@@ -1383,3 +1383,128 @@ ON CONFLICT (node_id, graph_id) DO UPDATE SET state = EXCLUDED.state, ...
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: T19: 派发硬门排除产出者 —— review 节点不得由自己审（#669 裁决 A 实现）
+
+**Date**: 2026-09-16
+**Task**: T19: 派发硬门排除产出者 —— review 节点不得由自己审（#669 裁决 A 实现）
+**Branch**: `main`
+
+### Summary
+
+执行 D16 #669 裁决 A：把「排除产出者」做成派发硬门，落在唯一一处能力 roster 计算点（workers_with_capabilities_excluding）—— dispatch_gate / dispatch_candidates / placement_target 三者同源，故 T12 那条「打分不得看到被门拒的 worker」的不变量自动成立。两条 fail-closed 检查各带独立计数器（no_independent_reviewer / producer_identity_unknown，刻意不合并）。非 review 节点逐字节不变。四次消融实测：两条子句打红不相交集合 ⇒ 各自独立被钉住。另修掉两处过期 spec（agent 默认能力集写成含 review，与代码相反）+ T16 一句已变假话的注释。
+
+### Main Changes
+
+## 背景：一条**结论在 wire 上不可见**的独立性
+
+T16（#661）把 `review` 做成图上一个**有类型**的节点，并在交付时**如实记账**了一条残余：「自审禁止是**能力门级**而非派发级……堵死需改 `dispatch_gate`，回 D14」。这条记账**没有出口**，直到本轮把它升成决策票 D16 #669 并裁定。
+
+缺口的形状值得单说：一个**显式 opt-in 了双角色**（`UC_CAP_REVIEW` + `code`）的 worker，可以既产又审，而产出的 verdict 在 wire 上与**真独立审阅逐字相同**（都进 `SubtaskReview`）。也就是说这不是「审得不准」，而是**下游没有任何东西能发现它不准** —— 与本仓反复付代价的失效形状（T12 的 affinity 静默失效、T17 的假 `RUNNING`）同族。
+
+D16 裁定 **A**：把「排除产出者」做成**派发硬门**，落在**唯一一处** roster 计算点。
+
+## 落地：为什么是那一处、为什么是必需形参
+
+`worker_service.rs` 的三个派发相关函数**同源**：`dispatch_gate`（判定）、`dispatch_candidates`（候选）、`placement_target`（affinity 打分）都从能力 roster 派生。既有不变量就写在后者的文档注释里 —— *"Scoring must never see a worker the gate would reject"*（`worker_service.rs:307`）。
+
+⇒ 排除只要落在 `workers_with_capabilities_excluding`（新抽出的**单一** roster 计算点），那条不变量**自动成立**；若只改 `dispatch_gate`，`placement_target` 会继续把被排除者当候选、并**定向投到它自己的 per-worker subject**（正是自审最直接的通道）。
+
+**`exclude` 做成必需形参，不做 `Option`/默认值。** 理由是本票要关掉的正是「某个派发路径不知道这条约束」——一个可省略的参数等于给未来的新派发口留了一个「少写一个参数就静默恢复自审」的后门。`workers_with_capabilities`（无排除）保留给纯能力查询，并在文档里明说**它不是派发口径**。
+
+**加性保证**：`requires_independence == false` ⇒ `review_independence` 返回空约束 ⇒ `dispatch_gate` 对非 review 节点**逐字节**等价于改动前的三重过滤（第一个检查不可能触发，第二个的候选集等于原集合）。这条有专项消融背书。
+
+## 两条 fail-closed 检查：为什么计数器**必须**分开
+
+| | 条件 | 含义 | 计数器 |
+|---|---|---|---|
+| 1 | `unknown_producers` 非空 | 依赖**跑了但没人记下是谁跑的**（PG backfill / `.uc/tasks` 导入 / 快照不全）⇒ 独立性**无法核实** | `producer_identity_unknown` |
+| 2 | 排除后候选**为空** | 生产者被识别了，而它是**唯一**持有该能力的人 ⇒ **没有独立审阅者** | `no_independent_reviewer` |
+
+合并成一个的代价很具体：节点停在 `PENDING`，而操作者**无从判断**该「补一个 reviewer worker」还是「去修生产者的上报口径」—— 后一种情况下补 worker **毫无作用**。这与 T12/T17 是同一种病：**失效可见但不可归因**。
+
+顺序上「越具体越先」也有具体理由：scope 判定会**点名候选 worker**，而那个名字会把操作者引向一个**不是问题**的 scoped worker。所以独立性检查排在 scope/version **之前**。
+
+`NoCapableWorker` 的语义**刻意没动**（用排除**前**的 roster 判定）⇒「没人有这个能力」与「只有产出者有此能力」永远可分。
+
+## 消融：四次，一次只删一条（实测非推断）
+
+| 注入的突变 | 实测结果 |
+|---|---|
+| 删掉 roster 的排除过滤 | **3 条**打红（自审拒绝 / placement 不选生产者 / 排序验证），而 unknown-producer 与「非 review 不变」**仍绿** |
+| 中性化 `unknown_producers` 检查（`if false && …`） | **2 条**打红（unknown-producer 分计数 / 排序验证），而自审拒绝**仍绿** |
+| 去掉 `review_independence` 里 review 判定早返回 | **恰好 2 条**打红（`independence_is_inert_for_every_non_review_node` + server 侧快照读取），其余全绿 |
+| 把谓词从精确相等放宽成 `c.contains("review")` | 打红 `assertion failed: !requires_independence(["code-review"])`（连带既有的标签测试） |
+
+**前两条打红的是不相交集合**（只共享排序用例）⇒ 两条子句是**各自独立被钉住**的，而不是「两条子句守同一句断言」。这正是 T17 那次的诊断法：**看哪条断言先红，本身就是信息** —— 若突变只打红靠后的断言而更靠前的仍绿，那条信息能定位是哪条子句在起作用。
+
+第四条消融还改掉了一个我自己刚写下的**薄弱断言**：原测试主体是 `node_type_for(&c) == NODE_TYPE_REVIEW` ⟺ `requires_independence(&c)` —— 两边调**同一个谓词**，是**自指**的，只能抓 `node_type_for` 漂移，**抓不住谓词定义被改**。补上绝对钉（`!requires_independence(["code-review"])` 等）之后它才真的能打红。
+
+## 门禁、基线，以及一份**外部对照**
+
+本地全绿（2026-09-16）：`fmt --check`；`clippy --workspace -D warnings`（CI 原样命令）；`clippy --workspace --all-targets --all-features -D warnings`；`cargo check --workspace`；**`cargo check --workspace --all-targets --all-features`**（公开签名变更的必需探针）；`cargo test -p uc-engine -p uc-grpc` 默认 / `--no-default-features` / `--features indexing` 三组。
+
+Rust 基线**只增不减**：uc-engine lib **452→453**（默认）、**392→393**（no default）、**467→468**（all-features）；uc-grpc lib **212→221**、**240→249**（all-features）；uc-types **50**、uc-grpc-server **36** 不变。**自洽校验**：`453−393 = 60`、`468−453 = 15`、`249−221 = 28` —— 三个差值与 T14/T18 时**完全相同** ⇒ 新增单测既未受 `storage` 也未受 `messaging` 门控，且门控测试数本身没被搅动。
+
+**CI（`322a571`）：Rust CI 8/8 绿、Python CI 4/4 绿**（TypeScript CI **未被触发** —— diff 不含 `packages/**`，符合路径过滤）。判**真跑**两条判据都过：storage job 里 `graph_store_integration` **21 passed / 0 failed / 2.91s**（与 T18 同为 21），逐字有 `test graph_* ... ok` 共 43 条，**全日志 0 条 `SKIP:`**。CI 日志里 `468 / 249 / 50 / 36 filtered out` 四行还**独立复核**了我的本地 all-features 计数（uc-engine 468、uc-grpc 249、uc-types 50、uc-grpc-server 36），等于给本地数字配了一份外部对照。
+
+Python（本轮只改了一处注释，无行为变更）：按仓规逐文件串行 **collected 1149 / passed 1139 / skipped 10 / failed 0 / error 0**，与 T18 基线**逐项相同**；`ruff check python/ tests/` clean。
+
+## 🔴 本轮最值钱的一条：spec 说反了，而它差点让我把结论写反
+
+为确认「worker 的默认能力集里有没有 `review`」，我读了 `.trellis/spec/backend/agent-capability-spec.md`。它写着：
+
+```
+Base: ["code", "search", "memory", "test", "decompose", "review"]
+```
+
+**照此推理的结论是**：每个 worker 默认都持有 `review` ⇒ 只要部署里只有一个 worker，本票的硬门就会让**所有 review 节点永久卡在 `PENDING`** —— 一条耸动、自洽、而且**看起来很有说服力**的结论，我几乎把它写进票面与记忆。
+
+去读一手代码（`worker.py:433-448`）后发现**恰好相反**：
+
+```python
+caps = ["code", "search", "memory", "test", "decompose"]
+```
+
+T16 自己留了注释解释为什么排除 `review`：*"Advertising it by default would let every producing worker claim its own review."* 真正的开关是环境变量 **`UC_CAP_REVIEW`**（`worker.py:495`）。
+
+**由此得到本票正确的定位（与险些写下的那句不同）**：
+
+1. 默认 worker **根本不持有** `review` ⇒ 它对 review 节点先在**能力门**上就是 `NoCapableWorker`，**走不到**本票的新检查。所以本票**不是**「新引入的常见路径阻塞」，而是**残余缺口的收口** —— 与 D16 的措辞（*显式双角色 worker 仍可自审*）严丝合缝。
+2. 新 fail-closed 路径**可被触达的前提**是「集群里存在一个 opt-in 了 `UC_CAP_REVIEW` 的 worker」。此时**要么**它审自己产出的东西（原缺口），**要么**停在 `PENDING`（本票）。
+
+这是本周第三次「**间接信号 ≠ 一手事实**」（前两次：拿 `which protoc` 的 PATH 事实当构建事实；信 Bun 自陈的 *"not your code"* 而真因就在那行上面）。**规格比没有规格更危险，因为它自带权威感** —— 过期时它会被当成事实。
+
+顺带修掉两处**已经变成假话**的陈述：spec 里那行能力集（已改，并补上 `UC_CAP_REVIEW`）；`worker.py` 里 T16 留的 *"The dispatch side has no exclusion primitive"*（本票之后不成立 —— 已改写并保留 T16 原本「为什么 review 不默认」的理由）。另外发现 `worker-service-spec.md` 的 `dispatch_gate` 签名**落后两个票**（缺 T8 的 `project_id`），一并补齐并写上 T19 契约。
+
+## 残余：一个**未消除**的竞态窗口（如实记账）
+
+本门是**花名册检查**，不是**投递保证**。投递走**共享 durable work-queue**；`resolve_dispatch_subject` 在 placement 返回 `None` 时**回落**共享 subject，而 `None` 是**正常**结果（affinity 是软偏好，D12）。⇒ 当候选 ≥2 且其中之一是生产者时，队列**仍可能**把 review 投给它。
+
+本票消除的只是**最坏的形状**：生产者是**唯一**候选人时的静默自审。要真正消除竞态需要 per-worker subject **全覆盖** + 把 affinity 从**偏好**升格为**门** —— 前者对 legacy worker **结构上不可能**（没有 per-worker subject），后者与 D12 正面冲突。这正是 D16 驳回裁决 D 的理由（**做不到**，不是「贵」）。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `322a571` | (see git log) |
+
+### Testing
+
+- [OK] Rust：`cargo fmt --all -- --check` clean；`clippy --workspace -j 1 -- -D warnings`（CI 原样）clean；`clippy --workspace --all-targets --all-features -j 1 -- -D warnings` clean；`cargo check --workspace -j 1` clean；`cargo check --workspace --all-targets --all-features -j 1` clean（公开签名变更的必需探针）。
+- [OK] Rust 测试：uc-engine lib **453**（默认）/ **393**（no default）/ **468**（all-features）/ **453**（indexing）；uc-grpc lib **221**（默认 = nodefault）/ **249**（all-features）；uc-types **50**；uc-grpc-server **36**。自洽校验 `453−393 = 60`、`468−453 = 15`、`249−221 = 28` 均与 T14/T18 相同。
+- [OK] 新增 9 条测试（uc-engine 1 + uc-grpc 8），覆盖验收 1–6。
+- [OK] 消融 4 次（排除过滤 / unknown-producer 子句 / review 早返回 / 谓词放宽成子串），每次实测打红，复原后复跑全绿（`worker_service.rs` 复原后 sha256 前 12 位 = `4b6a4db89d87`，与消融前一致）。
+- [OK] Python：逐文件串行 **collected 1149 / passed 1139 / skipped 10 / failed 0 / error 0**（与 T18 基线逐项相同）；`ruff check python/ tests/` = All checks passed；py39 兼容扫描 82 文件 0 问题。
+- [OK] CI（`322a571`）：**Rust CI 8/8 绿 + Python CI 4/4 绿**（TS CI 未触发 —— diff 不含 `packages/**`）。真跑判据：storage job `graph_store_integration` **21 passed / 2.91s**、43 条逐字 `test graph_* ... ok`、**0 条 `SKIP:`**；CI 日志 `468 / 249 / 50 / 36 filtered out` 独立复核了本地 all-features 计数。
+- [WARN] 本机 live PG 本轮不可用（`</dev/tcp/127.0.0.1/5432` 拒连）。T19 不含 `#[ignore]` PG 测试 ⇒ 不受影响；公开签名变更由 `--all-features` **编译**探针覆盖。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量门与 Rust 测试模式（#[cfg(test)] mod tests inline）约定"}
+{"file": ".trellis/spec/backend/worker-service-spec.md", "reason": "核对派发门/登记/scope 契约；发现该 spec 的 dispatch_gate 签名落后两个票（缺 T8 的 project_id、缺 T19 的 independence）⇒ 同票修正并补上 T19 的独立性门契约与已知竞态窗口"}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "核对 review 是否为默认能力 —— 该节写着默认包含 review，与一手代码 worker.py:448 相反（实际为 UC_CAP_REVIEW opt-in）⇒ 同票修正"}
+{"file": ".trellis/tasks/09-16-t19-dispatch-exclusion/research/notes.md", "reason": "对照一手事实核查改动面、残余竞态窗口与 spec 过期一事"}
+{"file": ".trellis/tasks/09-16-t19-dispatch-exclusion/prd.md", "reason": "验收项逐条对照"}

@@ -1,0 +1,17 @@
+{
+  "id": "09-16-t19-dispatch-exclusion",
+  "title": "T19: 派发硬门排除「产出者」——review 节点不得由自己审（#669 实现）",
+  "status": "completed",
+  "priority": "P2",
+  "issue": 670,
+  "map": 656,
+  "decision": 669,
+  "createdAt": "2026-09-16",
+  "branch": "main",
+  "summary": "把「排除产出者」做成派发硬门，落在唯一一处能力 roster 计算点上（workers_with_capabilities_excluding）：review 节点的依赖产出者被排除出候选集，两条 fail-closed 检查各带一个独立计数器（no_independent_reviewer = 没人能审 / producer_identity_unknown = 不知道谁产的，刻意不合并）。排除集作为必需形参贯穿两个派发口，非 review 节点行为逐字节不变。纯加性：不新增列/事件类型，contract_version 未动。已知竞态窗口（候选≥2 时共享 work-queue 仍可能投给生产者）如实记账、不假装已消除。同票修正两处过期 spec。",
+  "completedAt": "2026-09-16",
+  "commit": "322a571",
+  "commits": [
+    "322a571"
+  ]
+}
