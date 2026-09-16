@@ -457,7 +457,7 @@ Merges SandboxConfig agent fields with per-subtask overrides. Subtask-level valu
 def _derive_capabilities(self) -> list[str]
 ```
 
-Base: `["code", "search", "memory", "test", "decompose", "review"]`. Enhanced:
+Base: `["code", "search", "memory", "test", "decompose"]` — **`"review"` is deliberately NOT a default** (T16 #661/D14: a worker that produced a result must not also review it). Opt in with the `UC_CAP_REVIEW` env var (`worker.py:495`), same pattern as `UC_CAP_BROWSER`/`UC_CAP_DEBUG`. Enhanced:
 - `mcp_configs` → `"mcp"` + per-server `"mcp:<server>"` (extracted from dict keys or file path basename)
 - `tools` with `"mcp__<server>__*"` pattern → `"mcp:<server>"` per prefix
 - `agent_name` → `"agent:<name>"`

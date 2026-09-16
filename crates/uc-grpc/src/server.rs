@@ -469,12 +469,17 @@ fn resolve_dispatch_subject(
     subtask: &uc_types::Subtask,
     project_id: &str,
     sibling_hosts: &std::collections::HashSet<String>,
+    independence: &crate::worker_service::ReviewIndependence,
 ) -> String {
+    // T19 #670: the exclusion reaches placement too, not just the verdict. If it
+    // stopped at `dispatch_gate`, a targeted publish would happily land the node
+    // on the producer's own per-worker subject.
     match registry.placement_target(
         &subtask.required_capabilities,
         project_id,
         &subtask.file_constraints,
         sibling_hosts,
+        &independence.excluded_producers,
     ) {
         Some(placement) => {
             tracing::info!(
@@ -2805,8 +2810,15 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         let (ready, project_id) = {
             let mut store = self.inner.task_store.lock().await;
             let subtasks = store.get_ready_subtasks(task_id);
-            let project_id = store
-                .get_task(task_id)
+            // T19 #670: one task snapshot serves the whole loop — a review node's
+            // exclusion set is read off the *dependency* rows' `assigned_worker`.
+            // `get_task` returns an owned clone, so nothing here borrows the
+            // store across the status mutation below.
+            // `get_task` hands back a borrow of the store, which the loop
+            // then mutates (`update_subtask_status`) — take an owned snapshot.
+            let task = store.get_task(task_id).cloned();
+            let project_id = task
+                .as_ref()
                 .map(|t| t.project_id.clone())
                 .unwrap_or_default();
 
@@ -2838,7 +2850,11 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 // when at least one capability-matching available worker
                 // serves the task's project scope and declared the gateway's
                 // contract version.
-                match registry.dispatch_gate(&st.required_capabilities, &project_id) {
+                // T19 #670: what this node's dependency structure forbids —
+                // empty for every node that is not a review node.
+                let independence = crate::worker_service::review_independence(st, task.as_ref());
+                match registry.dispatch_gate(&st.required_capabilities, &project_id, &independence)
+                {
                     crate::worker_service::WorkerDispatchGate::Dispatch => {}
                     crate::worker_service::WorkerDispatchGate::NoCapableWorker => {
                         tracing::info!(
@@ -2870,11 +2886,45 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                         );
                         continue; // never dispatch silently
                     }
+                    // T19 #670 — the two independence refusals. Distinct log
+                    // lines (and distinct counters inside the registry) so an
+                    // operator can tell "nobody can review this" apart from
+                    // "we cannot even tell who produced it".
+                    crate::worker_service::WorkerDispatchGate::ProducerIdentityUnknown {
+                        dependencies,
+                    } => {
+                        tracing::warn!(
+                            subtask_id = %st.id.0,
+                            dependencies = ?dependencies,
+                            "Review node whose dependencies' producers are unknown, keeping subtask \
+                             Pending — independence cannot be verified, and dispatching would \
+                             silently allow self-review (T19 #670)"
+                        );
+                        continue;
+                    }
+                    crate::worker_service::WorkerDispatchGate::NoIndependentReviewer {
+                        producers,
+                    } => {
+                        tracing::warn!(
+                            subtask_id = %st.id.0,
+                            excluded_producers = ?producers,
+                            "Every capability-matching worker produced a node this review depends \
+                             on, keeping subtask Pending — no independent reviewer exists \
+                             (T19 #670)"
+                        );
+                        continue;
+                    }
                 }
                 store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
                 // T12 #654: pick WHERE it goes first (soft preference — the
                 // shared subject is the overflow default).
-                let subject = resolve_dispatch_subject(&registry, st, &project_id, &sibling_hosts);
+                let subject = resolve_dispatch_subject(
+                    &registry,
+                    st,
+                    &project_id,
+                    &sibling_hosts,
+                    &independence,
+                );
                 dispatchable.push((st.clone(), subject));
             }
             drop(registry);
@@ -3860,8 +3910,12 @@ async fn dispatch_ready_subtasks(
     let (ready, project_id) = {
         let mut store = task_store.lock().await;
         let subtasks = store.get_ready_subtasks(task_id);
-        let project_id = store
-            .get_task(task_id)
+        // T19 #670: same snapshot discipline as `publish_ready_subtasks`.
+        // `get_task` hands back a borrow of the store, which the loop
+        // then mutates (`update_subtask_status`) — take an owned snapshot.
+        let task = store.get_task(task_id).cloned();
+        let project_id = task
+            .as_ref()
             .map(|t| t.project_id.clone())
             .unwrap_or_default();
         // Capability-aware dispatch (mirrors publish_ready_subtasks): only mark
@@ -3893,7 +3947,9 @@ async fn dispatch_ready_subtasks(
             // publish_ready_subtasks, T1 #637; scope filter T8 #650): never
             // dispatch silently to a worker that has not confirmed the
             // gateway's contract version or does not serve the task's scope.
-            match registry.dispatch_gate(&st.required_capabilities, &project_id) {
+            // T19 #670: empty constraint for every non-review node.
+            let independence = crate::worker_service::review_independence(st, task.as_ref());
+            match registry.dispatch_gate(&st.required_capabilities, &project_id, &independence) {
                 crate::worker_service::WorkerDispatchGate::Dispatch => {}
                 crate::worker_service::WorkerDispatchGate::NoCapableWorker => {
                     tracing::info!(
@@ -3923,10 +3979,33 @@ async fn dispatch_ready_subtasks(
                     );
                     continue;
                 }
+                // T19 #670 — the two independence refusals (mirrors
+                // `publish_ready_subtasks`).
+                crate::worker_service::WorkerDispatchGate::ProducerIdentityUnknown {
+                    dependencies,
+                } => {
+                    tracing::warn!(
+                        subtask_id = %st.id.0,
+                        dependencies = ?dependencies,
+                        "Review node whose dependencies' producers are unknown, keeping subtask \
+                         Pending — independence cannot be verified (T19 #670)"
+                    );
+                    continue;
+                }
+                crate::worker_service::WorkerDispatchGate::NoIndependentReviewer { producers } => {
+                    tracing::warn!(
+                        subtask_id = %st.id.0,
+                        excluded_producers = ?producers,
+                        "Every capability-matching worker produced a node this review depends on, \
+                         keeping subtask Pending — no independent reviewer exists (T19 #670)"
+                    );
+                    continue;
+                }
             }
             store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
             // T12 #654: affinity placement target (shared subject = overflow).
-            let subject = resolve_dispatch_subject(&registry, st, &project_id, &sibling_hosts);
+            let subject =
+                resolve_dispatch_subject(&registry, st, &project_id, &sibling_hosts, &independence);
             dispatchable.push((st.clone(), subject));
         }
         (dispatchable, project_id)
@@ -8269,6 +8348,7 @@ mod tests {
             &subtask_with_files(&["src/auth.rs"]),
             "",
             &std::collections::HashSet::new(),
+            &crate::worker_service::ReviewIndependence::default(),
         );
         assert_eq!(subject, "uc.subtask.execute.w.w-a");
         assert_ne!(subject, NATS_SUBJECT_SUBTASK_EXECUTE);
@@ -8285,6 +8365,7 @@ mod tests {
             &subtask_with_files(&["src/unrelated.rs"]),
             "",
             &std::collections::HashSet::new(),
+            &crate::worker_service::ReviewIndependence::default(),
         );
         assert_eq!(subject, NATS_SUBJECT_SUBTASK_EXECUTE);
     }
@@ -8301,6 +8382,7 @@ mod tests {
             &subtask_with_files(&["src/auth.rs"]),
             "",
             &std::collections::HashSet::new(),
+            &crate::worker_service::ReviewIndependence::default(),
         );
         assert_eq!(subject, NATS_SUBJECT_SUBTASK_EXECUTE);
     }
@@ -8328,6 +8410,7 @@ mod tests {
             &subtask_with_files(&["src/auth.rs"]),
             "",
             &sibling_hosts,
+            &crate::worker_service::ReviewIndependence::default(),
         );
         assert_eq!(subject, "uc.subtask.execute.w.w-local");
     }
@@ -8340,7 +8423,13 @@ mod tests {
         let reg = registry_with("w-a", "box-a", 0, &["src/auth.rs"], true);
         let mut st = subtask_with_files(&["src/auth.rs"]);
         st.required_capabilities = vec!["rust".into()];
-        let subject = resolve_dispatch_subject(&reg, &st, "", &std::collections::HashSet::new());
+        let subject = resolve_dispatch_subject(
+            &reg,
+            &st,
+            "",
+            &std::collections::HashSet::new(),
+            &crate::worker_service::ReviewIndependence::default(),
+        );
         assert_eq!(subject, NATS_SUBJECT_SUBTASK_EXECUTE);
     }
 
@@ -9328,5 +9417,207 @@ mod tests {
         store.revert_swept_subtask(&task_id, &st_id, true);
         let got = store.get_task(&task_id).unwrap();
         assert_eq!(got.subtasks[0].status, uc_types::SubtaskStatus::Pending);
+    }
+
+    // ── T19 #670 / D16 #669 ruling A — review independence ──────────
+    //
+    // The snapshot-reading half of the constraint. The gate/placement half lives
+    // in `worker_service.rs` tests; here we only pin *what the dispatcher feeds
+    // it*: which worker produced a dependency, and when that is unknowable.
+
+    /// Rehydrate `t19` from a whole-task snapshot: `build` was produced by
+    /// `producer` (`None` ⇒ the field is absent, as for a backfilled row), and
+    /// `review` depends on it.
+    fn t19_store(producer: Option<&str>) -> TaskStore {
+        let build = match producer {
+            Some(w) => serde_json::json!({
+                "subtask_id": "build",
+                "status": "Completed",
+                "description": "write the thing",
+                "depends_on": [],
+                "assigned_worker": w,
+            }),
+            None => serde_json::json!({
+                "subtask_id": "build",
+                "status": "Completed",
+                "description": "write the thing",
+                "depends_on": [],
+            }),
+        };
+        let raw = serde_json::json!({
+            "v": 1,
+            "tasks": [{
+                "message_id": "t19:update:1",
+                "task_id": "t19",
+                "description": "review me",
+                "project_id": "p1",
+                "status": "InProgress",
+                "partial": false,
+                "subtasks": [
+                    build,
+                    {
+                        "subtask_id": "review",
+                        "status": "Pending",
+                        "description": "review it",
+                        "depends_on": ["build"],
+                    },
+                ],
+            }]
+        });
+        let response: NatsTaskSnapshotResponse = serde_json::from_value(raw).unwrap();
+        let mut store = TaskStore::new();
+        assert_eq!(apply_task_snapshot_response(&mut store, response), 1);
+        store
+    }
+
+    /// The `review` row of the snapshot, with `required_capabilities` set the way
+    /// the decomposer sets it (the NATS update shape carries no capabilities).
+    fn review_row(store: &TaskStore) -> uc_types::Subtask {
+        let mut row = store
+            .get_task("t19")
+            .expect("rehydrated")
+            .subtasks
+            .iter()
+            .find(|s| s.id.0 == "review")
+            .expect("review row")
+            .clone();
+        row.required_capabilities = vec!["code".to_string(), "review".to_string()];
+        row
+    }
+
+    #[test]
+    fn review_independence_reads_the_producer_from_the_task_snapshot() {
+        // Acceptance (T19 #670): the exclusion set is the producing worker of
+        // every dependency, read from the snapshot the dispatcher already holds.
+        let store = t19_store(Some("w-author"));
+        let task = store.get_task("t19").unwrap().clone();
+        let review = review_row(&store);
+
+        let ind = crate::worker_service::review_independence(&review, Some(&task));
+        assert_eq!(
+            ind.excluded_producers,
+            std::collections::HashSet::from(["w-author".to_string()])
+        );
+        assert!(ind.unknown_producers.is_empty());
+        assert!(!ind.is_unconstrained());
+
+        // The identical row *without* the review capability yields no constraint
+        // at all — the same predicate, so the two can never disagree.
+        let mut build = review.clone();
+        build.required_capabilities = vec!["code".to_string()];
+        assert!(crate::worker_service::review_independence(&build, Some(&task)).is_unconstrained());
+    }
+
+    #[test]
+    fn review_independence_fails_closed_when_the_producer_is_unrecorded() {
+        // The dependency is present but carries no `assigned_worker` — the shape
+        // a backfilled/imported graph has, and the shape a partial snapshot
+        // produces. The node must not become reviewable-by-anyone.
+        let store = t19_store(None);
+        let task = store.get_task("t19").unwrap().clone();
+        let review = review_row(&store);
+
+        let ind = crate::worker_service::review_independence(&review, Some(&task));
+        assert!(ind.excluded_producers.is_empty());
+        assert_eq!(ind.unknown_producers, vec!["build".to_string()]);
+
+        // A dependency absent from the snapshot is the same verdict for the same
+        // reason, and so is holding no snapshot at all.
+        let mut ghost = review.clone();
+        ghost.depends_on = vec![uc_types::TaskId("ghost".to_string())];
+        assert_eq!(
+            crate::worker_service::review_independence(&ghost, Some(&task)).unknown_producers,
+            vec!["ghost".to_string()]
+        );
+        assert_eq!(
+            crate::worker_service::review_independence(&review, None).unknown_producers,
+            vec!["build".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_failed_attempt_does_not_erase_the_producer_identity() {
+        // T19 reads `Subtask::assigned_worker`, so the whole scheme rests on that
+        // field being populated for any node that actually ran. The completion
+        // report on the wire is sparse (`nats_worker.py` sends only
+        // subtask_id/status/assigned_worker), and a retry reports mid-flight —
+        // but `apply_update` only ever *sets* the field, never clears it, so the
+        // identity assigned at dispatch survives to the terminal report. That is
+        // what makes the "retry blackout" a non-issue: a review node is only
+        // dispatched after its dependency reached SUCCEEDED.
+        let mut store = TaskStore::new();
+        let task = store.submit_task("t19".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        let update = |subtask_id: &str, status: &str, worker: Option<&str>| NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: false,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: subtask_id.to_string(),
+                status: status.to_string(),
+                assigned_worker: worker.map(|w| w.to_string()),
+                description: None,
+                depends_on: None,
+                result: None,
+                attempt_id: None,
+                usage: None,
+                steps: None,
+                review: None,
+            }],
+            result: None,
+        };
+
+        // Dispatch assigns the producer.
+        store.apply_update(&update("build", "Assigned", Some("w-a")));
+        // A failed attempt reports without the field — the ProducerId must survive.
+        store.apply_update(&update("build", "Failed", None));
+        let after_failure = store.get_task(&task_id).unwrap().subtasks[1]
+            .assigned_worker
+            .clone();
+        assert_eq!(after_failure, Some(uc_types::WorkerId("w-a".to_string())));
+
+        // Terminal success, same sparse shape — still there, so the review node
+        // that becomes READY on it has a known producer to exclude.
+        store.apply_update(&update("build", "Completed", None));
+        let completed = store.get_task(&task_id).unwrap();
+        assert_eq!(
+            completed.subtasks[1].status,
+            uc_types::SubtaskStatus::Completed
+        );
+        assert_eq!(
+            completed.subtasks[1].assigned_worker,
+            Some(uc_types::WorkerId("w-a".to_string()))
+        );
+
+        let review = mk_review_of(&task_id, "build");
+        let ind = crate::worker_service::review_independence(&review, Some(completed));
+        assert_eq!(
+            ind.excluded_producers,
+            std::collections::HashSet::from(["w-a".to_string()])
+        );
+    }
+
+    /// A `review` row depending on `dep` — used by the re-establishment test.
+    fn mk_review_of(parent: &str, dep: &str) -> uc_types::Subtask {
+        uc_types::Subtask {
+            id: uc_types::TaskId("review".to_string()),
+            parent_id: uc_types::TaskId(parent.to_string()),
+            description: "review it".to_string(),
+            status: uc_types::SubtaskStatus::Pending,
+            assigned_worker: None,
+            depends_on: vec![uc_types::TaskId(dep.to_string())],
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            effect_class: uc_types::EffectClass::default(),
+            dispatch_retry_count: 0,
+            required_capabilities: vec!["code".to_string(), "review".to_string()],
+            agent_config_json: None,
+            steps: Vec::new(),
+            retry_count: 0,
+        }
     }
 }

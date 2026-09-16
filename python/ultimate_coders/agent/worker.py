@@ -438,12 +438,15 @@ class Worker:
         # T16 (#661): "review" is deliberately NOT a default capability.
         #
         # D14 requires that the worker which produced a result must not also
-        # review it. The dispatch side has no exclusion primitive (see
-        # research/notes.md §3), so independence is enforced by the capability
-        # gate instead: a review node requires the "review" capability, and a
-        # worker that never opted in cannot pass that gate. Advertising it by
-        # default would let every producing worker claim its own review, i.e.
-        # turn review into self-assessment with no code change anywhere else.
+        # review it. T19 (#670) has since added the dispatch-side exclusion
+        # primitive, so independence is now enforced in two places; this one
+        # stays because it is the cheaper of the two — a review node requires
+        # the "review" capability, so a worker that never opted in cannot even
+        # become a candidate, and the exclusion set only ever has to reason
+        # about workers that did opt in.
+        # Advertising it by default would let every producing worker claim its
+        # own review, i.e. turn review into self-assessment with no code change
+        # anywhere else.
         # Opt in with UC_CAP_REVIEW (same pattern as UC_CAP_BROWSER/DEBUG).
         caps = ["code", "search", "memory", "test", "decompose"]
         cfg = self._sandbox_config

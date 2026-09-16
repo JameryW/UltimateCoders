@@ -4,10 +4,11 @@
 //! and DeregisterWorker on graceful shutdown. The gateway maintains an
 //! in-memory WorkerRegistry as the source of truth for worker state.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tonic::{Request, Response, Status};
-use uc_types::{EngineApi, CONTRACT_VERSION};
+use uc_types::{EngineApi, Subtask, Task, CONTRACT_VERSION};
 
 use crate::server::GrpcServer;
 use crate::ultimate_coders::worker_service_server::WorkerService;
@@ -22,6 +23,19 @@ use crate::ultimate_coders::*;
 /// supplementing (and eventually replacing) NATS-based heartbeat tracking.
 pub struct WorkerRegistry {
     workers: HashMap<String, RegisteredWorker>,
+    /// T19 #670 — rejected-dispatch counters.
+    ///
+    /// **Two counters, not one.** "No reviewer exists other than the producer"
+    /// and "the producer's identity is unknown" are different facts with
+    /// different fixes (add a reviewer worker vs. fix the producer's reporting).
+    /// Collapsing them would make the second undiagnosable: a node stuck
+    /// `PENDING` with no way to tell which one it was — the failure shape this
+    /// repo keeps paying for (T12's silent affinity, T17's fake `RUNNING`).
+    ///
+    /// Bumped inside [`Self::dispatch_gate`], so a rejection can never be
+    /// rejected-without-being-counted.
+    no_independent_reviewer: AtomicU64,
+    producer_identity_unknown: AtomicU64,
 }
 
 /// A worker that has registered with the gateway.
@@ -90,7 +104,23 @@ impl WorkerRegistry {
     pub fn new() -> Self {
         Self {
             workers: HashMap::new(),
+            no_independent_reviewer: AtomicU64::new(0),
+            producer_identity_unknown: AtomicU64::new(0),
         }
+    }
+
+    /// Review dispatches refused because *every* capability-matching worker was
+    /// the producer of a node this one depends on (T19 #670). The node stays
+    /// `PENDING`.
+    pub fn no_independent_reviewer_count(&self) -> u64 {
+        self.no_independent_reviewer.load(Ordering::Relaxed)
+    }
+
+    /// Review dispatches refused because a dependency's producing worker could
+    /// not be determined, so independence could not be *verified* (T19 #670).
+    /// Deliberately separate from [`Self::no_independent_reviewer_count`].
+    pub fn producer_identity_unknown_count(&self) -> u64 {
+        self.producer_identity_unknown.load(Ordering::Relaxed)
     }
 
     /// Register a new worker or re-register an existing one.
@@ -229,15 +259,42 @@ impl WorkerRegistry {
     }
 
     /// Find workers that have ALL the specified capabilities.
-    pub fn workers_with_capabilities(&self, required: &[String]) -> Vec<&RegisteredWorker> {
-        let required_set: std::collections::HashSet<_> = required.iter().collect();
+    /// Workers whose capabilities satisfy `required`, minus `exclude`.
+    ///
+    /// This is the **one** place the capability roster is computed (T19 #670):
+    /// the dispatch gate, the candidate list and affinity scoring all descend
+    /// from it, which is what makes the T12 invariant — *"scoring must never see
+    /// a worker the gate would reject"* ([`Self::placement_target`]) — hold
+    /// automatically once the exclusion lands here rather than in one mouth.
+    ///
+    /// `exclude` is empty for every non-review node, so non-review traffic is
+    /// byte-identical to before.
+    pub fn workers_with_capabilities_excluding(
+        &self,
+        required: &[String],
+        exclude: &HashSet<String>,
+    ) -> Vec<&RegisteredWorker> {
+        let required_set: HashSet<_> = required.iter().collect();
         self.available_workers()
             .into_iter()
+            .filter(|w| !exclude.contains(&w.id))
             .filter(|w| {
-                let worker_caps: std::collections::HashSet<_> = w.capabilities.iter().collect();
+                let worker_caps: HashSet<_> = w.capabilities.iter().collect();
                 required_set.is_subset(&worker_caps)
             })
             .collect()
+    }
+
+    /// [`Self::workers_with_capabilities_excluding`] with **no exclusion**.
+    ///
+    /// Kept for the capability-only callers (the test-only
+    /// `dispatchable_workers_with_capabilities`). ⚠️ It is deliberately **not**
+    /// a dispatch mouth: both mouths ([`Self::dispatch_gate`] and
+    /// [`Self::dispatch_candidates`]) take the exclusion as a required
+    /// parameter, so no dispatch path can drop a review node's exclusion by
+    /// choosing the shorter call.
+    pub fn workers_with_capabilities(&self, required: &[String]) -> Vec<&RegisteredWorker> {
+        self.workers_with_capabilities_excluding(required, &HashSet::new())
     }
 
     /// Find workers that have ALL the specified capabilities AND declared the
@@ -259,9 +316,19 @@ impl WorkerRegistry {
     /// Filter order (T8 #650 / D8 #645): capability match first (unchanged),
     /// then the scope hard filter, then the contract-version check — a
     /// worker that does not serve `project_id` is never a dispatch candidate.
-    pub fn dispatch_gate(&self, required: &[String], project_id: &str) -> WorkerDispatchGate {
-        let candidates = self.workers_with_capabilities(required);
-        if candidates.is_empty() {
+    pub fn dispatch_gate(
+        &self,
+        required: &[String],
+        project_id: &str,
+        independence: &ReviewIndependence,
+    ) -> WorkerDispatchGate {
+        // Pre-exclusion roster: answers "does *anyone* hold the required
+        // capability", which is what `NoCapableWorker` means. Kept separate from
+        // the exclusion-filtered list below so that "nobody has the capability"
+        // and "the only holders were the producers" stay distinguishable — the
+        // two counters depend on that distinction.
+        let capable = self.workers_with_capabilities(required);
+        if capable.is_empty() {
             // No capability-matching available worker. With required
             // capabilities that is today's "keep Pending" case; without,
             // preserve the legacy best-effort publish (queue-group
@@ -272,6 +339,39 @@ impl WorkerRegistry {
             } else {
                 WorkerDispatchGate::NoCapableWorker
             };
+        }
+        // ── T19 #670 / D16 #669 ruling A: independence ──────────────
+        // A review node must not be claimed by whoever produced the node it
+        // depends on. Two fail-closed checks, ordered most-specific-first:
+        //
+        //   1. the producer could not be identified at all ⇒ independence
+        //      cannot be *verified* ⇒ refuse (counted apart from case 2);
+        //   2. the producers were identified and they were the only workers
+        //      holding the required capability ⇒ no independent reviewer.
+        //
+        // Both leave the node PENDING, which is visible on an existing surface.
+        // The alternative — dispatching anyway — is silent self-review: the
+        // verdict lands in the wire as an ordinary `SubtaskReview` and nothing
+        // downstream can tell it apart. Neither check can fire for a non-review
+        // node, because `review_independence` returns an empty constraint for
+        // everything that `uc_engine::requires_independence` does not flag.
+        if !independence.unknown_producers.is_empty() {
+            self.producer_identity_unknown
+                .fetch_add(1, Ordering::Relaxed);
+            return WorkerDispatchGate::ProducerIdentityUnknown {
+                dependencies: independence.unknown_producers.clone(),
+            };
+        }
+        let candidates =
+            self.workers_with_capabilities_excluding(required, &independence.excluded_producers);
+        if candidates.is_empty() {
+            self.no_independent_reviewer.fetch_add(1, Ordering::Relaxed);
+            let mut producers: Vec<String> =
+                independence.excluded_producers.iter().cloned().collect();
+            // Sorted so the verdict (and the log line) is deterministic — a
+            // HashSet's iteration order is not.
+            producers.sort();
+            return WorkerDispatchGate::NoIndependentReviewer { producers };
         }
         // Scope hard filter: scoped workers must serve the task's project.
         let scope_matched: Vec<&RegisteredWorker> = candidates
@@ -309,8 +409,9 @@ impl WorkerRegistry {
         &self,
         required: &[String],
         project_id: &str,
+        exclude: &HashSet<String>,
     ) -> Vec<&RegisteredWorker> {
-        self.workers_with_capabilities(required)
+        self.workers_with_capabilities_excluding(required, exclude)
             .into_iter()
             .filter(|w| w.serves_scope(project_id))
             .filter(|w| w.contract_version == CONTRACT_VERSION)
@@ -341,10 +442,11 @@ impl WorkerRegistry {
         required: &[String],
         project_id: &str,
         file_constraints: &[String],
-        sibling_hosts: &std::collections::HashSet<String>,
+        sibling_hosts: &HashSet<String>,
+        exclude: &HashSet<String>,
     ) -> Option<crate::placement::Placement> {
         let candidates: Vec<crate::placement::PlacementCandidate<'_>> = self
-            .dispatch_candidates(required, project_id)
+            .dispatch_candidates(required, project_id, exclude)
             .into_iter()
             .filter(|w| w.per_worker_topic)
             .map(|w| crate::placement::PlacementCandidate {
@@ -432,6 +534,79 @@ pub enum WorkerDispatchGate {
     /// Keep Pending and surface it LOUDLY — never dispatch silently.
     /// Carries `(worker_id, declared_version)` of the rejected candidates.
     NoVersionMatchedWorker { workers: Vec<(String, String)> },
+    /// T19 #670 — a review node whose dependencies' producers could not all be
+    /// identified, so independence cannot be *verified*. Keep Pending:
+    /// dispatching anyway would silently permit self-review. Carries the
+    /// dependency ids whose producer is unknown.
+    ProducerIdentityUnknown { dependencies: Vec<String> },
+    /// T19 #670 — every capability-matching worker for this review node produced
+    /// a node it depends on, so no *independent* reviewer exists. Keep Pending.
+    /// Carries the excluded producer ids (sorted, for a deterministic verdict).
+    NoIndependentReviewer { producers: Vec<String> },
+}
+
+/// T19 #670 — what a node's dependency structure says about who must **not**
+/// execute it. Empty for every non-review node, which is what keeps this change
+/// additive for ordinary traffic.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReviewIndependence {
+    /// Workers that produced the nodes this subtask depends on. Never dispatch
+    /// candidates for it.
+    pub excluded_producers: HashSet<String>,
+    /// Dependencies whose producing worker is unknown (or whose row is missing
+    /// from the snapshot). Independence cannot be verified ⇒ fail closed.
+    pub unknown_producers: Vec<String>,
+}
+
+impl ReviewIndependence {
+    /// True when nothing constrains this node's dispatch: every node that is not
+    /// a review node, plus a review node with no dependencies at all (which has
+    /// nothing to review — a producer-side modelling bug, out of T19's scope).
+    pub fn is_unconstrained(&self) -> bool {
+        self.excluded_producers.is_empty() && self.unknown_producers.is_empty()
+    }
+}
+
+/// Derive the review-independence constraint for `subtask` (T19 #670).
+///
+/// Whether the constraint applies at all is decided by
+/// [`uc_engine::requires_independence`] — the **same single condition** behind
+/// the `review` node label ([`uc_engine::graph_store::node_type_for`]). Do not
+/// re-derive it here (`if node_type == "review"` would be that rule written a
+/// second time).
+///
+/// `task` is the snapshot the caller already holds. `None` (no snapshot) and a
+/// dependency absent from it both count as an **unknown producer** ⇒ fail
+/// closed, because "we cannot tell who produced it" must never degrade into
+/// "anyone may review it".
+///
+/// The producing worker is read from `Subtask::assigned_worker`, which the
+/// successful attempt re-establishes on its own status update
+/// (`server.rs`, the `subtask_update.assigned_worker` branch). A review node is
+/// only ever dispatched after its dependency reached `SUCCEEDED`, so that value
+/// is present for any node that actually ran — the failure paths that clear the
+/// field only affect the *retrying* window, in which no review can be READY yet.
+/// Graphs that never reported a producer (PG backfill / `.uc/tasks` import) are
+/// the real source of `unknown_producers`, which is why that case is counted
+/// separately rather than folded into `no_independent_reviewer`.
+pub fn review_independence(subtask: &Subtask, task: Option<&Task>) -> ReviewIndependence {
+    let mut out = ReviewIndependence::default();
+    if !uc_engine::requires_independence(&subtask.required_capabilities) {
+        return out;
+    }
+    for dep in &subtask.depends_on {
+        let producer = task
+            .and_then(|t| t.subtasks.iter().find(|s| s.id == *dep))
+            .and_then(|s| s.assigned_worker.as_ref())
+            .map(|w| w.0.clone());
+        match producer {
+            Some(id) => {
+                out.excluded_producers.insert(id);
+            }
+            None => out.unknown_producers.push(dep.0.clone()),
+        }
+    }
+    out
 }
 
 // ── WorkerService gRPC implementation ─────────────────────────────
@@ -1126,10 +1301,21 @@ mod tests {
 
         // Empty registry, no capabilities → today's best-effort publish
         // (NATS-only deployments without gRPC registration).
-        assert_eq!(reg.dispatch_gate(&[], ""), WorkerDispatchGate::Dispatch);
+        assert_eq!(
+            reg.dispatch_gate(
+                &[],
+                "",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
+            WorkerDispatchGate::Dispatch
+        );
         // Empty registry, capabilities required → keep Pending (unchanged).
         assert_eq!(
-            reg.dispatch_gate(&caps("rust"), ""),
+            reg.dispatch_gate(
+                &caps("rust"),
+                "",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::NoCapableWorker
         );
 
@@ -1143,14 +1329,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            reg.dispatch_gate(&caps("rust"), ""),
+            reg.dispatch_gate(
+                &caps("rust"),
+                "",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::NoVersionMatchedWorker {
                 workers: vec![("w-legacy".to_string(), String::new())]
             }
         );
         // Capability requirement still short-circuits before the version gate.
         assert_eq!(
-            reg.dispatch_gate(&caps("docker"), ""),
+            reg.dispatch_gate(
+                &caps("docker"),
+                "",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::NoCapableWorker
         );
 
@@ -1165,10 +1359,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            reg.dispatch_gate(&caps("rust"), ""),
+            reg.dispatch_gate(
+                &caps("rust"),
+                "",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::Dispatch
         );
-        assert_eq!(reg.dispatch_gate(&[], ""), WorkerDispatchGate::Dispatch);
+        assert_eq!(
+            reg.dispatch_gate(
+                &[],
+                "",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
+            WorkerDispatchGate::Dispatch
+        );
 
         // dispatchable_workers_with_capabilities excludes the legacy worker.
         let ids: Vec<_> = reg
@@ -1677,13 +1882,21 @@ mod tests {
 
         // Same scope → dispatchable.
         assert_eq!(
-            reg.dispatch_gate(&caps("rust"), "alpha"),
+            reg.dispatch_gate(
+                &caps("rust"),
+                "alpha",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::Dispatch
         );
         // Foreign scope → keep Pending, LOUDLY (scoped worker must never
         // receive a foreign-scope node).
         assert_eq!(
-            reg.dispatch_gate(&caps("rust"), "beta"),
+            reg.dispatch_gate(
+                &caps("rust"),
+                "beta",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::NoScopeMatchedWorker {
                 workers: vec!["w-alpha".to_string()]
             }
@@ -1691,7 +1904,11 @@ mod tests {
         // Empty scope (legacy task) → only open workers qualify; the scoped
         // worker must not receive it.
         assert_eq!(
-            reg.dispatch_gate(&caps("rust"), ""),
+            reg.dispatch_gate(
+                &caps("rust"),
+                "",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::NoScopeMatchedWorker {
                 workers: vec!["w-alpha".to_string()]
             }
@@ -1708,11 +1925,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            reg.dispatch_gate(&caps("rust"), "beta"),
+            reg.dispatch_gate(
+                &caps("rust"),
+                "beta",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::Dispatch
         );
         assert_eq!(
-            reg.dispatch_gate(&caps("rust"), ""),
+            reg.dispatch_gate(
+                &caps("rust"),
+                "",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::Dispatch
         );
 
@@ -1720,7 +1945,11 @@ mod tests {
         // Dispatch (NATS-only deployments) regardless of scope.
         let empty_reg = WorkerRegistry::new();
         assert_eq!(
-            empty_reg.dispatch_gate(&[], "alpha"),
+            empty_reg.dispatch_gate(
+                &[],
+                "alpha",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::Dispatch
         );
     }
@@ -1741,14 +1970,22 @@ mod tests {
 
         // In-scope: capability + scope pass, version gate fires.
         assert_eq!(
-            reg.dispatch_gate(&["rust".to_string()], "alpha"),
+            reg.dispatch_gate(
+                &["rust".to_string()],
+                "alpha",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::NoVersionMatchedWorker {
                 workers: vec![("w-legacy-alpha".to_string(), String::new())]
             }
         );
         // Out-of-scope: scope gate fires first (version never consulted).
         assert_eq!(
-            reg.dispatch_gate(&["rust".to_string()], "beta"),
+            reg.dispatch_gate(
+                &["rust".to_string()],
+                "beta",
+                &crate::worker_service::ReviewIndependence::default()
+            ),
             WorkerDispatchGate::NoScopeMatchedWorker {
                 workers: vec!["w-legacy-alpha".to_string()]
             }
@@ -1873,6 +2110,7 @@ mod tests {
                 "",
                 &["src/a.rs".to_string()],
                 &no_hosts(),
+                &std::collections::HashSet::new(),
             )
             .expect("the declared worker is targetable");
         assert_eq!(picked.worker_id, "w-topic");
@@ -1892,6 +2130,7 @@ mod tests {
                 "",
                 &["src/unrelated.rs".to_string()],
                 &no_hosts(),
+                &std::collections::HashSet::new(),
             )
             .is_none());
     }
@@ -1908,6 +2147,7 @@ mod tests {
                 "",
                 &["src/a.rs".to_string()],
                 &no_hosts(),
+                &std::collections::HashSet::new(),
             )
             .unwrap();
         assert_eq!(picked.worker_id, "w-light");
@@ -1929,6 +2169,7 @@ mod tests {
                 "",
                 &["src/a.rs".to_string(), "src/b.rs".to_string()],
                 &no_hosts(),
+                &std::collections::HashSet::new(),
             )
             .unwrap();
         assert_eq!(picked.worker_id, "w-overlap");
@@ -1957,6 +2198,7 @@ mod tests {
                 "",
                 &["src/a.rs".to_string()],
                 &no_hosts(),
+                &std::collections::HashSet::new(),
             )
             .is_none());
 
@@ -1979,6 +2221,7 @@ mod tests {
                 "beta",
                 &["src/a.rs".to_string()],
                 &no_hosts(),
+                &std::collections::HashSet::new(),
             )
             .is_none());
         assert!(reg
@@ -1987,6 +2230,7 @@ mod tests {
                 "alpha",
                 &["src/a.rs".to_string()],
                 &no_hosts(),
+                &std::collections::HashSet::new(),
             )
             .is_some());
 
@@ -2007,6 +2251,7 @@ mod tests {
                 "",
                 &["src/a.rs".to_string()],
                 &no_hosts(),
+                &std::collections::HashSet::new(),
             )
             .is_none());
     }
@@ -2027,6 +2272,7 @@ mod tests {
                 "",
                 &["src/a.rs".to_string()],
                 &sibling_hosts,
+                &std::collections::HashSet::new(),
             )
             .unwrap();
         assert_eq!(picked.worker_id, "w-local");
@@ -2049,5 +2295,362 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reg.worker_host("w-nometa"), None);
+    }
+
+    // ── T19 #670 / D16 #669 ruling A — review independence ──────────
+    //
+    // The constraint: a node labelled `review` must not be executed by a worker
+    // that produced one of its dependencies. These tests drive the gate and the
+    // placement scorer directly — independence is a parameter, so no store is
+    // needed. The snapshot-reading half (`review_independence` against a live
+    // `TaskStore`) lives in `server.rs` tests.
+
+    /// Register a version-matched, unscoped worker holding exactly `caps`.
+    fn worker(reg: &mut WorkerRegistry, id: &str, caps: &[&str]) {
+        reg.register(
+            id.to_string(),
+            caps.iter().map(|c| (*c).to_string()).collect(),
+            4,
+            String::new(),
+            CONTRACT_VERSION.to_string(),
+        )
+        .unwrap();
+    }
+
+    /// [`signalled`] with explicit capabilities — the review tests need workers
+    /// that hold `review` as well as `code` (`signalled` hardcodes `["code"]`).
+    fn signalled_with_caps(
+        reg: &mut WorkerRegistry,
+        id: &str,
+        host: &str,
+        load: u32,
+        caps: &[&str],
+        recent: &[&str],
+        topic: bool,
+    ) {
+        reg.register(
+            id.to_string(),
+            caps.iter().map(|c| (*c).to_string()).collect(),
+            4,
+            format!(r#"{{"hostname":"{host}"}}"#),
+            CONTRACT_VERSION.to_string(),
+        )
+        .unwrap();
+        let files: Vec<String> = recent.iter().map(|s| s.to_string()).collect();
+        reg.heartbeat_with_signals(id, load, &files, topic).unwrap();
+    }
+
+    /// A subtask row. `producer` is the worker that ran it (i.e. the value a
+    /// successful attempt reports back into `assigned_worker`).
+    fn mk_subtask(id: &str, deps: &[&str], caps: &[&str], producer: Option<&str>) -> Subtask {
+        Subtask {
+            id: uc_types::TaskId(id.into()),
+            parent_id: uc_types::TaskId("t-19".into()),
+            description: id.into(),
+            status: uc_types::SubtaskStatus::Pending,
+            assigned_worker: producer.map(|w| uc_types::WorkerId(w.into())),
+            depends_on: deps.iter().map(|d| uc_types::TaskId((*d).into())).collect(),
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            effect_class: uc_types::EffectClass::default(),
+            dispatch_retry_count: 0,
+            required_capabilities: caps.iter().map(|c| (*c).into()).collect(),
+            agent_config_json: None,
+            steps: Vec::new(),
+            retry_count: 0,
+        }
+    }
+
+    /// The task snapshot `review_independence` reads. Only `subtasks` matters.
+    fn mk_task(subtasks: Vec<Subtask>) -> Task {
+        let now = chrono::Utc::now();
+        Task {
+            id: uc_types::TaskId("t-19".into()),
+            description: "d".into(),
+            project_id: "p1".into(),
+            status: uc_types::TaskStatus::InProgress,
+            subtasks,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn set(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn review_node_is_never_dispatched_to_its_own_producer() {
+        // Acceptance (T19 #670): the only worker holding `review` also produced
+        // the node under review ⇒ refuse and keep PENDING. Pre-T19 this was a
+        // *silent* self-review: the gate saw a capable worker and published.
+        let mut reg = WorkerRegistry::new();
+        worker(&mut reg, "w-dup", &["code", "review"]);
+
+        let dep = mk_subtask("build", &[], &["code"], Some("w-dup"));
+        let review = mk_subtask("review", &["build"], &["code", "review"], None);
+        let task = mk_task(vec![dep, review.clone()]);
+
+        let ind = review_independence(&review, Some(&task));
+        assert_eq!(ind.excluded_producers, set(&["w-dup"]));
+        assert!(ind.unknown_producers.is_empty());
+        assert!(!ind.is_unconstrained());
+
+        assert_eq!(
+            reg.dispatch_gate(&review.required_capabilities, "p1", &ind),
+            WorkerDispatchGate::NoIndependentReviewer {
+                producers: vec!["w-dup".to_string()]
+            }
+        );
+        assert_eq!(reg.no_independent_reviewer_count(), 1);
+        assert_eq!(reg.producer_identity_unknown_count(), 0);
+
+        // A second reviewer flips the same node back to dispatchable — the
+        // refusal is about *this* roster, not about the node.
+        worker(&mut reg, "w-other", &["code", "review"]);
+        assert_eq!(
+            reg.dispatch_gate(&review.required_capabilities, "p1", &ind),
+            WorkerDispatchGate::Dispatch
+        );
+        // Counters count rejections, not state; the earlier one stands.
+        assert_eq!(reg.no_independent_reviewer_count(), 1);
+    }
+
+    #[test]
+    fn placement_never_targets_an_excluded_producer() {
+        // Acceptance (T19 #670): the producer is deliberately the *strongest*
+        // affinity match (it just touched the very files the review node names)
+        // and the lighter-loaded worker. Pre-T19 placement handed the review
+        // straight back to the author.
+        let mut reg = WorkerRegistry::new();
+        signalled_with_caps(
+            &mut reg,
+            "w-dup",
+            "box-a",
+            0,
+            &["code", "review"],
+            &["src/auth.rs", "src/b.rs"],
+            true,
+        );
+        signalled_with_caps(
+            &mut reg,
+            "w-other",
+            "box-b",
+            3,
+            &["code", "review"],
+            &["src/auth.rs"],
+            true,
+        );
+
+        let review = mk_subtask("review", &["build"], &["code", "review"], None);
+        let caps = &review.required_capabilities;
+        let files = vec!["src/auth.rs".to_string(), "src/b.rs".to_string()];
+        let ind = ReviewIndependence {
+            excluded_producers: set(&["w-dup"]),
+            unknown_producers: Vec::new(),
+        };
+
+        // Differential: with no constraint the producer wins on affinity (2 hits
+        // vs 1) — i.e. the exclusion is what changes the outcome, not the roster.
+        let unconstrained = reg
+            .placement_target(caps, "p1", &files, &no_hosts(), &set(&[]))
+            .expect("the producer is the best match");
+        assert_eq!(unconstrained.worker_id, "w-dup");
+        assert_eq!(unconstrained.affinity_hits, 2);
+
+        // With the constraint the same scoring run can only see the independent
+        // reviewer: "scoring must never see a worker the gate would reject"
+        // (T12 #654) holds because the exclusion lives in the shared roster.
+        assert_eq!(
+            reg.dispatch_gate(caps, "p1", &ind),
+            WorkerDispatchGate::Dispatch
+        );
+        let candidates = reg.dispatch_candidates(caps, "p1", &ind.excluded_producers);
+        assert_eq!(
+            candidates.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(),
+            vec!["w-other"]
+        );
+        let constrained = reg
+            .placement_target(caps, "p1", &files, &no_hosts(), &ind.excluded_producers)
+            .expect("the reviewer is targetable");
+        assert_eq!(constrained.worker_id, "w-other");
+        assert_eq!(constrained.affinity_hits, 1);
+        assert_eq!(reg.no_independent_reviewer_count(), 0);
+    }
+
+    #[test]
+    fn unknown_producer_identity_fails_closed_and_is_counted_apart() {
+        // Acceptance (T19 #670): the dependency ran, but nothing recorded *who*
+        // ran it (PG backfill / `.uc/tasks` import). Independence cannot be
+        // *verified*, so dispatch stays refused — "we cannot tell who produced
+        // it" must never degrade into "anyone may review it".
+        let mut reg = WorkerRegistry::new();
+        worker(&mut reg, "w-any", &["code", "review"]);
+
+        let dep = mk_subtask("build", &[], &["code"], None);
+        let review = mk_subtask("review", &["build"], &["code", "review"], None);
+        let task = mk_task(vec![dep, review.clone()]);
+
+        let ind = review_independence(&review, Some(&task));
+        assert!(ind.excluded_producers.is_empty());
+        assert_eq!(ind.unknown_producers, vec!["build".to_string()]);
+        assert!(!ind.is_unconstrained());
+
+        assert_eq!(
+            reg.dispatch_gate(&review.required_capabilities, "p1", &ind),
+            WorkerDispatchGate::ProducerIdentityUnknown {
+                dependencies: vec!["build".to_string()]
+            }
+        );
+        // The two counters must never be collapsed: a reviewer *does* exist here
+        // (w-any); what is missing is the provenance record. Reporting this as
+        // `no_independent_reviewer` would send the operator to add a worker that
+        // changes nothing.
+        assert_eq!(reg.producer_identity_unknown_count(), 1);
+        assert_eq!(reg.no_independent_reviewer_count(), 0);
+    }
+
+    #[test]
+    fn independence_is_inert_for_every_non_review_node() {
+        // Acceptance (T19 #670) — the regression guard, and the most important
+        // one: a build node whose sole producer is also its only capable worker
+        // must still dispatch. If the constraint ever leaked onto non-review
+        // nodes, ordinary traffic would *stall* rather than fail loudly, which
+        // is the worst possible shape for a regression.
+        let mut reg = WorkerRegistry::new();
+        worker(&mut reg, "w-dup", &["code"]);
+
+        let dep = mk_subtask("seed", &[], &["code"], Some("w-dup"));
+        let build = mk_subtask("build", &["seed"], &["code"], None);
+        let task = mk_task(vec![dep, build.clone()]);
+
+        let ind = review_independence(&build, Some(&task));
+        assert!(
+            ind.is_unconstrained(),
+            "no constraint for a non-review node"
+        );
+        assert_eq!(
+            reg.dispatch_gate(&build.required_capabilities, "p1", &ind),
+            WorkerDispatchGate::Dispatch
+        );
+        assert_eq!(reg.no_independent_reviewer_count(), 0);
+        assert_eq!(reg.producer_identity_unknown_count(), 0);
+
+        // The same holds when the producer cannot be identified: for a
+        // non-review node that is not a reason to refuse.
+        let unknown = review_independence(&build, None);
+        assert!(unknown.is_unconstrained());
+        assert_eq!(
+            reg.dispatch_gate(&build.required_capabilities, "p1", &unknown),
+            WorkerDispatchGate::Dispatch
+        );
+    }
+
+    #[test]
+    fn a_review_node_can_never_take_the_best_effort_escape_hatch() {
+        // `dispatch_gate` publishes best-effort (Dispatch) on an empty roster
+        // when *nothing* is required — the NATS-only deployment path. The
+        // independence checks sit after that early return, so the property that
+        // keeps them reachable is structural: `requires_independence` is defined
+        // by `review` ∈ required_capabilities, so a review node's requirement is
+        // never empty and an empty roster lands on NoCapableWorker instead.
+        let empty = WorkerRegistry::new();
+        let review = mk_subtask("review", &["build"], &["review"], None);
+        assert!(uc_engine::requires_independence(
+            &review.required_capabilities
+        ));
+        assert!(
+            !review.required_capabilities.is_empty(),
+            "otherwise the early return would bypass the independence checks"
+        );
+
+        assert_eq!(
+            empty.dispatch_gate(
+                &review.required_capabilities,
+                "p1",
+                &ReviewIndependence::default()
+            ),
+            WorkerDispatchGate::NoCapableWorker
+        );
+        // The escape hatch itself is intact for the deployment it exists for.
+        assert_eq!(
+            empty.dispatch_gate(&[], "p1", &ReviewIndependence::default()),
+            WorkerDispatchGate::Dispatch
+        );
+    }
+
+    #[test]
+    fn independence_outranks_scope_and_version_in_the_verdict() {
+        // Most-specific-first ordering. A review node that would *also* fail the
+        // scope filter must report the independence failure: the scope verdict
+        // names candidate workers, which points the operator at a scoped worker
+        // that is not the problem.
+        let mut reg = WorkerRegistry::new();
+        reg.register_with_projects(
+            "w-scoped".to_string(),
+            vec!["code".to_string(), "review".to_string()],
+            4,
+            String::new(),
+            CONTRACT_VERSION.to_string(),
+            vec!["other".to_string()],
+        )
+        .unwrap();
+        let caps = vec!["code".to_string(), "review".to_string()];
+
+        // Baseline: unconstrained, this roster reports the *scope* verdict.
+        assert_eq!(
+            reg.dispatch_gate(&caps, "p1", &ReviewIndependence::default()),
+            WorkerDispatchGate::NoScopeMatchedWorker {
+                workers: vec!["w-scoped".to_string()]
+            }
+        );
+
+        // Producer unknown ⇒ that verdict, not the scope one.
+        let unknown = ReviewIndependence {
+            excluded_producers: set(&[]),
+            unknown_producers: vec!["build".to_string()],
+        };
+        assert_eq!(
+            reg.dispatch_gate(&caps, "p1", &unknown),
+            WorkerDispatchGate::ProducerIdentityUnknown {
+                dependencies: vec!["build".to_string()]
+            }
+        );
+
+        // Producer known and it is the only candidate ⇒ that verdict, not the
+        // scope one.
+        let constrained = ReviewIndependence {
+            excluded_producers: set(&["w-scoped"]),
+            unknown_producers: Vec::new(),
+        };
+        assert_eq!(
+            reg.dispatch_gate(&caps, "p1", &constrained),
+            WorkerDispatchGate::NoIndependentReviewer {
+                producers: vec!["w-scoped".to_string()]
+            }
+        );
+
+        // And the scope verdict, when it does fire, never lists the excluded
+        // producer: the candidates it names are post-exclusion.
+        worker(&mut reg, "w-free", &["code", "review"]);
+        // Excluding the producer leaves the unscoped worker ⇒ dispatchable.
+        assert_eq!(
+            reg.dispatch_gate(&caps, "p1", &constrained),
+            WorkerDispatchGate::Dispatch
+        );
+        // Excluding the *unscoped* worker leaves only the out-of-scope one, and
+        // the verdict names it alone.
+        let only_scoped = ReviewIndependence {
+            excluded_producers: set(&["w-free"]),
+            unknown_producers: Vec::new(),
+        };
+        assert_eq!(
+            reg.dispatch_gate(&caps, "p1", &only_scoped),
+            WorkerDispatchGate::NoScopeMatchedWorker {
+                workers: vec!["w-scoped".to_string()]
+            }
+        );
     }
 }

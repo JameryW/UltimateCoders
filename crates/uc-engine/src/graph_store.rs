@@ -350,11 +350,36 @@ pub const REVIEW_CAPABILITY: &str = "review";
 /// truth: a node cannot claim to be a review node while failing to require
 /// the capability that routes it to a reviewer.
 pub fn node_type_for(required_capabilities: &[String]) -> &'static str {
-    if required_capabilities.iter().any(|c| c == REVIEW_CAPABILITY) {
+    if requires_independence(required_capabilities) {
         NODE_TYPE_REVIEW
     } else {
         NODE_TYPE_SUBTASK
     }
+}
+
+/// Does this node require an **independent** executor — i.e. must it not be
+/// claimed by whoever produced the node it depends on? (T19 #670, D16 #669.)
+///
+/// This is the *one* condition behind the `review` label: [`node_type_for`]
+/// calls it, and the gateway's dispatch mouth calls it too, so "this node is a
+/// review node" and "this node's producer must be excluded" can never drift
+/// apart. Do **not** re-derive it elsewhere (`if node_type == "review"` is the
+/// same rule written a second time — T13's lesson).
+///
+/// ⚠️ **Match semantics**: exact equality against [`REVIEW_CAPABILITY`], not
+/// substring and not case-insensitive — `"code-review"` and `"Review"` are both
+/// plain subtasks (pinned by the tests below).
+///
+/// ⚠️ **Shared namespace** (D16 ruling, item 5): `required_capabilities` carries
+/// *both* capability tokens and step agent names — the TS decomposer derives it
+/// as the union of the explicit list and `steps[].agent`
+/// (`packages/uc-orchestrator/src/orchestrator/orchestrator.ts:226-233`). A step
+/// whose `agent` is literally `"review"` therefore promotes its node to a review
+/// node. That collision is *known and deliberately not resolved here* (renaming
+/// would touch the wire and the TS derivation); the tests below pin the current
+/// semantics so a future rename is a deliberate change, not an accident.
+pub fn requires_independence(required_capabilities: &[String]) -> bool {
+    required_capabilities.iter().any(|c| c == REVIEW_CAPABILITY)
 }
 
 /// A Task projected into the five-table shape. Produced identically from the
@@ -3826,6 +3851,67 @@ mod tests {
         // "code-review" must not silently turn a coding node into a review one.
         assert_eq!(node_type_for(&caps(&["code-review"])), NODE_TYPE_SUBTASK);
         assert_eq!(node_type_for(&caps(&["Review"])), NODE_TYPE_SUBTASK);
+    }
+
+    /// T19 #670 — the `review` label and the independence predicate are **one**
+    /// rule, not two.
+    ///
+    /// [`node_type_for`] is defined *in terms of* [`requires_independence`], so
+    /// this asserts they can never disagree. A second derivation would be
+    /// exactly the T13 defect (one rule, two implementations, eventually
+    /// diverging) — and here the divergence would be silent: a node labelled
+    /// `review` whose producer is *not* excluded.
+    #[test]
+    fn independence_predicate_is_the_single_source_behind_the_review_label() {
+        let cases: Vec<Vec<&str>> = vec![
+            vec!["review"],
+            vec!["code", "review"],
+            vec!["code"],
+            vec!["rust"],
+            vec![],
+            // Exact match, not substring / case-insensitive.
+            vec!["code-review"],
+            vec!["Review"],
+            // The shared-namespace case (D16 ruling item 5): a *step agent* named
+            // "review" rides into `required_capabilities` via the TS union
+            // derivation, so the node is promoted. Pinned — not endorsed; see the
+            // doc note on `requires_independence`.
+            vec!["claude-code", "review"],
+        ];
+        for case in cases {
+            let c: Vec<String> = case.iter().map(|s| s.to_string()).collect();
+            assert_eq!(
+                node_type_for(&c) == NODE_TYPE_REVIEW,
+                requires_independence(&c),
+                "label and predicate disagree for {case:?}"
+            );
+        }
+        // Absolute pins. The equivalence above is self-referential — it compares
+        // two calls to the same predicate — so it can catch `node_type_for`
+        // drifting away, but NOT a redefinition of `requires_independence`
+        // itself. These assertions are what pin the definition.
+        assert!(requires_independence(&["review".to_string()]));
+        assert!(requires_independence(&[
+            "code".to_string(),
+            REVIEW_CAPABILITY.to_string()
+        ]));
+        assert!(!requires_independence(&[]));
+        // Not substring, not case-insensitive, not a prefix: capability tokens
+        // are matched byte-exactly everywhere else in the dispatch gate, so a
+        // looser match here would promote nodes the gate then routes as ordinary
+        // subtasks — the label and the routing would disagree.
+        assert!(!requires_independence(&["code-review".to_string()]));
+        assert!(!requires_independence(&["reviewer".to_string()]));
+        assert!(!requires_independence(&["Review".to_string()]));
+        assert!(!requires_independence(&["REVIEW".to_string()]));
+        // The shared-namespace promotion (D16 ruling item 5), pinned absolutely:
+        // a step agent literally named `review` does promote the node.
+        assert!(requires_independence(&[
+            "claude-code".to_string(),
+            "review".to_string()
+        ]));
+        // …and the constant is the literal the wire carries.
+        assert_eq!(REVIEW_CAPABILITY, "review");
     }
 
     #[test]

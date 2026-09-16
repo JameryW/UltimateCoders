@@ -79,16 +79,29 @@ pub struct RegisteredWorker {
 impl WorkerRegistry {
     pub fn new() -> Self
     pub fn register(&mut self, worker_id, capabilities, max_capacity, metadata, contract_version) -> Result<(), String>
+    pub fn register_with_projects(&mut self, worker_id, capabilities, max_capacity, metadata, contract_version, projects) -> Result<(), String>
     pub fn heartbeat(&mut self, worker_id, current_load) -> Result<(), String>
+    pub fn heartbeat_with_signals(&mut self, worker_id, current_load, recent_files, per_worker_topic) -> Result<(), String>
     pub fn deregister(&mut self, worker_id) -> Result<(), String>
     pub fn workers(&self) -> &HashMap<String, RegisteredWorker>
     pub fn available_workers(&self) -> Vec<&RegisteredWorker>
     pub fn workers_with_capabilities(&self, required: &[String]) -> Vec<&RegisteredWorker>
+    pub fn workers_with_capabilities_excluding(&self, required: &[String], exclude: &HashSet<String>) -> Vec<&RegisteredWorker>
     pub fn dispatchable_workers_with_capabilities(&self, required: &[String]) -> Vec<&RegisteredWorker>
-    pub fn dispatch_gate(&self, required: &[String]) -> WorkerDispatchGate
+    pub fn dispatch_gate(&self, required: &[String], project_id: &str, independence: &ReviewIndependence) -> WorkerDispatchGate
+    pub fn dispatch_candidates(&self, required: &[String], project_id: &str, exclude: &HashSet<String>) -> Vec<&RegisteredWorker>
+    pub fn placement_target(&self, required: &[String], project_id: &str, file_constraints: &[String], sibling_hosts: &HashSet<String>, exclude: &HashSet<String>) -> Option<placement::Placement>
     pub fn to_worker_protos(&self) -> Vec<WorkerProto>
 }
 ```
+
+> `workers_with_capabilities_excluding` is the **single** place the capability
+> roster is computed (T19 #670). `dispatch_gate` / `dispatch_candidates` /
+> `placement_target` all descend from it, which is what makes the T12 invariant
+> — *scoring must never see a worker the gate would reject* — hold structurally
+> rather than by convention. `exclude` is a **required** parameter on both
+> dispatch mouths: an optional one would let a future dispatch path silently
+> re-open self-review by omitting it.
 
 ### Python Engine (`python/ultimate_coders/engine.py`)
 
@@ -152,6 +165,43 @@ opaque JSON with best-effort parsing.
 - `publish_ready_subtasks()` checks `WorkerRegistry.workers_with_capabilities()` before dispatching
 - Subtasks with `required_capabilities` that have no matching worker → kept Pending
 - Subtasks without `required_capabilities` → dispatched normally via NATS
+
+**Scope hard filter (T8 #650)**: a worker registered with `projects` only serves
+those project_ids; a node whose `project_id` matches none of them is kept
+`Pending` (`NoScopeMatchedWorker`). An **empty** task scope is served only by
+unscoped ("open") workers.
+
+**Review independence (T19 #670, hard gate)**: a node is a *review node* iff its
+`required_capabilities` contains `"review"` — the same predicate behind the
+`review` graph label (`uc_engine::requires_independence`, called by
+`node_type_for`; never re-derive it). For such a node the producers of its
+dependencies (`Subtask::assigned_worker`) are **excluded** from the candidate
+roster, and dispatch fails closed in two distinguishable ways:
+
+| Condition | Verdict | Counter |
+|-----------|---------|---------|
+| a dependency's producer is unknown (field absent, or dependency missing from the snapshot) | `ProducerIdentityUnknown { dependencies }` | `producer_identity_unknown_count()` |
+| the producers were identified and they were the only capability-holders | `NoIndependentReviewer { producers }` | `no_independent_reviewer_count()` |
+
+Both leave the node `Pending` + `tracing::warn`. The two counters are
+deliberately **not** merged: "add a reviewer worker" and "fix the producer's
+reporting" are different fixes. The checks run *before* the scope/version
+filters so the verdict names the actual problem.
+
+⚠️ **Known limit — the gate is a roster check, not a delivery guarantee.**
+Delivery is a shared durable work-queue; `resolve_dispatch_subject` falls back to
+the shared subject whenever affinity placement returns `None` (the normal case —
+affinity is a soft preference, D12). So when ≥2 candidates remain and one of them
+is the producer, the work-queue may still deliver the review to it. The gate only
+removes the *worst* shape (the producer as the sole candidate). Closing the
+window needs per-worker subjects everywhere **plus** promoting affinity from
+preference to gate — rejected as structurally impossible for legacy workers
+(no per-worker subject) and as colliding with D12.
+
+⚠️ **`"review"` is not a default worker capability** (`UC_CAP_REVIEW` opts in,
+`worker.py:495`), so the fail-closed paths are reachable only in clusters that
+actually contain a reviewer-capable worker. Ordinary (`NoCapableWorker`) refusal
+still comes first for the rest.
 
 ### Stale Worker Detection
 
