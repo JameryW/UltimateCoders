@@ -15,7 +15,7 @@
   "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": "",
+  "commit": "4ff5f78",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -31,5 +31,8 @@
   "map": null,
   "decision": null,
   "summary": "#673 切片 B（重写本体）。**硬前置是 T23**：`REF_RE` 要求 `:(\\d+)`，重写会把引用变成无行号形态，不先补视野就会静默移出守卫视野。分类用**优先级阶梯**（与 T22 的 84 那套口径不同）：148 条里 **42 符号 + 9 唯一内容锚 = 51 合格**，32 内容锚歧义 + 65 无锚扣下。**形状闸门**再扣 1 条：`error-handling.md:320` 的 `sandbox.py:1007/1546` 是全文唯一裸写（无反引号）**且**唯一 `/双行号` 形态 ⇒ 机械删除会产出 `sandbox.py/1546`。⇒ **重写 50 处 / 9 文件**，`refs 148 -> 98`，`mentions 171=102/47/22 -> 221=153/47/21`。**零覆盖损失是逐条断言的**（每条重写后仍以提及被看见、解析到同一目标、保留原 verdict）；存活 98 条 verdict 全不变；守卫 exit 0、0 structural。`numstat` 49/49 与「50 次重写 / 49 个键」同源（`agent-capability-spec.md:603` 一行两引用且同名）。**收益分解**：26 条 STALE 里 **25 条本身就是漂移过的行号**（114 ok/26 stale -> 89 ok/1 stale）。顺带修守卫两处已测量的小缺陷：bold 锚收紧为 identifier-exact（全仓恰好 1 行：`error-handling.md:307` 的假锚 `delete` 消失）、`EXCLUDE_DIRS` 加 `.scratch`（全仓恰好 1 条判定、0 条 ref 判定；并让「仓内影子树 + 真 ROOT」这种此前不可用的测量手法可用）。消融 T0/T1/T2 走真 CLI，T1≠T0、T2 与 T0 字节一致、三次 exit 全 0。**三处修正如实记账**：52→51（收紧后该行零锚）、`MemoryWriteError` 我读错（CamelCase 无下划线，守卫对）、我自己的回滚副本让首跑报 151 resolved（真相 152，备份已移出仓库）。**#673 保持开放**（切片 C = CI 接线）；#675 切片 B/C 与 #674 仍开放。",
-  "commits": []
+  "commits": [
+    "4ff5f78",
+    "7ff0a66"
+  ]
 }

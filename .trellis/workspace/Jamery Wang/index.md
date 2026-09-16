@@ -7,8 +7,8 @@
 ## Current Status
 
 <!-- @@@auto:current-status -->
-- **Active File**: `journal-1.md`
-- **Total Sessions**: 26
+- **Active File**: `journal-2.md`
+- **Total Sessions**: 27
 - **Last Active**: 2026-09-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1978 | Active |
+| `journal-2.md` | ~110 | Active |
+| `journal-1.md` | ~2000 | Archived |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 27 | 2026-09-16 | T24: #673 切片 B —— 把 50 处「符号优先」引用从 path:line 改成 path（可去行号 52 → 51） | `4ff5f78`, `7ff0a66` | `main` |
 | 26 | 2026-09-16 | T23: 守卫新增「无行号路径提及」类 —— 让 47 处悬空提及可见（并把 #673 的可去行号从 84 修正到 52） | `848b1c7` | `main` |
 | 25 | 2026-09-16 | T22: 给 spec 引用守卫补「bold/heading 符号」与「内容锚」—— 量出 #673 重写的可行边界 | `7475952` | `main` |
 | 24 | 2026-09-16 | T21: .trellis/spec 的 文件:行号 引用普查与口径 —— 定「符号优先」并落地结构性回归守卫 | `d6dbba4` | `main` |
