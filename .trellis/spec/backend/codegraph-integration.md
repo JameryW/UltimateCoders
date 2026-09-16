@@ -4,6 +4,21 @@
 
 ---
 
+> ⚠️ **The "pre-processing layer" described in this spec no longer exists**
+> (flagged 2026-09-16, T20 #671; the banner is deliberately not a rewrite — a full re-audit of
+> this file is tracked in #672).
+>
+> - `_gather_prior_context` was removed in `ad931ec` (#111, 2026-06-21) and has **zero hits**
+>   across `python/`, `packages/`, `crates/`.
+> - The worker calls `codegraph.explore` **nowhere**; the only surviving `.explore(` is a usage
+>   example inside a docstring (`codegraph.py:33`).
+> - Even the `"(sandbox mode: prior context not gathered)"` fallback string is gone (zero hits).
+>
+> Context is now composed by the gateway and rendered by the caller
+> (`_render_gateway_context_block`, or `_context_injector.build_context`), and codegraph is
+> reached **as a tool**. Treat "Pre-processing Context Contract" and ADR-1's pre-processing half
+> as historical.
+
 ## Overview
 
 Codegraph provides a SQLite knowledge graph of every symbol, edge, and file in the workspace. The Worker integrates codegraph at two layers:

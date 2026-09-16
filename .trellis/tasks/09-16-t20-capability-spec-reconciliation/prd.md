@@ -1,6 +1,6 @@
 # T20 #671 — 能力层规范与代码脱节：纠正幽灵 API，并把默认能力事实钉死
 
-**Status**: in_progress
+**Status**: delivered
 **Implements**: —（无决策票：无产品取舍，纯「文档与代码一致性」维护）
 **Map**: —（不属 P2 范围；本票是仓级文档卫生，见「与地图的关系」）
 **Related**: #670（T19 —— 本票补它收口时漏掉的一处同源假话）、#111（`ad931ec`）、#161（`05ccb56`）
@@ -112,6 +112,42 @@ Worker(worker_id='probe-default').capabilities ==
 5. `test_default_capabilities` 能在删掉 `decompose` 或加入 `review` 时**变红**（消融实测，非推断）。
 6. 受影响 pytest 文件逐文件串行全绿；`ruff check` clean。
 7. Rust / TS 零改动 ⇒ 不触碰其基线（本票**不应**改变任何 Rust/Python 测试计数，`test_default_capabilities` 是**改断言**不是加用例 —— 计数须逐项不变，这本身就是一条回归证据）。
+
+## 交付中补齐的遗漏（票面清单外，显式记账）
+
+验收回读时逐符号重扫全仓，发现 `_gather_prior_context` 还在**第二份活规范**里：
+
+`.trellis/spec/backend/codegraph-integration.md` —— 第 11 行声称 Worker 有 "Pre-processing layer"（自动查 codegraph 注入上下文），
+第 81 / 122 行把 `_gather_prior_context` 当现行契约。
+
+一手取证（**过程中纠正了自己一个错误推断**）：
+
+| 待证 | 证据 | 结果 |
+|---|---|---|
+| 该函数何时移除 | `git log -S "_gather_prior_context" -- python` | **`ad931ec` (#111)** —— 我起初以为是 #161，**错了** |
+| worker 还调 codegraph.explore 吗 | `git grep -n "\.explore(" -- python` | 零调用；唯一命中是 `codegraph.py:33` 的 docstring 用法示例 |
+| 回退串还在吗 | `git grep "prior context not gathered"` | **零命中** ⇒ 该节**两半都过期** |
+
+处理方式与取舍：**只加 15 行横幅，不改写正文**。理由：改写该节需要先重审整份规范（连同 ADR-1 的 "Mixed Architecture" 两半），
+那是 #672 的范围；而横幅的每一句都可独立验证（移除提交、零命中、存活的 docstring、消失的回退串），**不臆造替代设计**。
+⇒ 本票的验收口径相应收紧为：**死符号只允许出现在「已标记移除/已标记过期」的区段内**。
+
+## 验收回读（交付后逐条核对，非仅执行前声明）
+
+| # | 验收 | 实测 | 结论 |
+|---|---|---|---|
+| 1 | 死符号只出现在标记移除区 | 六个符号全仓命中 = 本规范 History 块quote + 已归档 prd（历史件）+ codegraph 规范的**已标记横幅段** | ✅ |
+| 2 | 默认能力陈述与代码一致 | seed 5 项 `worker.py:451`（含 `decompose`）；实跑 advertised 13 项；`review` 须 `UC_CAP_REVIEW` | ✅ |
+| 3 | `index.md` 不再以已删除能力描述 | 改为「Capability derivation and advertising; the `review` opt-in; pointer to dispatch-side routing」 | ✅ |
+| 4 | 测试里不再有失效陈述 | docstring 已改为「自 T19 起另有派发侧排除集」（只更失效半句） | ✅ |
+| 5 | 新断言能被突变打红 | 消融：删 `decompose` ⇒ RED；塞 `review` ⇒ RED（基线 GREEN） | ✅ |
+| 6 | 受影响 pytest 全绿 + ruff clean | 28 passed / 187 passed；`ruff` All checks passed | ✅ |
+| 7 | **不改变任何测试计数** | 逐文件收集 **1149**（44 文件、零条目 0），与 T18/T19 基线逐项相同 | ✅ |
+
+⚠️ 验收 7 的取证本身踩了一次同源坑：初版汇总脚本报 **1146**（其中一个文件的收集数没被正则匹配到、静默计 0），
+靠对账不平发现，再**换一种机制**（数测试 ID 行、不解析汇总行）独立复算得 1149。**自写的汇总脚本也是间接信号** —— 这正是 T19 记下的铁律。
+
+⚠️ 一处刻意的**范围克制**：`types.py:61` 的孤儿枚举成员（`FALLBACK_TOOL` 等）**不删** —— 产品面存废另议，本票只停止把它描述为现行契约。
 
 ## 非目标
 
