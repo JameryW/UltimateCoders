@@ -1611,13 +1611,6 @@ assert "review" not in worker.capabilities
 |------|---------|
 | `6d7653c` | docs(spec): drop the removed capability layer and pin the base seed (T20 #671) |
 | `d2f4f49` | docs(spec): flag the dead pre-processing layer in codegraph-integration.md (T20 #671) |
-
-### Git Commits
-
-| Hash | Message |
-|------|---------|
-| `6d7653c` | docs(spec): drop the removed capability layer and pin the base seed (T20 #671) |
-
 ### Testing
 
 - `pytest tests/python/test_worker_capabilities.py` -> **28 passed**（含改动后的 docstring 所在用例）
