@@ -41,10 +41,29 @@ ADVISORY (heuristic, never fails the build):
                  can hold for the same reference.  This is the anchor that makes
                  the planned 148-reference rewrite safe: once a line number is
                  dropped, the quoted code is the only evidence left.
+  DANGLING       a *mention* (see below) that resolves to no file at all.
+
+MENTIONS (issue #675 -- the blind spot this tool used to have):
+  The same path written *without* a line number was invisible to this tool,
+  even though "the file is gone" has nothing to do with line numbers.  A
+  mention is a backticked, path-shaped span with no `:line`, **outside fenced
+  code blocks** (a directory tree or a prose block lists paths that are not
+  references).  Mentions are resolved exactly like references, but they are
+  reported as ADVISORY (DANGLING), never as a structural failure, because the
+  measured population mixes real drift with things that legitimately do not
+  exist in this repo: a runtime config the operator supplies
+  (`uc.scheduler.yaml`), an illustrative path in prose (`new_module/impl.rs`),
+  a naming-convention example (`rate_limiter.py`), and one spec file describing
+  an out-of-repo project (`tui/**`, 27 of the 47).  Making this gating before
+  that triage would fail the build on ~47 items most of which are not defects
+  -- the same shape as the 63-failure/61-false-positive census in #672.
+  Scope note: this tool now *sees* that population and prints its size; it does
+  not yet judge which of them are defects.  A green run still means "no
+  structural failure", never "every path in the specs exists".
 
 Usage:
     python scripts/check-spec-refs.py            # structural gate
-    python scripts/check-spec-refs.py --audit    # + symbol staleness table
+    python scripts/check-spec-refs.py --audit    # + staleness / dangling tables
     python scripts/check-spec-refs.py --json     # machine-readable rows
 """
 
@@ -88,6 +107,30 @@ PATH_SPAN_RE = re.compile(
     r"^[\w./\\:-]+\.(?:py|rs|ts|tsx|js|jsx|proto|toml|yml|yaml|json|sql|sh)"
     r"(?::\d+(?:\s*[-\u2013]\s*\d+)?)?$"
 )
+
+# A fenced code block: paths inside one are illustrations, not references
+# (`directory-structure.md` lists whole trees that way).
+FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
+
+# Shape of a *mention* (a path quoted without a line number).  Deliberately
+# different from PATH_SPAN_RE above, which answers a different question
+# ("is this quoted span a path, so it is not a content anchor?"):
+#   * `.md` IS included -- cross-spec links (`worker-service-spec.md`) are
+#     references whose target can go missing;
+#   * a leading `.` or `/` is NOT a mention -- `.mcp.json`, `./uc.scheduler.yaml`
+#     and `/app/docker/...` are operator-supplied or container-side paths, not
+#     repo-relative references (excluded by starting the pattern with `\w`);
+#   * `:` is not allowed at all, so a `path:line` span can never also be a mention.
+MENTION_PATH_RE = re.compile(
+    r"[A-Za-z0-9_][A-Za-z0-9_./\\-]*\."
+    r"(?:py|rs|ts|tsx|js|jsx|proto|toml|yml|yaml|json|sql|sh|md)"
+)
+
+# Mention verdicts.  Distinct names from the reference verdicts so that the
+# existing reference filters cannot accidentally pick a mention up.
+MENTION_OK = "MENTION_RESOLVED"
+MENTION_AMBIGUOUS = "MENTION_AMBIGUOUS"
+DANGLING = "DANGLING"
 
 # Attribute / keyword names that are never the intended symbol anchor.
 SYMBOL_STOPWORDS = {
@@ -310,6 +353,7 @@ def collect() -> list[dict[str, Any]]:
                 "target": target,
                 "candidates": candidates,
                 "verdict": verdict,
+                "kind": "ref",
                 "symbol": symbol,
                 "def_line": definition,
                 "offset": offset,
@@ -317,6 +361,45 @@ def collect() -> list[dict[str, Any]]:
                 "content_ok": content_ok,
                 "content_candidate_count": len(content_candidates),
             })
+
+        # Mentions (#675): the same path written WITHOUT a line number used to
+        # be invisible.  Scanned per line so the fence state is available; a
+        # span carrying `:line` is a reference and is skipped here.
+        in_fence = False
+        for number, line in enumerate(spec_lines, start=1):
+            if FENCE_RE.match(line):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            for raw_span in TICK_RE.findall(line):
+                span = raw_span.strip()
+                if REF_RE.search(span) or not MENTION_PATH_RE.fullmatch(span):
+                    continue
+                target, candidates, kind = _resolve(span, index)
+                verdict = {
+                    "exact": MENTION_OK,
+                    "suffix_unique": MENTION_OK,
+                    "suffix_ambiguous": MENTION_AMBIGUOUS,
+                    "none": DANGLING,
+                }[kind]
+                rows.append({
+                    "spec": spec_rel,
+                    "spec_line": number,
+                    "ref": span,
+                    "start": 0,
+                    "end": 0,
+                    "target": target,
+                    "candidates": candidates,
+                    "verdict": verdict,
+                    "kind": "mention",
+                    "symbol": None,
+                    "def_line": None,
+                    "offset": None,
+                    "content": None,
+                    "content_ok": True,
+                    "content_candidate_count": 0,
+                })
     return rows
 
 
@@ -328,18 +411,26 @@ def main() -> int:
     args = parser.parse_args()
 
     rows = collect()
-    structural = [r for r in rows if r["verdict"] in {"MISSING_FILE", "PATH_FORM", "OUT_OF_RANGE"}]
-    ambiguous = [r for r in rows if r["verdict"] == "AMBIGUOUS"]
-    stale = [r for r in rows if r["verdict"] == "STALE"]
-    content = [r for r in rows if not r["content_ok"]]
-    ok = [r for r in rows if r["verdict"] == "OK"]
+    refs = [r for r in rows if r["kind"] == "ref"]
+    mentions = [r for r in rows if r["kind"] == "mention"]
+    structural = [r for r in refs if r["verdict"] in {"MISSING_FILE", "PATH_FORM", "OUT_OF_RANGE"}]
+    ambiguous = [r for r in refs if r["verdict"] == "AMBIGUOUS"]
+    stale = [r for r in refs if r["verdict"] == "STALE"]
+    content = [r for r in refs if not r["content_ok"]]
+    ok = [r for r in refs if r["verdict"] == "OK"]
+    dangling = [r for r in mentions if r["verdict"] == DANGLING]
+    mention_ambiguous = [r for r in mentions if r["verdict"] == MENTION_AMBIGUOUS]
 
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=1))
         return 1 if structural else 0
 
-    print(f"scanned {len(rows)} `path:line` references in "
-          f"{len({r['spec'] for r in rows})} spec files")
+    print(f"scanned {len(refs)} `path:line` references in "
+          f"{len({r['spec'] for r in refs})} spec files")
+    print(f"scanned {len(mentions)} line-free path mentions in "
+          f"{len({r['spec'] for r in mentions})} spec files "
+          f"({len(mentions) - len(dangling) - len(mention_ambiguous)} resolved / "
+          f"{len(dangling)} dangling / {len(mention_ambiguous)} ambiguous)")
 
     if structural:
         print("\nSTRUCTURAL FAILURES (these break the build):")
@@ -382,10 +473,23 @@ def main() -> int:
         print(f"\nADVISORY: {len(content)} reference(s) quote code absent from the target "
               f"(run with --audit for the list).")
 
+    if args.audit and dangling:
+        print(f"\nADVISORY: {len(dangling)} line-free path mentions resolve to no file "
+              f"(not a verdict -- the population mixes real drift with runtime "
+              f"configs, illustrative paths and an out-of-repo project):")
+        for row in sorted(dangling, key=lambda r: (r["spec"], r["spec_line"])):
+            where = f"{row['spec'].split('/')[-1]}:{row['spec_line']}"
+            print(f"  {row['ref']:52s} ({where})")
+    elif not args.audit and dangling:
+        print(f"\nADVISORY: {len(dangling)} line-free path mentions resolve to no file "
+              f"(run with --audit for the list).")
+
     print(f"\nsummary: {len(ok)} ok / {len(stale)} stale(advisory) / "
           f"{len(ambiguous)} ambiguous(advisory) / {len(structural)} structural failure(s)")
-    print(f"         {len(content)} of {len(rows)} have no matching quoted content "
+    print(f"         {len(content)} of {len(refs)} have no matching quoted content "
           f"(orthogonal to the verdict above)")
+    print(f"         mentions: {len(dangling)} of {len(mentions)} resolve to no file "
+          f"(advisory, never failing -- see the module docstring)")
 
     if structural:
         print("spec reference audit FAILED.")
