@@ -1,0 +1,18 @@
+{
+  "id": "09-16-t16-review-graph-node",
+  "title": "T16: review 作为图上节点 —— type=review + 能力路由 + 独立性与兼容",
+  "status": "completed",
+  "priority": "P2",
+  "issue": 661,
+  "map": 656,
+  "decision": 658,
+  "createdAt": "2026-09-16",
+  "branch": "main",
+  "summary": "把 D14 裁决的 review-as-graph-node 落成通路：补 graph_nodes.type 的写者，能力门独立性，review 结论经 SubtaskResult.review 送达 TS。",
+  "completedAt": "2026-09-16",
+  "commit": "f5ef707",
+  "commits": [
+    "90f756d",
+    "f5ef707"
+  ]
+}
