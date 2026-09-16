@@ -231,6 +231,45 @@ pub fn transition_ok(from: &str, to: &str) -> bool {
     }
 }
 
+/// D15 #665 (clauses B + C): may a best-effort graph **mirror** write to a
+/// node whose *authoritative* state is `prev_state`, when the snapshot it
+/// carries claims `mirror_state`?
+///
+/// - `prev_state == mirror_state` — no transition at all: the ordinary
+///   "the snapshot agrees, refresh `type` / `dependencies`" path ⇒ allowed.
+/// - `transition_ok(prev, mirror)` — a move the state machine accepts ⇒
+///   allowed. This still does **not** let the write move `state`: clause B
+///   keeps `state` out of the `DO UPDATE SET` list, so an accepted write
+///   only refreshes the non-state columns.
+/// - anything else — an illegal edge such as a resurrect (`SUCCEEDED →
+///   RUNNING`) or a skip (`CREATED → SUCCEEDED`) ⇒ refused outright.
+///
+/// The first arm is **not** redundant: [`transition_ok`] rejects self-loops
+/// by design (`READY → READY` is false — see
+/// `transition_ok_wires_the_state_machine_to_tokens`), so testing the
+/// transition alone would refuse the *ordinary* mirror path wholesale.
+///
+/// The two clauses cover **opposite** stale-snapshot shapes, and an
+/// ablation (mutate one clause away, re-run the T17 integration test) pins
+/// what each one is actually worth — the table is *measured*, not asserted:
+///
+/// | authority | late snapshot | this guard | removing this clause |
+/// |---|---|---|---|
+/// | `READY` | `RUNNING` | **refused** (no `READY → RUNNING` edge; dispatch goes `READY → SCHEDULED → RUNNING`) | the write lands and its `dependencies` overwrite the authority row; `state` itself still does **not** move, because clause B is unconditional |
+/// | `RUNNING` | `READY` | allowed (`RUNNING → READY` *is* the fence re-arm edge) | **`state` rolls back to `READY`** — this row is the reason B is load-bearing |
+///
+/// So the honest split is: **B is the state guarantee** (with B in place no
+/// mirror write can move `state`, whatever this predicate says), and **C is
+/// the coherence + observability guard** — it stops a *known-incoherent*
+/// snapshot from refreshing anything at all, and turns that into a count
+/// instead of a silent partial write. Replacing this predicate with
+/// `true` leaves the authority's `state` intact but lets a stale snapshot's
+/// structure through; deleting clause B alone breaks the second row. Neither
+/// clause alone is a complete answer, which is why D15 ruled **B + C**.
+pub fn mirror_write_allowed(prev_state: &str, mirror_state: &str) -> bool {
+    prev_state == mirror_state || transition_ok(prev_state, mirror_state)
+}
+
 // ── Projection shapes (pure) ─────────────────────────────────────────
 
 /// One deterministic attempt id per (graph, node, retry) — the id formula is
@@ -949,6 +988,17 @@ pub struct BackfillStats {
     pub attempts: u64,
     pub completions: u64,
     pub skipped_existing: u64,
+    /// Mirror writes whose `state` disagreed with the authority and was
+    /// therefore dropped (D15 #665, clause B). The write still landed — it
+    /// just could not move `state`.
+    pub mirror_state_dropped: u64,
+    /// Mirror writes refused outright by the transition guard (clause C).
+    ///
+    /// Kept as its own counter on purpose: "the guard refused this write"
+    /// and "the mirror never arrived" are indistinguishable in the database
+    /// (both leave `state` untouched), so these two counters are the only
+    /// observables that tell the two apart.
+    pub mirror_rejected: u64,
 }
 
 /// PostgreSQL-backed graph store.
@@ -1068,11 +1118,24 @@ impl GraphStore {
             .map_err(|e| EngineError::StorageError(format!("graph insert: {}", e)))?;
         stats.graphs = res.rows_affected();
 
+        // D15 #665 (clauses B + C). Two changes to the shadow clause:
+        //
+        //   B — `state` is **deliberately absent** from the DO UPDATE SET
+        //       list. That omission *is* clause B: a best-effort mirror can
+        //       never roll the authoritative state backwards (#664).
+        //   C — a write to an EXISTING node is only attempted when the
+        //       snapshot agrees with the authority or forms a legal
+        //       transition; otherwise the whole write is skipped.
+        //
+        // The guard lives here rather than in `project_task`: that function is
+        // a pure projection (`Task → GraphProjection`) and cannot see the
+        // row's current state. It reuses `transition_ok` instead of
+        // restating the state machine, so the mirror path joins the *same*
+        // rule that commit / cancel / claim already use.
         let node_sql = if shadow {
             r#"INSERT INTO graph_nodes (graph_id, node_id, state, dependencies, required_capabilities, effect_class, type)
                VALUES ($1, $2, $3, $4, $5, $6, $7)
                ON CONFLICT (node_id, graph_id) DO UPDATE SET
-                   state = EXCLUDED.state,
                    dependencies = EXCLUDED.dependencies,
                    required_capabilities = EXCLUDED.required_capabilities,
                    effect_class = EXCLUDED.effect_class,
@@ -1082,7 +1145,46 @@ impl GraphStore {
                VALUES ($1, $2, $3, $4, $5, $6, $7)
                ON CONFLICT (node_id, graph_id) DO NOTHING"#
         };
+
+        // One read for the whole graph — not one query per node. Taken before
+        // any insert in this transaction, so it reflects the authority as it
+        // stands right now, which is exactly what the guard compares against.
+        let existing_states: std::collections::HashMap<String, String> = if shadow {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT node_id, state FROM graph_nodes WHERE graph_id = $1",
+            )
+            .bind(&p.graph_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| EngineError::StorageError(format!("mirror pre-read: {}", e)))?
+            .into_iter()
+            .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+
         for node in &p.nodes {
+            if shadow {
+                if let Some(prev_state) = existing_states.get(&node.node_id) {
+                    if !mirror_write_allowed(prev_state, &node.state) {
+                        stats.mirror_rejected += 1;
+                        tracing::warn!(
+                            graph_id = %p.graph_id,
+                            node_id = %node.node_id,
+                            authority_state = %prev_state,
+                            mirror_state = %node.state,
+                            "graph mirror write refused: not a legal transition (D15 #665)"
+                        );
+                        continue;
+                    }
+                    if prev_state != &node.state {
+                        // Legal move — but clause B means `state` will not
+                        // follow it. Counted separately so a caller can tell
+                        // this apart from "the mirror never arrived".
+                        stats.mirror_state_dropped += 1;
+                    }
+                }
+            }
             let res = sqlx::query(node_sql)
                 .bind(&p.graph_id)
                 .bind(&node.node_id)
@@ -1205,6 +1307,8 @@ impl GraphStore {
             let stats = self.write_projection(&projection, false, true).await?;
             total.graphs += stats.graphs;
             total.nodes += stats.nodes;
+            total.mirror_state_dropped += stats.mirror_state_dropped;
+            total.mirror_rejected += stats.mirror_rejected;
             total.attempts += stats.attempts;
             total.completions += stats.completions;
         }
@@ -1289,6 +1393,8 @@ impl GraphStore {
             let stats = self.write_projection(&projection, false, true).await?;
             total.graphs += stats.graphs;
             total.nodes += stats.nodes;
+            total.mirror_state_dropped += stats.mirror_state_dropped;
+            total.mirror_rejected += stats.mirror_rejected;
             total.attempts += stats.attempts;
             total.completions += stats.completions;
         }
@@ -3133,6 +3239,48 @@ mod tests {
         assert!(!transition_ok("READY", "PAUSED"));
         // lowercase (legacy wire form) is not the DB token vocabulary.
         assert!(!transition_ok("ready", "running"));
+    }
+
+    /// D15 #665 (B + C): the mirror's admission test. The **first** arm is
+    /// the one that matters most in practice — an ordinary mirror write
+    /// carries the state the authority already has, and `transition_ok`
+    /// alone would refuse it (no self-loops), silently breaking the entire
+    /// mirror path.
+    #[test]
+    fn mirror_guard_refuses_stale_roll_backs_and_keeps_the_no_transition_path_open() {
+        // No transition: the snapshot agrees with the authority. This is the
+        // ordinary "refresh type / dependencies" write — and the arm that
+        // keeps the mirror working at all.
+        assert!(mirror_write_allowed("READY", "READY"));
+        assert!(mirror_write_allowed("RUNNING", "RUNNING"));
+
+        // #664's own shape: authority READY, a late snapshot claiming
+        // RUNNING. There is no READY → RUNNING edge — dispatch goes
+        // READY → SCHEDULED → RUNNING — so the guard REFUSES it.
+        // (This assertion is what failed on the first run of this test: I had
+        // assumed READY → RUNNING was the ordinary dispatch edge. It is not.
+        // The guard is stricter than I first wrote in its own doc.)
+        assert!(!mirror_write_allowed("READY", "RUNNING"));
+
+        // The mirror image of that shape: authority RUNNING, a late snapshot
+        // claiming READY. `RUNNING → READY` IS legal (the fence re-arm
+        // edge), so the guard ADMITS it — what stops the roll-back here is
+        // clause B (`state` is never in the SET list), not this predicate.
+        // Pinned so nobody later "fixes" the guard believing it covers this.
+        assert!(mirror_write_allowed("RUNNING", "READY"));
+
+        // Legal forward moves: admitted, but still cannot move `state`.
+        assert!(mirror_write_allowed("READY", "SCHEDULED"));
+        assert!(mirror_write_allowed("SCHEDULED", "RUNNING"));
+        assert!(mirror_write_allowed("RUNNING", "SUCCEEDED"));
+        assert!(mirror_write_allowed("FAILED", "READY"));
+
+        // Refused: resurrections, skips, and tokens the state machine does
+        // not understand at all.
+        assert!(!mirror_write_allowed("SUCCEEDED", "RUNNING"));
+        assert!(!mirror_write_allowed("CREATED", "SUCCEEDED"));
+        assert!(!mirror_write_allowed("PAUSED", "READY"));
+        assert!(!mirror_write_allowed("READY", "WEIRD_STATE"));
     }
 
     /// The T3 sink verbs are default no-ops: a shadow-only implementation

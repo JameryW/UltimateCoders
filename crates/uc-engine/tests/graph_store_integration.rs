@@ -2011,3 +2011,198 @@ async fn graph_t15_commit_binds_reported_usage_and_keeps_unreported_null() {
 
     purge_t3(&store, &g).await;
 }
+
+// ── T17 (#667 / D15 #665): the mirror may not move `state` ───────────
+
+/// `(state, dependencies)` of one node row — the two columns T17 is about: the
+/// one the mirror may never move, and the one it still must be able to refresh.
+async fn t17_node_row(store: &GraphStore, gid: &str, nid: &str) -> (String, serde_json::Value) {
+    sqlx::query_as(
+        "SELECT state, dependencies FROM graph_nodes WHERE graph_id = $1 AND node_id = $2",
+    )
+    .bind(gid)
+    .bind(nid)
+    .fetch_one(store.pool().as_ref())
+    .await
+    .expect("t17 node row")
+}
+
+/// Seed the **authority** side: the graph row plus one node row sitting in a
+/// state the graph plane itself decided.
+///
+/// `dependencies` is seeded *deliberately inconsistent* with `state` (a `READY`
+/// node with an unmet dependency cannot arise through the store). The admitted
+/// shapes below then assert that the mirror refreshes exactly this column while
+/// `state` stays put — an empty dependency set would leave the refresh
+/// unobservable and would quietly turn "the write was skipped" into a pass.
+async fn t17_seed_authority(store: &GraphStore, gid: &str, nid: &str, state: &str) {
+    sqlx::query(
+        "INSERT INTO execution_graphs (graph_id, project_id, status, version) \
+         VALUES ($1, 't17', 'RUNNING', 1) ON CONFLICT (graph_id) DO NOTHING",
+    )
+    .bind(gid)
+    .execute(store.pool().as_ref())
+    .await
+    .expect("t17 authority graph row");
+    sqlx::query(
+        "INSERT INTO graph_nodes (graph_id, node_id, state, dependencies) \
+         VALUES ($1, $2, $3, '[\"ghost-dep\"]'::jsonb) \
+         ON CONFLICT (node_id, graph_id) DO NOTHING",
+    )
+    .bind(gid)
+    .bind(nid)
+    .bind(state)
+    .execute(store.pool().as_ref())
+    .await
+    .expect("t17 authority node row");
+}
+
+/// A legacy `Task` snapshot whose single subtask projects to a node state:
+/// `InProgress` → `RUNNING`, `Completed` → `SUCCEEDED`, and `Pending` →
+/// `READY` (an empty dependency set satisfies the dependency-aware rule
+/// trivially, which is what makes a `READY` snapshot constructible without
+/// inventing a sibling).
+fn t17_snapshot(gid: &str, nid: &str, status: SubtaskStatus) -> Task {
+    rust_task(
+        gid,
+        TaskStatus::InProgress,
+        vec![subtask(nid, gid, status, vec![], 0)],
+    )
+}
+
+/// D15 #665 (clauses B + C) against a real PostgreSQL: a **late** legacy
+/// snapshot cannot move `state` on the graph plane — in *either*
+/// stale-snapshot direction — while the ordinary mirror, whose snapshot agrees
+/// with the authority, still lands.
+///
+/// | # | authority | snapshot | guard | counter | ablation result |
+/// |---|---|---|---|---|---|
+/// | 1 | `READY` | `RUNNING` | refused | `mirror_rejected` | without C the write lands (`nodes: 1`) and `dependencies` is overwritten — `state` still holds, because B is unconditional |
+/// | 2 | `SUCCEEDED` | `RUNNING` | refused | `mirror_rejected` | same as 1 |
+/// | 3 | `RUNNING` | `READY` | admitted | `mirror_state_dropped` | **without B `state` rolls back to `READY`** — the load-bearing row |
+/// | 4 | `READY` | `READY` | admitted | *(neither)* | — |
+///
+/// Shape 1 is #664's own reproducing shape (`cancel_running_attempt` left the
+/// authority at `READY`; a snapshot captured earlier still said `RUNNING`).
+///
+/// Shape 3 is what makes clause B load-bearing: `RUNNING → READY` *is* a legal
+/// edge (the fence re-arm), so clause C admits the write — the only thing
+/// keeping the authority in place is that `state` is no longer in the
+/// `DO UPDATE SET` list. Both rows in this table were **measured** by ablating
+/// one clause at a time and re-running this test, not reasoned about: dropping
+/// B alone fails here (shape 3), dropping C alone fails only shape 1/2's
+/// counters. That is the precise sense in which D15's "B + C" is two clauses
+/// doing two different jobs — B guarantees `state`, C refuses incoherent
+/// snapshots outright and makes them countable.
+///
+/// Scope: the guard governs the node row's `state`. Attempt/completion rows
+/// stay append-only and are untouched by this ticket.
+#[tokio::test]
+#[ignore]
+async fn graph_t17_mirror_never_rolls_authority_back_or_resurrects() {
+    let Some(store) = connect_or_skip("t17_mirror").await else {
+        return;
+    };
+    let p = unique_prefix();
+
+    // (label, authority state, snapshot subtask status, rejected?, dropped?)
+    let cases: [(&str, &str, SubtaskStatus, u64, u64); 4] = [
+        (
+            "#664's shape: late RUNNING against READY",
+            "READY",
+            SubtaskStatus::InProgress,
+            1,
+            0,
+        ),
+        (
+            "resurrection: late RUNNING against SUCCEEDED",
+            "SUCCEEDED",
+            SubtaskStatus::InProgress,
+            1,
+            0,
+        ),
+        (
+            "fence re-arm edge: late READY against RUNNING",
+            "RUNNING",
+            SubtaskStatus::Pending,
+            0,
+            1,
+        ),
+        (
+            "ordinary mirror: snapshot agrees with READY",
+            "READY",
+            SubtaskStatus::Pending,
+            0,
+            0,
+        ),
+    ];
+
+    let mut graphs = Vec::new();
+    for (i, (label, authority, status, want_rejected, want_dropped)) in cases.iter().enumerate() {
+        let g = format!("{p}-s{}", i + 1);
+        let n = format!("{g}-n1");
+        purge_t3(&store, &g).await;
+        t17_seed_authority(&store, &g, &n, authority).await;
+        // Assert the seed really landed as the authority the guard will read —
+        // otherwise a failed seed would make "state did not move" vacuous.
+        assert_eq!(
+            store.node_state(&g, &n).await.expect("authority read"),
+            Some((*authority).to_string()),
+            "{label}: authority seed"
+        );
+
+        let stats = store
+            .upsert_task_shadow(&t17_snapshot(&g, &n, status.clone()))
+            .await
+            .expect("shadow upsert");
+
+        // The whole point of the ticket: `state` must not have moved. Ever.
+        assert_eq!(
+            store.node_state(&g, &n).await.expect("state after mirror"),
+            Some((*authority).to_string()),
+            "{label}: the mirror moved the authoritative state"
+        );
+        assert_eq!(
+            stats.mirror_rejected, *want_rejected,
+            "{label}: refused count (stats {stats:?})"
+        );
+        assert_eq!(
+            stats.mirror_state_dropped, *want_dropped,
+            "{label}: dropped count (stats {stats:?})"
+        );
+        // The two counters are disjoint by construction: a refused write
+        // `continue`s before the dropped arm, so exactly one of them can fire
+        // per node and a caller can read `rejected + dropped` as "how many
+        // snapshots disagreed with the authority at all".
+        assert!(
+            !(stats.mirror_rejected > 0 && stats.mirror_state_dropped > 0),
+            "{label}: the counters must be disjoint (stats {stats:?})"
+        );
+        // A refused shape skips the node write entirely; an admitted one lands
+        // exactly one row (`ON CONFLICT DO UPDATE` still reports one affected).
+        assert_eq!(
+            stats.nodes,
+            if *want_rejected == 1 { 0 } else { 1 },
+            "{label}: the node write landed iff the guard admitted it (stats {stats:?})"
+        );
+
+        let (_state, deps) = t17_node_row(&store, &g, &n).await;
+        if *want_rejected == 1 {
+            assert_eq!(
+                deps,
+                serde_json::json!(["ghost-dep"]),
+                "{label}: a refused write must not touch the row at all"
+            );
+        } else {
+            assert_eq!(
+                deps,
+                serde_json::json!([]),
+                "{label}: an admitted write still refreshes the non-state columns"
+            );
+        }
+
+        graphs.push(g);
+    }
+
+    purge_graphs(&store, &graphs).await;
+}
