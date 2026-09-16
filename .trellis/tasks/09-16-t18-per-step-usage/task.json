@@ -1,0 +1,43 @@
+{
+  "id": "t18-per-step-usage",
+  "name": "t18-per-step-usage",
+  "title": "T18: 逐步用量落到 payload.steps[]（#666 实现）",
+  "description": "把多步 workflow 的逐步用量落到终态事件 node_succeeded 的 payload.steps[]；加性改动，不新增列/事件类型，contract_version 不动。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Jamery Wang",
+  "assignee": "Jamery Wang",
+  "createdAt": "2026-09-16",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "python/ultimate_coders/agent/types.py",
+    "python/ultimate_coders/agent/sandbox.py",
+    "python/ultimate_coders/agent/worker.py",
+    "python/ultimate_coders/nats_worker.py",
+    "crates/uc-types/src/agent.rs",
+    "crates/uc-types/src/lib.rs",
+    "crates/uc-engine/src/graph_store.rs",
+    "crates/uc-grpc/src/server.rs",
+    "tests/python/test_workflow_orchestration.py",
+    "tests/python/test_nats_worker_helpers.py",
+    "crates/uc-engine/tests/graph_store_integration.rs"
+  ],
+  "notes": "",
+  "meta": {
+    "issue": 668,
+    "map": 656,
+    "decision": 666,
+    "related_tickets": [659, 660, 657, 661]
+  }
+}
