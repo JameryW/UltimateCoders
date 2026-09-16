@@ -1135,3 +1135,157 @@ S1–S3 交付后，我曾在提交信息、#661 评论与长期记忆里写「�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: T17: 图镜像不再移动权威 node state —— D15 的 B + C 落地（#667）
+
+**Date**: 2026-09-16
+**Task**: T17: 图镜像不再移动权威 node state —— D15 的 B + C 落地（#667）
+**Branch**: `main`
+
+### Summary
+
+执行 D15 裁决：shadow 分支不再写 state（B）+ 对已存在 node 加 transition_ok 转移守卫（C）+ 两个互斥计数。用消融实验测出两条子句各自的真实作用，据此推翻了票面与我已写下三遍的「C 拦住形状 1 回退」这一过度声称。
+
+### Main Changes
+
+### Summary
+
+执行 D15（#665）的 **B + C** 裁决：`write_projection` 的 shadow 分支**不再写 `state`**（B），并对**已存在** node 复用既有 `transition_ok` 加**转移守卫**（C）；新增两个**互斥**计数，让「被守卫拒绝」与「镜像根本没送达」在返回值与日志里可区分。落地过程中用**消融实验实测**了两条子句各自的真实作用，据此推翻了本票自己先写下的（以及我在源码 doc / 测试 doc / 票面里已经写下三遍的）一个**过度声称**。
+
+### Main Changes
+
+## 背景：一个无条件覆盖
+
+`GraphStore::write_projection` 的 shadow 分支原先写：
+
+```sql
+ON CONFLICT (node_id, graph_id) DO UPDATE SET state = EXCLUDED.state, ...
+```
+
+`state` 是**无条件覆盖** —— 既无迁移门、也无版本 CAS。而镜像的来源是 legacy `TaskStore` 的 **fire-and-forget fan-out**，快照在调用瞬间捕获 ⇒ 迟到即陈旧。#664 已在 CI 上稳定复现过这一形状：`cancel_running_attempt` 把权威写为 `READY` 之后，一个更早捕获的 `InProgress` 快照把它盖回 `RUNNING`。
+
+## 侦察：守卫为什么不能放在 `project_task`
+
+`project_task(task) -> GraphProjection` 是**纯函数**：它没有 DB 句柄，拿不到该 node 的**现存** state，只知道快照声称的 state。所以「快照 vs 权威」的比较只能发生在 `write_projection` 的**事务内**。这也顺带决定了预取的位置：在 node 循环**之前**做**一次** `SELECT node_id, state FROM graph_nodes WHERE graph_id = $1`，而不是逐节点查询。
+
+## 自我更正一：`READY → RUNNING` 不是合法边
+
+我先是按直觉写的注释与单测：以为 `READY → RUNNING` 是「普通派发的合法边」，于是主张「#664 的形状只能靠 B 拦住，C 只负责复活/跳级」。**单测当场打红**（`assertion failed: mirror_write_allowed("READY", "RUNNING")`），查证后确认 `transition_ok("READY","RUNNING") == false` —— 本仓的派发路径是 `READY → SCHEDULED → RUNNING`。
+
+这一个事实把整个设计故事翻了过来，正确分工是**两条子句各管一个方向**：
+
+| 权威 | 迟到快照 | 守卫 | 谁拦住回退 |
+|---|---|---|---|
+| `READY` | `RUNNING` | **拒**（非法边） | C |
+| `RUNNING` | `READY` | **放行**（`RUNNING → READY` **是**合法边 —— fence re-arm） | **B** |
+
+第二行才是 B 的主场：守卫**放行**了写入，唯一拦住回退的是 `state` 已不在 `DO UPDATE SET` 列表里。自更正的落点：源码 doc、单测注释、`prd.md` 验收表、`implement.jsonl` 全部改正，并保留被推翻的推论（**记录推理如何错，比只记录结论更有用**）。
+
+## 设计：B + C 与两个互斥计数
+
+- **B**：`state` 从 shadow 的 `DO UPDATE SET` 移除。**这处删除本身就是 B**。
+- **C**：新增纯函数
+  ```rust
+  pub fn mirror_write_allowed(prev_state: &str, mirror_state: &str) -> bool {
+      prev_state == mirror_state || transition_ok(prev_state, mirror_state)
+  }
+  ```
+  第一臂**不可省**：`transition_ok` 按设计**拒自环**（`READY → READY` 为 false），只取转移判定会把镜像的**常规补列路径整体误拒** —— 而那种失效的外观是「什么都没发生」，属最难发现的一类。
+- **不制造第二份状态机**：守卫 `delegate` 给 `transition_ok`，即把镜像路径接入 commit / cancel / claim / schedule_attempt 已共用的**同一份**规则。铁律「图 node state 只能由一份**依赖感知**规则产出」约束的是 `dependency_aware_state`（一个 node **应当**是什么态），与「这一步迁移是否合法」是**两份不同**的规则，复用后者不构成违规（这一点在 `prd.md` 里单列一节写清）。
+- **可观测性**（D15 待裁第 3 条）：`BackfillStats` 加
+  - `mirror_state_dropped`（B 生效：合法转移被放行，但 `state` 不跟随；写入仍落库）；
+  - `mirror_rejected`（C 生效：整个写入 `continue` 跳过）。
+
+  两者**互斥**（拒绝分支走不到 dropped 分支）⇒ `rejected + dropped` 恰读作「快照与权威不一致的 node 数」。另加 `tracing::warn!`（带 `graph_id` / `node_id` / `authority_state` / `mirror_state`），因为**「守卫拒了」与「镜像没到」在 DB 上完全同形**（两者都不动 `state`），返回值与日志是唯一能区分的地方 —— 这条也写进了 `BackfillStats` 的字段注释。
+
+  `BackfillStats` 只在 `#[cfg(feature = "storage")]` 下存在，且全仓 **0 处结构体字面量 / 25 处 `::default()`**（已核）⇒ 加字段非破坏性。
+
+## 自我更正二：B 才是 state 的保证，C 是一致性 + 可观测性守卫
+
+票面（以及我先写下的源码 doc）把上表写成「形状 1 靠 **C** 拦住回退、形状 3 靠 **B** 拦住回退」，读起来像两条子句**各守一半**。**消融实测**（一次只删一条子句，重跑 T17 集成测试）给出的答案不同：
+
+| 注入的突变 | 实测结果 |
+|---|---|
+| 把 `state = EXCLUDED.state` 加回（**删掉 B**） | 在**形状 3** 打红：`left: Some("READY") right: Some("RUNNING")` —— 权威被迟到的 `READY` 回退。形状 1/2 仍绿（C 拒了它们）。 |
+| 令 `mirror_write_allowed` 恒返回 `true`（**删掉 C**） | 在**形状 1 的计数断言**打红（`nodes: 1, mirror_state_dropped: 1, mirror_rejected: 0`，期望 `nodes: 0 / rejected: 1`）—— **而更靠前的 `node_state` 断言通过了** ⇒ 权威 `state` 没动。 |
+
+⇒ 准确口径：
+
+- **B 是 `state` 的保证**：B 在，任何镜像写入都动不了 `state`，**无论守卫怎么判**。
+- **C 是一致性 + 可观测性守卫**：它拦掉**已知不自洽**的快照（使其连**非状态列**都刷不进去），并把这件事变成**可计数**而非静默的部分写入。
+- 「只留 C」在形状 3 破防（合法边 + 陈旧快照）；「只留 B」让陈旧快照仍能静默改写结构且不可见。**两条都必须有** —— 这才是 D15 裁 `B + C` 的准确含义。
+
+已据此重写源码 doc 的消融表、测试 doc 的表格与 `prd.md` 验收表（保留「原文如此写、为何改」的痕迹）。
+
+## 测试：五个形状 + 两次消融
+
+`crates/uc-engine/tests/graph_store_integration.rs` 新增 `graph_t17_mirror_never_rolls_authority_back_or_resurrects`（`#[tokio::test] #[ignore]`，跑真实 PG）：
+
+| # | 权威 | 快照 | 守卫 | 计数 |
+|---|---|---|---|---|
+| 1 | `READY` | `RUNNING` | 拒 | `mirror_rejected=1`（**#664 的原形**） |
+| 2 | `SUCCEEDED` | `RUNNING` | 拒 | `mirror_rejected=1`（复活） |
+| 3 | `RUNNING` | `READY` | 放行 | `mirror_state_dropped=1`（fence re-arm 边） |
+| 4 | `RUNNING` | `SUCCEEDED` | 放行 | `mirror_state_dropped=1`（票面验收 2 点名的形状） |
+| 5 | `READY` | `READY` | 放行 | 两个计数皆 0（常规补列） |
+
+两个测试设计要点：
+
+- **权威行刻意用 `dependencies = ["ghost-dep"]` 播种**（与 `state` 故意不自洽）。否则「写入是否真的落地」不可观测 —— 一个**空**依赖集会让「被跳过」与「正常写入」产出**同一个 DB 状态**，测试就会为错误的原因变绿。
+- 形状 4 额外**显式钉住**：`Completed` 快照**仍会追加一行 `node_completions`**，而 B 把权威 `state` 钉在 `RUNNING`。守卫只管 `state`，镜像的 attempts / completions 仍是 append-only（D15 范围外）。把这个**不对称**写成断言，是为了让后来者**读到**它，而不是**撞到**它 —— 它也正是「图平面的 `state` 是读者唯一可信之物」的具体理由。
+
+## 门禁
+
+| 门禁 | 结果 |
+|---|---|
+| `cargo fmt --all -- --check` | clean |
+| `cargo clippy -p uc-engine --all-targets --features storage -- -D warnings` | clean |
+| `cargo clippy --workspace -- -D warnings`（CI job 同款） | clean |
+| `cargo check --workspace --all-targets --all-features` | clean |
+| `cargo test -p uc-engine --lib` | **447 passed**（446 → 447，+1） |
+| `cargo test -p uc-engine -p uc-grpc --no-default-features` | uc-engine lib **387**、uc-grpc **210**、executor_nats_down 5、grpc_integration 8 —— 全绿 |
+| `cargo test -p uc-engine -p uc-grpc`（default） | 同上，全绿 |
+| `cargo test -p uc-grpc --all-features` | **238 passed**（与 T16 基线一致 ⇒ 无 arity 回归） |
+| **真实 PG**：`graph_store_integration --ignored --test-threads=1 graph` | **20 passed / 0 failed / 11.49s**（T15 基线 19 ⇒ +1） |
+| **CI `1e61318` / `c6dfd20`：Rust CI** | **8/8 绿** |
+
+**CI 是真跑，不是 SKIP**：`storage integration tests` job 的日志里出现
+`test graph_t17_mirror_never_rolls_authority_back_or_resurrects ... ok`，且同文件 `20 passed ... 2.76s` —— 既无 `SKIP:` 行，耗时也不是假通过特征值。**graph_store_integration 的 CI 基线由 19 抬到 20。**
+
+记账自洽性（避免拿本地数对 CI 数误判回归）：uc-engine lib 447 = 443(T14) + 3(T16 `node_type_for`) + 1(T17)；nodefault 387 = 383 + 3 + 1 —— 因为 `node_type_for` 与 `mirror_write_allowed` 都**未受 `storage` 门控**（已核：两者所在测试模块仅 `#[cfg(test)]`），所以两个口径各 +4 一致。
+
+## 环境：本机资源坑（本轮踩了三连）
+
+1. **`cargo check --workspace --all-targets` 触发 `rustc` `STATUS_STACK_BUFFER_OVERRUN (0xc0000409)`**（并行 + 16GB RAM 吃紧）。
+2. 该崩溃**留下损坏的构建产物**：随后报 `failed to mmap rmeta metadata` / `can't find crate`（`windows_sys` / `chrono_tz` / `qdrant_client`），但文件大小**看着正常** —— 属崩溃期半写产物，**重跑一次即自愈**，不必 `cargo clean`。
+3. **`link.exe` `LNK1102`（out of memory）**：一条命令里串跑两个 cargo 调用、各 `-j 2` 会撞上。
+
+**可用判据：本机一律 `-j 1` 跑重量级构建/链接**（`--all-features` 全目标 2m44s、集成测试二进制 2m48s，均可接受）。
+
+## 残余与边界
+
+- 守卫只管 node 行的 `state`；`task_attempts` / `node_completions` 的 append-only 语义**刻意不动**（已在测试里显式钉住上述不对称）。
+- 预取在 node 循环前一次完成 ⇒ 同一 graph **同一次投影内**出现重复 `node_id` 时，第二次读到的仍是事务前状态。当前投影按 `subtasks` 唯一 id 构造，不出现该形状；**属已知边界，非当前缺陷**。
+- 未改 `UC_GRAPH_SHADOW` 默认值：守卫落地后不需要靠运维关开关，关掉它会让「图平面与镜像不一致」重新变成**静默**状态（那是另一种不可观测）。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fdef55a` | (see git log) |
+| `1e61318` | (see git log) |
+| `c6dfd20` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

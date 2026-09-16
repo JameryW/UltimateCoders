@@ -1,0 +1,19 @@
+{
+  "id": "09-16-t17-mirror-write-guard",
+  "title": "T17: 图镜像写入语义 —— seed-only + 转移守卫（D15 #665）",
+  "status": "completed",
+  "priority": "P2",
+  "issue": 667,
+  "map": 656,
+  "decision": 665,
+  "createdAt": "2026-09-16",
+  "branch": "main",
+  "summary": "write_projection 的 shadow 分支不再写 state（B），并对已存在 node 复用 transition_ok 加转移守卫（C）；新增 mirror_state_dropped / mirror_rejected 两个计数，让「被守卫拒绝」与「镜像没送达」可区分。",
+  "completedAt": "2026-09-16",
+  "commit": "c6dfd20",
+  "commits": [
+    "fdef55a",
+    "1e61318",
+    "c6dfd20"
+  ]
+}
