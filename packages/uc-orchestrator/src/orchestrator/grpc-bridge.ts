@@ -1051,7 +1051,7 @@ export class GrpcBridge {
 	 * and are not committed, so a field added to `engine.proto` is not visible
 	 * to this file's type-checker until that step re-runs.
 	 */
-	function parseReviewJson(raw: unknown): { approved: boolean; issues: string[]; suggestions: string[] } | undefined {
+	private parseReviewJson(raw: unknown): { approved: boolean; issues: string[]; suggestions: string[] } | undefined {
 		if (typeof raw !== "string" || !raw) return undefined;
 		try {
 			const v = JSON.parse(raw);
