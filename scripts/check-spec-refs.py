@@ -4,7 +4,10 @@ Background (issue #672): spec prose cites code as `worker.py:1035`.  Those line
 numbers drift whenever code is inserted above the target, because nothing
 verifies them.  The failure mode is *"valid line number, wrong content"* -- a
 census on 2026-09-16 found 149 references of which **0** were out of range, so
-purely structural checks cannot see the drift at all.
+purely structural checks cannot see the drift at all.  (149 is the pre-fix count:
+the two fixes below deleted one dead reference, so the current inventory is 148.
+Ticket prose that says 148 is quoting the post-fix number -- both counts agree
+that not a single reference was out of range.)
 
 This tool therefore separates two things:
 
