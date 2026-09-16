@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 16
+- **Total Sessions**: 19
 - **Last Active**: 2026-09-16
 <!-- @@@/auto:current-status -->
 
@@ -29,7 +29,10 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
-| 16 | 2026-09-16 | T16: review 作为图上节点 —— type 写者 + 能力门独立性 + 跨语言结论通路 | `90f756d`, `f5ef707`, `89a9178` | `main` |
+| 19 | 2026-09-16 | T16: review 作为图上节点 —— type 写者 + 能力门独立性 + 跨语言结论通路 | `90f756d`, `f5ef707`, `89a9178` | `main` |
+| 18 | 2026-09-15 | T15（#660）交付 —— usage 上报契约 + `cost`/`tokens` 落列 | `dd3d2b3`, `d942fa9` | `main` |
+| 17 | 2026-09-15 | 收口 T14 —— CI 8/8 绿 / #664 修复验收 / D15 立案 / 关票与账本 | `5ea38c9`, `45e60b7` | `main` |
+| 16 | 2026-09-15 | T14: 指标写入点 + `duration_ms` —— 终态事件带时长（#659） | `f28bf24`, `0c2604d` | `main` |
 | 15 | 2026-09-15 | T13: 统一两份图投影的依赖感知规则（#655） | `5bae604` | `main` |
 | 14 | 2026-09-15 | Verify the T12 dispatch plane on a live broker — affinity placement was never active | `78c0d1d`, `7f69e62`, `080e747`, `07064bf`, `82ea112`, `db7c289` | `main` |
 | 13 | 2026-09-15 | T12 affinity placement delivered (#654) | `b3aa299` | `main` |

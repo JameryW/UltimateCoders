@@ -1036,7 +1036,7 @@ source-B 导入把阻塞的 Pending 节点发布成 READY；三条投影路径�
 - 环境层面未变：本地 live PG 在 `wsl.exe` 解禁前实质不可用；`target/` 仍在 C:。
 
 
-## Session 16: T16: review 作为图上节点 —— type 写者 + 能力门独立性 + 跨语言结论通路
+## Session 19: T16: review 作为图上节点 —— type 写者 + 能力门独立性 + 跨语言结论通路
 
 **Date**: 2026-09-16
 **Task**: T16: review 作为图上节点 —— type 写者 + 能力门独立性 + 跨语言结论通路
