@@ -1,0 +1,20 @@
+{"step": "recon", "detail": "起点：T21（`d6dbba4`）落地的 `scripts/check-spec-refs.py` 有三层判定，但**看不见它自己要服务的那个口径**——「符号优先」重写（#673 本体）要求去掉行号后靠**符号名**或**被引代码**自证，而当时的守卫只在行内代码（反引号）里认符号，且完全没有内容锚概念。"}
+{"step": "recon", "detail": "规模确认：148 处 `path:line` 引用 / 12 个 spec 文件，与 T21 记录一致（`agent-capability-spec.md` 78 处，占 53%）。"}
+{"step": "recon", "detail": "🔴 **符号检测的漏检是结构性的，不是零星**：把 148 条按「本行有没有可判定的锚」分类，发现 16 行其实点名了符号，只是用 `**bold**` 或 `### 标题` 写的 ⇒ 旧检测一律判「本行没有符号」。逐条核对后其中 **13 条是真锚**（`**Task**` / `**OrchestratorConfig**` / `**SearchResultItem**` / `### Task Properties` 等），3 条是散文/停用词噪声。"}
+{"step": "recon", "detail": "内容锚可行性试探（第一版，naive 原样串匹配）：148 条里匹配 72、**不匹配 17**、无引用代码 51、无唯一目标 8。**但 17 条不匹配里 13 条是假阳性** —— `Worker._execute_steps` 在 `worker.py` 里根本不会这样出现（那里是 `def _execute_steps`）。⇒ 若照第一版落地，会一次引入 17 处噪声、其中 13 处要去改**没坏**的东西。"}
+{"step": "recon", "detail": "内容锚可行性试探（第二版，补归一化：限定名回落成末段 / 去掉 `=True` 尾巴 / 去掉调用括号）：匹配 **85**、不匹配 **4**、不适用 51、歧义 8。剩下 4 条不匹配是 `step_condition.py` 语法表里的**元变量**（`!expr` / `a && b` / `a \\|\\| b` / `(expr)`），根本不是该文件里的代码。"}
+{"step": "decision", "detail": "结论：内容锚**可行**，但必须 ① 归一化（否则 13/17 假阳性）；② 把语法元变量**按构造豁免**而非靠白名单 —— 取「被引串须含 `_` `=` `.` 引号 之一」作判据，四条元变量全不含、真实代码全含，当前语料上**零误报**。"}
+{"step": "decision", "detail": "🔴 **内容锚定为「独立标志」，不是新的 verdict**：第一版我把它做成 verdict 且排在 `STALE` 之后 ⇒ 两条**同级 advisory 共用一个字段**，同时成立时后者被前者掩盖。这与 T21 抓到的「两条规则写同一个字段」**同型**（那次是 advisory 掩盖 structural，这次是 advisory 掩盖 advisory）⇒ 改为 `content_ok` 独立字段 + 进 `--json`，永不与 verdict 互斥。"}
+{"step": "implement", "detail": "`_symbols_on` 改为三种写法都扫：行内代码 + `**bold**` + `### 标题`（新增 `BOLD_RE` / `HEADING_RE`）。新增 `_content_forms`（限定名/赋值式回落）+ `_content_anchor`；新增 `PATH_SPAN_RE` 把「纯路径引用」排除出内容候选；`CONTENT_TOKEN_RE` 取 `[_=.\\\"]`。"}
+{"step": "implement", "detail": "`--json` 每行新增 `content` / `content_ok` / `content_candidate_count`，使重写那一刀（#673 本体）可以**完全由仪器驱动**，不必再手写普查脚本。"}
+{"step": "verify", "detail": "守卫在当前仓上仍**结构性 exit 0**：`148 refs → 113 ok / 27 stale(advisory) / 8 ambiguous(advisory) / 0 structural`。STALE 由 19 升到 27，**无一条消失** ⇒ 放宽是纯增量。"}
+{"step": "verify", "detail": "STALE 增量 8 条**逐条核对**：**7 条真锚 + 1 条散文噪声**（`error-handling.md:307` 的 `delete` 来自 “for delete operations”）。精度 7/8；那 1 条噪声如实记账，**不加入 `SYMBOL_STOPWORDS`**（`delete` 完全可能是真实方法名，为一条噪声收窄词表不划算）。"}
+{"step": "verify", "detail": "消融自检 **10/10**（`M0` 对照 / `M1`–`M4` 老能力回归 / `M5`+`M5b` 内容锚正反 / `M6`+`M7` 双跑 / `M8` 不适用）。探针走**真 CLI 子进程**，判据含 structural 计数的 **delta**；消融后按**字节恢复**（sha256 `4408d2850bea…` 前后一致）。"}
+{"step": "verify", "detail": "🔴 **M6/M7 用「双跑」钉住新能力**：只断言「新检测报 STALE」**证明不了是放宽起的作用**（行内代码里的符号也可能解释它）。故同一探针再用**改动前**的 `_symbols_on` 收一次，断言**旧检测给出不同答案**（`OK`）。这是本票对消融方法本身的补充：**新能力必须证明「没有新代码就不会触发」**。"}
+{"step": "verify", "detail": "🔴 **M7 第一次 FAIL，但错在探针不在代码**：我写的探针是 `Probe: ### SubtaskStatus …`，而 `HEADING_RE` 是**行首锚定**的（真实标题都从第 0 列开始）。改成行首 `### SubtaskStatus Properties (…)` 后即 PASS。反面也证明了对真实语料有效 —— §D 的 3 条 `### 标题` 锚确实被抓到。"}
+{"step": "verify", "detail": "内容锚在真实语料上 **0 误报**（`0 of 148`，含 4 条按构造豁免的语法元变量）。⚠️ 但「0」也意味着该检查器在真实语料上**从未红过** ⇒ 其可信度来自消融的 `M5`/`M5b` 正反一对，**不是**来自真实语料。"}
+{"step": "measure", "detail": "锚点分布（重写的**工作清单**）：仅符号 25 / 仅内容 41 / 符号+内容 18 / **无锚 64** ⇒ **今天可去行号 84 / 148**；64 条里 8 条是裸文件名歧义，56 条本行无可匹配代码。"}
+{"step": "measure", "detail": "段落级锚（把窗口从「本行」放宽到「所在块」）量化：64 条里 **21 条**可在段落内找到可匹配代码 ⇒ 可去行号 **105 / 148**，余 35 真无锚 + 8 歧义。⚠️ **本票刻意不实现** —— 它把「自证」从一行松到一段，是**语义放宽**（候选变多 ⇒ 漏报更少、误报风险上升），需要自己的消融，故留作下一刀的**建议**。"}
+{"step": "gate", "detail": "ruff `All checks passed!`；改动 numstat `108/5`（小改非重写）；文件工作树统一 CRLF（CR==LF=398）；**0 处 spec 正文改动**（消融探针按字节恢复，`git status` 仅 `scripts/check-spec-refs.py` 一处 M）。"}
+{"step": "gate", "detail": "`scripts/**` 与 `.trellis/**` 均**不在**任何 workflow 的 `paths` 内 ⇒ 本票预期**不触发任何 CI**（与 T21 同，届时以 `gh run list` 实测确认，不从配置推断）。"}
+{"step": "scope", "detail": "🟡 **本票是 #673 的切片 A（仪器），不是它的本体** ⇒ **#673 保持开放**：按符号优先重写那 148 处仍未做。本票产出的 84/21/43 三段清单直接作为下一刀的工作清单写入 #673 评论。"}

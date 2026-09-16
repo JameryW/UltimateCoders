@@ -31,6 +31,16 @@ ADVISORY (heuristic, never fails the build):
                  ambiguous (a reference may intentionally target a doc comment
                  or attribute directly above the definition), so this is
                  evidence for a human, not a gate.
+  CONTENT_MISMATCH
+                 an *independent* advisory flag, not a verdict: the spec line
+                 quotes code that occurs nowhere in the target.  Only quoted
+                 spans containing `_`, `=`, `.` or `"` count as content anchors,
+                 so grammar meta-variables (`!expr`, `a && b`) are exempt by
+                 construction rather than reported.  Kept out of the verdict so
+                 it can never hide, nor be hidden by, a STALE result -- the two
+                 can hold for the same reference.  This is the anchor that makes
+                 the planned 148-reference rewrite safe: once a line number is
+                 dropped, the quoted code is the only evidence left.
 
 Usage:
     python scripts/check-spec-refs.py            # structural gate
@@ -63,7 +73,21 @@ REF_RE = re.compile(
     r":(\d+)(?:\s*[-\u2013]\s*(\d+))?"
 )
 TICK_RE = re.compile(r"`([^`\n]+)`")
+BOLD_RE = re.compile(r"\*\*([^*\n]+)\*\*")
+HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*$")
 IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# A quoted span counts as a *content anchor* only if it looks like a code token:
+# an underscore, an assignment, a member access, or a string literal.  Grammar
+# meta-variables (`!expr`, `a && b`, `(expr)`) contain none of these and are
+# therefore exempt by construction rather than reported as mismatches.
+CONTENT_TOKEN_RE = re.compile(r"[_.=\"]")
+
+# A quoted span that is nothing but a path (optionally with a line/range).
+PATH_SPAN_RE = re.compile(
+    r"^[\w./\\:-]+\.(?:py|rs|ts|tsx|js|jsx|proto|toml|yml|yaml|json|sql|sh)"
+    r"(?::\d+(?:\s*[-\u2013]\s*\d+)?)?$"
+)
 
 # Attribute / keyword names that are never the intended symbol anchor.
 SYMBOL_STOPWORDS = {
@@ -122,9 +146,21 @@ def _definitions(lines: list[str]) -> dict[str, list[int]]:
 
 
 def _symbols_on(spec_line: str) -> list[str]:
-    """Symbols named (backticked) on a spec line, in order, deduped."""
+    """Symbols named on a spec line, in order, deduped.
+
+    This repo's specs name symbols three ways, so all three are scanned: inline
+    code (``Worker._execute_steps``), bold (**Task**) and headings
+    (``### Task Properties``).  Scanning only inline code -- the first version --
+    silently reported every bold/heading symbol as "no symbol on this line",
+    which downgraded 13 real anchors to unjudgeable.
+    """
+    spans: list[str] = TICK_RE.findall(spec_line)
+    spans += BOLD_RE.findall(spec_line)
+    heading = HEADING_RE.match(spec_line)
+    if heading:
+        spans.append(heading.group(1))
     out: list[str] = []
-    for span in TICK_RE.findall(spec_line):
+    for span in spans:
         span = span.strip()
         if pathlib.PurePath(span).suffix in CODE_EXT:
             continue
@@ -133,6 +169,49 @@ def _symbols_on(spec_line: str) -> list[str]:
                 if part not in out:
                     out.append(part)
     return out
+
+
+def _content_forms(span: str) -> list[str]:
+    """Literal forms of a quoted span, most specific first.
+
+    `Worker._execute_steps` never occurs in worker.py (there it is
+    ``def _execute_steps``), and ``abort_on_failure=True`` may be written as a
+    bare identifier; without these fallbacks every qualified name would be a
+    false CONTENT_MISMATCH.
+    """
+    forms = [span]
+    tail = re.split(r"\.|::", span)[-1]
+    if tail and tail != span:
+        forms.append(tail)
+    for cut in ("=(", "=", "(", " "):
+        head = span.split(cut, 1)[0].strip()
+        if head and head != span and len(head) >= 4:
+            forms.append(head)
+    return forms
+
+
+def _content_anchor(spec_line: str, body: str) -> tuple[str | None, list[str]]:
+    """Return (matched_literal, candidates) for a spec line against a target body.
+
+    candidates are the code-shaped spans quoted on the line; an empty list means
+    content matching does not apply (the line quotes no code).  A None match with
+    a non-empty candidate list means nothing quoted on the line occurs in the
+    target at all.
+    """
+    candidates: list[str] = []
+    for span in TICK_RE.findall(spec_line):
+        span = span.strip()
+        if len(span) < 4 or not CONTENT_TOKEN_RE.search(span):
+            continue
+        if PATH_SPAN_RE.match(span) or pathlib.PurePath(span).suffix in CODE_EXT:
+            continue
+        if span not in candidates:
+            candidates.append(span)
+    for span in candidates:
+        for form in _content_forms(span):
+            if form in body:
+                return form, candidates
+    return None, candidates
 
 
 def _resolve(ref: str, index: dict[str, list[str]]):
@@ -171,6 +250,9 @@ def collect() -> list[dict[str, Any]]:
             offset: int | None = None
             symbol: str | None = None
             definition: int | None = None
+            anchor: str | None = None
+            content_ok = True
+            content_candidates: list[str] = []
 
             # Two independent judgements, combined by precedence so that an
             # advisory (symbol) result can never mask a structural defect.
@@ -189,10 +271,11 @@ def collect() -> list[dict[str, Any]]:
                 elif start > count or end > count:
                     structural = "OUT_OF_RANGE"
 
-                # symbol-anchored staleness (advisory)
+                # two advisory anchors: the symbol named on the line, and any
+                # code the line quotes (the latter survives dropping a line no.)
                 if structural is None:
-                    lines = (ROOT / target).read_bytes().decode("utf-8", "replace").split("\n")
-                    definitions = _definitions(lines)
+                    body = (ROOT / target).read_bytes().decode("utf-8", "replace")
+                    definitions = _definitions(body.split("\n"))
                     best = None
                     for candidate in _symbols_on(spec_lines[spec_line_no - 1]):
                         for line_no in definitions.get(candidate, []):
@@ -203,6 +286,9 @@ def collect() -> list[dict[str, Any]]:
                         symbol, definition = best[0], best[1]
                         if not (start <= definition <= end):
                             offset = definition - start
+                    anchor, content_candidates = _content_anchor(
+                        spec_lines[spec_line_no - 1], body)
+                    content_ok = anchor is not None or not content_candidates
 
             if kind == "none":
                 verdict = "MISSING_FILE"
@@ -227,6 +313,9 @@ def collect() -> list[dict[str, Any]]:
                 "symbol": symbol,
                 "def_line": definition,
                 "offset": offset,
+                "content": anchor,
+                "content_ok": content_ok,
+                "content_candidate_count": len(content_candidates),
             })
     return rows
 
@@ -242,6 +331,7 @@ def main() -> int:
     structural = [r for r in rows if r["verdict"] in {"MISSING_FILE", "PATH_FORM", "OUT_OF_RANGE"}]
     ambiguous = [r for r in rows if r["verdict"] == "AMBIGUOUS"]
     stale = [r for r in rows if r["verdict"] == "STALE"]
+    content = [r for r in rows if not r["content_ok"]]
     ok = [r for r in rows if r["verdict"] == "OK"]
 
     if args.json:
@@ -281,8 +371,21 @@ def main() -> int:
         print(f"\nADVISORY: {len(stale)} references look symbol-stale "
               f"(run with --audit for the table).")
 
+    if args.audit and content:
+        print(f"\nADVISORY (independent of verdict): {len(content)} reference(s) quote code "
+              f"that occurs nowhere in the target")
+        print("  -- a line number is the only thing still pointing at anything:")
+        for row in sorted(content, key=lambda r: (r["spec"], r["spec_line"])):
+            where = f"{row['spec'].split('/')[-1]}:{row['spec_line']}"
+            print(f"  {row['ref']:26s} -> {row['target'].split('/')[-1]:20s} ({where})")
+    elif not args.audit and content:
+        print(f"\nADVISORY: {len(content)} reference(s) quote code absent from the target "
+              f"(run with --audit for the list).")
+
     print(f"\nsummary: {len(ok)} ok / {len(stale)} stale(advisory) / "
           f"{len(ambiguous)} ambiguous(advisory) / {len(structural)} structural failure(s)")
+    print(f"         {len(content)} of {len(rows)} have no matching quoted content "
+          f"(orthogonal to the verdict above)")
 
     if structural:
         print("spec reference audit FAILED.")
