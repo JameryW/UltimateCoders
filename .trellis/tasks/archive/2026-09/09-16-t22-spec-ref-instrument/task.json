@@ -1,0 +1,36 @@
+{
+  "id": "09-16-t22-spec-ref-instrument",
+  "name": "t22-spec-ref-instrument",
+  "title": "T22: 为 spec 引用守卫补「bold/heading 符号」与「内容锚」两处能力，并量出 #673 重写的锚点分布",
+  "description": "实施 #673 的仪器前置：守卫此前只在行内代码里认符号（漏掉 **bold** 与 ### 标题），且完全没有内容锚概念。补上两者后量出重写的可行边界（84/148 今天可去行号；放宽到整段可到 105；余 43 需基线兜底或先消歧）。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Jamery Wang",
+  "assignee": "Jamery Wang",
+  "createdAt": "2026-09-16",
+  "completedAt": "2026-09-16",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "7475952",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "scripts/check-spec-refs.py",
+    ".trellis/tasks/09-16-t22-spec-ref-instrument/research/notes.md"
+  ],
+  "notes": "",
+  "meta": {},
+  "issue": 673,
+  "map": null,
+  "decision": null,
+  "summary": "给 T21 落地的 spec 引用守卫补两处能力：(1) `_symbols_on` 此前只在行内代码里认符号，`**bold**` 与 `### 标题` 写法一律被判「本行无符号」——实测 13 条真锚被这样漏掉；(2) 新增内容锚（本行被引代码是否出现在目标文件里）。内容锚定为**独立标志**而非新 verdict：两条同级 advisory 共用一个字段会互相掩盖，与 T21 抓到的优先级 bug 同型。naive 串匹配有 13/17 假阳性，补归一化后零误报（4 条语法元变量按构造豁免）。消融 10/10，含 M6/M7 **双跑**（新检测报 STALE 且旧检测报 OK，证明是放宽起的作用）与字节恢复。量出 148 处引用的锚点分布：仅符号 25 / 仅内容 41 / 两者 18 / 无锚 64 ⇒ 今天可去行号 84，放宽到段落可到 105（刻意不实现：语义放宽需独立消融），余 43 待基线兜底或先消歧。本票是 #673 的切片 A（仪器），#673 保持开放。",
+  "commits": [
+    "7475952"
+  ]
+}
