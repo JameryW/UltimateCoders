@@ -6,4 +6,4 @@
 {"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Custom hook patterns (useSSE, useAuth, useDashboard)"}
 {"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality bar — lint, typecheck, build"}
 {"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Backend API contracts — endpoints, SSE format, fallback behavior"}
-{"file": ".trellis/tasks/06-15-dashboard/prd.md", "reason": "PRD — requirements, acceptance criteria, architecture decisions"}
+{"file": ".trellis/tasks/archive/2026-06/06-15-dashboard/prd.md", "reason": "PRD — requirements, acceptance criteria, architecture decisions"}

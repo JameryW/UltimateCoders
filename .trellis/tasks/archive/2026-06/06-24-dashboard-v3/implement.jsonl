@@ -6,4 +6,4 @@
 {"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Hook patterns for useDashboard, state management conventions"}
 {"file": ".trellis/spec/frontend/state-management.md", "reason": "State management patterns, snapshot merging, dedup"}
 {"file": ".trellis/spec/frontend/type-safety.md", "reason": "TypeScript type patterns for dashboard types"}
-{"file": ".trellis/tasks/06-24-dashboard-v3/prd.md", "reason": "Task PRD with full requirements, proto schema, acceptance criteria"}
+{"file": ".trellis/tasks/archive/2026-06/06-24-dashboard-v3/prd.md", "reason": "Task PRD with full requirements, proto schema, acceptance criteria"}

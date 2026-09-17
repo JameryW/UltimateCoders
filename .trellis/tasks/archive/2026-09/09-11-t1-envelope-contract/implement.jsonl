@@ -3,4 +3,4 @@
 {"file": ".trellis/spec/backend/worker-service-spec.md", "reason": "注册/心跳握手改动受此规范约束"}
 {"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "engine.proto 变更需符合服务契约约定"}
 {"file": ".trellis/spec/backend/error-handling.md", "reason": "握手拒绝/门控告警的错误语义与事件"}
-{"file": ".trellis/tasks/09-11-t1-envelope-contract/research/envelope-current-state.md", "reason": "现状 file:line 事实，两个发布器与握手挂载点"}
+{"file": ".trellis/tasks/archive/2026-09/09-11-t1-envelope-contract/research/envelope-current-state.md", "reason": "现状 file:line 事实，两个发布器与握手挂载点"}

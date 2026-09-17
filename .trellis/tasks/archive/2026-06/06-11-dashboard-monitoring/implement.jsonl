@@ -1,4 +1,4 @@
-{"file": ".trellis/tasks/06-11-dashboard-monitoring/prd.md", "reason": "Dashboard PRD — FastAPI + Jinja2 + SSE, API endpoints, UI layout, acceptance criteria"}
+{"file": ".trellis/tasks/archive/2026-06/06-11-dashboard-monitoring/prd.md", "reason": "Dashboard PRD — FastAPI + Jinja2 + SSE, API endpoints, UI layout, acceptance criteria"}
 {"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "Scheduler code-spec — API signatures, night window contracts, Orchestrator exclusive mode"}
 {"file": ".trellis/spec/backend/error-handling.md", "reason": "EngineError mapping — how health errors propagate from Rust to Python"}
 {"file": "python/ultimate_coders/agent/orchestrator.py", "reason": "Orchestrator — workers/tasks/pending state, start_dashboard() will be added here"}

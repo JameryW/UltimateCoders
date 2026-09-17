@@ -3,8 +3,8 @@
 {"file": ".trellis/spec/backend/checkpoint-spec.md", "reason": "checkpoint 语义现状（C4 拆除 .uc/checkpoints 时更新退役记录）"}
 {"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "ready-node 派发与 pause 闸语义（C1/C4/D6 依据）"}
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试纪律与基线只增不减约定"}
-{"file": ".trellis/tasks/09-14-t6-authority-flip/research/recon-2026-09-14.md", "reason": "T6 全量勘察：legacy reaper/sweep/pause-resume/NatsSubtaskExecute 的 file:line 清单、TS 架构地图、C1-C7 切片定稿"}
-{"file": ".trellis/tasks/09-14-t6-authority-flip/research/ts-baseline.md", "reason": "TS 测试基线 179 pass/17 files（bun test，packages/uc-orchestrator 目录内跑），C3-C7 只增不减"}
+{"file": ".trellis/tasks/archive/2026-09/09-14-t6-authority-flip/research/recon-2026-09-14.md", "reason": "T6 全量勘察：legacy reaper/sweep/pause-resume/NatsSubtaskExecute 的 file:line 清单、TS 架构地图、C1-C7 切片定稿"}
+{"file": ".trellis/tasks/archive/2026-09/09-14-t6-authority-flip/research/ts-baseline.md", "reason": "TS 测试基线 179 pass/17 files（bun test，packages/uc-orchestrator 目录内跑），C3-C7 只增不减"}
 {"decision": "C3 范围判断：PRD C3 第3条（start/complete/fail 先经 update_task RPC）中的循环内 subtask 转移翻转推迟到 C4 claim loop 一并落地——那部分代码（executeWaves/executeWave）C4 整体删除，先翻转属于一次性工作；C3 交付控制面翻转（pause/resume RPC-first + listTasks 拉取 bootstrap + restore 去权威化 + 缓存只读投影）", "slice": "C3"}
 {"decision": "C4-TS 上报通道定稿：proto TaskService 无单子任务状态 RPC（仅 Submit/Get/List/Pause/Resume/Cancel/UpdateTask/CreateCheckpoint/Recover/Watch），claim loop 的认领（running）与结果（completed/failed）上报均走 UpdateTask upsert 全量快照；reportSubtaskStatus 为 3 次 × 500ms 重试的 upsert 包装。TOCTOU（全量快照可能覆盖并发 worker 转移）按既定决策接受——权威在 Rust gateway，orchestrator 是租户", "slice": "C4-TS"}
 {"decision": "C4-TS 派发元数据保真：TaskSync 子任务补 files/dispatchMode/requiredCapabilities 映射（bridge 两处 parse + fromServerSync + steps camelCase→snake_case），adopted-then-resumed 任务可 claim-gate；parseSubtaskOutput 新增可选 dispatch_mode（snake_case）解析并复用 normalizeServerDispatchMode 归一（未知值/local → prefer_remote，T5 裁决），claim gate 的输入从此有生产者", "slice": "C4-TS"}

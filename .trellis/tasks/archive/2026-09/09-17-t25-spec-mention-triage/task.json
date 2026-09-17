@@ -24,7 +24,7 @@
     "scripts/check-spec-refs.py",
     ".trellis/spec/frontend/tui-grpc-spec.md",
     ".trellis/spec/backend/local-worker-bridge-spec.md",
-    ".trellis/tasks/09-17-t25-spec-mention-triage/research/notes.md"
+    ".trellis/tasks/archive/2026-09/09-17-t25-spec-mention-triage/research/notes.md"
   ],
   "notes": "",
   "meta": {},

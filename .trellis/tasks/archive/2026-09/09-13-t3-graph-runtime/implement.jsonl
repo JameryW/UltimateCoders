@@ -2,4 +2,4 @@
 {"file": ".trellis/spec/backend/database-guidelines.md", "reason": "图五表/CAS/事务约定（T2 刚更新）"}
 {"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "挂钩点在 NATS 发布/订阅路径上"}
 {"file": ".trellis/spec/backend/error-handling.md", "reason": "commit 败者/迟到结果的错误语义与事件"}
-{"file": ".trellis/tasks/09-13-t3-graph-runtime/research/state-machine-wiring.md", "reason": "挂钩 file:line 与 reaper 现状、双平面裁决"}
+{"file": ".trellis/tasks/archive/2026-09/09-13-t3-graph-runtime/research/state-machine-wiring.md", "reason": "挂钩 file:line 与 reaper 现状、双平面裁决"}

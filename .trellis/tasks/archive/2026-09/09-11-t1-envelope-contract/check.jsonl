@@ -2,4 +2,4 @@
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Phase 2.2 质量门约定"}
 {"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "验证信封 additive 不破坏 bridge 规范"}
 {"file": ".trellis/spec/backend/worker-service-spec.md", "reason": "验证握手行为与登记语义一致"}
-{"file": ".trellis/tasks/09-11-t1-envelope-contract/research/envelope-current-state.md", "reason": "对照现状事实核查改动面完整（两发布器/两心跳路径）"}
+{"file": ".trellis/tasks/archive/2026-09/09-11-t1-envelope-contract/research/envelope-current-state.md", "reason": "对照现状事实核查改动面完整（两发布器/两心跳路径）"}

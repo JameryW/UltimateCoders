@@ -1,4 +1,4 @@
-{"path": ".trellis/tasks/06-18-rust-python-agent-grpc/prd.md", "kind": "spec", "note": "PRD acceptance criteria and definition of done"}
+{"path": ".trellis/tasks/archive/2026-06/06-18-rust-python-agent-grpc/prd.md", "kind": "spec", "note": "PRD acceptance criteria and definition of done"}
 {"path": "python/ultimate_coders/agent/conflict.py", "kind": "spec", "note": "Verify _llm_assisted_merge and _auto_merge are implemented, not placeholder"}
 {"path": "python/ultimate_coders/config.py", "kind": "spec", "note": "Verify load_config reads TOML/YAML files"}
 {"path": "python/ultimate_coders/agent/sandbox.py", "kind": "spec", "note": "Verify AgentAdapter uses ABC/@abstractmethod"}

@@ -3,5 +3,5 @@
 {"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "TaskService proto contracts — need to add CancelTask RPC, understand PauseTask/ResumeTask flow"}
 {"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS message protocol — understand existing subjects and event format for adding task_cancelled"}
 {"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Event pipeline — understand how events flow from gRPC server to subscribers"}
-{"file": ".trellis/tasks/06-25-tui-omp-unified-control-path-seamless-handoff/research/architecture-gaps.md", "reason": "7 architecture gaps analysis — primary research document for this task"}
+{"file": ".trellis/tasks/archive/2026-06/06-25-tui-omp-unified-control-path-seamless-handoff/research/architecture-gaps.md", "reason": "7 architecture gaps analysis — primary research document for this task"}
 {"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI gRPC client spec — need to add cancelTask method"}

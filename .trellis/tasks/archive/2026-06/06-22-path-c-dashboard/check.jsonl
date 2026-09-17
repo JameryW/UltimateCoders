@@ -1,4 +1,4 @@
-{"file": ".trellis/tasks/06-22-path-c-dashboard/prd.md", "role": "spec"}
+{"file": ".trellis/tasks/archive/2026-06/06-22-path-c-dashboard/prd.md", "role": "spec"}
 {"file": "proto/engine.proto", "role": "spec"}
 {"file": "crates/uc-types/src/agent.rs", "role": "spec"}
 {"file": "crates/uc-grpc/src/server.rs", "role": "spec"}

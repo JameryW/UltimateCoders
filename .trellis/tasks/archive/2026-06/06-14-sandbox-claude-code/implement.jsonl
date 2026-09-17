@@ -1,4 +1,4 @@
-{"file": ".trellis/tasks/06-14-sandbox-claude-code/prd.md", "reason": "PRD: requirements, ADR decisions, acceptance criteria, implementation plan"}
+{"file": ".trellis/tasks/archive/2026-06/06-14-sandbox-claude-code/prd.md", "reason": "PRD: requirements, ADR decisions, acceptance criteria, implementation plan"}
 {"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index: overall architecture and conventions"}
 {"file": ".trellis/spec/backend/directory-structure.md", "reason": "Backend directory layout: where to place new files (DecomposeAdapter, run_sandbox.py)"}
 {"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling conventions for sandbox execution failures and Claude Code parse errors"}

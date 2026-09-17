@@ -2,4 +2,4 @@
 {"file": ".trellis/spec/backend/database-guidelines.md", "reason": "PG 迁移/池/回退语义约定"}
 {"file": ".trellis/spec/backend/checkpoint-spec.md", "reason": "checkpoint 与 savedAt 较新者规则是导入器输入面"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "TS 文件→Rust 表→网关读路径跨层一致性"}
-{"file": ".trellis/tasks/09-12-t2-graph-tables/research/pg-storage-current-state.md", "reason": "迁移样板/env 坑/数据形状 file:line"}
+{"file": ".trellis/tasks/archive/2026-09/09-12-t2-graph-tables/research/pg-storage-current-state.md", "reason": "迁移样板/env 坑/数据形状 file:line"}

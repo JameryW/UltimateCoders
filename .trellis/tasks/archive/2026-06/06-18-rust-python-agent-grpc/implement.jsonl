@@ -1,7 +1,7 @@
-{"path": ".trellis/tasks/06-18-rust-python-agent-grpc/prd.md", "kind": "spec", "note": "PRD with requirements, technical approach, PR decomposition"}
-{"path": ".trellis/tasks/06-18-rust-python-agent-grpc/research/multi-llm-provider.md", "kind": "research", "note": "litellm delegation pattern, 7 Anthropic coupling points, tool calling format differences"}
-{"path": ".trellis/tasks/06-18-rust-python-agent-grpc/research/taskstore-persistence.md", "kind": "research", "note": "swap-in replacement strategy, PostgresMetadataStore dual-path pattern, EventStore trait pattern"}
-{"path": ".trellis/tasks/06-18-rust-python-agent-grpc/research/python-testing.md", "kind": "research", "note": "StubEngine Protocol pattern, conftest.py extraction, pytest-cov config"}
+{"path": ".trellis/tasks/archive/2026-06/06-18-rust-python-agent-grpc/prd.md", "kind": "spec", "note": "PRD with requirements, technical approach, PR decomposition"}
+{"path": ".trellis/tasks/archive/2026-06/06-18-rust-python-agent-grpc/research/multi-llm-provider.md", "kind": "research", "note": "litellm delegation pattern, 7 Anthropic coupling points, tool calling format differences"}
+{"path": ".trellis/tasks/archive/2026-06/06-18-rust-python-agent-grpc/research/taskstore-persistence.md", "kind": "research", "note": "swap-in replacement strategy, PostgresMetadataStore dual-path pattern, EventStore trait pattern"}
+{"path": ".trellis/tasks/archive/2026-06/06-18-rust-python-agent-grpc/research/python-testing.md", "kind": "research", "note": "StubEngine Protocol pattern, conftest.py extraction, pytest-cov config"}
 {"path": "python/ultimate_coders/agent/llm.py", "kind": "spec", "note": "Current LLMClient - 7 Anthropic coupling points to refactor"}
 {"path": "python/ultimate_coders/agent/conflict.py", "kind": "spec", "note": "ConflictResolver._llm_assisted_merge placeholder + _auto_merge simplified"}
 {"path": "python/ultimate_coders/config.py", "kind": "spec", "note": "LlmConfig provider field unused, load_config() TODO TOML/YAML"}

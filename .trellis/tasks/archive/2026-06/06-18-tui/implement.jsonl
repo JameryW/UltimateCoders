@@ -1,5 +1,5 @@
-{"path": ".trellis/tasks/06-18-tui/prd.md", "kind": "spec", "note": "PRD with 20 requirements across 5 categories, 4 PR decomposition, acceptance criteria"}
-{"path": ".trellis/tasks/06-18-tui/research/tui-ux-patterns.md", "kind": "research", "note": "7 TUI UX patterns: mouse, search, code rendering, progress, config, themes, export + Ink v5 constraints"}
+{"path": ".trellis/tasks/archive/2026-06/06-18-tui/prd.md", "kind": "spec", "note": "PRD with 20 requirements across 5 categories, 4 PR decomposition, acceptance criteria"}
+{"path": ".trellis/tasks/archive/2026-06/06-18-tui/research/tui-ux-patterns.md", "kind": "research", "note": "7 TUI UX patterns: mouse, search, code rendering, progress, config, themes, export + Ink v5 constraints"}
 {"path": "tui/src/reducer.ts", "kind": "spec", "note": "TuiState + TuiAction definitions — add new actions for cancel, search, symbolMode toggle, export"}
 {"path": "tui/src/keymap.ts", "kind": "spec", "note": "Centralized keyboard shortcuts — add Ctrl+C confirm, Ctrl+S search, Ctrl+E expand all"}
 {"path": "tui/src/commands.ts", "kind": "spec", "note": "Slash command definitions — add /cancel, /symbols, /export commands"}
