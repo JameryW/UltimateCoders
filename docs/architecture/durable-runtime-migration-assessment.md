@@ -156,3 +156,24 @@ P1（Scope、Commit Barrier、Context Compiler、Sandbox 白名单、affinity pl
 **T18 的两处方法要点**：① 把拆解逻辑抽成**未门控**纯函数 `steps_payload`，使其能在 `--no-default-features` 下被测（形状回归最难被发现之处），并**当场回本** —— `cargo check --workspace --all-features --all-targets` 抓到两处 `on_commit` 调用点的 arity 破窗，而它们所在文件带 `storage` 门控、默认特征下被编译成**空文件**，不带 `--all-features` 的 `cargo check --workspace` 完全看不见（与 T15 漏掉 5 处 `commit_once` 调用点是同一类失效面）。② **一次账目更正**：记忆中的本地 Python 基线「1120 passed」与实测不符；用 `git worktree` 在 **HEAD 上复跑**得到真实值 **1123 passed / 10 skipped**（1133 收集），并进一步用**总收集数对账**（本地 `1139+10=1149` vs CI `1141+8=1149` 完全一致，差 2 条为 POSIX-only）与**测试 ID 集 `comm`**（removed = 0 / added = 16，逐条皆本票新增）双重钉住「没有测试被静默丢掉」。消融自检（一次只删一条子句）：删 `steps_payload` 的空切片早返回 ⇒ **仅** `steps_payload_is_absent_when_there_is_nothing_to_record` 打红；给 `StepUsage.usage` 加 `skip_serializing_if` ⇒ uc-engine 与 uc-types **各在一个 crate 打红一条**，证明 D3 的两条断言确系**互不依赖**而非同一断言抄两遍。
 
 **T18 的门禁与 CI（2026-09-16，`8a0645d`）**：本地 fmt / clippy（`--workspace --all-targets --all-features -D warnings` 与 CI 原样的 `--workspace -D warnings`）/ `cargo check --workspace --all-features --all-targets` / 四组 cargo test 全绿；Rust 基线**只增不减**（uc-engine lib **447→452** 默认、**387→392** no default、**467** all-features；uc-grpc lib **210→212**、**238→240**；uc-types **47→50**；ignored 图套件 **20→21**）；Python 本地 **1123→1139 passed / 10 skipped**；ruff 与 dashboard 导入检查 clean。**CI：Rust CI 8/8、Python CI 4/4 全绿**（TypeScript CI **未被触发** —— 本 diff 不含 `packages/**`，符合其路径过滤）。CI 日志里 `467 / 240 / 50 / 36 filtered out` 四行还**独立复核**了本地 all-features 计数。⚠️ **本机 PG 本轮不可用**：provider 是 Docker Desktop，其引擎在本沙箱**起不来**（`docker desktop start` 报 starting 后 `docker info` 以 30×5s 轮询始终失败），故该 PG 测试**本地未跑**，唯一证据是 CI —— 判**真跑**的两条判据都过（日志逐字有 `test graph_t18_commit_carries_per_step_usage_into_the_terminal_payload ... ok`、同文件 `21 passed / 0 failed`、**全日志 0 条 `SKIP:`**）。这同时**更正**了 T17 段记的「本地 live PG 可用」：当时为真，但**不能跨轮沿用**（引擎停掉即消失），正确口径是「本机无原生 PG，live PG 取决于 Docker Desktop 是否在跑」。
+
+**T19 交付（2026-09-16，T19 #670，承 D16 #669）**：派发硬门拒绝把 review 节点投给自己的产出者 —— D16 裁决 A 落地。任务归档 `09-16-t19-dispatch-exclusion`，实现 `322a571`（`feat(uc-grpc): refuse to dispatch a review node to its own producer (T19 #670)`）；**Rust CI 8/8 绿**（`322a571`，run `35069816244`，2026-09-17 复核时回读各 job 结论）。落地形状与裁决 A 一致：排除集落在**唯一**一处 roster 计算点 `workers_with_capabilities_excluding` —— `dispatch_gate` / `dispatch_candidates` / `placement_target` 三者同源 ⇒ `worker_service.rs:307` 那条不变量（*scoring 不得看到被门拒的 worker*）**自动成立**，不必三处各改一遍。**排除集是必需形参而非 `Option`**：将来任何新的派发口都不能靠「少写一个参数」静默恢复自审。两条 fail-closed 检查 + 两个**刻意不合并**的计数：`ProducerIdentityUnknown { dependencies }`（依赖跑了但没人记下是谁跑的 ⇒ 独立性**无法核实**）与 `NoIndependentReviewer { producers }`（生产者被识别，而它是**唯一**持有该能力的人）。`NoCapableWorker` 的语义**未动**（用排除**前**的 roster 判定）⇒「没人有这个能力」与「只有产出者有此能力」永远可分。两条检查排在 scope/version **之前**（越具体越先），因为 scope 判定会**点名候选 worker**、把操作者引向一个不是问题的人。**加性保证**：`requires_independence == false` ⇒ 约束为空 ⇒ `dispatch_gate` 对非 review 节点**逐字节**等价于改动前（有专项消融背书）。
+
+**T19 的消融 4 次（一次只删一条，实测非推断）**：
+
+| 注入的突变 | 打红的用例 |
+|---|---|
+| 删掉 roster 的排除过滤 | 3 条（自审拒绝 / placement 不选生产者 / 排序验证），而 unknown-producer 与「非 review 不变」**仍绿** |
+| 中性化 `unknown_producers` 检查 | 2 条（unknown-producer 分计数 / 排序验证），而自审拒绝**仍绿** |
+| 去掉 `review_independence` 的 review 早返回 | **恰好** 2 条（`independence_is_inert_for_every_non_review_node` + server 侧快照读取） |
+| 把谓词放宽成子串匹配 | `assertion failed: !requires_independence(["code-review"])` ⇒ 新加的**绝对钉**不是装饰 |
+
+前两条打红的是**不相交**集合（只共享排序用例）⇒ 两条子句**各自独立被钉住**，而不是「两条子句守同一句断言」。
+
+**T19 的门禁（2026-09-16，`322a571`）**：**基线只增不减** —— uc-engine lib 452→**453**（默认）/ 392→**393**（no default）/ 467→**468**（all-features）；uc-grpc lib 212→**221**（默认 = nodefault）/ 240→**249**（all-features）；uc-types **50**、uc-grpc-server **36** 不变。**自洽校验**：`453−393 = 60`、`468−453 = 15`、`249−221 = 28`，三个差值与 T14/T18 时**完全相同** ⇒ 新增单测既未受 `storage` 也未受 `messaging` 门控，且门控测试数本身没被搅动。Python **无行为变更**（只改一处注释）：按仓规逐文件串行跑得 **collected 1149 / passed 1139 / skipped 10 / failed 0**，与 T18 基线**逐项相同**；`ruff check python/ tests/` clean。
+
+**T19 同票修掉两处过期「知识」**（都属「间接信号 ≠ 一手事实」）：① `.trellis/spec/backend/agent-capability-spec.md` 写着 worker 默认能力集**包含** `review`；一手代码（`worker.py:448`）是 `["code","search","memory","test","decompose"]`，`review` 走 **`UC_CAP_REVIEW` opt-in**（`:495`）⇒ **照 spec 推理会得出「本票让单 worker 部署永久卡住 review 节点」这个耸动而错误的结论**；实际默认 worker 在**能力门**上就是 `NoCapableWorker`，根本走不到新检查 —— 故本票的正确定位是**残余缺口的收口**，**不是**新增的常规阻塞。② T16 在 `worker.py` 留的注释 *"The dispatch side has no exclusion primitive"* 在本票之后**变成假话** ⇒ 已改写（保留 T16 原本「为什么 review 不默认」的理由，只更正失效的那半句）；另 `worker-service-spec.md` 的 `dispatch_gate` 签名**落后两个票**（缺 T8 的 `project_id`）⇒ 一并补齐并写上 T19 契约。
+
+**T19 的残余 race 窗口（如实记账，未消除）**：本门是**花名册检查**，不是投递保证。候选 ≥2 且含生产者时，共享 work-queue 仍**可能**投给生产者。本票把最坏形状（生产者是唯一候选人 ⇒ 静默自审）变成可见的 `PENDING`，**没有**在共享队列上建立投递保证 —— 与 D16 否决 D 的理由同源。
+
+**P2 地图截至 2026-09-17 的状态**：开放决策 **0**、待落地票 **0**；**P2-1 / P2-2 / P2-3 的「本体」仍无据** —— Optimizer 算法（三个比率*算什么*、输出给谁、谁消费）、review 策略（审什么、几轮、失败怎么重试）、market scheduling 三者都需要外部「方案第 21 节」原文才可能转成决策票/实现票，**本件不臆造其内容**。
