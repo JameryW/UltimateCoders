@@ -15,7 +15,7 @@
   "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": "",
+  "commit": "afb2333",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -29,5 +29,8 @@
   "map": null,
   "decision": null,
   "summary": "",
-  "commits": []
+  "commits": [
+    "afb2333",
+    "75c7d22"
+  ]
 }
