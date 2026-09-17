@@ -378,3 +378,145 @@ Session 13 是极端情形：**整个骨架块被写了一遍又被取代**。�
 - **Session 16/17/18 缺 `### Git Commits`**：本票**故意不补** —— 17 的正文只出现过 `0c2604d`（CI 验收提交）、
   18 是 `dd3d2b3`，而 16 一个自己的哈希都没有 ⇒ 补表等于**猜「哪些提交属于该 session」**。
   建议另开票，用 `git log` 按日期/标题回溯。
+
+
+## Session 31: T28: #676 —— journal 账本收口检查（占位符整行相等 == 0）+ 回填 S16/17/18 的 Git Commits
+
+**Date**: 2026-09-17
+**Task**: T28: #676 —— journal 账本收口检查（占位符整行相等 == 0）+ 回填 S16/17/18 的 Git Commits
+**Branch**: `main`
+
+### Summary
+
+把「占位符不再长回来」做成收口检查（独立小 workflow，判据 = 整行相等），并按实测口径回填 S16/17/18 缺的 Git Commits；顺带量出语料其实是五份 journal / 两本账。
+
+### Main Changes
+
+## 普查：票面两处前提被推翻
+
+先量形状，不照票面开工。
+
+| 票面说法 | 一手实测 | 影响 |
+|---|---|---|
+| 「两份 journal」 | git 跟踪 **5 份 / 2 本账**：`Jamery Wang/` 30 session；`JameryW/` 3 份文件 123 session、**363 处占位符** | 直接对全语料收口 = 一条**永远红的检查**（正是本票自己警告的形状） |
+| 三个 session 的日期是 2026-09-16 | 三段 `**Date**` 都是 **2026-09-15** | 按日期回溯会拉错窗口 ⇒ 改用 `git log -S` 定位「记录该 session 的提交」 |
+
+两本账**都已入库**（`git ls-files '.trellis/workspace/**'` 9 个文件）⇒ 干净检出也能看见，判词一致。
+
+## 判据：整行相等，不是子串
+
+`journal-2.md` 就是记录 #674 的那份 —— 它的正文**本身在引用这三个占位符**：
+
+| 判据 | `- [OK] (Add test results)` | `- None - task complete` | `(Add details)` |
+|---|---|---|---|
+| 宽松（子串） | 1 | 3 | 4 |
+| **严格（整行相等）** | **0** | **0** | **0** |
+
+⇒ 子串判据在**干净**账本上就报红；红着的门禁会被关掉，**那比没有门禁更糟**。
+代价是一条文档规则（引用占位符时要加前缀），已写进守卫 docstring 与违规信息。
+
+## 守卫：`scripts/check-journal-ledger.py`
+
+- **FAIL（exit 1）**：`PLACEHOLDER`（整行相等）/ `HEADING_COUNT`（每 session 六个标准标题各恰好一次）/
+  `SESSION_NUMBER`（必须带编号且不重复）/ `EMPTY_CORPUS` / `NO_INDEX` / `STALE_SKELETON` / `LEGACY_DRIFT`。
+- **ADVISORY**：行尾不统一；`index.md` 的 `Total Sessions` 与实测不符。
+- **检测必须宽于解析**：任何以 `## Session` 开头的行都算 session 起点 —— 否则 `## Session: …`
+  这种掉了编号的标题不是「坏 session」而是**不存在**，整段连同占位符一起漏读。
+- **`STALE_SKELETON` 是检查器看自己**：已声明的标题/占位符必须仍在 `add_session.py` 里 ——
+  骨架改名后判据必须立刻失效，而不是静默空转。
+- 刻意**不**门禁 `(No commits - planning session)` 与 `[OK] **Completed**`：同一个产出者、
+  不同含义（规划期确实没有提交；`Completed` 是真实状态）—— 门禁它们只会再造一条永远红的检查。
+
+## 索引源 = `git ls-files`，不是 `os.walk`
+
+`.trellis/.gitignore` 第 2 行就是 `.developer` ⇒「当前开发者」是**本机状态**，干净检出里
+`get_developer()` 返回 `None` ⇒「这本账」**在 CI 里不可计算**。而文件系统走查会看见未被跟踪的文件
+⇒ 同一个提交在本机与干净检出给出两个判词（T25 的 `40 exempt` 就是这个性质，T26 为
+`check-spec-refs.py` 修过）。⇒ 语料 = git 跟踪的 journal；索引问不出来时 `NO_INDEX` **fail closed**。
+
+## 另一本账：计数并冻结，而不是无视
+
+`JameryW/` 那本（最后活动 2026-08-06，在 T 系列之前）不在本票范围内 ⇒ 数字被 **pin** 住
+（`165/56/56`、`168/57/56`、`30/10/10`），pin 对不上就 FAIL —— T26 判据 1「声明的计数必须与语料相符」。
+**pin 只对表内路径生效**：pin 目录下新增的 journal 仍按「我们的」判 ⇒ 必须干净。
+计数过的债是可见的，没计数的不是。
+
+## 回填 S16/17/18 的 `### Git Commits`：口径是量出来的
+
+把 journal-1.md 里**已有表格的 25 个 session** 逐个对照 `git log -S`（找出「记录该 session 的提交」）：
+**25/25 都不把自己那条记录提交列进本表**，表内是**在该提交之前落地的交付提交** ——
+机制解释：表写于记录 session 的那一刻，写不进还不存在的提交。
+
+| session | 记录它的提交（按口径不列入） | 回填条目 |
+|---|---|---|
+| S16（T14 #659） | `f28bf24` | `ca67b20`（T14 实现，`Tracker: #659`） |
+| S17（T14 收口 / #664 / D15） | `5ea38c9` | `0c2604d`（#664 修复，`Tracker: #664`） |
+| S18（T15 #660） | `d942fa9` | `dd3d2b3`（T15 实现，`Tracker: #660`） |
+
+每条附一行回溯来源，并**点名未列入的提交**（`437265d` / `45e60b7` / `3d876df`）⇒ 映射完整、无静默丢弃。
+手术可审计：插入点由「会话切段 → 段内唯一的 `### Testing`」定位（**不用**全局匹配 —— 那行在文件里出现几十次）；
+3 个哈希各 3 条断言（存在 / 是记录提交的祖先 / 提交信息片段相符）在**构建输出之前**跑完；
+候选文本在**写盘之前**就通过整份文件的终检（26 个 session 全部六标题各一次、占位符 0）。
+
+## 消融自检与一处意外
+
+9 条非等价突变**全部打红**且集合两两不同（M1 判据→子串 打红 5 条；M8 抑制 HEADING_COUNT 打红 4 条；
+其余各 1 条），1 条**等价突变**（`strip(" ")`）带理由记录为预期绿 —— 理由：`read_journal` **先**归一化 CRLF，
+任何比较都见不到 `\r` ⇒ 单点改比较不可能影响 CRLF 行为；为此把 CRLF 测试的断言**下沉到读入器本身**。
+
+⚠️ **意外（诚实记录）**：第一次消融跑完后，守卫里残留了 M8 的 `if False:`（`+2` 字节），
+而消融脚本自己的「复原 + 断言」当时是**通过**的 —— 是**另起一次调用复算 sha256** 才发现的
+（`6fc139243f16c2fd` → `376faa1601891bec`）。手工还原那一行后哈希精确回到 `6fc139243f16c2fd`，
+证明残留只有那一行。**教训：复原脚本的自断言是自指检查，不是独立证据；消融后必须由另一个进程复算哈希。**
+
+## CI 落法
+
+独立小 workflow `.github/workflows/ci-journal.yml`（**不改任何既有 workflow 的 `paths`**），
+Python 3.9 + 3.12：`ruff check` 两个文件 → 真语料跑守卫 → `pytest`。
+
+**这里用 `paths` 过滤是对的**（与 `ci-scripts.yml` 刻意不过滤相反 —— 那个守卫走查全仓，过滤会瞎）：
+本守卫的输入是**封闭集**，五项全列：`.trellis/workspace/**`（语料）、
+`.trellis/scripts/add_session.py`（声明的标题/占位符就是照它校验的，**漏了会静默空转**）、
+守卫本体、它的测试、自身。不跑 `ruff format --check`（它对本仓 Python 本来就红，本 workflow 不拥有那份债）。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2773fcf` | (see git log) |
+| `3c0a641` | (see git log) |
+
+### Testing
+
+- **本票的门禁就是「账本自身的结构不变量」**（产品代码一行未动 ⇒ 没跑任何产品套件，跑的是自己写的那两条）：
+  - `python scripts/check-journal-ledger.py` → **exit 0**：`this ledger: 2 file(s), 30 session(s), 0 placeholder line(s),
+    30/30 session(s) conforming`；`legacy (pinned, not fixed here): 3 file(s), 123 session(s), 363 placeholder line(s)`；
+    另有一条 ADVISORY（`JameryW/index.md` 写 `Total Sessions: 119` 而语料有 123 个标题）。
+  - `pytest tests/python/test_check_journal_ledger.py -o addopts=""` → **27 passed**；`ruff check` 两文件
+    **All checks passed**；两文件 `ast.parse(feature_version=(3,9))` 通过（CI 矩阵含 3.9）。
+  - **严格 / 宽松双口径在真语料上复算**（测试里独立算，不调守卫自己的函数）：严格 **0**、宽松 **> 0**
+    ⇒ 判据不可放松。这一条是同字节上的绝对钉，不是「代码与它自己一致」。
+  - **未跟踪文件不进索引**：往**真**工作树里丢一份带裸占位符的未跟踪 journal ⇒ 仍 exit 0 ——
+    只有索引来自 `git ls-files` 才可能成立（T26 的回归钉）。
+- **消融自检**（守卫 `19364B / sha256 6fc139243f16c2fd`）：9 条非等价突变**全部打红**、失败集合两两不同
+  （M1 判据→子串打红 5 条、M8 抑制 HEADING_COUNT 打红 4 条、其余各 1 条）；1 条等价突变（`strip(" ")`）
+  带理由记录为预期绿；每条按字节复原并校 sha256。
+- **回填手术**：`git diff --numstat` = **24/0**（3 × 8 行纯新增，无删除）；`journal-1.md` 158409B / 1975 行 /
+  CRLF 1974 / 孤立 LF 0，26 个 session 全部六标题各一次。本文件（`journal-2.md`）加本 session 后 501 行 /
+  CRLF 500 / 孤立 LF 0。
+- ⚠️ **本票未跑**：任何 Rust / Python 产品套件与历史门禁（票面非目标，且当时环境不可复现）。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- **另一本账 `.trellis/workspace/JameryW/` 仍未清理**：363 处占位符 + 3 处重复 session 编号（49 / 74 / 98），
+  已被 pin 住（不会变坏，也不会被忘记）；建议**另开票**处置，或明确接受它作为历史数据冻结。
+- **#656（P2 地图）仍阻塞于外部「方案第 21 节」原文** —— 不臆造；P2-1 / P2-2 / P2-3 本体都等它。
+- **门禁的代价要记住**：整行相等 ⇒ 以后**讨论**占位符的正文必须给它加前缀（列表符 / 反引号 / 表格竖线）。
+- **接新守卫进 CI 就照 `.github/workflows/ci-journal.yml` 的形状做独立小 job**，别去动既有 workflow 的 `paths`；
+  且 `paths` 必须覆盖**判据的来源**（本票是 `.trellis/scripts/add_session.py`）—— 漏了就会静默空转。
+- 守卫目前**不**校验行尾统一（只作 ADVISORY，因为它随 `core.autocrlf` 在 CI 与本机给出不同读数）。

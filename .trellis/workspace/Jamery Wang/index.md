@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 30
+- **Total Sessions**: 31
 - **Last Active**: 2026-09-17
 <!-- @@@/auto:current-status -->
 
@@ -19,8 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~363 | Active |
-| `journal-1.md` | ~1950 | Archived |
+| `journal-2.md` | ~500 | Active |
+| `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 31 | 2026-09-17 | T28: #676 —— journal 账本收口检查（占位符整行相等 == 0）+ 回填 S16/17/18 的 Git Commits | `2773fcf`, `3c0a641` | `main` |
 | 30 | 2026-09-17 | T27: #674 —— journal 账本整备：39 处占位符据实回填 + 5 处重复残块清除 | `afb2333`, `75c7d22` | `main` |
 | 29 | 2026-09-17 | T26: #675 切片 C —— 豁免表加判据 4 + `scripts/**` 首次进入 CI（第一次 CI 打红暴露的其实是索引源缺陷） | `6e748e8`, `53550fd`, `ce81644` | `main` |
 | 28 | 2026-09-17 | T25: #675 切片 B —— 47 处悬空提及逐条分类，7 处真修 + 40 处带理由豁免（并推翻「tui 是另一个仓库」的定性） | `868cc92`, `d96f071` | `main` |
