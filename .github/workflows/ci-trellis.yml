@@ -1,0 +1,66 @@
+name: Trellis CI
+
+# `.trellis/scripts/**` is framework code (recorded in `.trellis/.template-hashes.json`)
+# with no test harness of its own: no `tests/` directory exists under `.trellis/`,
+# and no other workflow mentions `.trellis/scripts/`. A behaviour bug there is
+# invisible to every gate this repo has. #679 shipped that way -- `task.py finish`
+# printed `✓ Cleared current task (was: X)` while deleting nothing -- and the only
+# reason it was caught is that a human disbelieved the output and checked `current`.
+#
+# WHY A `paths` FILTER HERE, WHEN `ci-scripts.yml` DELIBERATELY HAS NONE
+# ---------------------------------------------------------------------
+# This is not that file's shape copied over; the two differ for a measured reason.
+# The spec-reference guard walks the whole repository to build its index, so any
+# file can flip its verdict, and a `paths` filter there would be blind to exactly
+# the changes that matter. This test's input set is CLOSED: it runs `task.py` as a
+# subprocess against a synthetic repo assembled in `tmp_path`, and imports nothing
+# from this repository. What can flip it is therefore exactly `.trellis/scripts/**`,
+# the test file, and this workflow.
+#
+# WHY ruff IS NOT RUN ON `task.py`
+# --------------------------------
+# Measured 2026-09-17: `active_task.py` passes (`All checks passed!`) while
+# `task.py` carries 8 pre-existing findings (6x E501, I001, UP009) unrelated to
+# #679. Linting it here would be born red, and fixing them would import an
+# unrelated reformat into a framework file that has to stay mergeable against the
+# upstream template. Both paths are named explicitly for the same reason
+# `ci-scripts.yml` names its two files instead of a directory.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".trellis/scripts/**"
+      - "tests/python/test_task_finish_fallback.py"
+      - ".github/workflows/ci-trellis.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".trellis/scripts/**"
+      - "tests/python/test_task_finish_fallback.py"
+      - ".github/workflows/ci-trellis.yml"
+
+jobs:
+  task-finish-pointer:
+    name: finish must not claim a deletion it did not perform (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - run: pip install ruff pytest
+      - name: ruff check (the green files only -- see the header for the measurement)
+        run: >-
+          ruff check .trellis/scripts/common/active_task.py
+          tests/python/test_task_finish_fallback.py
+      - name: pointer honesty
+        # `-o addopts=""`: pyproject's addopts pull in pytest-cov, which this job
+        # has no use for -- the test drives the CLI as a subprocess and never
+        # imports the package, so coverage would only report 0%.
+        run: pytest tests/python/test_task_finish_fallback.py -v -o addopts=""

@@ -153,6 +153,23 @@ def cmd_finish(args: argparse.Namespace) -> int:
     # Resolve task.json path before clearing
     task_json_path = repo_root / current / FILE_TASK_JSON
 
+    # `current` is what resolve_active_task REPORTED, which is a different claim
+    # from "cleared": the value can have come from a file this shell cannot
+    # attribute to itself, while a second window still carries the pointer.
+    # Re-resolve through the same read path the user will use, and only then
+    # claim success -- a ✓ that survives a `current` naming the same task
+    # misleads precisely the investigation that is trying to clear it (#679).
+    still = resolve_active_task(repo_root).task_path
+    if still:
+        print(colored("✗ Active task not cleared", Colors.RED))
+        print(f"Still resolves to: {still}")
+        print(f"Source: {active.source}")
+        print(
+            "Hint: a pointer under .trellis/.runtime/sessions/ that this shell "
+            "cannot attribute to itself still resolves the task."
+        )
+        return 1
+
     print(colored(f"✓ Cleared current task (was: {current})", Colors.GREEN))
     print(f"Source: {active.source}")
 

@@ -579,7 +579,18 @@ def clear_active_task(
     platform_input: dict[str, Any] | None = None,
     platform: str | None = None,
 ) -> ActiveTask:
-    """Clear the active task by deleting the current session context file."""
+    """Clear the active task by deleting the session file(s) that back it.
+
+    What this reports and what it deletes have to be the same object.
+    `resolve_active_task` reports from the current session file when there is
+    one, and otherwise falls back to scanning `sessions/*.json` -- so the
+    reported task can live in ANOTHER window's file, and deleting only
+    `_context_path(context_key)` prints a success that did not happen (#679).
+    A fallback-sourced value is therefore cleared through
+    `clear_task_from_sessions`, which removes exactly the files that carry the
+    pointer. That fallback fires only when exactly one session file exists, so
+    this can never delete a pointer a second window still needs.
+    """
     context_key = resolve_context_key(platform_input, platform)
     if not context_key:
         return ActiveTask(None, "none")
@@ -588,6 +599,8 @@ def clear_active_task(
     context_path = _context_path(repo_root, context_key)
     if context_path.is_file():
         _remove_file(context_path)
+    if previous.source_type == "session-fallback" and previous.task_path:
+        clear_task_from_sessions(previous.task_path, repo_root)
     return previous
 
 
