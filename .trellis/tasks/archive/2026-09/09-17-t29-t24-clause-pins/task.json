@@ -1,5 +1,5 @@
 {
-  "id": "t29-t24-clause-pins",
+  "id": "09-17-t29-t24-clause-pins",
   "name": "t29-t24-clause-pins",
   "title": "T29: #677 —— 给 T24 的两处守卫子句补测试级护栏 + 更正过期理由",
   "description": "实施 #677（T29）：给 T24（#673 切片 B）在 `scripts/check-spec-refs.py` 里改的两处子句补上**测试级**护栏，并更正其中一处已过期的理由。T24 的消融只覆盖 `.scratch` 那条、且判据是**CLI 输出差异**（T0/T1/T2 三次 exit 全 0）⇒ 两处子句的失效都没有护栏，违反铁律「没有红过的检查器不是证据」。本轮补做的**测试级消融（含对照突变）**实测：对照（关掉裸通配符不变量，已知被钉住）**红 1** ⇒ 夹具有效；**MB（bold 的 identifier-exact 过滤）红 0、但守卫输出 `1 stale→2 stale` / `89 ok→88 ok` ⇒ 未钉住**；**MS（`EXCLUDE_DIRS` 的 `.scratch`）红 0 且输出逐字相同 ⇒ 判定面效应为 0** —— T24 的理由（「全仓恰好改变 1 条判定」）是 `os.walk` 索引时代的测量，T26 把索引换成 `git ls-files` 后不再成立。交付：①新增合成、确定性钉 `test_bold_prose_is_not_a_symbol_anchor`（散文 bold 不得成为符号锚）；②更正注释（`git diff -U0` 的 37 个改动行全为注释、非注释行 0；改动前后守卫 stdout 逐字相同）；③写明 `EXCLUDE_DIRS` 在 git 路径上 9/10 无影响、只对 `_walk_index` 回退路径有意义。守卫终值一格未动：`89 ok / 1 stale / 8 ambiguous / 0 structural`、mentions `41/227`、exit 0；`12 passed`；ruff 两文件 clean。**未处置**：`.scratch` 是否应继续对索引隐形是**决策**（保留现行为并记录两种理由）；`EXCLUDE_DIRS` 的 9 项死条目只写明、不重构。",
@@ -15,7 +15,7 @@
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "e99638d",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -25,5 +25,12 @@
     "tests/python/test_check_spec_refs.py"
   ],
   "notes": "",
-  "meta": {}
+  "meta": {},
+  "commits": [
+    "e99638d"
+  ],
+  "issue": 677,
+  "map": null,
+  "decision": null,
+  "summary": ""
 }

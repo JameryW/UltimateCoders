@@ -520,3 +520,134 @@ Python 3.9 + 3.12：`ruff check` 两个文件 → 真语料跑守卫 → `pytest
 - **接新守卫进 CI 就照 `.github/workflows/ci-journal.yml` 的形状做独立小 job**，别去动既有 workflow 的 `paths`；
   且 `paths` 必须覆盖**判据的来源**（本票是 `.trellis/scripts/add_session.py`）—— 漏了就会静默空转。
 - 守卫目前**不**校验行尾统一（只作 ADVISORY，因为它随 `core.autocrlf` 在 CI 与本机给出不同读数）。
+
+
+## Session 32: T29: #677 —— 给 T24 的两处守卫子句补测试级护栏 + 更正过期理由
+
+**Date**: 2026-09-17
+**Task**: T29: #677 —— 给 T24 的两处守卫子句补测试级护栏 + 更正过期理由
+**Branch**: `main`
+
+### Summary
+
+对 T24 改过的两处守卫子句补做测试级消融（含对照突变）：bold 那条**未钉住**（子句生效但删掉不红），.scratch 那条的注释理由在 T26 换索引后已归零。交付 1 条合成确定性钉 + 注释更正。
+
+### Main Changes
+
+## 由来：T24 改了两处子句，却只有一处做过消融
+
+T24（#673 切片 B）在 `scripts/check-spec-refs.py` 改了两处：**bold 锚收紧为 identifier-exact**、
+**`EXCLUDE_DIRS` 加 `.scratch`**。它的消融（`research/notes.md` §E）只覆盖第 2 处，
+而且判据是 **CLI 输出差异**（T0/T1/T2，三次 exit 全 0）⇒ **没有任何测试会因这两处被撤销而变红**。
+
+按铁律「没有红过的检查器不是证据」，这两处子句的失效**都没有护栏**。本票把它从
+「子句生效」（T24 已证）升级为「**子句被钉住**」（本票要证）。
+
+## 三格测试级消融（含对照突变）
+
+突变全部是**纯删除/替换**、由正则从**文件字节**定位（不写死整行字面量 —— T24 首版正是死在 CRLF 上）。
+基线：守卫 `39904 B`、sha256 `ddaadb29b048251a`、`11 passed`、exit 0、`89 ok / 1 stale / 8 ambiguous`、mentions `41/227`。
+
+| # | 突变 | 打红 | 守卫输出 | 判词 |
+|---|---|---|---|---|
+| MC | **对照**：关掉「裸通配符」不变量（已知被钉住） | **1** | 无变化 | 夹具**证明能红** |
+| MB | 删 `if IDENT_RE.fullmatch(b.strip())`（−33 B） | **0** | **变**：`1 stale → 2 stale`、`89 ok → 88 ok` | 🔴 **未钉住** |
+| MS | 删 `EXCLUDE_DIRS` 里的 `.scratch`（−12 B） | **0** | **逐字相同** | ⚠️ 判定面效应 **0** |
+
+三者失败集合两两不同、对照与其余**不相交** ⇒ 无装饰性突变、无相互掩盖。每格按字节恢复并复校 sha256。
+
+## MB：子句确实生效，但没人能发现它被删
+
+删掉过滤后，`error-handling.md:307` 那行的**散文词** `delete` 重新成为符号锚。判定取
+「**定义离引用行最近**的符号」—— `delete` 在目标文件里有定义且比真锚更近 ⇒ 落在引用范围外 ⇒ **假 STALE**。
+与 T24 记录的 `STALE 27→26 / OK 113→114` 同向同量（现为 `1→2` / `89→88`）。
+
+⇒ **子句在起作用，11 条测试却一条不红**：任何重构都能静默删掉它，语料多出 1 条假 STALE 而无人察觉。
+
+## MS：`.scratch` 的效应在 T26 换索引之后就归零了
+
+`EXCLUDE_DIRS` 在 git 路径（守卫第 302 行）上确实生效，`.scratch` 仍在滤掉 **12 个被跟踪的**
+`.scratch/durable-runtime-migration/**` 文件。但那 12 个的 basename（`map.md`、`T1.md`…`T7.md`、
+`D4-*`…`D7-*.md`）**与语料里任何提及都不撞** ⇒ 删掉后守卫输出**逐字相同**。
+
+而注释里 T24 写的理由 —— *"Excluding it changes exactly one verdict in the whole corpus"* ——
+是 **`os.walk` 索引时代**的测量（当时本机 `.scratch/` 里有回滚副本与测试脚手架树，
+`.scratch/pt-test_*/**/lib.rs` 把 `lib.rs` 候选从 4 抬到 79）；**T26 隔天把索引换成 `git ls-files`**，
+未跟踪的 scratch 在构造上就进不了索引。
+
+⇒ **同一条子句、同一份代码，判词从「改变 1 条判定」变成「改变 0 条」——变的是索引源，不是子句。**
+这与 T25 的 `40 exempt` 同型：**环境相关的读数不能当作子句的固有性质**。
+按铁律推论 A（过期文档自带权威感），**同票更正**。
+
+## 附带量清：`EXCLUDE_DIRS` 在 git 路径上 9/10 是死的
+
+逐条量「该目录下**被跟踪且后缀在 `CODE_EXT`** 的文件数」：
+
+| 条目 | 跟踪文件 | 其中代码文件 |
+|---|---|---|
+| `.git` / `target` / `node_modules` / `.venv` / `__pycache__` / `dist` / `build` / `.pytest_cache` | 0 | **0** |
+| `vendor` | 1 | **0**（后缀不在 `CODE_EXT`） |
+| **`.scratch`** | **12** | **12** |
+
+⇒ 生产索引路径上 10 项里 **9 项无影响**，它们**只对 `_walk_index` 回退路径**有意义
+（那里必需：去掉会让 `target/` 之类被整棵走查）。**不是缺陷**，但必须写明 ——
+否则下一个人会以为这 10 项都在生效，并据此「清理」它们。
+
+## 交付
+
+1. **新增钉** `test_bold_prose_is_not_a_symbol_anchor`（合成、确定性）：目标文件第 40 行定义 `delete`；
+   spec 行含一条 `crates/one/target.py:2` 引用 + 一个**在目标文件里未定义**的真锚 `GhostThing` + 一句散文 bold。
+   收紧时无可解析符号（`best is None`）⇒ **OK**；松散时解析出 38 行外的 `delete` ⇒ **假 STALE**。
+   断言两层：直接断言锚集合（`"delete" not in _symbols_on(line)`）+ 断言行为（`symbol is None` 且 `verdict == "OK"`）。
+   **不钉真语料计数**（会随任何合法的语料编辑而碎）。
+2. **更正注释**（第 94–110 行）：三条与现状相符的陈述。**注释改写不改变行为** ——
+   改动前后守卫 stdout **逐字相同**；`git diff -U0` 的 **37 个改动行全以 `#` 开头**（非注释行 0）。
+
+## 门禁
+
+- 守卫终值**一格未动**：`89 ok / 1 stale / 8 ambiguous / 0 structural`、mentions `41/227`、`exit 0`。
+- `pytest tests/python/test_check_spec_refs.py` ⇒ **12 passed**（新增 1 条）。
+- **新钉自身的消融**：在**最终交付件**上重跑三格 ⇒ **MB 从「红 0」变为「红 1」，红的正是新钉**；
+  MC 仍红 1、MS 仍红 0，集合不相交；收尾 sha256 回到 `e4361a664def8bc6`。
+- `ruff check` 两文件 **All checks passed**；两文件 py39 可解析。
+
+## 🔴 两条教训
+
+1. **带沙箱升级的命令可能被重复执行。** 插入新钉的脚本跑了两次，整块测试**落了两份**
+   （`def` 出现在 199 / 243 行）—— ruff 报 `F811 Redefinition`，而**pytest 仍是 `12 passed`**
+   （同名函数后者遮蔽前者）⇒ **只有 ruff 看得见**。去重脚本以「恰好两份且逐字节相同」为前置断言，
+   并加**绝对尺寸兜底**（`10915 + 2229 = 13144 B`）；它**幂等安全**：只剩一份时断言中止、**不写盘**
+   （第二次执行正是被这样挡下的）。⇒ **副作用脚本必须幂等，或有歧义就拒绝写盘。**
+2. **git 的 subject 是「第一个空行之前的全部内容」，不是第一行。** 首版提交信息我先写了正文，
+   `git commit -F` 把整段当成 subject；已 `--amend` 修成「单行 subject + 空行 + 正文」。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e99638d` | (see git log) |
+
+### Testing
+
+- `pytest tests/python/test_check_spec_refs.py -o addopts=""` ⇒ **12 passed in 1.54s**（新增 1 条钉）。
+- **新钉自身的消融**（在**最终交付件**上重跑三格）：对照红 1、**MB 红 1（红的正是新钉）**、MS 红 0；
+  三者失败集合两两不同、对照与其余不相交；守卫按字节复原、收尾 sha256 `e4361a664def8bc6`（由另一个进程复算）。
+- 守卫 `exit 0`、`89 ok / 1 stale / 8 ambiguous / 0 structural`、mentions `41/227`（**一格未动**）。
+- 注释改动**行为中性**：改动前后 stdout **逐字相同**；`git diff -U0` 的 37 个改动行全为注释、**非注释行 0**。
+- `ruff check` 两文件 **All checks passed**；两文件 `ast.parse(feature_version=(3,9))` 通过。
+- 行尾：`check-spec-refs.py` / `test_check_spec_refs.py` / journal-2.md 均纯 CRLF，孤立 LF 全 0。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- ⚠️ **`.scratch` 是否应继续对索引隐形是一个决策**（本票保留现行为并记录两种理由）：保留 = 防将来
+  `.scratch/**` 里的跟踪文件与 basename 撞车；移除 = 跟踪文件本就是仓的一部分，守卫本该看见（T26 的原则）。
+- **`_walk_index` 回退路径没有专门的钉**：「回退路径与 git 路径给同一答案」这件事只被合成语料**间接**覆盖，
+  且该路径只在「非 git 检出」或 `git ls-remote` 失败时走到 —— 建议另开票。
+- **`EXCLUDE_DIRS` 的 9 项死条目**：只写明、不重构（它们对回退路径是必需的）。
+- **#656（P2 地图）仍阻塞于外部「方案第 21 节」原文** —— 不臆造。
+- **`.trellis/workspace/JameryW/` 那本账**（363 处占位符 / 3 处重复编号）仍只被 pin 住，建议另开票。
