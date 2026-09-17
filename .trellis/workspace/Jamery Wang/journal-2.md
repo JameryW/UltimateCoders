@@ -197,3 +197,72 @@ T24 #673 切片 B：把**可机械判定为安全**的引用真的去掉行号�
 - **#675 切片 C**（本票未做，票因此保持 open）：是否把提及升级为门禁、是否接 CI、是否加合成语料 pytest。⚠️ 接 CI 是**触发面**变更 —— `.trellis/**` 一旦进 workflow 的 `paths`，该目录上的改动就会开始跑 Python CI。
 - **判据 3 的残余风险**：它只挡**裸通配符**，不挡「比理由更宽的模式」（`tui/**` 这类合法 pattern 同样能覆盖整个 spec 的悬空集）。切片 C 决定门禁之前需先处理这条。
 - **两篇已删子系统的 spec 正文未订正**（只加了横幅）：逐节重写需每节重新取一手证据，建议另开一张票。
+
+
+## Session 29: T26: #675 切片 C —— 豁免表加判据 4 + `scripts/**` 首次进入 CI（第一次 CI 打红暴露的其实是索引源缺陷）
+
+**Date**: 2026-09-17
+**Task**: T26: #675 切片 C —— 豁免表加判据 4 + `scripts/**` 首次进入 CI（第一次 CI 打红暴露的其实是索引源缺陷）
+**Branch**: `main`
+
+### Summary
+
+T26 = #675 切片 C：给 `MENTION_EXEMPT` 加**声明命中数**并在自检里对账（判据 4），把 T25 记为残余风险的「非裸但宽于理由的 pattern」机械封死；消融证明判据 3 与 4 打红的集合**不相交**（T19 判据）、exit 仍恒 0。同时让 `scripts/**` **首次进入 CI**（新 `ci-scripts.yml`，无 `paths` 过滤、矩阵 3.9+3.12；代价侧由首次运行 23s 实测背书）。🔴 **第一次 CI 同时打红两档，暴露的是真缺陷**：守卫的 `os.walk` 索引看得见本机被 gitignore 的文件 ⇒ **同一个提交在本机与干净检出给出两个判词**；修法换根因 —— 索引改为 `git ls-files ∩ EXCLUDE_DIRS`（爆炸半径实测 1/325，C\W = 0）。终局数字：`89/1/8/0` 一格未动、`mentions 41 of 227`（0 unclassified）、收集 1149 → 1160、两档 CI 全绿。
+
+### Main Changes
+
+**范围**：#675 **切片 C**（#675 的最后一个切片）。切片 A（T23 `848b1c7`）让守卫**看得见**「无行号路径提及」；切片 B（T25 `868cc92`）把 47 处逐条分类处置成 7 修 + 40 豁免。切片 C 要处理 T25 显式推下来的两件事：①判据 3 挡不住「**非裸但宽于理由**」的 pattern；②`scripts/**` 在**零个** workflow 的 `paths` 里（守卫可静默腐烂）。
+
+**判据 4：把「pattern 被放宽」变成可观测。** T25 的残余风险是实测出来的，不是推的：消融 M4 把一条规则从 `new_module/impl.rs` 放宽成 `*`，两条既有判据**都不响**、`--audit` 照旧打印 `0 unclassified` —— 一份**看起来完全健康**的输出。切片 C 的解法不是再加一条形状规则（打地鼠），而是给每条 `MENTION_EXEMPT` 规则一个**声明的命中数**：元数 `(spec, pattern, reason)` → `(spec, pattern, expected_hits, reason)`，自检里对账，报 `declares N mention(s) but matches M`。**之所以可行，是量出来的**：规则侧命中 `{4,1,1,1,2,2} = 11`、`SUBJECT_REMOVED` 侧 `27+2 = 29`，**11+29 = 40 = 悬空总数** ⇒ 豁免是「**按条且穷尽**」的，所以数的变化必然可观测。**有意的不对称**：`SUBJECT_REMOVED` **不加**计数 —— 它的作用域按设计就是整个文件，「命中几个」在那里不是安全性质，防它静默的是判据 2（spec 正文必须自认删除提交）。两张表的元数不同是**自证的**，不是疏漏。实现落在判据 1 的 `elif` 分支上，这样一条**死规则**只报一次（死规则不该同时被抱怨计数不符），有专门测试钉住。
+
+**同时修掉一处「已变成假话的注释」。** 同一个注释块写着 *"Two invariants … Both are checked"*，紧接着列了**三条** —— T25 加判据 3 时写歪的。改成四条并落本票两个裁决。（**过期规格比没有规格更危险**的同源问题：注释自带权威感，读到的人不会去数。）
+
+**判据 3 与判据 4 互相独立 —— 消融实测，且本轮重跑复核**（不采信上一轮自己的结论）：M0 干净；M1 把 `new_module/impl.rs` 的 1 改成 3 → **只红判据 4**；M2 `tui/src/**` → `*`（该 spec 恰好只有 2 条悬空，**命中数不变**）→ **只红判据 3**；M3 `index.json` → `*.md`（**非裸**、但吞掉 `record-session.md` 的 2 条）→ **只红判据 4** ← 这正是判据 3 看不见的那个洞；M4 `record-session.md` 声明数改成 9 → 只红判据 4。**两次打红的集合不相交**（T19 判据：打红同一集合 ⇒ 其中一条是装饰）。**M5 端到端**：把守卫复制到 `scripts/_ablation_check.py`（同目录 ⇒ `ROOT = parents[1]` 仍正确）、改一处计数、跑它 —— 打印 `self-check found 1 problem(s)` 与 `hit count drifted`，而 **`exit` 仍是 0** ⇒ advisory 语义未被削弱。
+
+**裁决 1：mentions 的悬空计数维持 advisory；被强制执行的是「表的一致性」与「仓库自证」。** 守卫 exit code **不变**（判据 1–4 全部 advisory）—— 这是它的设计性质：**a mention is not a reference**，让散文里提到一个文件名去红 CI 会造假红。强制的部分落在**测试**里：表一致性（`exemption_self_check(real) == []`）与 `unclassified == 0`；后者是**仓库自己的主张**，不是工具的性质，测试 docstring 写明了。代价是「新出现一条悬空提及会红，修法是加一行带理由的规则」—— 这是**有意的摩擦**。
+
+**裁决 2：CI 接线取「无 `paths` 过滤」。** 理由是一手的：守卫用 `os.walk(ROOT)` 建索引 ⇒ **它读整个仓**，所以 `crates/**`/`python/**`/`packages/**` 的**增删**同样能翻判词（加文件可能让规则变死规则、删文件可能产生新悬空）⇒ `paths: scripts/**` 会**恰好对翻判词的那类改动瞎**。代价侧**由 CI 自己实测背书**：这个新 job 首次运行 **23s**，所以「每次 push 都跑」几乎免费（故刻意做得很小：不建 Rust、不跑整套 Python 套件）。副作用（有意）：`scripts/**` 与 `.trellis/spec/**` 的提交**从此会触发一个 job** —— T21–T25 那种「收口提交零触发」的记录，从 T26 起不再成立。
+
+**🔴 第一次 CI 直接打红 —— 而它抓到的是真缺陷，不是我测试写错。** 推送 `6e748e8` 后 **Scripts CI 与 Python CI 同时红**（`35207013920` / `35207013916`）。失败点是新测试的 `test_real_corpus_has_no_untriaged_dangling_mention`，断言逐字为 `Left contains one more item: ('.trellis/spec/backend/agent-capability-spec.md', 380, 'config.toml')`。**根因**：守卫的 `_repo_index()` 用 `os.walk` —— **它看得见本机被 gitignore 的文件**。本机存在 `./.codex/config.toml`（被 `.gitignore:90` 忽略），而 CI 的干净检出里没有 `.codex/`。于是**同一个提交**：本机 `MENTION_RESOLVED`、CI `DANGLING` → 未分类 → 测试红。**这正是守卫自己在 `EXCLUDE_DIRS` 注释里为 `.scratch/` 写下的失效模式，只是当时只针对一个目录，没有上升到「类」。** 一手规模：`os.walk` 索引 **1320** 条路径 vs `git ls-files` **1154** ⇒ 本机独有约 **13%**，不是角落情况。
+
+**修法换根因而非打地鼠：索引源从「文件系统」换成「git 跟踪集」。** 索引改为 `git ls-files` **∩** 保留 `EXCLUDE_DIRS`。**两者都必需**：① 只用 git ⇒ 会把 **12 个「在 `.scratch/` 被 ignore 之前就已提交」**的历史文件放回来（`.scratch/durable-runtime-migration/**`，一旦被跟踪 `.gitignore` 对它失效）⇒ 等于**撤销 T24 的排除决定**（当时 `.scratch/pt-test_*/**/lib.rs` 把 `lib.rs` 候选从 4 抬到 79）；② 只用 walk 就是本次事故。三索引实测：walk+EXCLUDE `488 basenames / 1320 paths`、纯 git `468 / 1154`、**git ∩ EXCLUDE（采用）`456 / 1142`**。**爆炸半径是量出来的不是假设的**：A → C 的判词差异 **1/325**（恰是那一条）；**C \ W = 0** ⇒ 换源只会**移除**索引项、不会新增；**W \ C = 178**，用 `git check-ignore --stdin` 逐条判定 **177 被 gitignore**（`.opencode` 55 / `.agents` 48 / `.reasonix` 47 / `.workbuddy` 10 / `.codex` 8 / `.kimi-code` 6 / `.trellis` 1 / `packages` 1 / `uc.repos.yaml` 1），余 1 条是本票当时尚未入库的 `task.json`。同时把 `config.toml` 按「**运行时存在、设计上不在仓内**」处置（Codex CLI 自己的 `$CODEX_HOME/config.toml`，spec 样例自己就用 `tempfile.mkstemp(..., dir=codex_home)`，与 `uc.scheduler.yaml` 同类；全 spec 目录里恰好 1 处）。
+
+**数字（修后）**：`--audit` **exit 0**；`89 ok / 1 stale / 8 ambiguous / 0 structural` **一格未动**（与 T24/T25 收口逐项相同）；`mentions 41 of 227`（**41 exempt** = 规则侧 12 + 整篇 29）/ **0 unclassified**；悬空 **40 → 41**；Python 收集 **1149 → 1160**（+11）。**两次自我更正**：① 首轮消融我把 M3 的预期写错了（用 `new_module/impl.rs → *`，但那份 spec 恰好只 1 条悬空 ⇒ 裸通配符没改变命中数，突变**退化成 M2 同形**）⇒ 换成 `index.json → *.md` 这才是「非裸但更宽」的形状；② 早期 jsonl 两行（「10 条测试」「mentions: 40 of 227」）是修复**前**的实测，已**显式标注为过时**而非静默改写。由此也**修正 T25 的一处记账**：T25 的 `40 exempt` 只在**本机**成立（本机有那个被忽略的 `.codex/`），干净检出里当时就已经是 41 —— **不是算错，是环境相关的**，而本票正是要消掉这种东西。
+
+**门禁**：`ruff check` 对守卫与新测试文件均 **All checks passed**；⚠️ `ruff check scripts/` 整体**仍是红的**（`I001`+`UP045` 都在 `scripts/check-codex-issue-flow.py`，`fc9b5ce` 起既有）⇒ 新 workflow 只**点名文件**；`ruff format --check` **不接**（改动前后都失败）；两文件 `ast.parse(feature_version=(3,9))` 通过。**CI（本票唯一的真跑验证）**：Scripts CI `35208696969` 全绿（`spec reference guard (Python 3.9)` 与 `(Python 3.12)` 各 success）；Python CI `35208696908` 全绿（ruff lint / dashboard checks / test 3.9 / test 3.12 全 success）；其 3.9 测试 job 自报 **`1152 passed, 8 skipped`** = 收集 **1160**，与本机 `--collect-only` **逐数一致**；11 条新测试在 CI 日志里**逐字 `test <name> ... PASSED`**，skipped 仍是基线的 8（**无新增 SKIP 行**）⇒ **真跑而非静默跳过**。
+
+**一处新踩到的静默陷阱（已记账）**：用 `subprocess.run(..., text=True, input="\n".join(paths))` 喂 `git check-ignore --stdin` 时，`text=True` 会把 stdin 的 `\n` 翻成 `\r\n` ⇒ **每个路径多带一个 `\r`** ⇒ git 认为含控制字符便**加引号回显** ⇒ 集合比较 175/178 全不匹配，而 `rc=0`、行数看着正常。改传 **bytes** 后 `177 被忽略 + 1 未跟踪` 与总数 178 逐条对上。
+
+**提交**：`6e748e8`（实现，6 files / +592 −14）+ `53550fd`（修索引源，4 files / +249 −8）+ `ce81644`（归档）。⇒ **#675 的切片 A / B / C 至此全部交付，可关票。**
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6e748e8` | (see git log) |
+| `53550fd` | (see git log) |
+| `ce81644` | (see git log) |
+
+### Testing
+
+- 消融（守卫侧，本轮**重跑复核**、不采信上一轮结论；`.scratch/t26-ablation.py`）：M0 干净 / M1 计数写错 → **只红判据 4** / M2 `tui/src/**`→`*`（该 spec 恰好 2 条悬空，命中数不变）→ **只红判据 3** / M3 `index.json`→`*.md`（**非裸**）→ **只红判据 4** ← 判据 3 看不见的那个洞 / M4 声明 9 实际 2 → 只红判据 4。**判据 3 与 4 打红的集合不相交**（T19 判据）。M5 端到端（`scripts/` 下临时副本）：打印 `self-check found 1 problem(s)` 而 **exit 仍 0**。守卫 sha `ddaadb29b048251a` 按字节复原校验通过。
+- 消融（测试侧；`.scratch/t26-test-ablation.py`）：基线 **11 passed**；拆掉判据 4 → **恰好 2 条**红（`test_declared_count_must_match_the_corpus`、`test_pattern_wider_than_its_reason_is_reported`）；拆掉判据 3 → **恰好 1 条**红（`test_bare_wildcard_pattern_is_reported`）；两次突变后守卫 sha 均按字节复原。
+- 索引复算（`.scratch/t26-index-remetric.py` + `-remetric2.py`）：W(walk) `1320 paths / 488 basenames`、G(纯 git) `1154 / 468`、C(git ∩ EXCLUDE，采用) `1142 / 456`；**A→C 判词差异 1/325**；**C \ W = 0**（换源只会移除索引项）；**W \ C = 178**，用 `git check-ignore --stdin` 逐条判：**177 被 gitignore** + 1 条本票尚未入库的 `task.json`（178 逐条对上）。
+- 真实语料：`python scripts/check-spec-refs.py --audit` → **exit 0**、`89 ok / 1 stale / 8 ambiguous / 0 structural`、`mentions 41 of 227`（41 exempt / 0 unclassified）。
+- 门禁：`ruff check` 对守卫与新测试文件 **All checks passed**；两文件 `ast.parse(feature_version=(3,9))` 通过；`pytest tests/python/test_check_spec_refs.py -o addopts=""` → **11 passed**；收集总数 **1149 → 1160**。
+- **CI（本票唯一的真跑判据）**：Scripts CI `35208696969` **绿**（`spec reference guard (Python 3.9)` 与 `(Python 3.12)` 各 success）；Python CI `35208696908` **绿**（ruff lint / dashboard checks / test 3.9 / test 3.12 全 success）；其 3.9 测试 job 自报 **`1152 passed, 8 skipped`** = 收集 **1160**（与本机 `--collect-only` 逐数一致），11 条新测试在日志里**逐字 `PASSED`** 且 **skipped 仍为基线的 8**（无新增 SKIP 行）⇒ 真跑而非静默跳过。
+- ⚠️ **第一次 CI 红的处置留痕**：`6e748e8` 两档**同时红**（`35207013920` / `35207013916`）⇒ 根因是 `os.walk` 索引（本机有 `.codex/config.toml`、干净检出没有 ⇒ 同一提交两个判词）⇒ `53550fd` 换索引源后两档全绿。**本地永远测不出这个红**。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- **#675 的三个切片（A/B/C）至此全部交付 ⇒ 关票**（贴验收映射）。
+- ⚠️ **两篇已删子系统的 spec 正文仍只有横幅**（`tui-grpc-spec.md` / `local-worker-bridge-spec.md`）：逐节重写需每节重新取一手证据，**应另开票**。
+- **#674（journal 账本欠账）**：14 个 session 的 `### Testing` 段仍是脚本骨架、Session 13 有重复残块 —— 与本票无关，保持 open。本场按「填掉自己那两个占位」执行，但历史欠账需专门处理。
+- ⚠️ **判据 4 的固有上限**：它钉的是**数量**不是**语义** —— 换成另一个同样只命中 1 条、但理由不成立的 pattern，对账看不出来；豁免理由是**散文**，不可机器校验。
+- ⚠️ **索引换源的固有上限**：`git ls-files` 依赖 `.git` 存在；非 git 场景回退 `_walk_index()`（有 stderr 警告），此时谓词仍可能随本机文件而变。
+- 副作用（有意）：`scripts/**` 与 `.trellis/spec/**` 的提交**从此会触发一个 job**，T21–T25 那种「收口提交零 CI 触发」的记录不再成立。
