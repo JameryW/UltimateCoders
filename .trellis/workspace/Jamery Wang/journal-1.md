@@ -19,7 +19,7 @@ Added the scheduler's missing reversible stop: SchedulerService::set_job_enabled
 
 ### Main Changes
 
-(Add details)
+- **回填（T27 #674）**：本 session 的逐条交付明细**当时未写入账本**（`### Summary` 已含交付范围）。一手证据见归档任务目录 `.trellis/tasks/archive/2026-09/09-07-scheduler-pause-resume/`（`prd.md` / `research/` / `check.jsonl` / `implement.jsonl` / `task.json`）。
 
 ### Git Commits
 
@@ -29,7 +29,7 @@ Added the scheduler's missing reversible stop: SchedulerService::set_job_enabled
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674）**：本段正文只记了交付路径（spec #625 → ticket #626 → 任务 09-07 → **PR #627**，**15 项 CI 检查全绿**后 squash-merge）。⚠️ 本地逐项门禁（`fmt` / `clippy` / 各套件计数）**当时未写入账本** —— 记为「当时未记录」，不臆造数字。
 
 ### Status
 
@@ -37,7 +37,7 @@ Added the scheduler's missing reversible stop: SchedulerService::set_job_enabled
 
 ### Next Steps
 
-- None - task complete
+- 后续：T1 execution envelope + contract_version handshake（#637）—— 见 Session 2。
 
 
 ## Session 2: T1: execution envelope + contract_version handshake (#637)
@@ -52,7 +52,7 @@ Stamped graph/node/attempt/idempotency/epoch/contract envelope on ALL THREE uc.s
 
 ### Main Changes
 
-(Add details)
+- **回填（T27 #674）**：本 session 的逐条交付明细**当时未写入账本**（`### Summary` 已含交付范围）。一手证据见归档任务目录 `.trellis/tasks/archive/2026-09/09-11-t1-envelope-contract/`（`prd.md` / `research/` / `check.jsonl` / `implement.jsonl` / `task.json`）。
 
 ### Git Commits
 
@@ -64,7 +64,7 @@ Stamped graph/node/attempt/idempotency/epoch/contract envelope on ALL THREE uc.s
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `### Summary`）**：Rust **428 / 370 / 180+8 / 35**；`clippy` clean；pytest **977**；两份 TS stub 均已重新生成。⚠️ 五个数字的套件口径**原文未标注**，按原样转录、不追认。
 
 ### Status
 
@@ -72,7 +72,7 @@ Stamped graph/node/attempt/idempotency/epoch/contract envelope on ALL THREE uc.s
 
 ### Next Steps
 
-- None - task complete
+- 后续：T2 #638（graph row tables + one-shot import）—— 见 Session 3。
 
 
 ## Session 3: T2: graph row tables + one-shot import (#638)
@@ -87,7 +87,7 @@ Five-table GraphStore (incl. reserved cost/tokens/duration + schema-only node_co
 
 ### Main Changes
 
-(Add details)
+- **回填（T27 #674）**：本 session 的逐条交付明细**当时未写入账本**（`### Summary` 已含交付范围）。一手证据见归档任务目录 `.trellis/tasks/archive/2026-09/09-12-t2-graph-tables/`（`prd.md` / `research/` / `check.jsonl` / `implement.jsonl` / `task.json`）。
 
 ### Git Commits
 
@@ -98,7 +98,7 @@ Five-table GraphStore (incl. reserved cost/tokens/duration + schema-only node_co
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `### Summary`）**：门禁 **435 / 377 / 182+8 / 36 / 28**；`clippy` 双 feature 模式 clean；**7 个真 PG 集成测试实跑**（原文 *actually executed* ⇒ 非 `--ignored` 跳过）。
 
 ### Status
 
@@ -106,7 +106,7 @@ Five-table GraphStore (incl. reserved cost/tokens/duration + schema-only node_co
 
 ### Next Steps
 
-- None - task complete
+- 后续：T3 #639（graph state machine + NodeCompletion commit-once）—— 见 Session 4。
 
 
 ## Session 4: T3: graph state machine + NodeCompletion commit-once + attempt lifecycle (#639)
@@ -137,7 +137,7 @@ Five-table GraphStore (incl. reserved cost/tokens/duration + schema-only node_co
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `### Summary`）**：`fmt` + `clippy` 双 feature 全绿；测试 **437 / 379 / 187+8 / 36 / 34**（T2 基线 435/377/182+8/36/28，**只增不减**）；**17 个真 PG `--ignored` 测试实跑全过**（T2 的 7 个 + 本票 10 个）。
 
 ### Status
 
@@ -145,7 +145,7 @@ Five-table GraphStore (incl. reserved cost/tokens/duration + schema-only node_co
 
 ### Next Steps
 
-- None - task complete
+- 后续：T4 #640 与 T6 #642 的图面 —— 据本段 `### Summary` 记为「解锁」；分别见 Session 5 / Session 7。
 
 
 ## Session 5: T4 #640: idempotency closed loop + attempt dedup + late-result fencing
@@ -204,7 +204,8 @@ T5 #641 (Executor trait unification) then T6 #642 (authority flip; depends on T4
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `## Gates`）**：`fmt` clean；`clippy -D warnings` **五目标双 feature 全绿**；Rust **437 / 379 / 192+8 / 36 / 34**（T3 基线只增）；pytest **978 passed / 4 skipped / 0 regressions**（4 个 JetStream 失败是**真·过期测试**，已修）。
+- ⚠️ **本 session 未跑**：真 PG 集成套件（Postgres 停、Docker daemon 未起）、真 JetStream 用例（本地 NATS 停 ⇒ loud-skip）。
 
 ### Status
 
@@ -212,7 +213,7 @@ T5 #641 (Executor trait unification) then T6 #642 (authority flip; depends on T4
 
 ### Next Steps
 
-- None - task complete
+- 后续：T5 #641（统一 Executor trait）→ T6 #642（authority flip）—— 据本段 `## Next`；见 Session 6 / Session 7。
 
 
 ## Session 6: T5 #641 统一 Executor trait 落地完成（JetStream 硬依赖 / effect_class 白名单 / 分解分叉删除）
@@ -280,7 +281,7 @@ T5 六提交落 main：Rust Executor trait/Selector/effect_class 投影 + 删 Di
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `## 门禁终值` 与 `## 验收对照（票面三条）`）**：`fmt` OK；`clippy -D warnings` 五目标（uc-types / uc-engine 默认+nodefault / uc-grpc `--all-features` / uc-grpc-server）**全绿**；Rust uc-engine lib **437** + 5 executor 集成、nodefault **379** + 5、uc-grpc **192+8**、grpc-server **36**、uc-types **35**（T4 基线只增）；pytest **977 passed + 4 skipped**（T4 基线 978，**净 −4 属预期删减**：随 core 回退删掉 5 个测试，被 4 个新 transport 测试部分抵消）；无头 grep 三条验收全过。
 
 ### Status
 
@@ -288,7 +289,7 @@ T5 六提交落 main：Rust Executor trait/Selector/effect_class 投影 + 删 Di
 
 ### Next Steps
 
-- None - task complete
+- 后续：T6 #642（切主 + 删 legacy reassign/reaper）—— 据本段 `## 状态` 记为「就绪」；见 Session 7。
 
 
 ## Session 7: T6 #642 authority flip: C1-C7 + D6 delivered, task archived
@@ -357,7 +358,7 @@ T6 delivered in 8 commits: graph-plane sweep replaces legacy reaper, T4 serde fa
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `## 门禁终值`）**：`fmt` / `clippy` **五目标全绿**；TS `bun test` **162 pass / 17 files**（开工基线 179，净减**全部随死机制**）；pytest **970 passed + 11 单跑复核**（merge_arbiter 5 + workspace 6）**= 977 + 4 skipped**。全量跑中 7 个失败 **100% 为 safe-delete 监视器的 turn 累计删除拦截**（环境现象，非回归）。
 
 ### Status
 
@@ -365,7 +366,7 @@ T6 delivered in 8 commits: graph-plane sweep replaces legacy reaper, T4 serde fa
 
 ### Next Steps
 
-- None - task complete
+- 后续：T7 #643（node/attempt 级取消）—— 见 Session 8。⚠️ 本段另记 PG/NATS 实跑欠账（需手动启动 Docker Desktop）。
 
 
 ## Session 8: T7 #643 node/attempt 级取消 + cancel-attempt-keep-node
@@ -416,7 +417,8 @@ C1-C5 全切片交付：graph 取消原语、网关三路分派、worker killpg 
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `## 质量门禁`）**：`fmt` / `clippy` **双模式全绿**；Rust **452+5 / 379+5 / 195+8**（对 HEAD 无增减）；pytest 全量 **988+5 量级**（新增 11 协作取消用例），全量跑受 safe-delete bulk guard 环境拦截 ⇒ **按文件分批 38/38 全绿等价**；TS `bun test` **156 pass / 16 files**（连续两次）；`tsc` 包内零错误。
+- ⚠️ 本段同时留了一条**勘误**：此前记录的 437/192 是 D6 提交 `765068b` **打测试前**的中途捕获。
 
 ### Status
 
@@ -424,7 +426,7 @@ C1-C5 全切片交付：graph 取消原语、网关三路分派、worker killpg 
 
 ### Next Steps
 
-- None - task complete
+- 后续：T8 #650（ExecutionScope）—— 见 Session 9。
 
 
 ## Session 9: T8 ExecutionScope delivered (#650)
@@ -439,7 +441,7 @@ D8 #645 落地：submit 三入口 project_id 非空校验+创建后不可变；u
 
 ### Main Changes
 
-(Add details)
+- **回填（T27 #674）**：本 session 的逐条交付明细**当时未写入账本**（`### Summary` 已含交付范围）。一手证据见归档任务目录 `.trellis/tasks/archive/2026-09/09-14-t8-execution-scope/`（`prd.md` / `research/` / `check.jsonl` / `implement.jsonl` / `task.json`）。
 
 ### Git Commits
 
@@ -449,7 +451,7 @@ D8 #645 落地：submit 三入口 project_id 非空校验+创建后不可变；u
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `### Summary`）**：**基线只增** —— Rust **439 / 381 / 204+8 / 36 / 35**；pytest **997 + 5 skipped**。
 
 ### Status
 
@@ -457,7 +459,7 @@ D8 #645 落地：submit 三入口 project_id 非空校验+创建后不可变；u
 
 ### Next Steps
 
-- None - task complete
+- 后续：T9 #651（merge barrier）—— 见 Session 10。
 
 
 ## Session 10: T9 merge barrier delivered (#651)
@@ -472,7 +474,7 @@ D9 #646 落地：uc-types merge.rs 确定性 key（跨语言 golden 7094…）+ 
 
 ### Main Changes
 
-(Add details)
+- **回填（T27 #674）**：本 session 的逐条交付明细**当时未写入账本**（`### Summary` 已含交付范围）。一手证据见归档任务目录 `.trellis/tasks/archive/2026-09/09-14-t9-merge-barrier/`（`prd.md` / `research/` / `check.jsonl` / `implement.jsonl` / `task.json`）。
 
 ### Git Commits
 
@@ -482,7 +484,7 @@ D9 #646 落地：uc-types merge.rs 确定性 key（跨语言 golden 7094…）+ 
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `### Summary`）**：uc-types **40（+5）**；pytest **1009 + 5 skipped（+12）**；PG 集成 **+4 条 `--ignored` 并入欠账**（本轮未实跑）。
 
 ### Status
 
@@ -490,7 +492,7 @@ D9 #646 落地：uc-types merge.rs 确定性 key（跨语言 golden 7094…）+ 
 
 ### Next Steps
 
-- None - task complete
+- 后续：T10 #652（context compiler）—— 见 Session 11。
 
 
 ## Session 11: T10 context compiler delivered (#652)
@@ -505,7 +507,7 @@ D10 #647 落地：uc-types ContextEntry/ContextBlock + compose（8KiB 贪心装�
 
 ### Main Changes
 
-(Add details)
+- **回填（T27 #674）**：本 session 的逐条交付明细**当时未写入账本**（`### Summary` 已含交付范围）。一手证据见归档任务目录 `.trellis/tasks/archive/2026-09/09-14-t10-context-compiler/`（`prd.md` / `research/` / `check.jsonl` / `implement.jsonl` / `task.json`）。
 
 ### Git Commits
 
@@ -515,7 +517,7 @@ D10 #647 落地：uc-types ContextEntry/ContextBlock + compose（8KiB 贪心装�
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `### Summary`）**：uc-types **43（+3）**；uc-grpc **206（+2）**；pytest **1016 + 5 skipped（+7）**；PG 集成**再 +1 条 `--ignored`** —— 累计欠账清单见 Session 13 的 `### Known Limitations`。
 
 ### Status
 
@@ -523,7 +525,7 @@ D10 #647 落地：uc-types ContextEntry/ContextBlock + compose（8KiB 贪心装�
 
 ### Next Steps
 
-- None - task complete
+- 后续：T11 #653（sandbox env allowlist）—— 见 Session 12。
 
 
 ## Session 12: T11 sandbox env allowlist delivered (#653)
@@ -535,8 +537,6 @@ D10 #647 落地：uc-types ContextEntry/ContextBlock + compose（8KiB 贪心装�
 ### Summary
 
 D11 #648 落地：_execute_subprocess 单点 deny-by-default 过滤（替换 dict(os.environ)+env_vars 全量透传）+ SandboxConfig 三级清单（base/shared/per-adapter，*=前缀通配、大小写无关）+ 插件驱动凭据并入（registry api_key_env）+ 覆盖层纪律（可加/覆盖但非旁路）+ UC_SANDBOX_ENV_EXTRA 逃生舱（启动即日志）+ agent 身份三序解析（adapter.name() → request[agent] → config.agent，decompose 走 claude 清单）。新增 pytest 69（真实子进程回读 os.environ：诱饵密钥全适配器不过闸、CLI 凭据过闸、decompose 得 ANTHROPIC 不得 XAI、逃生舱生效+日志、LC_*/UC_* 前缀）。pytest 1016+5 → 1085+5（44 文件逐文件全绿，sandbox 域 251 全过）；Rust 零改动，fmt + 5 组 clippy -D warnings 全绿。README 双语文档补 UC_SANDBOX_ENV_EXTRA。
-
-### Main Changes
 
 ### Main Changes
 
@@ -574,30 +574,10 @@ D11 #648 落地：_execute_subprocess 单点 deny-by-default 过滤（替换 dic
 |------|---------|
 | `4c3689c` | (see git log) |
 
-### Testing
-
-- [OK] (Add test results)
-
-### Status
-
-[OK] **Completed**
-
 ### Next Steps
 
-- None - task complete
+- 后续：T12 #654（affinity placement）—— 据本段 `### Status`「P1 剩余」；见 Session 13。
 
-
-## Session 13: T12 affinity placement delivered (#654)
-
-**Date**: 2026-09-15
-**Task**: T12 affinity placement delivered (#654)
-**Branch**: `main`
-
-### Summary
-
-D12 #649 落地（P1 收尾）：网关侧软放置。硬闸（capability→scope→contract_version）后按 affinity desc→load asc→locality desc→worker_id asc 排序，命中 per-worker subject uc.subtask.execute.w.{worker_id}；零重叠/未声明/全过期→共享 overflow。新增 placement.rs（纯打分器+跨语言 subject golden）、WorkerRegistry.heartbeat_with_signals/dispatch_candidates/placement_target、两个发布嘴统一 resolve_dispatch_subject；proto 加性加 recent_files/per_worker_topic，UC_SUBTASKS 补通配。worker 自建 per-worker durable 并每次心跳声明（失败保持 legacy）。Rust 237 passed；pytest 1106+5 skip（+21）；fmt + 5 组 clippy 全绿。零搁死：定向不写 assigned_worker。
-
-### Main Changes
 
 ## Session 13: T12 affinity placement delivered (#654) — P1 收尾
 
@@ -698,17 +678,9 @@ Docker Desktop）。
 |------|---------|
 | `b3aa299` | (see git log) |
 
-### Testing
-
-- [OK] (Add test results)
-
-### Status
-
-[OK] **Completed**
-
 ### Next Steps
 
-- None - task complete
+- P1 地图 #644 已全部交付（T8–T12）；剩余 **PG/NATS 实跑欠账**（T4/T6/T7/T9/T10）阻塞于 Docker Desktop —— 据本段 `### Known Limitations` 与 `### Status`。
 
 
 ## Session 14: Verify the T12 dispatch plane on a live broker — affinity placement was never active
@@ -720,8 +692,6 @@ Docker Desktop）。
 ### Summary
 
 T12 affinity placement had never been run against a real NATS broker; mock-only coverage hid that the shared durable was unfiltered, which makes every per-worker consumer illegal on a work-queue stream (err_code 10100). Fixed by pinning the shared consumer to the bare shared subject; added a live-broker integration suite plus a CI step that runs it against a real JetStream server; also taught streaming provisioning to add the per-worker wildcard to a pre-existing stream, since get_or_create_stream has no update path.
-
-### Main Changes
 
 ### Main Changes
 
@@ -821,17 +791,9 @@ Complete. Commits `78c0d1d`, `7f69e62`, `080e747`, `07064bf`, `82ea112`,
 | `82ea112` | (see git log) |
 | `db7c289` | (see git log) |
 
-### Testing
-
-- [OK] (Add test results)
-
-### Status
-
-[OK] **Completed**
-
 ### Next Steps
 
-- None - task complete
+- 后续：T13 #655（统一两份图投影的依赖感知规则）—— 见 Session 15。
 
 
 ## Session 15: T13: 统一两份图投影的依赖感知规则（#655）
@@ -843,8 +805,6 @@ Complete. Commits `78c0d1d`, `7f69e62`, `080e747`, `07064bf`, `82ea112`,
 ### Summary
 
 source-B 导入把阻塞的 Pending 节点发布成 READY；三条投影路径改为共用一份 dependency_aware_state
-
-### Main Changes
 
 ### Main Changes
 
@@ -873,17 +833,9 @@ source-B 导入把阻塞的 Pending 节点发布成 READY；三条投影路径�
 |------|---------|
 | `5bae604` | (see git log) |
 
-### Testing
-
-- [OK] (Add test results)
-
-### Status
-
-[OK] **Completed**
-
 ### Next Steps
 
-- None - task complete
+- #655 收口：贴验收映射后关闭 —— 据本段 `### Status` 记为「待关」；该 issue 现已关闭。
 
 ## Session 16: T14: 指标写入点 + duration_ms —— 终态事件带时长（#659）
 
@@ -1126,7 +1078,8 @@ S1–S3 交付后，我曾在提交信息、#661 评论与长期记忆里写「�
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `## 测试` 与 `## 门禁`）**：Rust golden 测试钉住 `review_json` 的**跨语言 key 名**（`approved` / `issues` / `suggestions`），并断言缺 `approved` 的 JSON **必须解析失败**；Python 3 条（verdict 往返、垃圾/部分块容错、checkpoint 往返 + payload 仅在存在时发键）。门禁：`cargo fmt` clean、`uc-types` clippy `--all-targets` clean、`uc-engine` clippy `--lib` clean、`cargo check -p uc-engine --all-targets` clean；uc-engine lib **446**、uc-types **47**、uc-grpc `--all-features` **238**；pytest **1123 / 10 skipped**；`ruff` clean。**CI：`f5ef707` 的 Rust CI 8/8 绿。**
+- ⚠️ 本段另记两条**归因过的环境现象**（都不是本票引入，已在干净基线上复现）：`clippy --all-targets` 在 `graph_store_integration` 上报 `can't find crate`；`--all-features` 报 `worker_service_server` 缺失 + `rustc STATUS_STACK_BUFFER_OVERRUN`。
 
 ### Status
 
@@ -1134,7 +1087,7 @@ S1–S3 交付后，我曾在提交信息、#661 评论与长期记忆里写「�
 
 ### Next Steps
 
-- None - task complete
+- 后续：T17 #667（图镜像不再移动权威 node state）—— 见 Session 20。
 
 
 ## Session 20: T17: 图镜像不再移动权威 node state —— D15 的 B + C 落地（#667）
@@ -1146,10 +1099,6 @@ S1–S3 交付后，我曾在提交信息、#661 评论与长期记忆里写「�
 ### Summary
 
 执行 D15 裁决：shadow 分支不再写 state（B）+ 对已存在 node 加 transition_ok 转移守卫（C）+ 两个互斥计数。用消融实验测出两条子句各自的真实作用，据此推翻了票面与我已写下三遍的「C 拦住形状 1 回退」这一过度声称。
-
-### Main Changes
-
-### Summary
 
 执行 D15（#665）的 **B + C** 裁决：`write_projection` 的 shadow 分支**不再写 `state`**（B），并对**已存在** node 复用既有 `transition_ok` 加**转移守卫**（C）；新增两个**互斥**计数，让「被守卫拒绝」与「镜像根本没送达」在返回值与日志里可区分。落地过程中用**消融实验实测**了两条子句各自的真实作用，据此推翻了本票自己先写下的（以及我在源码 doc / 测试 doc / 票面里已经写下三遍的）一个**过度声称**。
 
@@ -1280,7 +1229,7 @@ ON CONFLICT (node_id, graph_id) DO UPDATE SET state = EXCLUDED.state, ...
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `## 测试：五个形状 + 两次消融` 与 `## 门禁`）**：五个形状 + **两次消融** —— 把 `state = EXCLUDED.state` 加回（删 B）在**形状 3** 打红，令 `mirror_write_allowed` 恒 true（删 C）在**形状 1 的计数断言**打红 ⇒ 两条子句**各守一半**，据此推翻了票面与源码 doc 的过度声称。门禁：`cargo fmt --all -- --check` clean；`clippy -p uc-engine --all-targets --features storage -D warnings` clean；`clippy --workspace -D warnings`（CI 同款）clean；`cargo check --workspace --all-targets --all-features` clean；uc-engine lib **447 passed**（446 → 447）、nodefault **387**、uc-grpc `--all-features` **238 passed**；**真 PG** `graph_store_integration --ignored --test-threads=1 graph` → **20 passed / 0 failed / 11.49s**（T15 基线 19 ⇒ +1）；**CI `1e61318` / `c6dfd20`：Rust CI 8/8 绿**，且 storage job 日志逐字有 `test graph_t17_mirror_never_rolls_authority_back_or_resurrects ... ok`、**无 `SKIP:` 行** ⇒ **真跑，不是 SKIP**。
 
 ### Status
 
@@ -1288,7 +1237,7 @@ ON CONFLICT (node_id, graph_id) DO UPDATE SET state = EXCLUDED.state, ...
 
 ### Next Steps
 
-- None - task complete
+- 后续：T18 #666 实现（逐步用量落到 `payload.steps[]`）—— 见 Session 21。
 
 
 ## Session 21: T18: 逐步用量落到 payload.steps[]（#666 实现）
@@ -1374,7 +1323,8 @@ ON CONFLICT (node_id, graph_id) DO UPDATE SET state = EXCLUDED.state, ...
 
 ### Testing
 
-- [OK] (Add test results)
+- **回填（T27 #674，源 = 本段 `## 消融` 与 `## 门禁与一次账目更正`）**：**两条消融**各自定位到唯一守卫 —— 删 `steps_payload` 的空切片早返回 ⇒ **只有 1 条打红**；给 `StepUsage.usage` 加 `skip_serializing_if = "Option::is_none"` ⇒ **两个 crate 各打红一条**（证明两条断言真的分处两个编译单元，而非同一断言抄两遍）。本地门禁（2026-09-16）全绿：`fmt --check`；`clippy --workspace --all-targets --all-features -D warnings`；`clippy --workspace -D warnings`（CI 原样命令）；`cargo check --workspace --all-features --all-targets`；四组 `cargo test` exit 0。基线**只增不减**：uc-engine lib **447→452**（默认）/ **387→392**（nodefault）/ **467**（all-features）；uc-grpc **210→212** / **238→240**（all-features）；uc-types **47→50**；`graph_store_integration` ignored **20→21**；Python **1123→1139 passed / 10 skipped**；`ruff check python/ tests/` clean。**CI（`8a0645d`）：Rust CI 8/8 绿、Python CI 4/4 绿**；TypeScript CI **未被触发**（diff 不含 `packages/**`，符合其路径过滤）；真跑判据两条都过（storage job 逐字 `test graph_t18_commit_carries_per_step_usage_into_the_terminal_payload ... ok`、`21 passed; 0 failed`，**全日志 0 条 `SKIP:`**），且 CI 日志的 `467 / 240 / 50 / 36 filtered out` 四行**独立复核**了本地 all-features 计数。
+- ⚠️ 本段并留了一次**账目更正**：用 `git worktree` 在 HEAD 复跑得真实本地数 **1123 passed / 10 skipped**（收集 1133），纠正了记忆里「1120」的口径；更硬的判据是**总收集数对账**（本地 1139+10 = CI 1141+8 = 1149，差的 2 条是 POSIX-only）+ 导出全量测试 ID 集做 `comm`（**removed = 0, added = 16**）。
 
 ### Status
 
@@ -1382,7 +1332,7 @@ ON CONFLICT (node_id, graph_id) DO UPDATE SET state = EXCLUDED.state, ...
 
 ### Next Steps
 
-- None - task complete
+- 后续：T19 #669（派发硬门排除产出者）—— 见 Session 22。
 
 
 ## Session 22: T19: 派发硬门排除产出者 —— review 节点不得由自己审（#669 裁决 A 实现）
@@ -1507,7 +1457,7 @@ T16 自己留了注释解释为什么排除 `review`：*"Advertising it by defau
 
 ### Next Steps
 
-- None - task complete
+- **遗留一个未消除的竞态窗口**：候选 ≥2 且含生产者时，共享 work-queue 仍可能把 review 投给生产者 —— 据本段 `## 残余`，属**已知、已记账**，**不是待办**（消除它需 per-worker subject 全覆盖 + 把 affinity 从偏好升格为门，即 D16 已驳回的裁决 D）。
 
 
 ## Session 23: T20: 能力层规范与代码脱节 —— 纠正 #111/#161 遗留的幽灵 API，并把默认能力事实钉死
