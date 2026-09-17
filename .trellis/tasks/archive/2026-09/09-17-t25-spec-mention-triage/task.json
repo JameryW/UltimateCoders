@@ -1,0 +1,38 @@
+{
+  "id": "09-17-t25-spec-mention-triage",
+  "name": "t25-spec-mention-triage",
+  "title": "T25: #675 切片 B —— 47 处悬空路径提及的逐条分类与处置（含带理由的豁免机制）",
+  "description": "实施 #675 切片 B：把守卫实测的 47 处「无行号但指向不存在文件」的提及逐条分类并处置。一手证据把 47 处划成 7 个完全且不相交的类（29+2+4+5+1+4+2）：已删子系统 TUI（d7f4631，替代物 packages/uc-orchestrator/src/** 在仓内）、已删子系统 local-worker bridge（a368371）、运行时配置（uc.scheduler.yaml，spec 自述 opt-in）、举例/命名规范示例、目录表列已删文件（docker.rs，514ec3b）、测试指针已删（47f2add）、Python→Rust 迁移（15b5ae3 → crates/uc-python/src/scheduler.rs）。真过期 7 行改 spec，已删子系统 31 行加状态横幅（点名删除提交），其余 40 行进入守卫新增的 MENTION_EXEMPT / SUBJECT_REMOVED 带理由豁免机制。顺带推翻票面「tui 是另一个仓库」的定性并更正守卫 docstring。不改 exit code、不接 CI。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Jamery Wang",
+  "assignee": "Jamery Wang",
+  "createdAt": "2026-09-17",
+  "completedAt": "2026-09-17",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "868cc92",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "scripts/check-spec-refs.py",
+    ".trellis/spec/frontend/tui-grpc-spec.md",
+    ".trellis/spec/backend/local-worker-bridge-spec.md",
+    ".trellis/tasks/09-17-t25-spec-mention-triage/research/notes.md"
+  ],
+  "notes": "",
+  "meta": {},
+  "issue": 675,
+  "map": null,
+  "decision": null,
+  "summary": "#675 切片 B（47 处悬空提及的分类与处置）。**一手证据推翻票面定性**：`tui/**` 不是「另一个仓库」，而是**在本仓被 `d7f4631` 删除**（\"Delete tui/ directory\"，84 files / −15336），spec 从未同步 —— 处置因此从「豁免」改为「加状态横幅」。7 类划分**完全且不相交**（29+2+4+5+1+4+2 = 47，未分类 0）：真过期 7 行改 spec，40 行进入守卫新增的 `MENTION_EXEMPT` / `SUBJECT_REMOVED` 带理由豁免。关键机制：整篇豁免**只有 spec 正文点名删除提交时才被承认**（判据 2），且自检拒绝**死规则**（判据 1）与**裸通配符**（判据 3，由消融 M4 实测出的洞补上）。**不改 exit code**：`--audit` exit 0、`0 structural`、`0 unclassified`，既有 ref 判定 `89 ok / 1 stale / 8 ambiguous` 与 T24 逐项相同。消融六格（M0–M5）全部按预期，M5 与 M0 逐字节相同。**#675 保持开放**（切片 C = 门禁/CI 决策）。",
+  "commits": [
+    "868cc92"
+  ]
+}

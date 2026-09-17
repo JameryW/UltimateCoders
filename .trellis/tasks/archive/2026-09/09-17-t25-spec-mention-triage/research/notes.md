@@ -169,20 +169,55 @@ SUBJECT_REMOVED = {spec: (removal_commit, successor)} # 整篇级：正文必须
 - 自检结果作为 **advisory 段落**打印（**不参与 exit code**，满足票面「不改 exit code」），
   并由 `.scratch/` 的消融脚本断言「突变后会报警」。
 
-## 7. 消融计划（一次一处突变，验证后按字节恢复并校 sha256）
+## 7. 消融实测（一次一处突变；恢复后校 sha256）
 
-| # | 突变 | 期望 |
-|---|---|---|
-| **M0** | 不改 | `unclassified == 0`、自检问题数为 0、exit 0 |
-| **M1** | 从 `tui-grpc-spec.md` 横幅里删掉提交哈希 `d7f4631` | 自检**报警**（整篇豁免失去正文背书）⇒ 该 spec 的 29 条回落 `unclassified` |
-| **M2** | 把 `MENTION_EXEMPT` 里 `uc.scheduler.yaml` 规则改成匹配不到的形状（如 `uc.scheduler.yamls`） | 自检**报警**（规则命中 0 条） |
-| **M3** | 往一篇 spec 的围栏外**新增**一条真悬空提及（如 `` `does_not_exist_xyz.py` ``） | 该条进 `unclassified`（证明豁免集**不是**「什么都吃」） |
-| **M4** | 把某条 `MENTION_EXEMPT` 的 glob 放宽到 `*` | 该 spec 下**其它**悬空提及一并被豁免 ⇒ 自检的「整篇豁免必须点名提交」不适用于细粒度规则，故此格用来**确认放宽的边界可观测**（记录实际行为，不预设结论） |
-| **M5** | 全部恢复 | 与 M0 **逐字节**相同（sha256 相等） |
+`M0` 的基线与 `M5` 的恢复态**逐字节相同**；**六次运行全部 exit 0**（advisory 语义未被削弱）。
+所有数字读自守卫自己的 stdout（不是重算 —— 重算是第二个会分歧的 oracle）。
 
-⚠️ **M4 是刻意保留的探索格**：细粒度规则放宽到 `*` 在语义上等于「静默整篇豁免」，
-而这正是 `SUBJECT_REMOVED` 设计要避免的。若 M4 显示它可以静默吃掉整篇，则需在自检里
-**再加一条**（细粒度规则不得与任一 spec 的全部悬空提及重合）。**先测，再决定要不要加规则**。
+| # | 突变 | exit | exempt | unclassified | 自检问题 | 结论 |
+|---|---|---|---|---|---|---|
+| **M0** | 不改 | 0 | 40 | 0 | 0 | 基线干净 |
+| **M1** | 从 `tui-grpc-spec.md` 横幅删掉提交令牌 `d7f4631` | 0 | 13 | **27** | **1** | 整篇豁免**确实**以「spec 自己声明」为条件 —— 横幅不是装饰 |
+| **M2** | 把 `uc.scheduler.yaml` 规则改成 `uc.scheduler.yamls`（匹配不到） | 0 | 36 | **4** | **1** | 死规则被**报出来**，不是静默放过 |
+| **M3** | 在 `directory-structure.md` 围栏外注入 `` `totally_missing_zzz.py` `` | 0 | 40 | **1** | 0 | 豁免集**不会**吞掉无关提及；且注入的提及被守卫真的看见了（`228` 提及） |
+| **M4** | （承 M3）把该 spec 的规则 pattern 放宽成 `*` | 0 | **41** | **0** | **1** | ⚠️ **放宽后那条注入的提及被静默豁免** ⇒ 风险是真的；**首轮它一个问题都不报** |
+| **M5** | 全部恢复 | 0 | 40 | 0 | 0 | 与 M0 逐字节相同（三个文件 sha256 相等） |
+
+### M4 的产出：一个被实测出来的洞，以及补上的判据 3
+
+**M4 首跑是本票唯一一处「设计自以为严密、实测不严密」的地方。** 把细粒度规则的 pattern 从
+`new_module/impl.rs` 放宽到 `*` 后，它**静默变成整篇豁免**，而 `exemption_self_check` 的两条
+原有判据都不触发（规则仍然「命中 ≥1 条」，横幅也都在）—— 同时 `--audit` 依然报告
+`0 unclassified`，也就是**一条看起来完全健康的输出**。
+
+处置：补**判据 3** —— `MENTION_EXEMPT` 的 pattern **不得是裸通配符**（`*` / `**` / `*.*`）。
+整篇级豁免必须走 `SUBJECT_REMOVED`（在那里它必须由 spec 正文自己声明）。补完后 M4 报
+`self_check_problems=1`，而 M0/M1/M2/M3/M5 的结论全不变。
+
+⇒ 这条判据**检查的是 pattern 的形态，而不只是它的命中数** —— 与 T22 那条「凡 `f(x) == g(x)`
+的不变量，先确认两边定义不互相调用」同源：**只数命中数的检查器，看不见「一条规则比它的理由更宽」。**
+
+## 7b. 交付后的实测数字（收口时复算）
+
+```
+scanned 98 `path:line` references in 11 spec files
+scanned 227 line-free path mentions in 26 spec files (166 resolved / 40 dangling / 21 ambiguous)
+summary: 89 ok / 1 stale(advisory) / 8 ambiguous(advisory) / 0 structural failure(s)
+         0 of 98 have no matching quoted content (orthogonal to the verdict above)
+         mentions: 40 of 227 resolve to no file (40 exempt by documented reason, 0 unclassified)
+spec reference audit passed.        <- exit 0
+```
+
+- **47 -> 40** 悬空；**40 == exempt**；**0 unclassified**。
+- 提及总数 **221 -> 227**（+6 净）：修复时引入的**真实**指针（`+13 resolved`）多于被删掉的死提及（`-7 dangling`）。
+- **既有 ref 判定一格未动**：`89 ok / 1 stale / 8 ambiguous / 0 structural` 与 T24 收口逐项相同。
+- 豁免来源：`SUBJECT_REMOVED` 29 条（tui-grpc 27 + local-worker 2）、`MENTION_EXEMPT` 11 条
+  （`uc.scheduler.yaml` 4 + `tui/src/**` 2 + `record-session.md` 2 + 其余 3 各 1）。
+- `git diff --numstat`：9 篇 spec 全为小改动（最大 `10/17`，来自被整段替换的 20 行块），
+  守卫 `198/16`。**无整文件重写**；9 篇 spec 改动后**孤立 LF 均为 0**。
+- 门禁：`cargo fmt --all --check` clean（Rust 未动）、`ruff check` clean；
+  `ruff format --check` **改动前后都失败**（用 `git show HEAD:` 的版本取证：既有的
+  `EXCLUDE_DIRS` / `CODE_EXT` 两块就是不允许被格式化的），`scripts/**` 不在 CI lint 面内。
 
 ## 8. 已知限制
 
@@ -197,3 +232,10 @@ SUBJECT_REMOVED = {spec: (removal_commit, successor)} # 整篇级：正文必须
 4. **本机时钟与注入时间不一致**：本轮注入的 `current_time` 是 `2026-09-16 22:17`，
    而 `date` 实测 `2026-09-17 17:15 +0800`，且 HEAD 提交时间戳为 `2026-09-16 23:14 +0800`
    （T24 收口）⇒ 注入值**早于**已完成的提交，必为陈旧信号。任务目录/日期一律以 **`date` + git 时间戳**为准。
+5. **⚠️ 判据 3 只挡住了「裸通配符」，没挡住「比它的理由更宽的模式」。** M4 暴露的风险有一半仍在：
+   一条形如 `tui/**` 的 pattern 是合法的（有 `/`、非裸通配），但它同样可以覆盖整个 spec 的悬空集。
+   本票**没有**加「规则不得覆盖该 spec 全部悬空提及」这条判据 —— 因为存在**合法**的全覆盖情形
+   （`uc.scheduler.yaml` 恰好命中 scheduler-spec 的全部 4 条悬空提及）。
+   ⇒ 真正的判据应是「模式宽度 vs 理由宽度」，而那是**语义**比对，非机械可判。
+   **切片 C 若把提及升级为门禁，需要先决定这条怎么处理**（候选：要求每条规则在注释里声明它预期覆盖的
+   路径清单，并对清单做逐条核对）。**本票只把「已实测到的那一半」堵上，并把剩余风险写在这里。**
