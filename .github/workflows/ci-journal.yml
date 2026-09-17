@@ -1,0 +1,79 @@
+name: Journal CI
+
+# Why this exists (#676): the workspace journals are written by
+# `.trellis/scripts/add_session.py`, whose skeleton contains placeholder text,
+# and nothing read the result -- so 39 placeholder lines accumulated across 18
+# sections before #674 cleaned them.  This job is what stops the backlog from
+# coming back.  It is deliberately separate from `ci-scripts.yml` rather than an
+# extra step there, so the two guards fail independently and neither workflow's
+# `paths` has to grow to cover the other.
+#
+# A `paths` filter IS correct here, unlike in `ci-scripts.yml`.  That guard
+# walks the whole repository (`os.walk(ROOT)`) to build its index, so a filter
+# would be blind to the changes that flip its verdict.  This one reads a closed
+# set of inputs, and every one of them is listed below:
+#
+#   * `.trellis/workspace/**` -- the corpus itself.  Adding or deleting any file
+#     under it changes what `git ls-files` returns, and the guard indexes from
+#     git on purpose: #675 slice C measured a guard whose verdict depended on a
+#     gitignored file, so the same commit gave two different judgments.
+#   * `.trellis/scripts/add_session.py` -- the declared headings and placeholder
+#     strings are checked against the skeleton that emits them.  If the skeleton
+#     is renamed and this workflow does not re-run, the gate would keep passing
+#     while testing nothing (the guard fails closed with STALE_SKELETON).
+#   * `scripts/check-journal-ledger.py` and its test -- the checker and its
+#     harness.
+#
+# The Python matrix keeps 3.9 because the guard claims 3.9 compatibility (it
+# leans on `from __future__ import annotations` and avoids 3.10+ runtime syntax)
+# and `pyproject.toml` pins `target-version = "py39"`.  Exercising the claim is
+# what stops it from quietly becoming false.
+#
+# `ruff format --check` is not run: it fails on the rest of the repo's Python
+# and this workflow owns neither, exactly as `ci-scripts.yml` records.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".trellis/workspace/**"
+      - ".trellis/scripts/add_session.py"
+      - "scripts/check-journal-ledger.py"
+      - "tests/python/test_check_journal_ledger.py"
+      - ".github/workflows/ci-journal.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".trellis/workspace/**"
+      - ".trellis/scripts/add_session.py"
+      - "scripts/check-journal-ledger.py"
+      - "tests/python/test_check_journal_ledger.py"
+      - ".github/workflows/ci-journal.yml"
+
+jobs:
+  journal-ledger:
+    name: journal ledger (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - run: pip install ruff pytest
+      - name: ruff check (the guard and its test only)
+        run: ruff check scripts/check-journal-ledger.py tests/python/test_check_journal_ledger.py
+      - name: run the guard on the real ledger
+        # --verbose only adds the per-file census; it never changes the verdict.
+        # A violation (a placeholder line, a session missing one of the six
+        # standard headings, a duplicate session number) exits 1 on purpose.
+        run: python scripts/check-journal-ledger.py --verbose
+      - name: synthetic corpus + real corpus tests
+        # `-o addopts=""`: pyproject's addopts pull in pytest-cov, which this job
+        # has no use for -- the test loads a script by path and never imports the
+        # package, so coverage would only report 0%.
+        run: pytest tests/python/test_check_journal_ledger.py -v -o addopts=""

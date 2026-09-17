@@ -857,6 +857,14 @@ source-B 导入把阻塞的 Pending 节点发布成 READY；三条投影路径�
 - **取 DB 时间**：`commit_once` 的 attempt 读从 `SELECT status` 扩成 `SELECT status, started_at, NOW() … FOR UPDATE`，时长由**数据库自己的 NOW()** 推出，绝不用进程时钟（应用/PG 时钟差会把时长污染成看似合理的错值）。CAS / commit-once / fence 语义一行未改。
 - **`usage_reported: false`** 写进 `node_succeeded` 的 payload——显式声明本次不含用量上报（D13 的硬性要求：别让缺失被读成 0）。
 
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ca67b20` | (see git log) |
+
+> 回溯（T28 #676）：交付提交 = T14 实现（`ca67b20`，`Tracker: #659`）。本表只列**记录本 session 的提交**（`f28bf24`）**之前**落地的交付提交 —— 该口径与既有 25 处表格逐条吻合（`git log -S` 量过）；其后的归档提交 `437265d` 不列入。
+
 ### Testing
 
 - **单测（本地）**：`attempt_duration_ms_never_invents_a_duration`（无起点 / 起点晚于 DB 时钟，两条都 `None`）、`attempt_duration_ms_measures_the_elapsed_span`（+1500ms → `Some(1500)`；两戳相同 → `Some(0)`）。
@@ -901,6 +909,14 @@ source-B 导入把阻塞的 Pending 节点发布成 READY；三条投影路径�
 - **原生依赖边 `#660 ← #659` 已补**：票面 `Blocked by: T14` 原先只是文字。补之前先做**方法自证**——拿已知为真的边对照（#638 / #640 / #641 / #642 / #643 都非空），确认不是 API 能力缺失；补之后**双向复核**（`#660 blocked_by #659` + `#659 blocking #660`）。⇒ 与 T1–T7 链的记法对齐。
 - **#659 / #664 关闭**（reason=completed），各附验收映射评论：#659 逐条对表（验收项 + CI 数字 + 三处诚实记录：函数改名、`append_event_tx` 签名未改而改为委托、payload 用显式 `usage_reported:false` 而非省略该键）；#664 表列 4 项门禁 + 「修的是测试不是产品」+ **后效写明**。
 - **#665（D15）保持 open 并加立案评论**：决策票未裁就不关（与 D13/D14「裁并关闭」的口径一致）。评论补两条裁决材料——#664 修复后该链路 e2e 覆盖消失（刻意为之）、以及「裁决前是否默认关掉 `UC_GRAPH_SHADOW`」。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0c2604d` | (see git log) |
+
+> 回溯（T28 #676）：交付提交 = #664 修复（`0c2604d`，`Tracker: #664`），本段正文即点名此哈希。记录本 session 的提交是 `5ea38c9`（评估文档），按「只列它之前的交付提交」口径不列入。
 
 ### Testing
 
@@ -948,6 +964,14 @@ source-B 导入把阻塞的 Pending 节点发布成 READY；三条投影路径�
 - **跨语言 golden 两半**：Python 侧钉「payload builder 发的键 == Rust 侧读的键」，Rust 侧钉
   「不设 usage 时序列化里不出现 `usage` 子串」。任一侧改名会同时打红。
 - **票面三处偏差 + 两处实现偏离**逐条记入 `prd.md` 与 `implement.jsonl`，未静默扩张也未静默遗漏。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dd3d2b3` | (see git log) |
+
+> 回溯（T28 #676）：交付提交 = T15 实现（`dd3d2b3`，`Tracker: #660`），本段 `**Branch**` 行即点名此哈希。记录本 session 的提交是 `d942fa9`；其后的归档 `45e60b7` 与评估 `3d876df` 不列入。
 
 ### Testing
 
