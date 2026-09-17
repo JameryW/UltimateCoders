@@ -1,0 +1,38 @@
+{
+  "id": "09-17-t26-guard-ci-wiring",
+  "name": "t26-guard-ci-wiring",
+  "title": "T26: #675 切片 C —— 豁免表判据 4（规则必须声明命中数）+ 让 `scripts/**` 真正进入 CI",
+  "description": "实施 #675 切片 C。T25 留下的两个问题：①判据 3 只挡裸通配符，挡不住「非裸但宽于理由」的 pattern（消融 M4 实测两条判据都不响而 --audit 照旧打印 0 unclassified）；②`scripts/**` 在零个 workflow 的 `paths` 里，守卫可静默腐烂，且把测试放进 `tests/python/` 补不上这个洞（改 `scripts/**` 不触发它）。本票：给 `MENTION_EXEMPT` 加声明命中数（实测 4+1+1+1+2+2=11，与 SUBJECT_REMOVED 侧 29 合计 40）；加判据 4 并对账；修一处已变成假话的注释（Two invariants … Both，后面却列了三条）；新增合成语料测试（10 条，含真实语料两条）；新增 `ci-scripts.yml`（无 paths 过滤、矩阵 3.9+3.12）。两个裁决：悬空计数维持 advisory（可强制的是表一致性 + 仓库自证 unclassified==0）；CI 取无过滤形态（守卫用 os.walk 读整个仓，带过滤会恰好对翻判词的改动瞎）。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Jamery Wang",
+  "assignee": "Jamery Wang",
+  "createdAt": "2026-09-17",
+  "completedAt": "2026-09-17",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "6e748e8",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "scripts/check-spec-refs.py",
+    "tests/python/test_check_spec_refs.py",
+    ".github/workflows/ci-scripts.yml"
+  ],
+  "notes": "",
+  "meta": {},
+  "issue": 675,
+  "map": null,
+  "decision": null,
+  "summary": "",
+  "commits": [
+    "6e748e8",
+    "53550fd"
+  ]
+}
