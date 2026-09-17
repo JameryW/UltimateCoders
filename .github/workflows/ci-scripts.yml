@@ -1,0 +1,62 @@
+name: Scripts CI
+
+# The spec-reference guard lives in `scripts/`, which was in NO workflow's
+# `paths` before this file existed (measured 2026-09-17, #675 slice C: zero of
+# the four other workflows mention `scripts/`).  So a guard regression, or an
+# exemption rule that quietly stopped matching, could ship with nothing
+# noticing.
+#
+# Two deliberate choices, both measured rather than assumed:
+#
+#   * NO `paths` filter.  The obvious shape would be `paths: scripts/**`, but
+#     that is semantically wrong: the guard walks the whole repository
+#     (`os.walk(ROOT)`) to build its index, so adding a file can make an
+#     exemption rule dead, and deleting one can create a dangling mention.
+#     A `paths` filter would therefore be blind to exactly the changes that
+#     flip a verdict.  The job is deliberately tiny (no Rust build, no matrix
+#     over Python for the suite -- see below) so that running it on every push
+#     stays cheap.
+#   * `ruff` is scoped to the two named files, NOT to `scripts/`.  `ruff check
+#     scripts/` is red today on pre-existing issues in check-codex-issue-flow.py
+#     (I001 + UP045, last touched in fc9b5ce) and this workflow owns neither.
+#     `ruff format --check` is not run at all: it fails on the guard both before
+#     and after #675 slice C (verified against the `git show HEAD:` copy), so
+#     wiring it would import a large unrelated reformat.
+#
+# The Python matrix keeps 3.9 because the guard claims 3.9 compatibility (it
+# leans on `from __future__ import annotations` and avoids 3.10+ runtime
+# syntax) and the repo's Python CI matrix includes 3.9.  Exercising the claim
+# here is what stops it from silently becoming false.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  spec-refs:
+    name: spec reference guard (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - run: pip install ruff pytest
+      - name: ruff check (the guard and its test only)
+        run: ruff check scripts/check-spec-refs.py tests/python/test_check_spec_refs.py
+      - name: run the guard
+        # Advisory by design -- a mention is not a reference, so this never fails
+        # on the dangling count.  It is here so the run explains itself.
+        run: python scripts/check-spec-refs.py --audit
+      - name: synthetic corpus + real corpus tests
+        # `-o addopts=""`: pyproject's addopts pull in pytest-cov, which this job
+        # has no use for -- the test loads a script by path and never imports the
+        # package, so coverage would only report 0%.
+        run: pytest tests/python/test_check_spec_refs.py -v -o addopts=""

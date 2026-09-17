@@ -169,9 +169,14 @@ DANGLING = "DANGLING"
 #   SUBJECT_REMOVED the whole spec documents a subsystem deleted from this repo,
 #                   so every path in it is historical.
 #
-# Two invariants stop this from becoming a silent blanket.  Both are checked by
-# `exemption_self_check()` below, printed by --audit, and never affect the exit
-# code (slice C owns the gating decision):
+# Four invariants stop this from becoming a silent blanket.  All four are checked
+# by `exemption_self_check()` below, printed by --audit, and never affect the exit
+# code -- a mention is not a reference, so the *dangling count* stays advisory
+# (#675 slice C decided this).  What IS enforceable is the tables' own
+# consistency: `tests/python/test_check_spec_refs.py` pins invariants 1-4 on a
+# synthetic corpus and asserts the real corpus has no untriaged mention, and
+# `.github/workflows/ci-scripts.yml` runs it whenever `scripts/**` or
+# `.trellis/spec/**` changes.
 #   1. every MENTION_EXEMPT rule must match at least one live mention -- an
 #      exemption that exempts nothing is a false claim about the corpus;
 #   2. a SUBJECT_REMOVED spec must contain its removal commit hash AND really have
@@ -182,24 +187,33 @@ DANGLING = "DANGLING"
 #      it file-wide, and nothing else in this file notices -- so a pattern must be
 #      path-shaped.  Whole-spec exemptions go through SUBJECT_REMOVED, where they
 #      have to be declared by the spec itself.
-MENTION_EXEMPT: tuple[tuple[str, str, str], ...] = (
-    ("backend/scheduler-spec.md", "uc.scheduler.yaml",
+#   4. every MENTION_EXEMPT rule declares HOW MANY mentions it exempts, and the
+#      live count must equal it.  Measured (T25 slice B): invariants 1-3 cannot
+#      see a pattern that is broader than its own *reason* -- ablation M4 tripped
+#      neither, and `--audit` still printed "0 unclassified", i.e. a completely
+#      healthy-looking run.  A pinned count turns every such widening into a red,
+#      including the legitimate-looking `tui/**` shape (which matches 2, not 27).
+#      SUBJECT_REMOVED carries no count on purpose: its scope is the whole file by
+#      design, so "how many" is not a safety property there -- invariant 2 is what
+#      keeps it from being silent.
+MENTION_EXEMPT: tuple[tuple[str, str, int, str], ...] = (
+    ("backend/scheduler-spec.md", "uc.scheduler.yaml", 4,
      "runtime/operator-supplied config, absent from the repo by design: the gateway loads it "
      "from UC_SCHEDULER_CONFIG (default ./uc.scheduler.yaml) at boot, and this spec documents "
      "'missing file = idle scheduler (opt-in)'.  The './'-prefixed form is already excluded by "
      "MENTION_PATH_RE's leading-character rule; only the bare form reaches this table"),
-    ("backend/directory-structure.md", "new_module/impl.rs",
+    ("backend/directory-structure.md", "new_module/impl.rs", 1,
      "illustrative path inside an instruction list: 'Add implementation files as needed "
      "(e.g., new_module/impl.rs)'"),
-    ("frontend/directory-structure.md", "rate_limiter.py",
+    ("frontend/directory-structure.md", "rate_limiter.py", 1,
      "naming-convention example in the 'Example' column of a table, not a reference to a file"),
-    ("guides/cross-layer-thinking-guide.md", "index.json",
+    ("guides/cross-layer-thinking-guide.md", "index.json", 1,
      "generic probe example: 'checking if index.json exists to decide marketplace vs direct "
      "download' -- no specific file is meant"),
-    ("guides/cross-layer-thinking-guide.md", "record-session.md",
+    ("guides/cross-layer-thinking-guide.md", "record-session.md", 2,
      "a Trellis command template: it exists in the *other* CLI platforms, and is named here as "
      "the subject of a cross-layer consistency checklist"),
-    ("backend/taskservice-grpc-spec.md", "tui/src/**",
+    ("backend/taskservice-grpc-spec.md", "tui/src/**", 2,
      "deliberately historical section: the Ink/React TUI client was deleted in d7f4631 "
      "(2026-06-25, #157).  This spec's live subject is the TaskService gRPC surface, so the "
      "section is annotated in place rather than deleted -- the heading keeps the path because "
@@ -513,7 +527,7 @@ def _mention_exemption(rel_spec: str, ref: str) -> str | None:
     `frontend/`, so a bare basename would collide.
     """
     short = rel_spec[len(_SPEC_PREFIX):] if rel_spec.startswith(_SPEC_PREFIX) else rel_spec
-    for spec, pattern, reason in MENTION_EXEMPT:
+    for spec, pattern, _expected, reason in MENTION_EXEMPT:
         if spec == short and fnmatch.fnmatch(ref, pattern):
             return reason
     return _subject_removed_reason(short)
@@ -553,16 +567,23 @@ def exemption_self_check(rows: list[dict[str, Any]]) -> list[str]:
         spec = row["spec"]
         return spec[len(_SPEC_PREFIX):] if spec.startswith(_SPEC_PREFIX) else spec
 
-    for spec, pattern, _reason in MENTION_EXEMPT:
+    for spec, pattern, expected, _reason in MENTION_EXEMPT:
         if pattern.strip() in {"*", "**", "*.*"}:
             problems.append(
                 f"MENTION_EXEMPT pattern is a bare wildcard (file-wide in disguise): "
                 f"{spec} :: {pattern!r} -- use a path-shaped pattern, or SUBJECT_REMOVED "
                 f"if the spec's whole subject is gone")
-        if not [r for r in dangling
-                if short_of(r) == spec and fnmatch.fnmatch(r["ref"], pattern)]:
+        hits = [r for r in dangling
+                if short_of(r) == spec and fnmatch.fnmatch(r["ref"], pattern)]
+        if not hits:
             problems.append(
                 f"MENTION_EXEMPT rule matches nothing (dead rule): {spec} :: {pattern}")
+        elif len(hits) != expected:
+            problems.append(
+                f"MENTION_EXEMPT rule hit count drifted: {spec} :: {pattern!r} "
+                f"declares {expected} mention(s) but matches {len(hits)} -- a pattern "
+                f"wider than its reason is the failure mode this pins; narrow the "
+                f"pattern, or update the count if the corpus legitimately changed")
 
     for short, (commit, _reason) in SUBJECT_REMOVED.items():
         path = SPEC_DIR / short
