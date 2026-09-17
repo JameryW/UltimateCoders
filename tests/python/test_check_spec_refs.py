@@ -16,9 +16,9 @@ Three properties of the guard shape this harness:
 * it has no import-time side effects (the scan runs under
   ``if __name__ == "__main__"``), so importing it is safe.
 
-The last two tests run against the *real* repo.  They are the enforceable half
-of the decision made in #675 slice C: the dangling *count* stays advisory (a
-mention is not a reference), but the repo asserts its own state -- every
+The last three tests run against the *real* repo.  They are the enforceable
+half of the decision made in #675 slice C: the dangling *count* stays advisory
+(a mention is not a reference), but the repo asserts its own state -- every
 dangling mention is either fixed or carries a documented reason.
 """
 
@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import subprocess
 
 import pytest
 
@@ -206,11 +207,35 @@ def test_real_corpus_has_no_untriaged_dangling_mention():
 
     A new dangling mention fails here on purpose: the fix is a one-line reasoned
     rule, and the failure mode being avoided is an untriaged pointer that
-    nobody notices.  Measured at the slice-B close (2026-09-17): 47 dangling ->
-    40 exempt, 0 unclassified.
+    nobody notices.  Measured 2026-09-17 (T26): 47 dangling -> 41 exempt, 0
+    unclassified.
     """
     guard = _load_guard()
     unclassified = [(r["spec"], r["spec_line"], r["ref"])
                     for r in _dangling_rows(guard)
                     if guard._mention_exemption(r["spec"], r["ref"]) is None]
     assert unclassified == []
+
+
+def test_repo_index_is_built_from_git_not_from_the_filesystem():
+    """The index must not see files git does not track.
+
+    Regression for the defect CI caught on this ticket's first run: the index
+    was an `os.walk`, so `.codex/config.toml` -- gitignored by `.gitignore:90`
+    and therefore absent from a fresh checkout -- resolved this repo's only
+    `config.toml` mention on a developer machine while CI reported it dangling.
+    One commit, two answers.
+
+    Honest limit: this comparison can only FAIL where such a local file exists.
+    In CI's fresh checkout an `os.walk` returns the same set as git, so this test
+    would have passed there even with the bug -- the untriaged-mention test above
+    is the one CI sees.
+    """
+    guard = _load_guard()
+    listed = subprocess.run(["git", "ls-files", "-z"], cwd=str(guard.ROOT),
+                            capture_output=True)
+    if listed.returncode != 0:
+        pytest.skip("not a git checkout")
+    tracked = {rel for rel in listed.stdout.decode("utf-8").split("\0") if rel}
+    indexed = {p for paths in guard._repo_index().values() for p in paths}
+    assert sorted(indexed - tracked) == [], "index sees files git does not track"

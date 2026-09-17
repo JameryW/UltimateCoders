@@ -120,3 +120,75 @@ T23 让守卫**看见**了「无行号路径提及」这一类（advisory、恒�
 - #674（journal 账本欠账）与本票无关，保持 open。
 - `SUBJECT_REMOVED` 侧无计数：若将来该表增长，可考虑给它加「悬空数不得下降」之类的判据；
   现状（判据 2 的「必须还有悬空」）已覆盖「规则变成死规则」这一侧。
+
+## 交付后回读（本票的第一次 CI 之后，2026-09-17）
+
+### 🔴 第一次 CI 直接打红 —— 而红得有价值：它抓到一个**真缺陷**，不是我测试写错
+
+推送 `6e748e8` 后：**Scripts CI 与 Python CI 同时红**。取日志后，失败点是新测试的
+`test_real_corpus_has_no_untriaged_dangling_mention`，断言信息逐字为：
+
+```
+E   AssertionError: assert [('.trellis/s...config.toml')] == []
+E     Left contains one more item: ('.trellis/spec/backend/agent-capability-spec.md', 380, 'config.toml')
+```
+
+**根因（一手）**：守卫的索引来自 `_repo_index()` 的 `os.walk` —— **它看得见本机被 gitignore 的文件**。
+本机存在 `./.codex/config.toml`，被 `.gitignore:90` 忽略；CI 的干净检出里没有 `.codex/`。
+于是**同一个提交**：
+
+| 环境 | `agent-capability-spec.md:380` 的 `` `config.toml` `` |
+|---|---|
+| 本机 | `MENTION_RESOLVED`（经 `.codex/config.toml`） |
+| CI 干净检出 | `DANGLING` → 未分类 → 测试红 |
+
+⇒ 这正是守卫自己在 `EXCLUDE_DIRS` 注释里为 `.scratch/` 写下的那个失效模式，
+**只是当时只针对 `.scratch/` 一个目录，没有上升到「类」**。一手测量：`os.walk` 索引 **1320** 条路径
+vs `git ls-files` **1154** 条 ⇒ **本机独有约 13%**，不是角落情况。
+
+### 修法：把索引源从「文件系统」换成「git 跟踪集」（爆炸半径实测 1/325）
+
+不再往 `EXCLUDE_DIRS` 里逐个加目录（那是打地鼠），而是换掉**根因**：索引改为
+`git ls-files` **∩** 保留 `EXCLUDE_DIRS`。为什么两者都要：
+
+- 只用 git ⇒ 会把 **12 个在 `.scratch/` 被 ignore 之前就已提交**的历史文件放回来
+  （`.scratch/durable-runtime-migration/**`，一旦被跟踪 `.gitignore` 对它失效）
+  ⇒ 等于**撤销 T24 的排除决定**（当时 `.scratch/pt-test_*/**/lib.rs` 把 `lib.rs` 候选从 4 抬到 79）。
+- 只用 walk ⇒ 就是本次事故。
+
+三种索引的实测对比与判词差异：
+
+| 索引 | basename | 路径 |
+|---|---|---|
+| A 现状（walk + EXCLUDE_DIRS） | 488 | 1320 |
+| B 纯 git | 468 | 1154 |
+| **C git ∩ EXCLUDE_DIRS（拟采用）** | **456** | **1142** |
+
+**A → C 的判词差异 = 1 / 325**，即上面那一条；B \ C 恰好是那 12 个 `.scratch/**` 文件。
+⇒ 换源是**可测的、最小的**根因修法。
+
+同时新增第 7 条豁免规则把它按「合法不存在」处置：`config.toml` 是 **Codex CLI 自己的
+`$CODEX_HOME/config.toml`**（spec 自己给出的样例代码即 `tempfile.mkstemp(..., dir=codex_home)`），
+与 `uc.scheduler.yaml` 同类 —— **运行时存在、设计上不在仓内**。全 spec 目录里 `` `config.toml` ``
+**恰好只有 1 处**（`agent-capability-spec.md:380`），故声明命中数 = 1。
+
+### 因此被改写的验收/数字
+
+| 项 | 原定 | 实测（修后） |
+|---|---|---|
+| 悬空提及 | 40 | **41** |
+| 豁免 | 40（规则侧 11 + 整篇 29） | **41（规则侧 12 + 整篇 29）** |
+| 未分类 | 0 | **0** |
+| ref 判词 | `89 ok / 1 stale / 8 ambiguous / 0 structural` | **同（一格未动）** |
+| exit | 0 | **0** |
+| 测试条数 | 10 | **11**（新增索引来源的回归钉） |
+| Python 收集总数 | 1159 | **1160**（1149 + 11，实测 `--collect-only`） |
+
+⚠️ 由此也**修正了 T25 的一处记账**：T25 写下的 `40 exempt / 0 unclassified` 是**在本机**成立的
+（本机有那个被忽略的 `.codex/`）；在干净检出里当时就已经是 41。T25 的数字不是错的，而是
+**环境相关的** —— 这正是本票要消掉的东西。
+
+### 本票的裁决不变
+
+索引换源**不改变**裁决 1/2：悬空计数仍是 advisory、exit 仍恒 0、`unclassified == 0` 仍由
+**测试**（而非守卫退出码）主张。换源只是让那个主张在**两种环境里给同一个答案**。

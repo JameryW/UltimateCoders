@@ -138,3 +138,88 @@ OK M4   problems=1  wildcard=0 drifted=1 dead=0   <- 声明 9 条实际 2 条
 2. 真实语料两条测试**依赖仓库当前状态**：`unclassified == 0` 会在新增悬空提及时报红（**有意**），
    `exemption_self_check == []` 会在规则失配时报红（**有意**）。若将来确有正当的例外，修法是加规则。
 3. `ci-scripts.yml` 的**首次耗时与首次绿**本轮未验证（需要 push 之后看 `gh run list`）。
+
+## 9. CI 首跑打红：索引依赖本机被忽略文件（本票最重要的产出）
+
+### 9.1 症状与逐字证据
+
+推送 `6e748e8` 后 **Scripts CI（35207013920）与 Python CI（35207013916）同时红**。
+Scripts CI 的 3.9 与 3.12 两档都在同一步失败，日志逐字：
+
+```
+tests/python/test_check_spec_refs.py::test_real_corpus_has_no_untriaged_dangling_mention FAILED
+E   AssertionError: assert [('.trellis/s...config.toml')] == []
+E     Left contains one more item: ('.trellis/spec/backend/agent-capability-spec.md', 380, 'config.toml')
+```
+
+**注意**：其余 9 条（含 3.9 档下 `from __future__ import annotations` 的兼容性）**全部 PASSED** ——
+即我在本票事先证伪的「3.9 会炸」确实不成立，而真正的问题出在别处。日志还给出
+`pythonLocation: /opt/hostedtoolcache/Python/3.9.25/x64`，确认矩阵生效。
+
+### 9.2 根因
+
+```
+$ find . -name 'config.toml' -not -path './target/*' -not -path './vendor/*' -not -path './.git/*'
+./.codex/config.toml
+$ git check-ignore -v ./.codex/config.toml
+.gitignore:90:.codex/	./.codex/config.toml
+```
+
+`_repo_index()` 用 `os.walk(ROOT)` 建索引 ⇒ **它索引本机文件系统，而不是这个仓库**。
+本机有被忽略的 `.codex/config.toml`，CI 的干净检出没有 ⇒
+`agent-capability-spec.md:380` 的 `` `config.toml` `` 在本机解析得到、在 CI 悬空。
+**同一提交两种答案**，而 T25 的收口数字（`40 exempt / 0 unclassified`）是在**有那个文件的那一侧**测的。
+
+一手规模测量：
+
+```
+os.walk 索引：488 个 basename / 1320 个路径
+git ls-files：1764 个路径 -> 按 CODE_EXT 过滤后 468 个 basename / 1154 个路径
+只在 os.walk 里出现的 basename：67 个   （.workbuddy/memory/**、.agents/**、.opencode/**、.reasonix/**、.codex/** ...）
+只在 git 里出现的 basename：12 个       （.scratch/durable-runtime-migration/** —— 见 9.3）
+```
+
+### 9.3 修法的两种坏形态（都实测过，都否掉）
+
+- **只往 `EXCLUDE_DIRS` 加 `.codex`**：打地鼠，不修「类」；而且下一个被忽略的目录还会重演。
+- **纯 `git ls-files` 索引**：会把 12 个**在 `.scratch/` 被 ignore 之前就已提交**的文件放回来
+  （`.scratch/durable-runtime-migration/{map.md,tickets/T1..T7.md,issues/D4..D7*.md}`，
+  一旦被跟踪 `.gitignore` 就不再对其生效）⇒ 等于**撤销 T24 的决定**（`.scratch/pt-test_*/**/lib.rs`
+  曾把 `lib.rs` 候选从 4 抬到 79）。实测 B \ C = 恰好这 12 个。
+
+### 9.4 采用形态与其可测性
+
+索引 = `git ls-files -z` **∩** `EXCLUDE_DIRS`（按路径分量过滤）∩ `CODE_EXT`；
+`git` 不可用时退回 `_walk_index()`，且**只在 `ROOT/.git` 存在（即 git 本该可用）时才告警** ——
+这样合成语料测试（tmp 目录、非 checkout）不会刷警告，而一个退化的真仓运行不会被误当成权威结果。
+
+| 索引 | basename | 路径 | 与 A 的判词差异 |
+|---|---|---|---|
+| A 现状 | 488 | 1320 | — |
+| B 纯 git | 468 | 1154 | — |
+| **C git ∩ EXCLUDE_DIRS** | **456** | **1142** | **1 / 325** |
+
+**C 下悬空 = 41**（规则侧 `4+1+1+1+2+2+1(config.toml) = 12`，整篇 `27+2 = 29`，12+29 = 41，0 未分类）。
+
+### 9.5 被顺带钉住的两件事
+
+1. **新增第 11 条测试** `test_repo_index_is_built_from_git_not_from_the_filesystem`：断言索引里
+   没有 git 不认识的路径。⚠️ **诚实标注其不对称性**：它只在「本机确实有被忽略文件」时会红，
+   CI 的干净检出即便带着这个 bug 也会通过（那里 walk == git）。**CI 侧看到的是 `unclassified == 0` 那条**。
+   两条合起来才是完整覆盖，这一点写进了测试 docstring。
+2. **T25 的数字被正名**：`40 exempt` 在本机成立、在干净检出是 41 —— 不是 T25 算错，而是
+   **那个数字当时是环境相关的**。本票消掉了这个性质。
+
+### 9.6 复算入口（本节新增）
+
+```bash
+# 索引来源与规模对比（A/B/C）
+python .scratch/t26-index-probe2.py
+
+# 三者对判词的影响：应恰好 1 行（agent-capability-spec.md:380 config.toml）
+```
+
+### 9.7 未测项（诚实记账）
+
+修后**尚未推送**，因此「CI 转绿」这一步在本轮末尾才由推送后的 `gh run list` 背书；
+另外 Scripts CI 的**实际耗时**（两档矩阵）本轮仍未本地测得。

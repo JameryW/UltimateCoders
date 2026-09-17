@@ -84,6 +84,8 @@ import json
 import os
 import pathlib
 import re
+import subprocess
+import sys
 from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -91,8 +93,15 @@ SPEC_DIR = ROOT / ".trellis" / "spec"
 
 # Directories never scanned as *targets* of a reference.
 #
+# Applied to the *git* file list as well, and not redundant with `.gitignore`:
+# `.scratch/durable-runtime-migration/**` was committed BEFORE `.scratch/` was
+# ignored, and once a path is tracked, `.gitignore` no longer applies to it.  A
+# pure `git ls-files` index therefore puts those 12 files back, undoing the
+# exclusion below (measured 2026-09-17, T26).
+#
 # `.scratch/` is this repo's gitignored scratch space (test harnesses, temp trees,
-# rollback copies).  The walk below uses `os.walk`, not git, so leaving it in makes
+# rollback copies).  An `os.walk` sees whatever is on this machine, so leaving it
+# in makes
 # verdicts depend on whatever local scratch state happens to exist.  Measured
 # (2026-09-16, T24 slice B): a rollback copy parked in `.scratch/` turned a unique
 # mention AMBIGUOUS mid-run, and `.scratch/pt-test_*/**/lib.rs` inflated `lib.rs`
@@ -161,7 +170,9 @@ DANGLING = "DANGLING"
 #     gone entirely; they never reach these tables;
 #   * legitimately absent -> recorded here, with the reason it is not a defect.
 #
-# Measured 2026-09-17: 47 dangling -> 7 rewritten/removed, 40 exempt, 0 otherwise.
+# Measured 2026-09-17 (T26): 47 dangling -> 7 rewritten/removed, 41 exempt, 0
+# otherwise -- the 41st surfaced only once the index became git-based, because
+# `config.toml` had been resolving against a local, gitignored `.codex/`.
 # The split between the two tables is by *scope*, not by reason:
 #
 #   MENTION_EXEMPT  one (spec, ref-pattern) rule -> the mention is either not a
@@ -213,6 +224,11 @@ MENTION_EXEMPT: tuple[tuple[str, str, int, str], ...] = (
     ("guides/cross-layer-thinking-guide.md", "record-session.md", 2,
      "a Trellis command template: it exists in the *other* CLI platforms, and is named here as "
      "the subject of a cross-layer consistency checklist"),
+    ("backend/agent-capability-spec.md", "config.toml", 1,
+     "tool-owned config outside the repo: the Codex CLI reads `$CODEX_HOME/config.toml`, "
+     "and this spec's own sample writes it with `tempfile.mkstemp` under `$CODEX_HOME`, "
+     "so no such path is ever repo-relative.  Same class as `uc.scheduler.yaml` above: "
+     "present at runtime, absent from the repo by design"),
     ("backend/taskservice-grpc-spec.md", "tui/src/**", 2,
      "deliberately historical section: the Ink/React TUI client was deleted in d7f4631 "
      "(2026-06-25, #157).  This spec's live subject is the TaskService gRPC surface, so the "
@@ -252,7 +268,50 @@ DEF_PATTERNS = (
 
 
 def _repo_index() -> dict[str, list[str]]:
-    """basename -> sorted repo-relative paths. Tolerates unreadable links."""
+    """basename -> sorted repo-relative paths, restricted to *tracked* files.
+
+    Git-aware on purpose, and the reason is measured rather than theoretical.  A
+    filesystem walk sees whatever happens to be on this machine, so a gitignored
+    local file can resolve a mention that a clean checkout cannot -- two answers
+    for one commit.  Caught by CI on 2026-09-17 (T26): `.codex/config.toml` is
+    gitignored (.gitignore:90 -- the Codex CLI's own directory), yet on a
+    developer machine it turned `agent-capability-spec.md:380`'s `config.toml`
+    mention from DANGLING (what CI reported) into MENTION_RESOLVED.  Local-only
+    state was not a corner case: the walk indexed 1320 paths against git's 1154,
+    so ~13% of the index was something no other checkout has.  Switching the
+    source moves exactly ONE row out of 325 verdicts -- that same mention --
+    which is why the fix is the index itself, not a longer EXCLUDE_DIRS list.
+    """
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=str(ROOT),
+            capture_output=True, check=True).stdout.decode("utf-8", "replace")
+    except (OSError, subprocess.CalledProcessError):
+        # Only warn when git *should* have worked: a synthetic corpus (the tests)
+        # lives outside any checkout, and a degraded index must not be mistaken
+        # for an authoritative one where it matters.
+        if (ROOT / ".git").exists():
+            print("WARNING: `git ls-files` failed inside a git work tree -- falling "
+                  "back to a filesystem walk, so verdicts may depend on gitignored "
+                  "local files", file=sys.stderr)
+        return _walk_index()
+    index: dict[str, list[str]] = collections.defaultdict(list)
+    for rel in listed.split("\0"):
+        if not rel or pathlib.PurePath(rel).suffix not in CODE_EXT:
+            continue
+        if any(part in EXCLUDE_DIRS for part in rel.split("/")[:-1]):
+            continue
+        index[rel.split("/")[-1]].append(rel)
+    return {name: sorted(paths) for name, paths in index.items()}
+
+
+def _walk_index() -> dict[str, list[str]]:
+    """Fallback index: filesystem walk minus EXCLUDE_DIRS. Tolerates unreadable links.
+
+    Kept because the guard must still answer outside a checkout, but it is no
+    longer the primary source: it is the one that made verdicts depend on local
+    state.
+    """
     index: dict[str, list[str]] = collections.defaultdict(list)
     for dirpath, dirnames, filenames in os.walk(ROOT, onerror=lambda e: None):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
