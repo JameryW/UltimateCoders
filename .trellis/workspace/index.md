@@ -27,7 +27,16 @@ workspace/
 
 | Developer | Last Active | Sessions | Active File |
 |-----------|-------------|----------|-------------|
-| (none yet) | - | - | - |
+| `Jamery Wang` | 2026-09-17 | 32 | `journal-2.md` |
+| `JameryW` (retired identity, frozen) | 2026-08-06 | 123 | `journal-3.md` |
+
+Session counts and dates are measured from the journals' `## Session` headings
+and `**Date**` lines.
+`JameryW/` belongs to a **retired `.developer` identity** -- `get_developer()`
+returns `Jamery Wang`, so no script resolves that directory any more, and its
+363 skeleton placeholders are **frozen** by `scripts/check-journal-ledger.py`
+(`LEGACY_JOURNALS`) rather than backfilled. See
+`.trellis/workspace/JameryW/index.md` for its own session index.
 
 ---
 
