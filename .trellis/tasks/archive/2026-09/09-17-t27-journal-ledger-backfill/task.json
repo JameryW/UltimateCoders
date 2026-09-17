@@ -1,0 +1,33 @@
+{
+  "id": "09-17-t27-journal-ledger-backfill",
+  "name": "t27-journal-ledger-backfill",
+  "title": "T27: #674 —— journal 账本整备：39 处占位符据实回填 + 5 处重复残块清除",
+  "description": "实施 #674。票面列三类欠账（14 个 session 的 `### Testing` 只剩脚本骨架 / Session 13 的 590-601 重复残块 / 逐条复核 `- None - task complete`），并要求「先核实、再据实回填、不臆造」。先量形状后实测出**多两类**：①骨架尾巴残留（S12/S13/S14/S15 各有一对占位 `### Testing`+`### Status`，18 处 Testing 占位符 = 14 骨架型 + 4 尾巴）；②`(Add details)` 6 处与空标题重复 4 处（S12/14/15/20）。机制是同一个：作者在追加的骨架之上手写正文，正文自带 Summary/Main Changes 重新起头，而骨架尾巴原样留在下面；Session 13 是极端情形（整块被取代，其数字是真块子集，删掉不丢信息）。回填的一手来源就在账本自己里面（同段的 Summary / ## Gates / ## 门禁终值 / ## 质量门禁 / ## 测试 / ## 门禁），每条标注来源；Session 1 确无本地数字 ⇒ 写「当时未记录」。`- None - task complete` 实测 19 个（票面说 4 个），逐条改为有据可查的后续（本文明写的 Next 陈述，或用下一 session 的票据）。交付 = 对 journal-1.md 的一次单遍可审计手术：删 54 行（逐字节断言）、替换 39 行；结果 148099→157354 字节、2000→1950 行、三类占位符 0/0/0、统一 CRLF、numstat 43/93。故意不补 S16/17/18 的 `### Git Commits`（会是猜测）。只动 journal-1.md，不动测试/产品代码、不重跑历史门禁。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Jamery Wang",
+  "assignee": "Jamery Wang",
+  "createdAt": "2026-09-17",
+  "completedAt": "2026-09-17",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/workspace/Jamery Wang/journal-1.md"
+  ],
+  "notes": "",
+  "meta": {},
+  "issue": 674,
+  "map": null,
+  "decision": null,
+  "summary": "",
+  "commits": []
+}
