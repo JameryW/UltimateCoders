@@ -1,3 +1,14 @@
+> **状态：已被取代（2026-09-17 标注）。** 本文是 **2026-06-23 的原始 PRD 草稿**，已被
+> `.trellis/tasks/archive/2026-06/06-24-oh-my-pi-orchestrator/prd.md`（`status: completed`，
+> `completedAt: 2026-06-25`）**完整包含**：逐行比对为 371 行 vs 474 行、303 行非空内容相同，
+> 本文仅 1 行措辞不同 —— 风险表里「信号量 + 队列，限制并发」那一行，在 06-24 已演进为
+> 「subprocess 隔离 + 信号量限并发（deferred: signal+queue 动态容量）」。
+>
+> **保留而不删除的理由**：`06-24` 的 `implement.jsonl` 把本文件登记为「原始 PRD — 架构设计参考」，
+> 删掉会留下一条指向不存在文件的引用。**但它不是一个在飞任务** —— 它没有 `task.json`，
+> `task.py list` 一直把它算作 **0 个活动任务**；本文件也已随目录从 `.trellis/tasks/` 移入
+> `archive/2026-06/`。判断「升级/里程碑是否全部完成」时，**不要把它读成欠账**。
+
 # PRD: 基于 oh-my-pi 构建 UltimateCoders Orchestrator
 
 ## 1. 背景与动机
