@@ -25,6 +25,10 @@ name: Trellis CI
 # unrelated reformat into a framework file that has to stay mergeable against the
 # upstream template. Both paths are named explicitly for the same reason
 # `ci-scripts.yml` names its two files instead of a directory.
+#
+# `common/task_utils.py` is in the same position after #678: measured
+# 6 pre-existing findings (3x UP024, 2x E501, I001), unchanged by that
+# commit, so it too is left out of the ruff step.
 
 on:
   workflow_dispatch:
@@ -33,17 +37,19 @@ on:
     paths:
       - ".trellis/scripts/**"
       - "tests/python/test_task_finish_fallback.py"
+      - "tests/python/test_archive_repoints_refs.py"
       - ".github/workflows/ci-trellis.yml"
   pull_request:
     branches: [main]
     paths:
       - ".trellis/scripts/**"
       - "tests/python/test_task_finish_fallback.py"
+      - "tests/python/test_archive_repoints_refs.py"
       - ".github/workflows/ci-trellis.yml"
 
 jobs:
-  task-finish-pointer:
-    name: finish must not claim a deletion it did not perform (${{ matrix.python-version }})
+  framework-scripts:
+    name: framework script contracts (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -59,8 +65,11 @@ jobs:
         run: >-
           ruff check .trellis/scripts/common/active_task.py
           tests/python/test_task_finish_fallback.py
-      - name: pointer honesty
+          tests/python/test_archive_repoints_refs.py
+      - name: framework script contracts
         # `-o addopts=""`: pyproject's addopts pull in pytest-cov, which this job
         # has no use for -- the test drives the CLI as a subprocess and never
         # imports the package, so coverage would only report 0%.
-        run: pytest tests/python/test_task_finish_fallback.py -v -o addopts=""
+        run: >-
+          pytest tests/python/test_task_finish_fallback.py
+          tests/python/test_archive_repoints_refs.py -v -o addopts=""

@@ -73,7 +73,7 @@ python3 ./.trellis/scripts/task.py create-pr [name] [--dry-run]
 
 > Run `python3 ./.trellis/scripts/task.py --help` to see the authoritative, up-to-date list.
 
-**Current-task mechanism**: `task.py create` creates the task directory and (when session identity is available) auto-sets the per-session active-task pointer so the planning breadcrumb fires immediately. `task.py start` writes the same pointer (idempotent if already set) and flips `task.json.status` from `planning` to `in_progress`. State is stored under `.trellis/.runtime/sessions/`. If no context key is available from hook input, `TRELLIS_CONTEXT_ID`, or a platform-native session environment variable, there is no active task and `task.py start` fails with a session identity hint. `task.py finish` deletes the session file(s) that back the resolved active task, then re-resolves before reporting: it exits non-zero instead of printing `✓` while the task is still resolvable (status unchanged). `task.py archive <task>` writes `status=completed`, moves the directory to `archive/`, and deletes any runtime session files that still point at the archived task.
+**Current-task mechanism**: `task.py create` creates the task directory and (when session identity is available) auto-sets the per-session active-task pointer so the planning breadcrumb fires immediately. `task.py start` writes the same pointer (idempotent if already set) and flips `task.json.status` from `planning` to `in_progress`. State is stored under `.trellis/.runtime/sessions/`. If no context key is available from hook input, `TRELLIS_CONTEXT_ID`, or a platform-native session environment variable, there is no active task and `task.py start` fails with a session identity hint. `task.py finish` deletes the session file(s) that back the resolved active task, then re-resolves before reporting: it exits non-zero instead of printing `✓` while the task is still resolvable (status unchanged). `task.py archive <task>` writes `status=completed`, moves the directory to `archive/`, repoints the task's own `.trellis/tasks/<name>/...` citations in its JSON carriers (`task.json`, `*.jsonl`) at the new `archive/<year-month>/<name>/` location, and deletes any runtime session files that still point at the archived task.
 
 ### Workspace System
 
@@ -232,7 +232,7 @@ Phase 3.4 commit (required, once): after `trellis-update-spec`, or whenever impl
 [workflow-state:completed]
 Code committed via Phase 3.4; run `/trellis:finish-work` to wrap up (archive the task + record session).
 If you reach this state with uncommitted code, return to Phase 3.4 first — `/finish-work` refuses to run on a dirty working tree.
-`task.py archive` deletes any runtime session files that still point at the archived task.
+`task.py archive` deletes any runtime session files that still point at the archived task, and repoints the moved task's OWN `.trellis/tasks/<name>/...` citations in its JSON carriers (`task.json`, `*.jsonl`) at `archive/<year-month>/<name>/`. The directory move breaks every citation a task makes to its own files, all at once and silently, so the repair happens in the same command. It is byte-level and boundary-aware (a citation of `06-15-tui-unit-tests` is a different task than `06-15-tui`); prose in `.md` is left alone, because a path there may be a deliberate historical note. Citations from OTHER tasks are listed on stderr and never rewritten.
 [/workflow-state:completed]
 
 ### Rules

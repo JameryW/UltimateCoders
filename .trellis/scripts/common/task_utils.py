@@ -12,12 +12,13 @@ Provides:
 
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from .paths import get_repo_root, get_tasks_dir
+from .paths import DIR_ARCHIVE, DIR_TASKS, DIR_WORKFLOW, get_repo_root, get_tasks_dir
 
 
 # =============================================================================
@@ -117,6 +118,9 @@ def archive_task_dir(task_dir_abs: Path, repo_root: Path | None = None) -> Path 
         print(f"Error: task directory not found: {task_dir_abs}", file=sys.stderr)
         return None
 
+    if repo_root is None:
+        repo_root = get_repo_root()
+
     # Get tasks directory (parent of the task)
     tasks_dir = task_dir_abs.parent
     archive_dir = tasks_dir / "archive"
@@ -140,7 +144,139 @@ def archive_task_dir(task_dir_abs: Path, repo_root: Path | None = None) -> Path 
         print(f"Error: Failed to move task to archive: {e}", file=sys.stderr)
         return None
 
+    # The move breaks every citation the task makes to its own files. Repoint
+    # them in the same operation, or the corpus silently accumulates dangling
+    # paths (#678). Done AFTER the move so that a failure here leaves the
+    # pre-existing failure mode rather than inventing a worse one.
+    for rel_path, count in sorted(rewrite_archived_task_refs(dest, repo_root).items()):
+        print(f"[OK] Repointed {count} citation(s) in {rel_path}", file=sys.stderr)
+
+    old_rel = pre_archive_task_ref(dest, repo_root)
+    if old_rel:
+        external = find_external_task_refs(repo_root, old_rel, skip_dir=dest)
+        if external:
+            print(
+                f"[WARN] {len(external)} other file(s) still cite {old_rel}; "
+                "repoint them deliberately -- this archive did not touch them:",
+                file=sys.stderr,
+            )
+            for rel_path in external[:10]:
+                print(f"       {rel_path}", file=sys.stderr)
+
     return dest
+
+
+# =============================================================================
+# Archived-task reference repair
+# =============================================================================
+
+# Suffixes whose `.trellis/...` strings are machine-typed citations. Prose is
+# deliberately excluded -- see `rewrite_archived_task_refs`.
+REF_CARRIER_SUFFIXES = (".json", ".jsonl")
+
+
+def _task_ref_pattern(ref: str) -> re.Pattern[bytes]:
+    """Match `ref` as a whole task path, not as a prefix of a longer name.
+
+    `.trellis/tasks/06-15-tui` must not match inside
+    `.trellis/tasks/06-15-tui-unit-tests`: those are two different tasks, and
+    16 such name pairs exist in this repository.
+    """
+    return re.compile(re.escape(ref.encode("utf-8")) + rb"(?![\w.\-])")
+
+
+def pre_archive_task_ref(archived_dir: Path, repo_root: Path) -> str | None:
+    """Repo-relative path a task had BEFORE it was archived.
+
+    `.trellis/tasks/archive/2026-09/09-13-t3-graph-runtime`
+        -> `.trellis/tasks/09-13-t3-graph-runtime`
+    """
+    try:
+        dest_rel = archived_dir.relative_to(repo_root).as_posix()
+    except ValueError:
+        return None
+
+    prefix = f"{DIR_WORKFLOW}/{DIR_TASKS}/{DIR_ARCHIVE}/"
+    if not dest_rel.startswith(prefix):
+        return None
+
+    parts = dest_rel[len(prefix):].split("/")
+    if len(parts) < 2 or not parts[1]:
+        return None
+    return f"{DIR_WORKFLOW}/{DIR_TASKS}/{parts[1]}"
+
+
+def rewrite_archived_task_refs(archived_dir: Path, repo_root: Path) -> dict[str, int]:
+    """Repoint a just-archived task's own citations at its new location.
+
+    `archive_task_dir` moves a directory and nothing else, but every citation a
+    task makes to its OWN files is written at the pre-archive path
+    (`implement.jsonl` / `check.jsonl` name `.trellis/tasks/<name>/prd.md`, and
+    `task.json` names its own research notes). The move therefore breaks all of
+    them at once, silently -- measured 2026-09-17 (#678), this is the dominant
+    shape of the dangling `.trellis/tasks/**` corpus.
+
+    Only JSON carriers are rewritten, because there a `.trellis/...` string is a
+    machine-typed citation. A path inside `.md` prose may be a deliberate
+    historical note ("this task moved from X"), and this repository already holds
+    that a mention is not a reference, so prose is left for a human to repoint.
+
+    Substitution is byte-level and boundary-aware: a citation of
+    `.trellis/tasks/a-b` is a DIFFERENT task and is not touched, even though
+    the string `.trellis/tasks/a` occurs inside it. Encoding and JSON escaping
+    are untouched. Idempotent: the pre-archive prefix is gone once rewritten.
+
+    Returns {repo-relative file: replacement count} for files that changed.
+    """
+    old_rel = pre_archive_task_ref(archived_dir, repo_root)
+    if old_rel is None or not archived_dir.is_dir():
+        return {}
+
+    new_rel = archived_dir.relative_to(repo_root).as_posix()
+    new_bytes = new_rel.encode("utf-8")
+    pattern = _task_ref_pattern(old_rel)
+
+    changed: dict[str, int] = {}
+    for path in sorted(archived_dir.rglob("*")):
+        if not path.is_file() or path.suffix not in REF_CARRIER_SUFFIXES:
+            continue
+        data = path.read_bytes()
+        new_data, count = pattern.subn(new_bytes, data)
+        if not count:
+            continue
+        path.write_bytes(new_data)
+        changed[path.relative_to(repo_root).as_posix()] = count
+    return changed
+
+
+def find_external_task_refs(
+    repo_root: Path,
+    old_rel: str,
+    skip_dir: Path | None = None,
+) -> list[str]:
+    """Task files OUTSIDE `skip_dir` that still cite `old_rel`.
+
+    Reported, never rewritten: they belong to other tasks, and editing another
+    task's provenance as a side effect of an archive would be a wider change than
+    the command implies. The caller is expected to surface them.
+    """
+    if not old_rel:
+        return []
+
+    pattern = _task_ref_pattern(old_rel)
+    suffixes = REF_CARRIER_SUFFIXES + (".md",)
+    hits: list[str] = []
+    for path in sorted(get_tasks_dir(repo_root).rglob("*")):
+        if not path.is_file() or path.suffix not in suffixes:
+            continue
+        if skip_dir is not None and skip_dir in path.parents:
+            continue
+        try:
+            if pattern.search(path.read_bytes()):
+                hits.append(path.relative_to(repo_root).as_posix())
+        except OSError:
+            continue
+    return hits
 
 
 def archive_task_complete(
