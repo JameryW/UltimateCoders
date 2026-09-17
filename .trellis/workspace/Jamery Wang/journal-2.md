@@ -183,7 +183,10 @@ T24 #673 切片 B：把**可机械判定为安全**的引用真的去掉行号�
 
 ### Testing
 
-- [OK] (Add test results)
+- 消融自检（`.scratch/t25-ablation.py`，一次一处突变、恢复后校 sha256；数字读自守卫 stdout 而非重算）：M0 干净 / M1 删掉 `tui-grpc-spec.md` 横幅里的 `d7f4631` → **27 unclassified + 1 自检问题** / M2 把 `uc.scheduler.yaml` 规则改成匹配不到的形状 → 4 + 1 / M3 在围栏外注入 `totally_missing_zzz.py` → 1 unclassified（**不被吞**） / M4 把细粒度规则放宽成 `*` → 被吞**且被报**（判据 3 即由此补上） / M5 与 M0 **逐字节相同**。**六次运行 exit 全 0**，advisory 语义未被削弱。
+- 逐条验证 7 处修复（`.scratch/t25-verify.py`）：死提及全部 `gone`、活指针全部 `resolves`、仍悬空的 7 处锚点为 **0**。
+- 收口验收（`.scratch/t25-accept.py`）**8/8 PASS**：exit 0、`structural=0`、`unclassified=0`、`exempt == dangling == 40`、`166+40+21 = 227`（stdout 与 `--json` 两条路径一致）、ref 判定 `89 ok / 1 stale / 8 ambiguous / 0 structural` 与 T24 收口逐项相同。
+- 门禁：`cargo fmt --all --check` clean（Rust 未动）；`ruff check scripts/check-spec-refs.py` clean；`ruff format --check` **改动前后都失败**（用 `git show HEAD:` 的版本取证 = 既有状态，且 `scripts/**` 不在 CI lint 面内）；9 篇 spec 的 `git diff --numstat` 全为小改动（最大 `10/17`），改动后孤立 LF 全 0。
 
 ### Status
 
@@ -191,4 +194,6 @@ T24 #673 切片 B：把**可机械判定为安全**的引用真的去掉行号�
 
 ### Next Steps
 
-- None - task complete
+- **#675 切片 C**（本票未做，票因此保持 open）：是否把提及升级为门禁、是否接 CI、是否加合成语料 pytest。⚠️ 接 CI 是**触发面**变更 —— `.trellis/**` 一旦进 workflow 的 `paths`，该目录上的改动就会开始跑 Python CI。
+- **判据 3 的残余风险**：它只挡**裸通配符**，不挡「比理由更宽的模式」（`tui/**` 这类合法 pattern 同样能覆盖整个 spec 的悬空集）。切片 C 决定门禁之前需先处理这条。
+- **两篇已删子系统的 spec 正文未订正**（只加了横幅）：逐节重写需每节重新取一手证据，建议另开一张票。
