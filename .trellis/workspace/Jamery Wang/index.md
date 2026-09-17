@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 27
-- **Last Active**: 2026-09-16
+- **Total Sessions**: 28
+- **Last Active**: 2026-09-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~110 | Active |
+| `journal-2.md` | ~194 | Active |
 | `journal-1.md` | ~2000 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 28 | 2026-09-17 | T25: #675 切片 B —— 47 处悬空提及逐条分类，7 处真修 + 40 处带理由豁免（并推翻「tui 是另一个仓库」的定性） | `868cc92`, `d96f071` | `main` |
 | 27 | 2026-09-16 | T24: #673 切片 B —— 把 50 处「符号优先」引用从 path:line 改成 path（可去行号 52 → 51） | `4ff5f78`, `7ff0a66` | `main` |
 | 26 | 2026-09-16 | T23: 守卫新增「无行号路径提及」类 —— 让 47 处悬空提及可见（并把 #673 的可去行号从 84 修正到 52） | `848b1c7` | `main` |
 | 25 | 2026-09-16 | T22: 给 spec 引用守卫补「bold/heading 符号」与「内容锚」—— 量出 #673 重写的可行边界 | `7475952` | `main` |
