@@ -2,6 +2,11 @@
 
 > Executable contracts for the JSON-RPC 2.0 bridge between Rust gRPC server and Python local_worker subprocess.
 
+> **Status: subject removed — `a368371` (2026-06-27, #171).** That single commit replaced the
+> hand-rolled JSON-RPC bridge with a connectrpc gRPC-Web client and deleted both sides of it
+> (the Rust bridge module and its Python counterpart). This file is retained as a record of the
+> protocol contract; the paths below are historical.
+
 ---
 
 ## 1. Scope / Trigger

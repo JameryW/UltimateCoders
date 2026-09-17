@@ -51,15 +51,23 @@ MENTIONS (issue #675 -- the blind spot this tool used to have):
   references).  Mentions are resolved exactly like references, but they are
   reported as ADVISORY (DANGLING), never as a structural failure, because the
   measured population mixes real drift with things that legitimately do not
-  exist in this repo: a runtime config the operator supplies
-  (`uc.scheduler.yaml`), an illustrative path in prose (`new_module/impl.rs`),
-  a naming-convention example (`rate_limiter.py`), and one spec file describing
-  an out-of-repo project (`tui/**`, 27 of the 47).  Making this gating before
-  that triage would fail the build on ~47 items most of which are not defects
-  -- the same shape as the 63-failure/61-false-positive census in #672.
-  Scope note: this tool now *sees* that population and prints its size; it does
-  not yet judge which of them are defects.  A green run still means "no
-  structural failure", never "every path in the specs exists".
+  exist in this repo.  Making this gating before triaging it would fail the build
+  on ~47 items most of which are not defects -- the same shape as the
+  63-failure/61-false-positive census in #672.
+  Slice B (2026-09-17) then triaged all 47 against first-hand evidence and edited
+  the specs wherever they were genuinely stale (47 -> 40 dangling); the remaining
+  40 are declared in MENTION_EXEMPT / SUBJECT_REMOVED, each with the reason it is
+  not a defect, and `exemption_self_check` keeps those tables honest.
+  NOTE: that triage **overturned a claim this docstring used to make** -- `tui/**`
+  was described here as an "out-of-repo project".  `git log --diff-filter=D` shows
+  the TUI lived in *this* repo and was deleted in `d7f4631` (2026-06-25, #157,
+  "Delete tui/ directory"), with the spec never updated.  It is a removed
+  subsystem, not a foreign one; the spec now carries a banner saying so.
+  Scope note: this tool *sees* that population, classifies it, and prints both
+  halves.  Unclassified dangling mentions stay advisory, never failing -- slice C
+  owns the decision of whether they become a gate.  A green run therefore means
+  "no structural failure and no unclassified mention", never "every path in the
+  specs exists".
 
 Usage:
     python scripts/check-spec-refs.py            # structural gate
@@ -71,6 +79,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import fnmatch
 import json
 import os
 import pathlib
@@ -140,6 +149,74 @@ MENTION_PATH_RE = re.compile(
 MENTION_OK = "MENTION_RESOLVED"
 MENTION_AMBIGUOUS = "MENTION_AMBIGUOUS"
 DANGLING = "DANGLING"
+
+# ---------------------------------------------------------------------------
+# Documented exemptions (issue #675 slice B).
+#
+# Slice A made the dangling-mention population *visible*; slice B triaged it item
+# by item against first-hand evidence (git history for deletions, the file system
+# for "does a successor exist?") and split it in two:
+#
+#   * genuinely stale -> the spec was EDITED, so those mentions now resolve or are
+#     gone entirely; they never reach these tables;
+#   * legitimately absent -> recorded here, with the reason it is not a defect.
+#
+# Measured 2026-09-17: 47 dangling -> 7 rewritten/removed, 40 exempt, 0 otherwise.
+# The split between the two tables is by *scope*, not by reason:
+#
+#   MENTION_EXEMPT  one (spec, ref-pattern) rule -> the mention is either not a
+#                   repo path at all, or a deliberately historical reference;
+#   SUBJECT_REMOVED the whole spec documents a subsystem deleted from this repo,
+#                   so every path in it is historical.
+#
+# Two invariants stop this from becoming a silent blanket.  Both are checked by
+# `exemption_self_check()` below, printed by --audit, and never affect the exit
+# code (slice C owns the gating decision):
+#   1. every MENTION_EXEMPT rule must match at least one live mention -- an
+#      exemption that exempts nothing is a false claim about the corpus;
+#   2. a SUBJECT_REMOVED spec must contain its removal commit hash AND really have
+#      dangling mentions left -- a file-level exemption is only honoured if the
+#      spec declares it itself, so the banner cannot be forgotten;
+#   3. no MENTION_EXEMPT pattern may be a bare wildcard.  Measured (ablation M4,
+#      2026-09-17): widening a rule from `new_module/impl.rs` to `*` silently makes
+#      it file-wide, and nothing else in this file notices -- so a pattern must be
+#      path-shaped.  Whole-spec exemptions go through SUBJECT_REMOVED, where they
+#      have to be declared by the spec itself.
+MENTION_EXEMPT: tuple[tuple[str, str, str], ...] = (
+    ("backend/scheduler-spec.md", "uc.scheduler.yaml",
+     "runtime/operator-supplied config, absent from the repo by design: the gateway loads it "
+     "from UC_SCHEDULER_CONFIG (default ./uc.scheduler.yaml) at boot, and this spec documents "
+     "'missing file = idle scheduler (opt-in)'.  The './'-prefixed form is already excluded by "
+     "MENTION_PATH_RE's leading-character rule; only the bare form reaches this table"),
+    ("backend/directory-structure.md", "new_module/impl.rs",
+     "illustrative path inside an instruction list: 'Add implementation files as needed "
+     "(e.g., new_module/impl.rs)'"),
+    ("frontend/directory-structure.md", "rate_limiter.py",
+     "naming-convention example in the 'Example' column of a table, not a reference to a file"),
+    ("guides/cross-layer-thinking-guide.md", "index.json",
+     "generic probe example: 'checking if index.json exists to decide marketplace vs direct "
+     "download' -- no specific file is meant"),
+    ("guides/cross-layer-thinking-guide.md", "record-session.md",
+     "a Trellis command template: it exists in the *other* CLI platforms, and is named here as "
+     "the subject of a cross-layer consistency checklist"),
+    ("backend/taskservice-grpc-spec.md", "tui/src/**",
+     "deliberately historical section: the Ink/React TUI client was deleted in d7f4631 "
+     "(2026-06-25, #157).  This spec's live subject is the TaskService gRPC surface, so the "
+     "section is annotated in place rather than deleted -- the heading keeps the path because "
+     "'historical' alone would not say what is historical"),
+)
+
+SUBJECT_REMOVED: dict[str, tuple[str, str]] = {
+    "frontend/tui-grpc-spec.md": (
+        "d7f4631",
+        "subject removed: the Ink/React TUI was deleted from this repository in d7f4631 "
+        "(2026-06-25, #157) and replaced by the OMP extension (packages/uc-orchestrator/src/)"),
+    "backend/local-worker-bridge-spec.md": (
+        "a368371",
+        "subject removed: the hand-rolled JSON-RPC local-worker bridge was replaced by a "
+        "connectrpc gRPC-Web client in a368371 (2026-06-27, #171), which deleted both the Rust "
+        "and the Python side"),
+}
 
 # Attribute / keyword names that are never the intended symbol anchor.
 SYMBOL_STOPWORDS = {
@@ -425,6 +502,84 @@ def collect() -> list[dict[str, Any]]:
     return rows
 
 
+_SPEC_PREFIX = SPEC_DIR.relative_to(ROOT).as_posix() + "/"
+
+
+def _mention_exemption(rel_spec: str, ref: str) -> str | None:
+    """Reason this dangling mention is not a defect, or None if untriaged.
+
+    Both tables are keyed by the spec path relative to `.trellis/spec/`, which is
+    unambiguous -- `directory-structure.md` exists under both `backend/` and
+    `frontend/`, so a bare basename would collide.
+    """
+    short = rel_spec[len(_SPEC_PREFIX):] if rel_spec.startswith(_SPEC_PREFIX) else rel_spec
+    for spec, pattern, reason in MENTION_EXEMPT:
+        if spec == short and fnmatch.fnmatch(ref, pattern):
+            return reason
+    return _subject_removed_reason(short)
+
+
+_ACK_CACHE: dict[str, str | None] = {}
+
+
+def _subject_removed_reason(short: str) -> str | None:
+    """File-level exemption reason, but ONLY if the spec acknowledges the removal
+    by naming the commit hash.
+
+    A blanket exemption must never be silent: if the banner disappears, the
+    mentions stop being exempt (and `exemption_self_check` says why), so this can
+    not decay into "everything in this file is exempt forever".
+    """
+    if short not in _ACK_CACHE:
+        hit = SUBJECT_REMOVED.get(short)
+        reason: str | None = None
+        if hit is not None:
+            commit, text = hit
+            try:
+                body = (SPEC_DIR / short).read_bytes().decode("utf-8", "replace")
+            except OSError:
+                body = ""
+            reason = text if commit in body else None
+        _ACK_CACHE[short] = reason
+    return _ACK_CACHE[short]
+
+
+def exemption_self_check(rows: list[dict[str, Any]]) -> list[str]:
+    """Invariants that stop the exemption tables from rotting.  Empty == consistent."""
+    problems: list[str] = []
+    dangling = [r for r in rows if r["kind"] == "mention" and r["verdict"] == DANGLING]
+
+    def short_of(row: dict[str, Any]) -> str:
+        spec = row["spec"]
+        return spec[len(_SPEC_PREFIX):] if spec.startswith(_SPEC_PREFIX) else spec
+
+    for spec, pattern, _reason in MENTION_EXEMPT:
+        if pattern.strip() in {"*", "**", "*.*"}:
+            problems.append(
+                f"MENTION_EXEMPT pattern is a bare wildcard (file-wide in disguise): "
+                f"{spec} :: {pattern!r} -- use a path-shaped pattern, or SUBJECT_REMOVED "
+                f"if the spec's whole subject is gone")
+        if not [r for r in dangling
+                if short_of(r) == spec and fnmatch.fnmatch(r["ref"], pattern)]:
+            problems.append(
+                f"MENTION_EXEMPT rule matches nothing (dead rule): {spec} :: {pattern}")
+
+    for short, (commit, _reason) in SUBJECT_REMOVED.items():
+        path = SPEC_DIR / short
+        if not path.is_file():
+            problems.append(f"SUBJECT_REMOVED names a spec that does not exist: {short}")
+            continue
+        text = path.read_bytes().decode("utf-8", "replace")
+        if commit not in text:
+            problems.append(
+                f"SUBJECT_REMOVED banner missing: {short} does not name {commit} anywhere "
+                f"(a file-level exemption must be declared in the spec itself)")
+        if not [r for r in dangling if short_of(r) == short]:
+            problems.append(
+                f"SUBJECT_REMOVED spec has no dangling mention left: {short} (stale entry?)")
+    return problems
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--audit", action="store_true",
@@ -442,6 +597,14 @@ def main() -> int:
     ok = [r for r in refs if r["verdict"] == "OK"]
     dangling = [r for r in mentions if r["verdict"] == DANGLING]
     mention_ambiguous = [r for r in mentions if r["verdict"] == MENTION_AMBIGUOUS]
+    exempt_rows: list[tuple[dict[str, Any], str]] = []
+    unclassified: list[dict[str, Any]] = []
+    for row in dangling:
+        reason = _mention_exemption(row["spec"], row["ref"])
+        if reason is None:
+            unclassified.append(row)
+        else:
+            exempt_rows.append((row, reason))
 
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=1))
@@ -497,21 +660,40 @@ def main() -> int:
 
     if args.audit and dangling:
         print(f"\nADVISORY: {len(dangling)} line-free path mentions resolve to no file "
-              f"(not a verdict -- the population mixes real drift with runtime "
-              f"configs, illustrative paths and an out-of-repo project):")
-        for row in sorted(dangling, key=lambda r: (r["spec"], r["spec_line"])):
-            where = f"{row['spec'].split('/')[-1]}:{row['spec_line']}"
-            print(f"  {row['ref']:52s} ({where})")
+              f"({len(exempt_rows)} exempt by documented reason, {len(unclassified)} otherwise; "
+              f"a mention is not a reference, so this is never a verdict):")
+        by_reason: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+        for row, reason in exempt_rows:
+            by_reason[reason].append(row)
+        for reason, group in sorted(by_reason.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            print(f"  [exempt x{len(group)}] {reason}")
+            for row in sorted(group, key=lambda r: (r["spec"], r["spec_line"])):
+                where = f"{row['spec'].split('/')[-1]}:{row['spec_line']}"
+                print(f"      {row['ref']:48s} ({where})")
+        if unclassified:
+            print(f"  [UNCLASSIFIED x{len(unclassified)} -- these still need triage]:")
+            for row in sorted(unclassified, key=lambda r: (r["spec"], r["spec_line"])):
+                where = f"{row['spec'].split('/')[-1]}:{row['spec_line']}"
+                print(f"      {row['ref']:48s} ({where})")
     elif not args.audit and dangling:
         print(f"\nADVISORY: {len(dangling)} line-free path mentions resolve to no file "
-              f"(run with --audit for the list).")
+              f"({len(exempt_rows)} exempt by documented reason, {len(unclassified)} otherwise; "
+              f"run with --audit for the list).")
+
+    problems = exemption_self_check(rows)
+    if problems:
+        print(f"\nADVISORY: exemption table self-check found {len(problems)} problem(s) "
+              f"-- the exemption tables are out of sync with the corpus:")
+        for problem in problems:
+            print(f"  {problem}")
 
     print(f"\nsummary: {len(ok)} ok / {len(stale)} stale(advisory) / "
           f"{len(ambiguous)} ambiguous(advisory) / {len(structural)} structural failure(s)")
     print(f"         {len(content)} of {len(refs)} have no matching quoted content "
           f"(orthogonal to the verdict above)")
     print(f"         mentions: {len(dangling)} of {len(mentions)} resolve to no file "
-          f"(advisory, never failing -- see the module docstring)")
+          f"({len(exempt_rows)} exempt by documented reason, {len(unclassified)} unclassified; "
+          f"advisory, never failing -- see the module docstring)")
 
     if structural:
         print("spec reference audit FAILED.")

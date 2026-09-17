@@ -97,7 +97,12 @@ pub trait ScheduleStore: Send + Sync {
 }
 ```
 
-#### Python API (`python/ultimate_coders/agent/scheduler.py`)
+#### Python API (`crates/uc-python/src/scheduler.rs`)
+
+> ⚠️ The pure-Python scheduler module was removed in `15b5ae3` (#548) once the Rust
+> `SchedulerService` took over. The `Scheduler` class below is now the PyO3 export
+> `PySchedulerService` from the `uc-python` extension; the implementation lives in
+> `crates/uc-engine/src/scheduler/`.
 
 ```python
 class Scheduler:

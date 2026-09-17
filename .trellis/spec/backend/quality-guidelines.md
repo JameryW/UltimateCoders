@@ -145,7 +145,9 @@ fn error_mapping_rate_limited() {
 
 ## Python Test Patterns
 
-Tests live in `tests/python/test_agent.py`.
+Tests live in `tests/python/`, one file per component under test (e.g.
+`tests/python/test_types.py`, `tests/python/test_sandbox.py`,
+`tests/python/test_orchestrator_decompose.py`).
 
 ### 1. pytest with Class Grouping
 

@@ -57,7 +57,12 @@ Key methods:
 - `resume_task(task_id) -> Result<(), String>` — validates state (only Paused)
 - `read_events_from(offset) -> Vec<(usize, &AgentEventType)>`
 
-### Node.js Client (`tui/src/grpc/client.ts`)
+### Node.js Client (historical — `tui/src/grpc/client.ts`)
+
+> ⚠️ **Historical section.** The Ink/React TUI was deleted in `d7f4631` (2026-06-25, #157) and
+> replaced by the OMP extension. The current Node-side client is
+> `packages/uc-orchestrator/src/orchestrator/grpc-bridge.ts`, over generated types in
+> `packages/uc-orchestrator/src/grpc/engine_pb.ts`. The contract below is kept as a record.
 
 ```typescript
 class TaskServiceClient {

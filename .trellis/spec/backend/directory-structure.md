@@ -69,7 +69,7 @@ module_name/
 | `memory/` | `mod.rs`, `short_term.rs`, `long_term.rs` | Layered memory (TiKV short-term, Qdrant long-term) |
 | `indexer/` | `mod.rs`, `text.rs`, `ast.rs`, `semantic.rs` | Index pipeline (text tokenizer, tree-sitter AST, BLAKE3/Voyage embeddings) |
 | `search/` | `mod.rs`, `hybrid.rs`, `semantic.rs` | Hybrid search engine (text + AST + semantic) |
-| `sandbox/` | `mod.rs`, `subprocess.rs`, `docker.rs`, `pool.rs`, `file_tracker.rs`, `agents/` | Sandbox execution |
+| `sandbox/` | `mod.rs`, `subprocess.rs`, `pool.rs`, `file_tracker.rs`, `agents/` | Sandbox execution |
 | `sandbox/agents/` | `mod.rs`, `claude_code.rs`, `codex.rs` | Coding agent adapters |
 | `metadata/` | `mod.rs`, `postgres.rs` | PostgreSQL structured metadata |
 | `conflict/` | `mod.rs`, `merger.rs` | Conflict detection + three-way merge |

@@ -2,6 +2,14 @@
 
 > Executable contracts for the Ink/React TUI gRPC integration — client setup, React hooks, and data flow.
 
+> **Status: subject removed — `d7f4631` (2026-06-25, #157).** The Ink/React TUI was deleted
+> from this repository in that commit ("Delete tui/ directory (Ink/React TUI no longer
+> needed)", 84 files / 15,336 deletions) and replaced by the OMP extension
+> (`packages/uc-orchestrator/src/`). **Every `tui/` path below is historical** — this file is
+> retained as a record of the gRPC client contracts the TUI implemented, not as a description
+> of code that still exists. Current Node-side gRPC access lives in
+> `packages/uc-orchestrator/src/orchestrator/grpc-bridge.ts`.
+
 ---
 
 ## 1. Scope / Trigger

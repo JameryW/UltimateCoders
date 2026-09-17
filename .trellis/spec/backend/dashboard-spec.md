@@ -113,7 +113,14 @@ class Orchestrator:
     # Emits: task_submitted (in submit_task), task_completed (in handle_subtask_result)
 ```
 
-#### Scheduler (`python/ultimate_coders/agent/scheduler.py`)
+#### Scheduler (`crates/uc-python/src/scheduler.rs`)
+
+> ⚠️ The pure-Python scheduler module was removed in `15b5ae3` (#548). `Orchestrator.scheduler`
+> is permanently `None`, so the dashboard's scheduler endpoints report "Scheduler not
+> available" (503), and `trigger_job` below no longer exists on any implementation -- the PyO3
+> `PySchedulerService` exposes `create_cron_job` / `create_one_shot_job` / `cancel_job` /
+> `list_jobs` / `get_job` / `get_execution_history` / `set_night_window` /
+> `clear_night_window` / `start` / `stop` instead.
 
 ```python
 class Scheduler:

@@ -6,32 +6,25 @@
 
 ## Overview
 
-Python tests live in `tests/python/test_agent.py` using `pytest` with `unittest.mock`. Tests are organized by class grouping, with integration tests in a dedicated class. All tests mock the engine (they do not test the Rust extension directly).
+Python tests live in `tests/python/`, one file per component under test (e.g. `tests/python/test_types.py`, `tests/python/test_sandbox.py`), using `pytest` with `unittest.mock`. Tests are organized by class grouping **within** a file and by component **across** files, with integration tests in a dedicated class. All tests mock the engine (they do not test the Rust extension directly).
 
 ---
 
 ## Test Organization
 
-Tests are grouped by class rather than by file. The current single-file structure groups logically related tests:
+Tests are grouped by class **within** a file, and by component **across** files -- one `test_<component>.py` per component under test:
 
 ```
-tests/python/test_agent.py
-    class TestTask          -- Task dataclass tests
-    class TestSubtask       -- Subtask dataclass tests
-    class TestWorkerInfo    -- WorkerInfo dataclass tests
-    class TestLLMClient     -- LLM client tests
-    class TestLLMResponse   -- LLM response tests
-    class TestToolDefinition -- Tool definition tests
-    class TestMemoryKey     -- MemoryKey validation tests
-    class TestMemoryEntry   -- MemoryEntry from_dict tests
-    class TestShortTermMemory -- Short-term memory wrapper tests
-    class TestLongTermMemory -- Long-term memory wrapper tests
-    class TestOrchestrator  -- Orchestrator tests
-    class TestWorker        -- Worker tests
-    class TestOrchestratorWorkerIntegration -- Cross-component flow tests
+tests/python/test_types.py
+    class TestTaskToDict    -- Task -> dict serialization
+    class TestTaskFromDict  -- dict -> Task round-trip
+    class TestEdgeCases     -- boundary inputs
+tests/python/test_sandbox.py
+    class TestSandboxConfig -- sandbox configuration
+    class TestExecResult    -- execution result shape
 ```
 
-When adding new components, add a new `Test{Component}` class within the same file. Split into separate files only when the test file exceeds ~500 lines.
+When adding a new component, add a new `test_<component>.py`; do not grow an unrelated class into an existing file.
 
 ---
 

@@ -350,7 +350,13 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
 | `json_bool_or_default_false` | JSON bool `false` parsed correctly |
 | `json_bool_or_default_string` | String "true"/"false" fallback |
 
-### Python Tests (`tests/python/test_nats_worker.py`, `tests/python/test_dashboard.py`)
+### Python Tests (`tests/python/test_nats_worker_helpers.py`, `tests/python/test_nats_jetstream_subtask.py`, `tests/python/test_dashboard_nats_binding.py`)
+
+> ⚠️ **The inventory below is historical.** It predates `47f2add` (2026-06-26, #163
+> "consolidate repo structure"), which deleted the two test modules this heading used to name;
+> none of the nine test names listed below survive anywhere under `tests/python/` any more. It
+> is kept as a record of the wire shapes that were asserted -- for current coverage read the
+> files named in the heading above.
 
 | Test | Assertion |
 |------|-----------|
