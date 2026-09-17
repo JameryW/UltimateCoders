@@ -192,6 +192,50 @@ def test_an_untriaged_dangling_mention_is_not_a_problem(guard):
 
 
 # --------------------------------------------------------------------------
+# A bold span is an anchor only when the span IS an identifier (T24; pinned T29)
+# --------------------------------------------------------------------------
+
+
+def test_bold_prose_is_not_a_symbol_anchor(guard):
+    """`**...**` counts as a symbol anchor only when the span itself is a name.
+
+    T24 (slice B) tightened this from "any bold span" to identifier-exact and
+    measured the corpus effect (`STALE 27 -> 26`, `OK 113 -> 114`).  Until T29
+    nothing pinned it: reverting the filter left all 11 tests green while the real
+    corpus silently regained a false STALE (`89 ok / 1 stale` -> `88 ok / 2
+    stale`).  This test is that pin.
+
+    Mechanism being pinned: the guard picks the symbol whose definition sits
+    *closest* to the referenced line, so one prose word that happens to be a
+    defined name elsewhere in the target file is enough to drag the row out of its
+    range -- and a pointer at a location must not go STALE off prose.  `GhostThing`
+    is deliberately undefined in the target, so under the tightening the row has no
+    resolvable symbol at all (OK); the loose form resolves the prose word `delete`
+    at line 40, i.e. 38 lines away (STALE).
+    """
+    spec_line = ("See `crates/one/target.py:2` -- "
+                 "**Handling `GhostThing` when delete runs**.")
+
+    # The tightened semantics, asserted directly on the anchor set.
+    symbols = guard._symbols_on(spec_line)
+    assert "GhostThing" in symbols, "the tick span must still be an anchor"
+    assert "delete" not in symbols, "prose inside a bold span is not an anchor"
+
+    target = "\n".join(["# filler"] * 39 + ["def delete():", "    pass"])
+    _write_files(guard.ROOT, {
+        "crates/one/target.py": target,
+        ".trellis/spec/backend/bold-spec.md": spec_line + "\n",
+    })
+
+    rows = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["target"] == "crates/one/target.py"
+    assert row["symbol"] is None, "the prose word must not become the row's symbol"
+    assert row["verdict"] == "OK", "no resolvable symbol -> no offset -> OK"
+
+
+# --------------------------------------------------------------------------
 # The real corpus
 # --------------------------------------------------------------------------
 

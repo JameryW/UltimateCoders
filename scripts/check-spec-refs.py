@@ -93,21 +93,32 @@ SPEC_DIR = ROOT / ".trellis" / "spec"
 
 # Directories never scanned as *targets* of a reference.
 #
-# Applied to the *git* file list as well, and not redundant with `.gitignore`:
-# `.scratch/durable-runtime-migration/**` was committed BEFORE `.scratch/` was
-# ignored, and once a path is tracked, `.gitignore` no longer applies to it.  A
-# pure `git ls-files` index therefore puts those 12 files back, undoing the
-# exclusion below (measured 2026-09-17, T26).
+# Applied to both index sources: the `git ls-files` path and the `_walk_index`
+# fallback.  Measured liveness on the *git* path (2026-09-17, T29 -- `git
+# ls-files -- <dir>`, filtered by CODE_EXT the same way the index does it): eight
+# entries cover 0 tracked files, `vendor` covers one tracked file whose suffix is
+# not in CODE_EXT, and `.scratch` covers 12.  Nine of the ten entries below are
+# therefore inert on the git path; they exist for the fallback walk, where they
+# are load-bearing (dropping e.g. `target` would walk the whole build tree).
 #
-# `.scratch/` is this repo's gitignored scratch space (test harnesses, temp trees,
-# rollback copies).  An `os.walk` sees whatever is on this machine, so leaving it
-# in makes
-# verdicts depend on whatever local scratch state happens to exist.  Measured
-# (2026-09-16, T24 slice B): a rollback copy parked in `.scratch/` turned a unique
-# mention AMBIGUOUS mid-run, and `.scratch/pt-test_*/**/lib.rs` inflated `lib.rs`
-# from 4 candidates to 79.  Excluding it changes exactly one verdict in the whole
-# corpus (`event-pipeline-spec.md:153` `dashboard/app.py`: ambiguous -> resolved)
-# and no reference verdict at all.
+# `.scratch` is the one entry with a live input, and it is still needed:
+# `.scratch/durable-runtime-migration/**` was committed BEFORE `.scratch/` was
+# ignored, and once a path is tracked `.gitignore` no longer applies to it, so a
+# pure `git ls-files` index puts those 12 files back.  Removing the entry today
+# changes **no verdict** though: the 12 basenames (`map.md`, `T1.md`..`T7.md`,
+# `D4-*`..`D7-*.md`) collide with no mention in the corpus (measured 2026-09-17,
+# T29: guard stdout byte-identical with the entry deleted).
+#
+# History, because the original rationale no longer holds and must not be quoted
+# as a current effect.  It was measured (2026-09-16, T24 slice B) under an
+# `os.walk` index: a rollback copy parked in `.scratch/` turned a unique mention
+# AMBIGUOUS mid-run, and `.scratch/pt-test_*/**/lib.rs` inflated `lib.rs` from 4
+# candidates to 79 -- "exactly one verdict in the whole corpus"
+# (`event-pipeline-spec.md:153` `dashboard/app.py`: ambiguous -> resolved).
+# T26 replaced the index with `git ls-files`, which by construction cannot see
+# untracked scratch state, so that measurement is an artifact of the old index.
+# Kept anyway: keeping a tracked path under `.scratch/` out of the index costs
+# nothing, and deleting the entry would be a behaviour change, not a fix.
 EXCLUDE_DIRS = {".git", ".scratch", "target", "node_modules", "vendor", ".venv",
                 "__pycache__", "dist", "build", ".pytest_cache"}
 
