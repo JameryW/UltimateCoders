@@ -1,3 +1,3 @@
-{"file": ".trellis/tasks/09-18-t32-env-allowlist-agent-derivation/prd.md", "reason": "本票 PRD：漂移面实测、修法裁决、非目标与四条验收"}
+{"file": ".trellis/tasks/archive/2026-09/09-18-t32-env-allowlist-agent-derivation/prd.md", "reason": "本票 PRD：漂移面实测、修法裁决、非目标与四条验收"}
 {"file": "tests/python/test_sandbox_env_allowlist.py", "reason": "改动面：ALL_AGENTS / SPAWNABLE_AGENTS 改为推导式，UNKNOWN_AGENT 提为常量，新增元测试"}
 {"file": "python/ultimate_coders/agent/sandbox.py", "reason": "真源：ADAPTER_ENV_ALLOWLIST（:80）与 GROK_AGENT_ALIASES（:28）；本票不改其内容，只把它作为推导来源"}
