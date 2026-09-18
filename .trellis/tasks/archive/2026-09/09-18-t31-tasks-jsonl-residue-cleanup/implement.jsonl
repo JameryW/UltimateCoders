@@ -1,3 +1,3 @@
-{"file": ".trellis/tasks/09-18-t31-tasks-jsonl-residue-cleanup/prd.md", "reason": "本票 PRD：两类 malformed + 六类 dangling 的成因分类与修法裁决"}
+{"file": ".trellis/tasks/archive/2026-09/09-18-t31-tasks-jsonl-residue-cleanup/prd.md", "reason": "本票 PRD：两类 malformed + 六类 dangling 的成因分类与修法裁决"}
 {"file": "scripts/check-tasks-refs.py", "reason": "T30 交付的守卫，本票的判据与验收依据"}
 {"file": "tests/python/test_check_tasks_refs.py", "reason": "含被有意钉住的真实语料数字（14/47），本票须同步更新"}
