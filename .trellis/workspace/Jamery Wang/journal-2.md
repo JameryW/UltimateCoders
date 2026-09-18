@@ -1091,3 +1091,77 @@ Failed to connect to github.com:443 over proxy 127.0.0.1 after 2048 ms
 ### Status
 
 [OK] **本地已完成** —— 守卫 + 自检 + 14 用例 + CI 接线全部落地并实测；⚠️ **未推送、CI 未跑 ⇒ #680 暂不关**。
+
+
+## Session 37: T31 / #681 — clean .trellis/tasks jsonl residue, guard turns green
+
+**Date**: 2026-09-18
+**Task**: T31 / #681 — clean .trellis/tasks jsonl residue, guard turns green
+**Branch**: `main`
+
+### Summary
+
+交付 **T31 / #681**：把 `.trellis/tasks` 的 jsonl 存量欠账清到 `0 dangling / 0 malformed`，
+让 T30 交付的守卫（`scripts/check-tasks-refs.py`）**在 CI 里转绿**。
+
+### Main Changes
+
+- **47 条 malformed 不是一种形状，是两种**（一手分类，0 条 unclassified）：
+  - **27 行**（4 文件）每行是合法 JSON 对象、**行尾多一个逗号** ⇒ 删那一个字节即可。
+  - **18 条**（2 文件）整文件是 `[ {..}, .. ]` **JSON 数组**，键是 `path` 不是 `file`
+    ⇒ 拆成 JSONL，**并有意保留 `path` 键名**，免得这些历史条目悄悄进入守卫的 `file` 计数。
+- **14 条 dangling 不是一种成因，是六种**：
+  - 9 条指向归档前的旧路径（任务目录搬移）；
+  - 1 条少了一层同名目录（`06-22-rust-scheduler/06-22-rust-scheduler/prd.md`）；
+  - 2 条写成 `.trellis/spec/backend/type-safety.md`，实际在 **`frontend/`**；
+  - 3 条指向**全仓从未存在**的目标（`.trellis/spec/backend.md`、
+    `.trellis/spec/backend/workspace-config-spec.md` ×2）⇒ **删引用，不臆造路径**。
+  - ⇒ **11 条 repoint + 3 条删除 = 14**。
+- **每个 repoint 目标都先用 `git ls-files` 验明存在**才动手（不猜）。每个文件**保持自己的行尾**
+  （两个 06-24 文件是 CRLF，改完仍是 CRLF）。
+- 数字闭环：**788 → 785 引用（= -3，恰为删除数）**，`0 dangling / 0 malformed`，守卫 exit 0。
+- `test_real_corpus_reproduces_the_recorded_numbers` **同票更新**（它是有意钉住数字的绊线）。
+
+### Testing
+
+- `scripts/check-tasks-refs.py` ⇒ `785 ok / 0 dangling / 0 malformed`，**exit 0**。
+- `check-tasks-refs-selftest.py` ⇒ **SELF-CHECK PASSED：6 突变、红集两两不同**，
+  守卫 sha256 仍是 `a74deb2a…`（**未被本票改动**）。
+- `tests/python/test_check_tasks_refs.py` ⇒ **14 passed**。
+- 全量收集 **1210**（与改前一致 —— 本票只改数据文件、不新增用例）。
+- 其余守卫：spec-refs **0**、journal **0**。
+
+### CI
+
+- **`Scripts CI` 的 `tasks-refs` job 全绿**（3.9 + 3.12 两版，含 `run the guard`、
+  `real corpus tests`、`mutation self-check`）—— 这是本票的验收核心。
+- 此前 `Scripts CI` 在 `1323cc00` 是红的（守卫**如实**报出 14+47）；本票把它转绿。
+
+### Git Commits
+
+- `3305504` fix(trellis): clean .trellis/tasks jsonl residue (0 dangling / 0 malformed) (#681)
+- `ad5c06c` test(trellis): widen the corpus pin to cover this ticket's own two jsonl files (#681)
+
+### 撞到的坑（值得记住）
+
+1. **我自己写的探针脚本也算「间接信号」。** 我用一个自算脚本得到「43 条 trailing-comma」，
+   而守卫说 47；`tail -20` 把表截断了，我**读错了半行**。改用守卫自己的语义重算 ⇒ 两处都是 47。
+   ⇒ **判据必须以被审对象的语义复算，不是拿自己的近似脚本当准**。
+2. **EOL 回归是我自己引入的**：第一版 `rewrite()` 把两个 CRLF 文件写成了 LF。
+   回滚后用**「逐文件实测 + 混合即 abort」**的 `measure()` 重做。
+   ⚠️ 更早我还**误报过这两个文件是 LF** —— 探针里 `crlf`/`lf` 的算法写错了。
+3. 🔴 **钉数字的绊线，必须钉「CI 会看到的那棵树」。**
+   我先删了存量、在**未提交**的树上读到 **785**，就把 pin 写成 `(784, 785)`；
+   而 CI 跑的是**已提交**的树 —— 我这张票自己的两个 jsonl 已被跟踪、各贡献 1 条引用 ⇒ **787**。
+   **CI 直接把它打红**，我才发现。修法 = 放行 `(785, 786, 787)` 窗口（785 无我票文件 / 787 有）。
+   ⇒ **本地读数与 CI 读数属于不同的树；钉数字前先想清楚「CI 会在哪棵树上跑」。**
+
+### Next Steps
+
+- 无。本票范围已闭合；守卫转绿即验收。
+- **#656 P2 本体**仍阻塞于外部「方案第 21 节」原文（唯一外部阻塞项）。
+
+
+### Status
+
+[OK] **Completed** -- guard green; `Scripts CI` `tasks-refs` job passing on 3.9 + 3.12
