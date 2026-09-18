@@ -1387,3 +1387,104 @@ deepseek-harness / local-harness），测试清单 = 这 6 个 + `grok`（别名
 - 实现票 T32 已直落 main（`579843e` 实现 + `aa6898d` 归档）；**待 CI 绿后关 #682**（贴四条验收映射）。
 - #656（P2 本体）仍只等外部「方案第 21 节」原文 —— 本轮 T32 **不在**该依赖内，故可独立交付。
 - 若再遇「无票可取」：先按 §5.51 判「确实无票」还是「有可自推的独立欠账」（本轮即后者，判据是靠**实测**漂移面存在）。
+
+
+## Session 40: T33 pin the WorkerService RPC -> roster field mapping (#683)
+
+**Date**: 2026-09-18
+**Task**: T33 pin the WorkerService RPC -> roster field mapping (#683)
+**Branch**: `main`
+
+### Summary
+
+补一条穿过 RPC 边界的 placement 钉：三处字段映射（recent_files/per_worker_topic/capabilities）此前全部无测试，三条突变各自存活 249 passed
+
+### Main Changes
+
+**T33 / #683** —— 钉住 `WorkerService` 两个 RPC 到花名册的字段映射（框架卫生线，不依赖外部「方案第 21 节」）。
+
+## 起点：接缝无主（一手实测）
+
+`placement_target` 读的**每一个**输入都是从 wire 进来的：心跳的 `recent_files` / `per_worker_topic`、
+注册的 `capabilities`。两个 handler 都逐字把它传给了 `register_with_projects` / `heartbeat_with_signals`
+（我逐行读过，当前**都是对的**）。问题是**没有测试钉住这件事**：
+
+- 7 个 placement 测试（`server.rs:8342/8359/8392/8420`、`worker_service.rs:2101/2121/2139/2180/2260/2422`）
+  全部用**本地辅助**直接戳 registry —— `registry_with`（`server.rs:8300-8313`）、`signalled`（`worker_service.rs:2019-2035`）；
+- 3 个 `register_worker_rpc_*`（`:1388` / `:1414` / `:1996`）走到 RPC，但只断言「接受 / 拒绝」，
+  **从不要求花名册做决策**。
+
+⇒ 与 T12（软语义让「功能死了」= 「没理由定向」）、T32（手抄清单与真源平行维护）**同一个形状**。
+
+## 消融（3 处独立突变，`cargo test -j 1 -p uc-grpc --all-features`）
+
+| 突变 | 重编译 | 结果 |
+|---|---|---|
+| `req.per_worker_topic` → `false` | `Compiling uc-grpc`×1 | 249 passed / **0 failed（存活）** |
+| `&req.recent_files` → `&[]` | ✅ | 249 passed / **0 failed（存活）** |
+| `req.capabilities` → `Vec::new()` | ✅ | 249 passed / **0 failed（存活）** |
+
+**阳性对照**：`PER_WORKER_SUBJECT_PREFIX`（`placement.rs:249` 的绝对钉）加 `zz` ⇒ **rc=101 / 6 failed**
+⇒ 装置确有检出能力；基线 rc=0（lib 249 + 集成 8）。三次突变后按字节恢复，sha256 回 `4b6a4db8…`，工作树 0 行。
+
+**反例（顺带发现，不在本票范围）**：`placement.rs:303` 的 `assert_eq!(norm.len(), MAX_RECENT_FILES)`
+是**符号自指** —— 常量 `64 → 640` 后仍全绿，它钉不住自己的值。proto 未承诺该数字，故记录不修。
+
+## 交付与验收（四条全过，均一手实测）
+
+新增 `placement_signals_survive_the_rpc_boundary`：真 proto 请求 `register_worker` + `worker_heartbeat`
+→ `placement_target` 决策 → 断言**字面量** subject（符号断言会随常量漂移，钉不住）。
+
+| # | 判据 | 实测 |
+|---|---|---|
+| 1 | 新测试未突变 | **绿**（`test worker_service::tests::placement_signals_survive_the_rpc_boundary ... ok`） |
+| 2 | m1 / m2 / m3 各自单独施加 | **三条各自恰好打红新测试**（`249 passed; 1 failed`，失败名就是它）；修复前 **0/3** 红 |
+| 3 | `cargo test` lib 计数 | **249 ⇒ 250 passed**，0 failed |
+| 4 | 语料钉值 | `(787, 788)` ⇒ **`(788, 789)`**；`check-tasks-refs` 未跟踪 **788** / 已跟踪 **789**，均 0 dangling |
+
+`cargo fmt --all --check` 干净；`cargo clippy -j 1 --workspace --all-targets --all-features -- -D warnings`
+**RC=0**；`pytest tests/python/test_check_tasks_refs.py` **14 passed**；Python 总收集 **1211 不变**。
+
+## 值得记的
+
+- **「两半各测各的」也是一种沉默漂移**：单侧各自绿（7 + 3 个测试）并不能覆盖**接缝**。
+  判据很硬：把 handler 的映射改错，套件会不会红 —— 不会，就说明接缝无人守。
+- 🔴 **本地跑 `check-tasks-refs-selftest.py` 必然中断**（本轮首次定位到确切形状）：pytest 会话末清
+  `%TEMP%\pytest-of-jamer\garbage-*`（实测 **count=968** > 阈值 50）撞 safe-delete ⇒ pytest 打印完
+  `..............`（14 个点全过）却以 rc=1 退出且**没有 summary 行** ⇒ 自检 `no summary ⇒ raise` 的
+  fail-closed 把它变成崩溃。**把 `TEMP` 指到新目录也没用**（pytest 仍自建 `garbage-*` 且同样超阈值）。
+  ⇒ 它不是「判定红」，是环境现象；**本地只拿得到中间读数**（本轮拿到 `baseline red set = none` +
+  前两条突变打红**互不相交**的集合 ⇒ 判别力已证），完整结论只能由 CI 给。
+- **阳性对照可能自己就是反例**：第一版对照改 `MAX_RECENT_FILES` 想让它红，它绿了 —— 因为那条断言
+  是符号自指。**对照必须落在有绝对期望的点上**，否则「装置没检出能力」会被误读成「装置正常」。
+- **装置要先证明会红，再相信绿**：三个突变都带 `Compiling uc-grpc` 证据（否则「绿」可能是没重编译）。
+- `task.py archive` **不写 `commit`** —— 归档后通读确认 `commit: null` 并手填 `82ab716`；
+  脚本重写 `task.json` 时**丢掉了末尾换行**（与 T32 的 26 CRLF + 有换行不同形），已补回。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `82ab716` | test(uc-grpc): pin the WorkerService RPC -> roster field mapping (#683) |
+| `b895a7d` | chore(task): archive 09-18-t33-rpc-to-roster-passthrough-pin |
+
+### Testing
+
+- [OK] 新测试未突变源码下**绿**；`cargo test -j 1 -p uc-grpc --all-features` lib `249 ⇒ 250 passed`，0 failed
+- [OK] 突变自检：m1(`per_worker_topic`→`false`) / m2(`&req.recent_files`→`&[]`) / m3(`req.capabilities`→`Vec::new()`) **各自单独施加都恰好打红新测试**（`249 passed; 1 failed`，失败名即它）；修复前 **0/3** 红；每次均带 `Compiling uc-grpc` 证据，恢复后 sha256 回 `4b6a4db8…`、工作树 0 行
+- [OK] 阳性对照 `PER_WORKER_SUBJECT_PREFIX` + `zz` ⇒ **rc=101 / 6 failed**（装置确有检出能力，绿不是「没重编译」）
+- [OK] `cargo fmt --all --check` 干净；`cargo clippy -j 1 --workspace --all-targets --all-features -- -D warnings` **RC=0**
+- [OK] `check-tasks-refs` 未跟踪 **788** / 已跟踪 **789**，均 **0 dangling / 0 malformed**；`test_check_tasks_refs.py` **14 passed**；Python 总收集 **1211 不变**
+- [OK] `check-journal-ledger.py` 通过（本账本 40 session(s)、0 占位符）
+- [WARN] `check-tasks-refs-selftest.py` **本地跑不完**：pytest 会话末清 tmp（`count=968` > 阈值 50）撞 safe-delete ⇒ rc=1 且无 summary ⇒ 自检 fail-closed 中断。已取中间读数（`baseline red set = none` + 前两条突变打红**互不相交**集合），完整结论以 CI 为准
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 已直落 main（`82ab716` 实现 + `b895a7d` 归档）；**待 CI 绿后关 #683**（贴四条验收映射）。
+- 本票只补钉、未动生产代码；`placement.rs:303` 的符号自指（`MAX_RECENT_FILES` 钉不住自己的值）**已记账、刻意未修**。
+- #656（P2 本体）仍只等外部「方案第 21 节」原文；其上「已记账残余」现在只剩 T19 的 race 窗口一项。
