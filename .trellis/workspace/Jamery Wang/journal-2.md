@@ -1289,3 +1289,101 @@ P2-1/2/3 的仓内前置与「只有方案第 21 节能回答的问题」分列�
 - 外部「方案第 21 节」原文到达后：按 `durable-runtime-p2-recon.md` 的空位逐条填答 → 开 P2-1 / P2-2 / P2-3 的**决议票**（编号开票时确认）。
 - 开票时把两笔**已记账残余**一并裁决：#644 残余 2（`ALL_AGENTS` 清单漂移）与 T19 的共享队列 race 窗口 —— 二者都不是欠账，是 P2 的输入。
 - 本轮两处自伤（均被断言拦在写盘前）：① 多行替换用 `\n` 会把 lone LF 注入 CRLF 文件；② 检查占位符时扫**整文件**会因早先 session 讨论过占位符原文而**自指误报** ⇒ 判据要限定在本次 session 内。
+
+
+## Session 39: T32：sandbox allowlist 测试的 agent 清单改为从 allowlist 自身推导
+
+**Date**: 2026-09-18
+**Task**: T32：sandbox allowlist 测试的 agent 清单改为从 allowlist 自身推导
+**Branch**: `main`
+
+### Summary
+
+消除测试侧手抄清单与 ADAPTER_ENV_ALLOWLIST 的平行维护：改为推导式 + 元测试钉住；消融两方向对照实证
+
+### Main Changes
+
+按「继续」自主推进。上一轮我留了一句「要不要开 #644 残余 2，你说了算」；本轮不等回答，
+按约定**自己定并写明假设**：`ALL_AGENTS` 清单漂移是今日一手实测确证的覆盖缺口、
+且**不依赖**外部「方案第 21 节」 ⇒ 属框架卫生线（与 T21–T31 同类），可独立开票交付。
+
+## 交付（T32 / #682）
+
+issue **#682** → 任务目录 `09-18-t32-env-allowlist-agent-derivation` → 实现 → 归档 → 本 session。
+
+### 漂移面（实测）
+
+`tests/python/test_sandbox_env_allowlist.py:51` 的 `ALL_AGENTS` 是**手抄清单**，与
+`python/ultimate_coders/agent/sandbox.py:80` 的 `ADAPTER_ENV_ALLOWLIST` **平行维护**：
+allowlist **6** 个键（grok-build / claude-code / claude-code-decompose / codex /
+deepseek-harness / local-harness），测试清单 = 这 6 个 + `grok`（别名）+
+`some-external-plugin`（刻意未知）= **8**。
+⇒ 新增 adapter（= 加一个键）时参数化**不自动纳入**，新适配器的
+「host secret 不得进入子进程」断言**静默缺失而套件全绿**。与 T13 教训同源。
+
+### 修法
+
+`ALL_AGENTS` 改为从 allowlist **自身推导**：allowlist 的键 ∪ `GROK_AGENT_ALIASES`
+中未直接命中的别名 ∪ 刻意未知项。别名那一支**保留**（它覆盖「别名须经 registry
+归一后才命中 allowlist」的路径）；`some-external-plugin` 提为 `UNKNOWN_AGENT` 常量
+并消掉另外三处字面量；新增**元测试**把「清单必须保持推导」钉住。
+**非目标**：不改 allowlist 内容；不用 `available_agents()` —— 它的 `discover_once()`
+会让参数化集合依赖宿主环境，破坏「总收集数对账」这条回归判据。
+
+## 验收（四条全过，均一手实测）
+
+| # | 判据 | 实测 |
+|---|---|---|
+| 1 | 参数化条目 8 ⇒ 8 | 推导结果 = 原 8 个（顺序略变、语义一致） |
+| 2 | 消融：注入探针键 | **修复前 69 不变**；**修复后 70 ⇒ 72**（两个参数化点各 +1），测试文件一字未动 |
+| 3 | 该文件 pytest | **70 passed**（基线实测 69，+1 = 新增元测试） |
+| 4 | Python 总收集 | **1210 ⇒ 1211** |
+
+`ruff check` 通过；消融后两文件均按字节恢复、sha256 一致；四个 blob 全 LF-only
+且与工作树逐字节一致（**CI 会看到的那棵树 = 我测的那棵树**）。
+
+提交：`579843e`（实现）+ `aa6898d`（归档）。
+
+## 值得记的
+
+- **消融必须两方向对照**：只证「修好后能自动纳入」不足以说修好了 —— 用**修复前版本 +
+  同一注入**跑出 69 不变，才把「正是那个失效模式」变成实测事实（与「没有红过的检查器
+  不是证据」同源）。
+- **开新票会移动被钉死的语料计数**：`.trellis/tasks/<新票>/*.jsonl` 里的 `.trellis` 引用进语料 ⇒
+  `test_real_corpus_reproduces_the_recorded_numbers` 立刻红，**Scripts CI 与 Python CI 同时红**。
+  这不是回归，是该测试 docstring 规定的「同 change 更新」；T31 的 `ad5c06c` 做过同样的事，我漏了。
+  顺手把 T31 的**增长窗口 `(785,786,787)` 收紧成可达对 `(787,788)`** —— 窗口里的陈旧值会吞掉真实的 -1 漂移。
+- **突变自检不能被「打断」**：前台跑 `check-tasks-refs-selftest.py` 撞默认超时被 SIGTERM ⇒ 在
+  `scripts/check-tasks-refs.py` 里**留下一处突变**（`posix in index` → `(ROOT/posix).exists()`）。
+  症状极具误导性：**一个与本票无关的测试**变红（`test_untracked_target_does_not_resolve`），
+  而半小时前同一命令是 14 passed。判据：**同一命令前后读数不一致 ⇒ 先怀疑工作树变了**，
+  拿 blob 哈希比对（工作树 `dffb2325` vs HEAD `a74deb2a`），而不是先怀疑自己刚改的代码。⇒ 一律后台跑。
+- `task.json` 的 `commit` 字段仍是**空的**（`task.py archive` 不写它）⇒ 归档后手填
+  `579843e`；`implement.jsonl` 的 prd 引用由脚本自动改指归档路径，**已通读确认**。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `579843e` | test(python): derive the sandbox allowlist sweep from ADAPTER_ENV_ALLOWLIST (#682) |
+| `aa6898d` | chore(task): archive 09-18-t32-env-allowlist-agent-derivation |
+| `6f8d50f` | test(trellis): re-pin the task-reference corpus at 787/788 (#682) |
+
+### Testing
+
+- [OK] `pytest tests/python/test_sandbox_env_allowlist.py` → **70 passed**（基线实测 69，+1 = 新增元测试）；`ruff check` 通过
+- [OK] 消融**两方向**：修复前 + 探针键 = **69 不变**（正是那个失效模式）；修复后 + 探针键 = **70 ⇒ 72**（两个参数化点各 +1），测试文件一字未动；两文件均按字节恢复、sha256 一致
+- [OK] Python 总收集 **1210 ⇒ 1211**；四个 blob 全 LF-only 且与工作树逐字节一致（CI 看到的树 = 我测的树）
+- [OK] `check-tasks-refs` 语料 **788 ok / 0 dangling / 0 malformed**；`test_check_tasks_refs.py` **14 passed**（含 re-pin 后那条）；`ruff` 通过
+- [OK] re-pin 消融：往归档 jsonl 注入一条目标**存在**的额外引用 ⇒ `reference count drifted: 789` 报红；按字节恢复后由独立进程复算 sha256 一致
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 实现票 T32 已直落 main（`579843e` 实现 + `aa6898d` 归档）；**待 CI 绿后关 #682**（贴四条验收映射）。
+- #656（P2 本体）仍只等外部「方案第 21 节」原文 —— 本轮 T32 **不在**该依赖内，故可独立交付。
+- 若再遇「无票可取」：先按 §5.51 判「确实无票」还是「有可自推的独立欠账」（本轮即后者，判据是靠**实测**漂移面存在）。

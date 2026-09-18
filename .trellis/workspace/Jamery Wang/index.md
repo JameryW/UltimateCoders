@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 38
+- **Total Sessions**: 39
 - **Last Active**: 2026-09-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1287 | Active |
+| `journal-2.md` | ~1373 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 39 | 2026-09-18 | T32：sandbox allowlist 测试的 agent 清单改为从 allowlist 自身推导 | `579843e`, `aa6898d` | `main` |
 | 38 | 2026-09-18 | P2 开票前置勘察：分离「仓内已确证」与「待 §21」 | `03de685` | `main` |
 | 37 | 2026-09-18 | 架构升级收口审计（五面）—— 迁移程序已完成；唯一未竟是 P2 本体待外部原文；§六 覆盖边界放宽至 T21–T31 | `fe848635` | `main` |
 | 36 | 2026-09-18 | T31 / #681 — clean .trellis/tasks jsonl residue, guard turns green | `3305504`, `ad5c06c` | `main` |
