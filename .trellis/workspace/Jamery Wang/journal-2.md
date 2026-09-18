@@ -1234,3 +1234,58 @@ Failed to connect to github.com:443 over proxy 127.0.0.1 after 2048 ms
   **没有改那个 session 标题的编号** ⇒ 本轮脚本按 36 递增，产出**第二个** Session 37。
   守卫当场报 `SESSION_NUMBER: session 37 is used twice` —— 已把前一个（T31 交付）改回 **36**。
   ⇒ **回滚 journal 必须连「标题编号」一起回滚，不只是 `index.md` 的计数**（§5.34 ④ 的补强）。
+
+
+## Session 38: P2 开票前置勘察：分离「仓内已确证」与「待 §21」
+
+**Date**: 2026-09-18
+**Task**: P2 开票前置勘察：分离「仓内已确证」与「待 §21」
+**Branch**: `main`
+
+### Summary
+
+P2-1/2/3 的仓内前置与「只有方案第 21 节能回答的问题」分列成文（durable-runtime-p2-recon.md），不臆造本体
+
+### Main Changes
+
+按「继续」自主推进。上一轮一手核实：迁移程序已完成、无下一票可取（开放 issue 仅 #656、
+0 活动任务、0 开放 PR、CI 绿），唯一未竟是 #656 的 P2 本体，阻塞于外部「方案第 21 节」原文。
+本轮不去空等，而是把这个外部阻塞的**时滞**压到最短 —— 原文一到即可开票。
+
+- 新增 `docs/architecture/durable-runtime-p2-recon.md`：把 P2-1 / P2-2 / P2-3 的
+  **仓内已确证前置**（每条带 `file:line`，2026-09-18 实测）与**只有 §21 能回答的问题**
+  分列两栏；后者一律留空位，**不臆造**。
+- P2-1：指标列 `cost` / `tokens` / `duration_ms`（`graph_store.rs:928-930`）；
+  T14 #659 写入点、T15 #660 上报契约（同事务同条）、T18 #668 逐步用量 `payload["steps"]`。
+- P2-2：T16 #661 让 `graph_nodes.type` 有写者（`node_type_for` 由 capability 派生）；
+  T19 #670 的 `requires_independence` 是唯一条件、节点打标与派发口**共用**它；
+  另记 D16 未解的 `steps[].agent` 命名冲突与 T19 的残余 race 窗口（**已记账，非欠账**）。
+- P2-3：仓内**零坐实** —— `PlacementScore` 0、`Execution Optimizer` 0、`market` 仅 3 处
+  无关命中 ⇒ 评估件 2026-09-15 那句「范围无法在仓内坐实」**至今成立**（顺手复测，
+  防「过期规格自带权威感」）。
+- 评估件 §六 的 P2 状态段后加一句指向该文，避免孤儿文档（numstat **1/0**）。
+
+边界：本文只列事实与空位，**不是**本体设计、**不是**决议票；开票时以票面 Acceptance 为准。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `03de685` | docs(architecture): 记录 P2 开票前置勘察，分离「仓内已确证」与「待 §21」 |
+
+### Testing
+
+- [OK] 锚点复核：`git grep -n` 定位后逐段读原文 —— `graph_store.rs:928-930`（指标列）/ `:1845-1849`（`EventUsage`）/ `:2660` + `:1936-1938`（`steps_payload`）/ `:352-358`（`node_type_for`）/ `:381-383`（`requires_independence`）；`worker_service.rs:319-324`（`dispatch_gate`）/ `:440-447`（`placement_target`）；`test_sandbox_env_allowlist.py:51`（`ALL_AGENTS`）
+- [OK] `git diff --numstat` 评估件 **1/0**：纯新增一句指向，既有段落未动
+- [OK] 新文档 CRLF-only、5716 B，无反斜杠泄漏；本次**无代码变更**，四面守卫的输入不受影响
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 外部「方案第 21 节」原文到达后：按 `durable-runtime-p2-recon.md` 的空位逐条填答 → 开 P2-1 / P2-2 / P2-3 的**决议票**（编号开票时确认）。
+- 开票时把两笔**已记账残余**一并裁决：#644 残余 2（`ALL_AGENTS` 清单漂移）与 T19 的共享队列 race 窗口 —— 二者都不是欠账，是 P2 的输入。
+- 本轮两处自伤（均被断言拦在写盘前）：① 多行替换用 `\n` 会把 lone LF 注入 CRLF 文件；② 检查占位符时扫**整文件**会因早先 session 讨论过占位符原文而**自指误报** ⇒ 判据要限定在本次 session 内。
