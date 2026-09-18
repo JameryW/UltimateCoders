@@ -1488,3 +1488,107 @@ deepseek-harness / local-harness），测试清单 = 这 6 个 + `grok`（别名
 - 已直落 main（`82ab716` 实现 + `b895a7d` 归档）；**待 CI 绿后关 #683**（贴四条验收映射）。
 - 本票只补钉、未动生产代码；`placement.rs:303` 的符号自指（`MAX_RECENT_FILES` 钉不住自己的值）**已记账、刻意未修**。
 - #656（P2 本体）仍只等外部「方案第 21 节」原文；其上「已记账残余」现在只剩 T19 的 race 窗口一项。
+
+
+## Session 41: T34 lint the whole scripts/ directory, retiring the name-files-only workaround (#684)
+
+**Date**: 2026-09-19
+**Task**: T34 lint the whole scripts/ directory, retiring the name-files-only workaround (#684)
+**Branch**: `main`
+
+### Summary
+
+把 `scripts/` 变成一等 lint 面：修掉 `check-codex-issue-flow.py` 的两处既有 ruff 错误（`Found 2 errors` → `All checks passed!`），新增 `scripts-lint` job 跑 `ruff check scripts/`，并同票修掉那句被本票变成假话的文件头注释。判据性消融：同一突发下 CI 现有的三条点名文件命令**全绿**而目录级命令**变红** —— 覆盖是真的，且「新加进 `scripts/` 的文件天生无人 lint」这个类被消掉了。
+
+### Main Changes
+
+**T34 / #684** —— 修掉 T26 留下的两处既有 ruff 错误，退休「ruff 只能点名文件」的临时形状（框架卫生线，不依赖外部「方案第 21 节」）。
+
+## 起点与判据
+
+T33 收口后 `origin/main = dcaef15`、工作树干净，开放 issue 只剩 #656（阻塞于外部「方案第 21 节」原文）。本会话承接的是仓自检线（T26→T33 一路在做的「检查器 / 门禁卫生」），本轮问的是 **T26 当年那个临时形状留下了什么**。
+
+## 一手测量：scripts/ 的 lint 面
+
+`git ls-files '*.py'` ∩ 各 workflow 里 `ruff check` 的实参（2026-09-18 实测）：
+
+| 目录 | tracked `.py` | 被某个 CI ruff target 覆盖 | 未覆盖 |
+|---|---|---|---|
+| `python/` | 36 | 36（`ci-python.yml:32` 目录级） | 0 |
+| `tests/` | 51 | 51（同上） | 0 |
+| `scripts/` | **5** | **4**（3 个在 `ci-scripts.yml:67/93-95`、1 个在 `ci-journal.yml:69`） | **1** |
+| `.trellis/scripts/` | 28 | 1（`ci-trellis.yml:66`） | 27 |
+| `.claude/hooks/` | 3 | 0 | 3 |
+| **合计** | **123** | **92** | **31** |
+
+`scripts/` 上唯一逃逸的是 `scripts/check-codex-issue-flow.py` —— 正是 `ci-scripts.yml:19-21` 逐字记下的那两处既有 ruff 错误（`I001` + `UP045`，末次改动 `fc9b5ce`）。
+
+**形状问题比那两行大**：只要 ruff 步骤仍点名文件，**下一个**加进 `scripts/` 的守卫就同样天生无人 lint。T34 要消的是这个类。
+
+## 为什么这是欠账而不是已决冻结
+
+| 出处 | 逐字 | 判读 |
+|---|---|---|
+| T26 `prd.md:113` | `**不**修 ... 的两处既有 ruff 问题（不在本票）。` | **非目标** —— 本票不做 |
+| T26 `prd.md` 的 `## 遗留（不在本票）` | 列了 2 项 | **不含**这两处 ⇒ 既非遗留亦非冻结 |
+| `ci-scripts.yml:21` | `and this workflow owns neither` | **没人拥有**，不是「决定永不修」 |
+
+## 变更
+
+1. `scripts/check-codex-issue-flow.py`：`I001`（import 块后两个空行 → 一个）+ `UP045`（`-> Optional[str]` → `-> str | None`，并删掉随之未使用的 `from typing import Optional`）。形状取自 `ruff check --fix --diff` 的逐字输出，非推测。**3772 → 3738 B**，CRLF 104 → 102，行为不变（`rc 0`、输出逐字同）。
+2. `.github/workflows/ci-scripts.yml`：新增第三个 job `scripts-lint` 跑 `ruff check scripts/`；**既有两个 job 的 `steps` 逐字未动**（`yaml.safe_load` 后与 HEAD 比对相等）；workflow 无 `paths`（本来就无）。
+3. 同票修掉文件头那句**已被本票变成假话**的注释（`ruff check scripts/ ... is red today`），并写清「为什么这里是目录级、另两处仍点名文件」与「为什么这个 job 在本文件而不是另开 workflow」。
+4. `README.md` / `README.zh-CN.md` 的 Lint 配方补 `scripts/`（各 +9 B）—— 同一处遗漏的文档面。
+5. `tests/python/test_check_tasks_refs.py` 语料钉值 `(788,789)` → `(789,790)`（本票 `implement.jsonl` 进语料）。
+
+## 消融（两方向，均实测）
+
+方向一 —— 新形状**能红**：
+
+| 突变 | `ruff check scripts/` |
+|---|---|
+| M0 基线 | `rc=0` GREEN `All checks passed!` |
+| M1 `scripts/` 下**新增**一个含 `F401` 的文件 | `rc=1` RED `F401 ... imported but unused` |
+| M2 还原 `UP045` | `rc=1` RED `UP045 Use X | None` |
+| M3 还原 `I001` | `rc=1` RED `I001 Import block is un-sorted` |
+
+方向二 —— 旧形状对同一突发**是瞎的**（本票的判据性消融）：同一份 M1 下，CI 今天实际在跑的三条命名文件命令**全部 rc=0 GREEN**，而 `ruff check scripts/` **RED**。判词不同 ⇒ 本票**确实增加了覆盖**，不是装饰（T19 判据：两处突变打红同一集合 ⇒ 其中一条是装饰）。
+
+突变全部按字节恢复，并由**独立进程**从磁盘复算 sha256 认证：`015a4feafee8455db579c4eef6fa708a19ff7d4f4219f160d751847cae7147fc`。
+
+## 门禁与 CI
+
+本地：`ruff check scripts/` **All checks passed**（改前 `Found 2 errors`）；守卫 `rc 0` 且输出逐字不变；两文件 `ast.parse(feature_version=(3,9))` 通过；`check-spec-refs` / `check-journal-ledger` 均 `rc 0` 未动；`test_check_tasks_refs.py` **14 passed**；Python 总收集 **1211 不变**；workflow 3 job。
+
+CI（`e6b2d03`）：**Scripts CI success**（含新 job `ruff lint (the whole scripts/ directory) -> success`，其 `ruff check scripts/` 步骤 `All checks passed!`）、**Python CI success**（4/4 job，`1203 passed, 8 skipped` 在 3.9 与 3.12 上逐字同基线）。`tasks-refs` 两个 Python 版本各自独立复算：**`789 ok / 0 dangling / 0 malformed`** —— 实现提交里 `task.json` 刻意不入库（仓规），任务目录仍未跟踪，故为 789；归档后该值为 790。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e6b2d03` | ci(scripts): lint the whole scripts/ directory, not three named files (#684) |
+| `c1d8940` | chore(task): archive 09-18-t34-scripts-lint-surface |
+
+### Testing
+
+- [OK] `ruff check scripts/` **All checks passed!**（改前 `Found 2 errors`）；`scripts/check-codex-issue-flow.py` 3772 → 3738 B（CRLF 104 → 102），行为不变：`rc 0`、`Codex issue workflow validation passed.` 逐字同
+- [OK] 消融方向一（新形状**能红**）：M0 基线 GREEN；M1（`scripts/` 下**新增**一个含 `F401` 的文件）/ M2（还原 `UP045`）/ M3（还原 `I001`）**各自单独施加都 RED**。突变全部按字节恢复，由**独立进程**从磁盘复算 sha256 = `015a4feafee8455db579c4eef6fa708a19ff7d4f4219f160d751847cae7147fc`
+- [OK] 消融方向二（**判据性**：旧形状对同一突发是瞎的）：同一份 M1 下，CI 今天实际在跑的三条命名文件命令（`ci-scripts.yml:67` / `:93-95` / `ci-journal.yml:69`）**全部 rc=0 GREEN**，而 `ruff check scripts/` **RED** ⇒ 判词不同，本票确实增加了覆盖，不是装饰
+- [OK] `yaml.safe_load` 通过，job 数 **2 → 3**；`spec-refs`（6 步）与 `tasks-refs`（7 步）的 `steps` 与 HEAD **逐字相等**（既有 job 未动）；workflow 级无 `paths`
+- [OK] 两文件 `ast.parse(feature_version=(3,9))` 通过；两个 README 行尾仍 **CRLF-only**，各 +9 B；`--numstat` 均小改动、无行尾翻腾
+- [OK] `test_check_tasks_refs.py` **14 passed**；Python 总收集 **1211 不变**；`check-spec-refs` / `check-journal-ledger` 均 `rc 0` 未动
+- [OK] **CI（`e6b2d03`）**：Scripts CI **success**（含新 job `ruff lint (the whole scripts/ directory)`，其 `ruff check scripts/` 步骤 `All checks passed!`）；Python CI **4/4 success**，`1203 passed, 8 skipped` 在 3.9 与 3.12 逐字同基线
+- [OK] `tasks-refs` 两个 Python 版本各自独立复算 **`789 ok / 0 dangling / 0 malformed`** —— 实现提交里 `task.json` 刻意不入库（仓规）故任务目录未跟踪，值为 789；归档后为 790 ⇒ 两个可达态都落在钉值 `(789,790)` 内
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 已直落 main（`e6b2d03` 实现 + `c1d8940` 归档）；`e6b2d03` 上 Scripts / Python CI 全绿，**#684 待关**（贴验收映射）。
+- 新增的 `scripts-lint` 是本仓第一个**目录级** ruff target；既有两个 job 仍**点名文件**（有意：它们的绿要自包含）—— 理由落在 `ci-scripts.yml` 文件头。
+- **记账未做**：`scripts/check-codex-issue-flow.py` 零个 workflow 运行它（一个 CI-safe 的 wiring 守卫无武装，漂移对每个门禁不可见）⇒ 是否接进门禁需另开票。
+- `.trellis/scripts/**`（27 处）与 `.claude/hooks/**`（3 处）仍不在任何 ruff target 内 —— **已登记排除**（`ci-trellis.yml` 头 / `.trellis/.template-hashes.json`），不是欠账。
+- #656（P2 本体）仍只等外部「方案第 21 节」原文。
