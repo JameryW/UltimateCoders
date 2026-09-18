@@ -39,10 +39,16 @@
 | 匹配语义 | T19 | **精确相等**，非子串、非忽略大小写：`"code-review"` / `"Review"` 都是普通 subtask（`graph_store.rs:369-371`，测试 `:3893`） |
 | 已知未解 | D16 裁决 5 | `required_capabilities` 是 capability 与 `steps[].agent` 的**并集**（`graph_store.rs:373-379`）；`agent == "review"` 会把节点提升为 review 节点。该冲突**已知、刻意不在此解决** |
 
-### 已记账的残余（不是欠账，开票时作输入）
+### 已记账的残余（开票时作输入；两项中一项已于 T32 消除）
 
 - **T19 的 race 窗口**：这道门是**花名册检查**，不是投递保证 —— 候选 ≥2 且含生产者时，共享 work-queue 仍**可能**投给生产者（最坏形状已变成可见的 `PENDING`）。
-- **#644 残余 2（清单漂移）**：`ALL_AGENTS` 在测试内维护（`tests/python/test_sandbox_env_allowlist.py:51`），新增 adapter 不会被自动纳入。
+- **#644 残余 2（清单漂移）** —— **已于 T32 / #682 消除（2026-09-18）**：原先 `ALL_AGENTS` 在测试内
+  **手抄**（`tests/python/test_sandbox_env_allowlist.py:51`），与 `python/ultimate_coders/agent/sandbox.py:80`
+  的 `ADAPTER_ENV_ALLOWLIST` **平行维护** ⇒ 新增 adapter 不会被自动纳入参数化，且**套件仍全绿**（断言静默缺失）。
+  现改为**从 allowlist 自身推导**（`:62`；别名支取 `sandbox.py:28` 的 `GROK_AGENT_ALIASES`），
+  并加元测试钉住「必须保持推导」。消融两方向实测：**修复前 + 探针键 = 69 不变**（正是那个失效模式）、
+  **修复后 = 70 ⇒ 72**（两个参数化点各 +1，测试文件一字未动）。
+  ⇒ 本节剩下的**唯一**活输入是 T19 的 race 窗口。
 
 ### 只有 §21 能回答（空位）
 
