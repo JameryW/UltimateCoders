@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 36
+- **Total Sessions**: 37
 - **Last Active**: 2026-09-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1168 | Active |
+| `journal-2.md` | ~1236 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 37 | 2026-09-18 | 架构升级收口审计（五面）—— 迁移程序已完成；唯一未竟是 P2 本体待外部原文；§六 覆盖边界放宽至 T21–T31 | `fe848635` | `main` |
 | 36 | 2026-09-18 | T31 / #681 — clean .trellis/tasks jsonl residue, guard turns green | `3305504`, `ad5c06c` | `main` |
 | 35 | 2026-09-18 | T30: #680 —— 给 .trellis/tasks 的 jsonl 引用建守卫（#678 选项 C 的落地） | `2f88e44` | `main` |
 | 34 | 2026-09-18 | 补记 #679 + #678 的交付会话 —— 四面审计缺口 ② 的落地（编号连续 ≠ 同一条线：那两票无 T 编号） | `0033c74`, `f3ee6dd`, `7ba7ad8` | `main` |

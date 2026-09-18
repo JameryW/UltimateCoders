@@ -1093,7 +1093,7 @@ Failed to connect to github.com:443 over proxy 127.0.0.1 after 2048 ms
 [OK] **本地已完成** —— 守卫 + 自检 + 14 用例 + CI 接线全部落地并实测；⚠️ **未推送、CI 未跑 ⇒ #680 暂不关**。
 
 
-## Session 37: T31 / #681 — clean .trellis/tasks jsonl residue, guard turns green
+## Session 36: T31 / #681 — clean .trellis/tasks jsonl residue, guard turns green
 
 **Date**: 2026-09-18
 **Task**: T31 / #681 — clean .trellis/tasks jsonl residue, guard turns green
@@ -1165,3 +1165,72 @@ Failed to connect to github.com:443 over proxy 127.0.0.1 after 2048 ms
 ### Status
 
 [OK] **Completed** -- guard green; `Scripts CI` `tasks-refs` job passing on 3.9 + 3.12
+
+
+## Session 37: 架构升级收口审计（五面）—— 迁移程序已完成；唯一未竟是 P2 本体待外部原文；§六 覆盖边界放宽至 T21–T31
+
+**Date**: 2026-09-18
+**Task**: 架构升级收口审计（五面）—— 迁移程序已完成；唯一未竟是 P2 本体待外部原文；§六 覆盖边界放宽至 T21–T31
+**Branch**: `main`
+
+### Summary
+
+五面复核：迁移程序已全部完成；P2 本体待外部「方案第 21 节」原文（外部阻塞，非欠账）；同票修 §六 覆盖边界
+
+### Main Changes
+
+本轮用户问「架构升级任务是否全部完成」。按四面法（地图 / 未归档目录 / 文档进度尾 / 已关闭票的 carry-over）
+加第五面（引用完整性）逐一手复核：
+
+**面① 地图 issue**：开放地图**仅 #656（P2）**；#632（P0）、#644（P1）已关，**D4–D16 全部已裁并关**。
+#656 正文尾段与其唯一评论（2026-09-18）口径一致：**开放决策 0、待落地票 0**。
+
+**面② 未归档目录**：`ls .trellis/tasks/` 与 `task.py list` **双视图均为 0** ——
+无「没有 `task.json` 的幽灵目录」。
+
+**面③ 文档进度尾**：判据是 `task.json` 的 `map` 字段，**不是编号连续**。
+实测 `map = 656` 的只有 **T16 / T17 / T18 / T19**（4 张），其余 **290 张为 `None`**
+⇒ **T30 / T31 同属框架卫生线**，不挂在迁移程序上。
+⚠️ **本轮唯一真欠账**：评估件 §六 的覆盖边界只写到「T21–T29」，未含 T30 / T31
+⇒ 已同票放宽为 **T21–T31**，并补上两票的 issue 号与用途；P2 状态行的日期也一并刷新。
+
+**面④ 已关闭票的 carry-over**：#644 关闭评论里三条「残余风险」在 #656 上**各有落点**
+（2026-09-18 补记，逐条一手核对）—— 1（live NATS e2e）**收窄**为「仅网关侧一半」、
+2（`ALL_AGENTS` 清单漂移）成立、属 P2 开票输入、3 为环境事实 ⇒ **无悬空交接项**。
+
+**面⑤ 引用完整性**：三道守卫全绿 —— `check-tasks-refs` **787 ok / 0 dangling / 0 malformed**、
+`check-spec-refs` **0 structural failure**、`check-journal-ledger` **36/36 conforming / 0 placeholder**。
+
+**结论**：迁移程序**已全部完成** —— P0 / P1 关闭、D4–D16 全裁、挂在 #656 上的 T14–T19 全交付并归档。
+**「未完成」的部分是 P2 本体无据**（Optimizer 算法 / review 策略 / market scheduling），
+需外部「方案第 21 节」原文 ⇒ **属外部输入阻塞，不是欠账**，本件不臆造。
+
+**方法上值得记的**：#656 正文里「开放决策」出现 10 次，但**全是历史进度条目**
+（正文自己就标了「此句已过期，不要据它判断当前状态」）。
+⇒ **词频是间接信号**；判当前状态只能读**最新一段**。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fe848635` | (see git log) |
+
+### Testing
+
+- 三道守卫全绿：`check-tasks-refs` **787 ok / 0 dangling / 0 malformed**（exit 0）；
+  `check-spec-refs` **0 structural failure**；`check-journal-ledger` 修复后 **37/37 conforming / 0 placeholder**。
+- 评估件改动 `git diff --numstat` = **2/2**（小改动，非整文件重写），文件仍是 **CRLF-only**。
+- 零代码变更 ⇒ **Rust / Python CI 不会触发**（本轮只动 `docs/**` 与 `.trellis/**`）。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 无。本轮结论是「迁移程序已完成」；唯一未竟是 **#656 P2 本体**，阻塞于外部「方案第 21 节」原文。
+- ⚠️ **记一条自伤（本轮已修）**：上一轮回滚 journal 时只把 `index.md` 的计数改回 36，
+  **没有改那个 session 标题的编号** ⇒ 本轮脚本按 36 递增，产出**第二个** Session 37。
+  守卫当场报 `SESSION_NUMBER: session 37 is used twice` —— 已把前一个（T31 交付）改回 **36**。
+  ⇒ **回滚 journal 必须连「标题编号」一起回滚，不只是 `index.md` 的计数**（§5.34 ④ 的补强）。
