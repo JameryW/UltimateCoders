@@ -411,7 +411,10 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     dangling = [r for r in rows if r["verdict"] == "DANGLING"]
     malformed = [r for r in rows if r["verdict"] == "MALFORMED"]
 
-    assert len(refs) in (784, 785), f"reference count drifted: {len(refs)}"
+    # 785 without this ticket's own two jsonl files (uncommitted / untracked),
+    # 787 with them (committed -- which is how CI always sees it). Both are
+    # correct for their own tree; see the docstring above.
+    assert len(refs) in (785, 786, 787), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 
