@@ -809,3 +809,137 @@ set 混淆）。
 - **`.trellis/workspace/JameryW/` 那本账**（363 处占位符 / 3 处重复编号）仍只被 pin 住 ⇒ 建议**另开票**。
 - ⚠️ **编号口径**：本次发现我自己的记忆把 #678 / #679 写作「T30 / T31」，而**仓内不存在这两个编号**
   （T 线止于 T29）。将来续排号一律以 `.trellis/tasks/*/task.json` 与 issue 为准，**不要沿用记忆**。
+
+
+## Session 34: 补记 #679 + #678 的交付会话 —— 四面审计缺口 ② 的落地（编号连续 ≠ 同一条线：那两票无 T 编号）
+
+**Date**: 2026-09-18
+**Task**: 补记 #679 + #678 的交付会话 —— 四面审计缺口 ② 的落地（编号连续 ≠ 同一条线：那两票无 T 编号）
+**Branch**: `main`
+
+### Summary
+
+四面审计（session 33）缺口 ② 的落地：`0033c74`(#679) 与 `7ba7ad8`+`f3ee6dd`(#678) 落地时未写 journal session，journal-2 止于 Session 32。本 session 按**一手产物**（提交正文 + issue 关闭评论）逐条转录，**不推测未留痕的过程**；两票均附 CI 结论与显式残余。
+
+### Main Changes
+
+本 session 为**补记**。交接事实（一手，非推断）：`0033c74` 与 `7ba7ad8`/`f3ee6dd` 三票落地时**没有写 journal session** —— journal-2 止于 Session 32（T27/T28/T29 那条框架线），其后 8 个提交（合入两票的关闭动作）都无 session 记录。此处按**提交正文 + issue 关闭评论**（两者都是一手产物，且都已推送）逐条转录，**不推测未留痕的心理过程**；本 session 的 `Testing` 段全部来自 CI 与提交正文的实测值，未重跑。
+
+### 由来：为什么必须补
+
+四面审计（Session 33）的第 ④ 面「已关票内结转项」发现两票缺交付记录。#679 与 #678 的关闭评论本身**证据完备**（各有验收映射表、提交表、CI 结论、显式残余）—— 缺的不是「交付记录」，而是**项目自己的 memory 账本里的那一行**。判据：journal 是 `add_session.py` 写、被 `check-journal-ledger.py` 守的唯一会话台账；一个提交有 issue 评论而无 session，就意味着**换一个 session 的我**读账本时看不到它存在。补写的可行性依据：内容可由已推送的一手产物**逐条还原**，因此是**转录而非猜测**。
+
+### 票 1：#679 —— `task.py finish` 报告值与删除目标不同源
+
+**现象（提交正文实测，修复前）**：
+
+```
+$ python .trellis/scripts/task.py finish
+✓ Cleared current task (was: .trellis/tasks/09-13-t3-graph-runtime)
+Source: session-fallback:qoder_64c9007e-...
+$ python .trellis/scripts/task.py current
+.trellis/tasks/09-13-t3-graph-runtime        # 一字未变，mtime 也未变
+```
+
+**根因（读代码）**：`clear_active_task` **删**的是 `_context_path(context_key)`（本 session 的文件），而**报**的值来自 `resolve_active_task` —— 后者在本 session 无文件时**回落扫描** `.runtime/sessions/*.json`（`Source: session-fallback:*` 即此）。⇒ **报告值与删除目标不同源**，删了 0 个却打印 `✓`。
+
+> **严重性升级的一手事实**（票面未写、关闭评论补上）：`.claude/hooks/session-start.py:323` 在 **STALE POINTER** 分支里正是让用户 `Run python3 ./.trellis/scripts/task.py finish to clear the stale pointer` ⇒ **该状态的官方修法原本是静默空转**。
+
+**改动（2 处代码 + 1 规格 + 1 测试 + 1 门禁）**：
+
+| 文件 | 改动 | numstat |
+|---|---|---|
+| `.trellis/scripts/common/active_task.py` | `clear_active_task` 对 fallback 来源走**同文件里早已存在**的 `clear_task_from_sessions`（`cmd_archive` 早就在用） | +14/-1 |
+| `.trellis/scripts/task.py` | `cmd_finish` **重解析后**再宣称成功；仍能解析出活动任务则退非零、不打印 `✓` | +17/-0 |
+| `.trellis/workflow.md` | 更正「`task.py finish` deletes the current session file」这句**已变成假话**的规格 | +1/-1 |
+| `tests/python/test_task_finish_fallback.py`（新） | 合成仓 + 子进程跑真 CLI，3 条测试 | +121 |
+| `.github/workflows/ci-trellis.yml`（新） | **第一个覆盖 `.trellis/scripts/**` 的门禁** | +66 |
+
+**关键设计点**：fallback 分支**只在恰好一个 session 文件存在时**触发 ⇒ 不可能删掉第二个窗口还需要的那根指针（两窗口测试断言的正是这一点）。
+
+**验收映射（关闭评论，逐条）**：
+
+| 票面验收 | 结果 |
+|---|---|
+| `finish` 后 `current` 不得再报出同一任务 | ✅ `test_finish_clears_a_fallback_sourced_pointer` 断言 `current` rc=1 且 stdout 为空 |
+| 值来自 session-fallback 时必须清掉**那个** session 文件 | ✅ 同测断言该文件 `not exists()` |
+| 回归：造「指向不存在任务」的 session 文件 ⇒ `finish` 后文件消失且 `current` 为空 | ✅ `TASK_REF` 即 `09-13-t3-graph-runtime`（**悬空**指针，与实测现场同形） |
+| 不得把「没清任何东西」打印成 `✓ Cleared` | ✅ `test_finish_refuses_to_cross_delete_a_second_window` 断言 `"✓" not in stdout` 且 rc≠0 |
+
+**顺序：先见红 → 再修 → 再消融。** 未修代码上 `2 failed, 1 passed`（repro 报 *the pointer that was reported is still on disk*；两窗口那条报假 `✓`；单窗口对照两态都过）；修后 `3 passed`；**M1**（删掉 fallback 分支）⇒ **只**打红 repro；**M2**（把重解析改成 `still = None`）⇒ **只**打红两窗口那条 ⇒ **两红集不相交**，两半都不是装饰。**恢复由独立进程复算 sha256** 与清单比对（连开两个独立进程），不让做突变的进程自证。
+
+**两个附带结论**：
+
+- 🔑 **`paths` 该不该加，判据是「输入集是否封闭」。** 新门禁**带** `paths`，而 `ci-scripts.yml` 刻意**无** `paths` —— 不矛盾：那个守卫扫**全仓**（任何文件都能翻判词 ⇒ 过滤会蒙住它），而本测试输入集**封闭**（`tmp_path` 自建语料 + 子进程 CLI + 不 import 本仓任何模块）⇒ 过滤才正确。**照抄「无 paths」是想错方向。**
+- ⚠️ **顺带更正一个长期错误的基线**：Python 收集不是 `1160` 而是 **1188**（`6080a69` 的 CI run `35220680603` 自报 `1180 passed + 8 skipped`，与本机 `--collect-only` 逐数一致）。28 条漂移已完整归因：`2773fcf`（T28）新增 `test_check_journal_ledger.py` = 27 条，加 `test_check_spec_refs.py` 由 11→12 条（+1），**27+1=28** ✓。本票再 +3 ⇒ **1191**，CI 实测 `1183 passed + 8 skipped` ✓。
+
+**未做 / 边界（有意不扩大）**：`.trellis/.template-hashes.json` **故意不动** —— 它记录**模板原样**；改写哈希等于宣称这个修复来自模板，会让未来的模板更新**静默覆盖**它。相邻缺陷（无 session 身份时 `finish` 直接打印 `No current task set` 而不走 fallback ⇒ 不假成功但也不清指针）**不在本票范围**。
+
+### 票 2：#678 —— 归档不移写路径 ⇒ 787 条中 215 条悬空
+
+**一手测量**：`.trellis/tasks/**` 下被 git 跟踪的 `*.jsonl`，逐行 `json.loads` 后取 `{"file": ".trellis/..."}`，用 `Path.is_file()` 判可解析性 ⇒ 引用总数 **787**、悬空 **217 → 215**（本票顺手修掉 2 条）、比例 **27.6%**。
+
+**形态：全部同一个形状** —— 悬空目标**无一例外**是「归档前的旧路径」（`.trellis/tasks/<name>/…`，而目录早在 `archive/<YYYY-MM>/<name>/…`）。
+
+**根因**：`task_utils.py` 的 `archive_task_dir()` 用 `shutil.move()` **只移动目录**，不触碰任务自己的 `implement.jsonl` / `check.jsonl`。这两个文件里的 `{"file": "<本任务的 prd/research 路径>", "reason": …}` 是**按归档前的相对路径**写下的 ⇒ **归档那一刻起就是悬空的**。**写出者制造了 100% 的实例 ⇒ 修在写出者而非周期性扫描器。**
+
+**为什么一直没人发现（可复用的部分）**：`check-spec-refs.py` 只把 `.trellis/spec/**` 当引用语料 —— `.trellis/tasks/**` 的 `{"file": …}` **不在任何守卫的索引里**。实测佐证：本次改动（移动目录、改 4 条引用、删改若干行）之后，守卫输出**逐项未变**（`89 ok / 1 stale / 8 ambiguous / 0 structural`、`mentions 41 of 227`、`exit 0`）⇒ 与 **#675** 同型、不同对象：**引用完整性只在一处被守**。
+
+**范围裁决（按行定，不是假设的）**：
+
+| 类别 | 裁决 |
+|---|---|
+| 任务**自己**的引用，在 JSON 载体（`.jsonl`/`.json`） | **重指** —— 那里的 `.trellis/...` 字符串是机器写入的引用 |
+| 任务自己在 `.md` 散文里的提及 | **不动** —— 散文里的路径可能是**故意的历史注记**（「本任务从 X 迁出」），且本仓对另一守卫的既有规则就是「a mention is not a reference」。**边界由测试断言**，不留隐含 |
+| **其它**任务的引用 | **只在 stderr 报告，绝不改写** —— 归档的副作用去改别的任务的来源元数据，宽于命令本身 |
+
+**同时抓到一处潜伏 bug**：本仓 **16 对**任务名互为前缀（`06-15-tui` < `06-15-tui-unit-tests`、`06-29-worker` < `06-29-worker-omp` …）。朴素 `str.replace(".trellis/tasks/06-15-tui", …)` 会**连带改写另一个任务**（可能归档在另一个月）的引用，**而结果仍像一个合法路径**。本语料恰好不命中（217 个迁移文件上 naive == boundary-aware），但框架会持续归档 ⇒ 匹配器改为**边界感知**。`find_external_task_refs` 有同一缺陷（并为该形状**产出假阳性告警**），一并修。
+
+**改动与证据**：
+
+| 提交 | 内容 |
+|---|---|
+| `7ba7ad8` | 框架修复 + 5 条测试 + CI 接线 + 规格更正（4 files / +377 −7） |
+| `f3ee6dd` | 语料迁移：**115 个任务目录、217 个文件里的 263 条**引用 |
+
+- 「语料未遗漏」：JSON 载体里、任务现居 `archive/` 的**归档前位置**引用 **263 → 0**（同仪器，HEAD vs 工作树）。
+- 「迁移没做别的事」：217 个文件每个都与「前像施加前缀替换」**逐字节相同**（212/217 对生 blob；另 5 个只差 `git archive` 对 LF 存盘文件的 CRLF 转换）；**263 added / 263 deleted** = 每条引用一行；无行尾抖动。
+- 「幂等」：对真实语料第二次 dry run 报 **0** 处改动。
+- 「无新增 lint 债」：`task_utils.py` 的 ruff 在改动前后同为 6 条既有发现（3 UP024 / 2 E501 / 1 I001）。
+- 「规格不再说谎」：`workflow.md` 把 `archive` 描述成「只清 session 指针」，在使该描述失效的**同一个提交**里更正。
+- 测试：5 条，合成仓 + 真 CLI 子进程 + `--no-commit`，真树从不被改；**一处突变一次运行，各打红一个互不相交的非空集；边界突变恰好只打红它自己那条测试** ⇒ 无守卫是装饰。恢复由**独立进程**按 sha256 对清单校验。
+
+**有意留开**：`.md` 散文里 2 条悬空的自我提及（可能是历史注记 ⇒ 需人裁，不做自动证伪）；JSON 载体里 7 条**跨任务**悬空引用（`06-27-optimize-…` ×6、`06-24-orchestrator-omp-phase3-python` ×1 —— 属其它任务，超出「一次归档的副作用」范围）。
+
+### CI 接线
+
+`ci-trellis.yml` 现在覆盖 `.trellis/scripts/**` 与两个测试文件，其 `paths` 选择**刻意与 `ci-scripts.yml` 相反**，文件头写明了理由（同上一节 🔑 的判据）。CI on `f3ee6dd`：**Trellis CI ✅（3.9 与 3.12 逐步绿）、Scripts CI ✅、Python CI ✅**；只有这三个触发，Rust/TS 按 `paths` 正确跳过。CI on `0033c74`：三门全绿。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0033c74` | (see git log) |
+| `f3ee6dd` | (see git log) |
+| `7ba7ad8` | (see git log) |
+
+### Testing
+
+- **本 session 是补记，未重跑任何门禁** —— 下列数值全部转录自**已推送的一手产物**（`0033c74` / `7ba7ad8` / `f3ee6dd` 的提交正文与两个 issue 的关闭评论），不是本 session 的实测。**声明，而非「已通过」。**
+- 转录后复核（本 session 唯一的新实测）：journal-2 = 84231 bytes / 937 CRLF / 0 孤立 LF；`check-journal-ledger.py` 报 `2 file(s), 34 session(s), 0 placeholder line(s), 34/34 conforming`。
+- #679：修前 `2 failed, 1 passed`（repro 报 *the pointer that was reported is still on disk*）⇒ 修后 `3 passed`；**M1/M2 两红集不相交**；恢复由**独立进程**复算 sha256。CI on `0033c74`：**Trellis CI / Scripts CI / Python CI 三门全绿**（Python CI 两档 `1183 passed, 8 skipped`）。
+- #678：5 条测试（合成仓 + 真 CLI 子进程 + `--no-commit`）；语料迁移 **263 added / 263 deleted**、**263 → 0** 悬空、第二次 dry run **0** 处改动、ruff 前后同为 6 条既有发现。CI on `f3ee6dd`：**Trellis CI ✅（3.9/3.12 逐步绿）、Scripts CI ✅、Python CI ✅**，Rust/TS 按 `paths` 正确未触发。
+- ⚠️ **两票的 `Testing` 原文以 issue 关闭评论为准**（本文件是转录层）；本 session 对它们**没有**新增验证 ⇒ 若日后发现评论与提交不符，以**提交与 CI 日志**为准。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- ⚠️ **两条未落地的相邻缺陷**（各自在关闭评论里显式记为「不在范围」）：① #679 —— 无 session 身份时（`resolve_context_key()` 返回 None）`finish` 直接打印 `No current task set` 而**不**走 fallback ⇒ 不假成功，但也不清那根指针；② #678 —— `.md` 散文 2 条自我提及 + 7 条跨任务 JSON 引用仍悬空（前者需人裁是否属历史注记）。
+- **#656（P2 地图）仍阻塞于外部「方案第 21 节」原文** —— 不臆造；P2-1/P2-2/P2-3 本体都等它。
+- ⚠️ **`add_session.py` 没有 dry-run**：`--no-commit` 只跳过 **git 提交**，**不**跳过写盘（本 session 亲测：探针调用直接写出一个 session 34，随后 `git checkout --` 逐字节回滚，72662 bytes / 812 行确认复原）。⇒ 想预览就**别碰真脚本**，或先 `git stash`/记录哈希。
+- **补记类 session 的判据**（可复用）：只有当内容能由**已推送的一手产物逐条还原**时才补 —— 否则就是把「没记录」换成「编的记录」。本 session 的取舍：转录提交正文与关闭评论（都是一手且已推送），**不推测任何未留痕的过程**。
+- **`.trellis/workspace/JameryW/` 那本账**（363 处占位符 / 3 处重复编号 49·74·98）仍**只被 pin 住**（`[legacy]`，`ADVISORY` 另报 index 写 119 而实为 123）⇒ 已由 `LEGACY_JOURNALS` 显式冻结并写明理由；**建议另开票**处置或明确接受它作为历史数据冻结。

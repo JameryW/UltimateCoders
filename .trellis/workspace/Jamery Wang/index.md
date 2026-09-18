@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 33
+- **Total Sessions**: 34
 - **Last Active**: 2026-09-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~787 | Active |
+| `journal-2.md` | ~946 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 34 | 2026-09-18 | 补记 #679 + #678 的交付会话 —— 四面审计缺口 ② 的落地（编号连续 ≠ 同一条线：那两票无 T 编号） | `0033c74`, `f3ee6dd`, `7ba7ad8` | `main` |
 | 33 | 2026-09-18 | 架构升级收口审计（四面）—— P0/P1 已关、P2 本体待外部原文；补记 T20 与 §六 覆盖边界 + P1 交接项落点 | `54a5003` | `main` |
 | 32 | 2026-09-17 | T29: #677 —— 给 T24 的两处守卫子句补测试级护栏 + 更正过期理由 | `e99638d` | `main` |
 | 31 | 2026-09-17 | T28: #676 —— journal 账本收口检查（占位符整行相等 == 0）+ 回填 S16/17/18 的 Git Commits | `2773fcf`, `3c0a641` | `main` |
