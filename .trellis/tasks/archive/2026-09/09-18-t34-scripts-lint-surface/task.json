@@ -1,6 +1,6 @@
 {
-  "id": "t34-scripts-lint-surface",
-  "name": "t34-scripts-lint-surface",
+  "id": "09-18-t34-scripts-lint-surface",
+  "name": "09-18-t34-scripts-lint-surface",
   "title": "T34 让 scripts/** 成为一等 lint 面",
   "description": "承接 #684：ci-scripts.yml 因 check-codex-issue-flow.py 的两处既有 ruff 错误而只能点名文件 ⇒ scripts/ 下新加的文件天生无人 lint。修掉这两处，加独立 job 跑 ruff check scripts/，并同票修掉已变假话的文件头注释",
   "status": "completed",
@@ -15,7 +15,7 @@
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "e6b2d03",
   "pr_url": null,
   "subtasks": [],
   "children": [],
