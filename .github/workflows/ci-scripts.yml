@@ -27,6 +27,20 @@ name: Scripts CI
 # leans on `from __future__ import annotations` and avoids 3.10+ runtime
 # syntax) and the repo's Python CI matrix includes 3.9.  Exercising the claim
 # here is what stops it from silently becoming false.
+#
+# `tasks-refs` was added 2026-09-18 (#680, the C half of #678's "A + C").  It is
+# a SEPARATE JOB rather than more steps on `spec-refs`: the two guards share
+# nothing but a shape, and a red one should name which surface broke.  It is
+# wired WITHOUT a `paths` filter for the same reason as `spec-refs` -- it reads
+# an open input set (any archived task directory, or any file a task cites, can
+# flip its verdict).  Note the index source differs from `spec-refs`: this guard
+# uses `git ls-files` rather than `os.walk`, so a gitignored file can no longer
+# change the verdict (the T26 two-verdicts-for-one-commit defect).
+#
+# This job IS expected to be red while #680's residual 14 dangling / 47
+# malformed citations stand -- those are recorded in #680 and are deliberately
+# outside the guard ticket's scope.  A red run here means the guard is telling
+# the truth, not that the guard is broken; fix the citation or fix #680.
 
 on:
   workflow_dispatch:
@@ -60,3 +74,36 @@ jobs:
         # has no use for -- the test loads a script by path and never imports the
         # package, so coverage would only report 0%.
         run: pytest tests/python/test_check_spec_refs.py -v -o addopts=""
+
+  tasks-refs:
+    name: task context reference guard (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - run: pip install ruff pytest
+      - name: ruff check (the guard, its test, and the self-check)
+        run: >-
+          ruff check scripts/check-tasks-refs.py
+          scripts/check-tasks-refs-selftest.py
+          tests/python/test_check_tasks_refs.py
+      - name: run the guard
+        # NOT advisory: a dangling citation is repairable, and #678 already
+        # shipped the self-healing path -- so this failing is actionable.  No
+        # whitelist: an allow-list would be "turning the red off" instead of
+        # fixing it, and the residue is already recorded in #680.
+        run: python scripts/check-tasks-refs.py --audit
+      - name: synthetic repo + real corpus tests
+        run: pytest tests/python/test_check_tasks_refs.py -v -o addopts=""
+      - name: mutation self-check
+        # A checker nobody has seen go red is not evidence, so the procedure
+        # that falsifies this guard is a CI step and not a local ritual: six
+        # mutations, each must redden, no two may redden an identical set, and
+        # the restore is certified by a separate process.
+        run: python scripts/check-tasks-refs-selftest.py
