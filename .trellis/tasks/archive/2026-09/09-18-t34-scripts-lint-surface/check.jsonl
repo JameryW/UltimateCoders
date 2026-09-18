@@ -1,0 +1,2 @@
+{"file": "scripts/check-codex-issue-flow.py", "reason": "验收 1/2/3：未突变时 ruff 全绿且 rc 0 与输出不变；三个突变（新增 F401 文件 / UP045 / I001）各自变红；ast.parse(feature_version=(3,9)) 通过"}
+{"file": ".github/workflows/ci-scripts.yml", "reason": "验收 4/5：job 数 3 且既有两个 job 的 steps 与 HEAD 逐字相同；无 workflow 级 paths；推送后 scripts-lint 实测被触发"}

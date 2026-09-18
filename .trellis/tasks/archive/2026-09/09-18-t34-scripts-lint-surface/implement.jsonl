@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/archive/2026-09/09-18-t34-scripts-lint-surface/prd.md", "reason": "本票 PRD：coverage 表（123 tracked / 92 covered / 31 uncovered）、结论 A–H、两方向消融与十条验收"}
+{"file": "scripts/check-codex-issue-flow.py", "reason": "改动面：修 I001（多一个空行）与 UP045（Optional[str] → str | None 并删掉随之未使用的 import），3772 → 3738 B，rc 0 与输出逐字不变"}
+{"file": ".github/workflows/ci-scripts.yml", "reason": "改动面：新增 scripts-lint job 跑 ruff check scripts/；并修掉文件头「ruff check scripts/ is red today」这句被本票变成假话的注释"}
+{"file": "tests/python/test_check_tasks_refs.py", "reason": "同 change 更新：task context 语料计数钉值 (788,789) → (789,790)"}
+{"file": "README.md", "reason": "Lint 配方补 scripts/（README.zh-CN.md 同步）—— 同一处遗漏的文档面"}
