@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 32
-- **Last Active**: 2026-09-17
+- **Total Sessions**: 33
+- **Last Active**: 2026-09-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~641 | Active |
+| `journal-2.md` | ~787 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 33 | 2026-09-18 | 架构升级收口审计（四面）—— P0/P1 已关、P2 本体待外部原文；补记 T20 与 §六 覆盖边界 + P1 交接项落点 | `54a5003` | `main` |
 | 32 | 2026-09-17 | T29: #677 —— 给 T24 的两处守卫子句补测试级护栏 + 更正过期理由 | `e99638d` | `main` |
 | 31 | 2026-09-17 | T28: #676 —— journal 账本收口检查（占位符整行相等 == 0）+ 回填 S16/17/18 的 Git Commits | `2773fcf`, `3c0a641` | `main` |
 | 30 | 2026-09-17 | T27: #674 —— journal 账本整备：39 处占位符据实回填 + 5 处重复残块清除 | `afb2333`, `75c7d22` | `main` |

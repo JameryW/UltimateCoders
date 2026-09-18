@@ -651,3 +651,161 @@ T24（#673 切片 B）在 `scripts/check-spec-refs.py` 改了两处：**bold 锚
 - **`EXCLUDE_DIRS` 的 9 项死条目**：只写明、不重构（它们对回退路径是必需的）。
 - **#656（P2 地图）仍阻塞于外部「方案第 21 节」原文** —— 不臆造。
 - **`.trellis/workspace/JameryW/` 那本账**（363 处占位符 / 3 处重复编号）仍只被 pin 住，建议另开票。
+
+
+## Session 33: 架构升级收口审计（四面）—— P0/P1 已关、P2 本体待外部原文；补记 T20 与 §六 覆盖边界 + P1 交接项落点
+
+**Date**: 2026-09-18
+**Task**: 架构升级收口审计（四面）—— P0/P1 已关、P2 本体待外部原文；补记 T20 与 §六 覆盖边界 + P1 交接项落点
+**Branch**: `main`
+
+### Summary
+
+按四面（地图/未归档目录/文档尾部/已关票交接项）审计「架构升级是否全部完成」：P0 #632 与 P1 #644 已关，P2 #656 开放但开放决策 0 / 待落地票 0（本体需外部「方案第 21 节」原文）；查出两条真缺口 —— #644 的三条「记入 P2 输入」无承接物（其中残余 1 已被同日提交与 CI step 推翻一半），以及 #678/#679 关闭但无 Trellis 目录、无 journal session。
+
+### Main Changes
+
+## 由来：用户要求「检查架构升级任务是否全部完成」，按仓内已录的四面审计法执行
+
+架构升级**没有父实现票** —— 它由**三张 wayfinder 地图 + 逐票 Trellis 目录 + 评估件**承载。
+故「是否全部完成」不是读一个状态字段能回答的，须按四面取一手证据，外加引用完整性一面。
+
+## 四面结果
+
+| 面 | 对象 | 结果 |
+|---|---|---|
+| ① | 三张地图 issue | **#632 P0 CLOSED**（2026-09-14）/ **#644 P1 CLOSED**（2026-09-15）/ **#656 P2 OPEN** |
+| ② | 未归档 `.trellis/tasks/` 目录（真欠账源） | **干净** —— 该目录下只有 `archive/`，**零个未归档任务** |
+| ③ | 文档进度尾部 | **已是最新**（见下「一处自查更正」） |
+| ④ | **已关闭票**里的交接项 | 🔴 **找到两条真缺口**（见下） |
+| ⑤ | 引用完整性 | 两个守卫 exit 0 |
+
+开放 issue 总数 = **1**（只有 #656）；T1–T29 **全部 `completed` 并归档**，逐票有 issue 映射
+（#637–#643 / #650–#655 / #657–#677）。
+
+## P0 / P1 / P2 的逐层结论
+
+- **P0 ✅ 完成并关闭**：T1–T7（#637–#643）逐票关闭归档，D4–D7 全闭环，P0 验收通过。其唯一遗留
+  （三笔 `#[ignore]` PG e2e）已由 P1 清账。
+- **P1 ✅ 完成并关闭**：T8–T12（#650–#654）逐票关闭归档，D8–D12 全闭环；P1 验收是**逐条**反查
+  覆盖测试 **并确认该测试真的被某个 CI job 执行**（不是只存在文件）。
+- **P2 ⛔ 地图仍开放，但开放决策 = 0、待落地票 = 0**：卡点**不在我方** —— P2-1 / P2-2 / P2-3 的
+  **本体**（Optimizer 用三个比率*算什么*、review 策略、market scheduling）在仓内**无任何定义**
+  （硬证据：`crates/`、`python/`、`packages/` 三处 `market` 零命中，亦无独立 scheduler 模块），
+  需**外部「方案第 21 节」原文**。**不臆造。**
+  ⇒ **本仓能做的部分已全部做完；架构升级的「未完成」= 一个外部输入缺口，不是欠账。**
+
+## 🔴 缺口 1（face ④）：#644 的三条「记入 P2 输入」没有承接物
+
+#644 的关闭评论有一段 **「残余风险（不阻塞验收，记入 P2 输入）」**，共三条。实测：**在 P2 地图
+#656 正文里 0 命中**（`ALL_AGENTS` / `清单漂移` / `live NATS e2e` / `本地无等价` /
+`storage-integration` 计数全 0），#656 **0 条评论**，且**没有任何 issue 承接** —— 那次「记入」
+实际只落在了**那张已关闭的地图**上。这正是 face ④ 要抓的失效形态。
+
+已补记进 #656（评论 `#issuecomment-5723071300`），并在逐条核对中**推翻其中一条**：
+
+**残余 1 的一半已经过期**（一手反证）：#644 那条说「T8/T12 的验收是单测级，**没有** live e2e，
+T12 曾整体静默失效过 ⇒ 值得在 P2 补一条 live NATS e2e」。而
+`tests/python/test_nats_live_dispatch.py` 落在 `7f69e62`（`2026-09-15 16:01:51 +0800` = **08:01Z**），
+**早于该评论（`2026-09-15T10:28:18Z`）2 小时 26 分**；`82ea112` 收尾。
+
+- 该文件跑**真 `nats-server -js`**、走真 `NatsWorker` 绑定路径
+  （`_ensure_subtask_transport` / `_bind_per_worker_consumer`），**不是**在 mock 上重实现；
+  其 docstring 逐字记着 `10099` / `10100` 与「affinity placement silently degraded to pre-T12
+  behaviour」—— **正是残余 1 举的那个理由本身**。
+- 5 条用例：`test_shared_and_per_worker_consumers_coexist` /
+  `test_two_workers_bind_distinct_per_worker_durables` /
+  `test_targeted_publish_lands_on_the_targeted_worker_only` /
+  `test_shared_publish_still_reaches_the_overflow_queue` /
+  `test_legacy_worker_is_served_by_overflow_alone`。
+- **在 CI 里真跑**：`.github/workflows/ci-python.yml:86-106` 专设 step「Live NATS dispatch tests」
+  —— 下载 `nats-server v2.14.6`、以 `-js -sd /tmp/nats-js -p 4222 -m 8222` 起服、
+  **轮询 `/jsz` 验 JetStream 真起来**（验不到即 step 红）、再
+  `pytest tests/python/test_nats_live_dispatch.py --integration -v`。
+
+⇒ 精确的剩余缺口**只剩网关侧一半**：**没有**一条「真 Rust 网关 + 真已注册 worker」的 live e2e，
+让 `placement_target` / `dispatch_gate` 在真实花名册上**自己决策**并把消息真投出去（Rust 侧仍是
+纯函数单测）。**这是本仓首要铁律的又一例：间接信号 / 记忆 ≠ 一手事实，而一手事实就在旁边**，
+且这正是「过期规格比没有规格更危险」—— 自带权威感。
+
+残余 2 **成立**（已复核）：`tests/python/test_sandbox_env_allowlist.py:51` 定义 `ALL_AGENTS`、
+`:64` 派生 `SPAWNABLE_AGENTS`、`:198` 用它做参数表，**无任何机制**从适配器注册处推导该清单
+（清单漂移）。残余 3 是环境事实：本机无原生 PG，provider 是 Docker Desktop，可用性**逐轮实测**
+（T17 可用 / T18 不可用），不可跨轮沿用。
+
+## 🔴 缺口 2（交付流程偏离）：#678 / #679 关闭但**没有 Trellis 目录、也没有 journal session**
+
+- 两票均 CLOSED（#679 `14:51Z` / #678 `15:51Z`），提交用 `Tracker: #679` / `Tracker: #678`。
+- **全仓找不到它们的任务目录**：`.trellis/tasks/archive/2026-09/` 只有 37 个目录，最后一张是
+  `09-17-t29-t24-clause-pins`；`find .trellis -name '*t30*' -o -name '*t31*'` **零输出**。
+- **journal 账本也零命中**：`git grep -n -i 't30\|t31' -- .trellis` 为空；
+  `grep -rn '#678\|#679' .trellis/workspace/` 为空；八个相关提交哈希在 journal 中全部零命中。
+- journal 最后一笔是 **Session 32 = T29**；其后的 `87f1ae1` / `edcc861` / `a8f55e7` / `1624515` /
+  `0033c74` / `7ba7ad8` / `f3ee6dd` / `ab07390` 八个提交（含**两票关闭**）**均无 session**。
+- ⚠️ **顺带更正我自己的长期记忆**：记忆里把它们写作「**T30**」「**T31**」—— **这两个编号在仓内
+  不存在**，是我自造的编号（T 线止于 T29）。这本身就是「把间接信号当事实」的同类错误。
+- 判断：#678 是**整票规模**的交付（writer 修复 + 5 测试 + CI 接线 + 217 文件 / 263 引用迁移），
+  却走了「issue → 实现 → 直落 main → 关票」而**跳过** 任务目录 / 归档 / journal 三步。
+  **这不是已决冻结，是真偏离**，故记在此处而非默默略过。
+
+## 一处自查更正（face ③）
+
+本次审计开始时我按「§六 尾部止于 T19」推断「T20–T31 未在评估件记录」—— **前提是错的**。
+实测 `task.json` 的 `map` 字段：**T16–T19 才是挂在本程序地图上（`map = 656`）的票**，
+T20–T29 的 `map` 全是 `None`；而 T21–T29 的内容是 spec 引用 / journal 账本卫生
+（#672 / #673 / #674 / #675 / #676 / #677）—— **属另一条线**。故评估件「不记 T21–T29」是
+**正确的范围**，不是遗漏。真正该补的只有 **T20**：它是 T19 那处规范发现的直接续作，同改
+`agent-capability-spec.md`（六个幽灵签名全仓命中 0、漏 `decompose`、base seed 与 advertised
+set 混淆）。
+
+⇒ 已把 T20 补进 §六，并**显式写出覆盖边界**（`54a5003`）：边界写出来，下一个审计者才不必重新
+推一遍，也不会按「T 编号连续」把 T21–T29 误读成未交付的迁移票。
+
+## 交付
+
+1. `54a5003` —— 评估件 §六 补记 T20 + 显式写出覆盖边界（**+4 / −0**，纯 CRLF，179 → 183 行）。
+2. #656 评论 `#issuecomment-5723071300` —— P1 三条交接项逐条落点 + 残余 1 的一手更正。
+3. 本 session。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `54a5003` | (see git log) |
+
+### Testing
+
+- `python scripts/check-spec-refs.py` ⇒ exit **0**：`89 ok / 1 stale(advisory) / 8 ambiguous(advisory) / 0 structural`、
+  `0 of 98 have no matching quoted content`、mentions `41 of 227`（41 全部带理由豁免、0 unclassified）。
+- `python scripts/check-journal-ledger.py` ⇒ exit **0**：本账 `33 session(s)`、`0 placeholder line(s)`、
+  `33/33 session(s) conforming`；legacy 3 文件仍按 `LEGACY_JOURNALS` pin（363 占位符）**未动**。
+- 评估件改动按**结构性**量核验：`git diff --numstat` = **`4 0`**（纯增 4 行、0 删）；
+  纯 CRLF `179 → 183` 行、bare LF **0**；写后回读与写前 sha256 对照
+  （`d34dfb2a84a1c625…` → `0c921825693d9866…`），且落盘前对**全部**前置断言
+  （字节数 48429 / CRLF 行数 179 / 两段目标文本均不得已存在）逐条通过才写。
+- 断言的一手性：写进 #656 的两条核对（`ALL_AGENTS` 仍是测试内维护清单；投递面已有 live e2e 并在 CI 真跑）
+  都是**直接读码 / 读 `git log`** 得到的，**不是**沿用 #644 的措辞。
+- ⚠️ **未跑 cargo / pytest，理由是本票零代码变更**（唯一改动 = 评估件一段 docs + 一条 issue 评论），
+  按仓规不触发构建门禁；CI 侧仍会走 `ci-scripts.yml`（**无 `paths`** ⇒ 任何 push 都跑）。
+  这是**声明**而非「已通过」—— 若 CI 有红，本 session 的结论不变，但会在此追加。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- **#656（P2 地图）本体仍是唯一阻塞点**：需外部「方案第 21 节」原文 —— **不臆造**。
+- **P2 开票时必须纳入的两条输入**（本次已补进 #656，否则会随 #644 的关闭一起消失）：
+  ① **网关侧** live e2e（真 Rust 网关 + 真已注册 worker 自己决策 placement / scope）——
+  投递面那一半已由 `tests/python/test_nats_live_dispatch.py` 覆盖且 CI 真跑，别再当缺口；
+  ② T11 的 `ALL_AGENTS` 清单漂移（新增 adapter 不会被自动纳入）。
+- ⚠️ **#678 / #679 仍缺交付记录**：两票已关闭但**无 Trellis 目录、无 journal session**。本 session 只做
+  **如实记录**，**没有代它们补写** —— 从提交信息反推 session 正文（尤其 Testing / Next Steps）会变成猜。
+  若要补，建议按「补记一行」或另开一张记录票处理，而不是伪造一个 session。
+- ⚠️ **Session 29 的 Next Steps 仍未被任何票承接**：`.scratch` 是否应对索引隐形是一个决策；
+  `_walk_index` 回退路径没有专门的钉 ⇒ 建议**另开票**。
+- **`.trellis/workspace/JameryW/` 那本账**（363 处占位符 / 3 处重复编号）仍只被 pin 住 ⇒ 建议**另开票**。
+- ⚠️ **编号口径**：本次发现我自己的记忆把 #678 / #679 写作「T30 / T31」，而**仓内不存在这两个编号**
+  （T 线止于 T29）。将来续排号一律以 `.trellis/tasks/*/task.json` 与 issue 为准，**不要沿用记忆**。
