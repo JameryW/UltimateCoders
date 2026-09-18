@@ -1,0 +1,1 @@
+{"file": "tests/python/test_sandbox_env_allowlist.py", "reason": "验收：本文件全绿 + 参数化条目 8 不变；元测试钉住「手抄清单回归」"}

@@ -32,6 +32,7 @@ from ultimate_coders.agent.sandbox import (
     ADAPTER_ENV_ALLOWLIST,
     BASE_ENV_ALLOWLIST,
     ENV_EXTRA_ENV_VAR,
+    GROK_AGENT_ALIASES,
     SHARED_ENV_ALLOWLIST,
     DecomposeAdapter,
     SandboxConfig,
@@ -46,22 +47,27 @@ DECOY_VALUE = "host-secret-must-not-pass"
 #: Another plausible host-side secret (cloud credentials).
 DECOY_CLOUD = "AWS_SECRET_ACCESS_KEY"
 
-#: Every agent identity the allowlist knows about, plus an unknown one.
-#: Config-level filtering is exercised for all of these.
+#: An identity the allowlist has never heard of. Swept together with the real
+#: ones so the filtering is proven *deny-by-default* ("unknown ⇒ base + shared
+#: only") rather than "known ⇒ blocked".
+UNKNOWN_AGENT = "some-external-plugin"
+
+#: Every agent identity the allowlist knows about, **derived from the allowlist
+#: itself** instead of hand-copied. A hand-maintained twin is exactly what let a
+#: newly added adapter drift out of this sweep while the suite stayed green
+#: (T13's lesson: two copies of one rule always diverge). T32 #682.
+#:
+#: The alias entry is kept deliberately: an alias does not hit the allowlist
+#: directly, it resolves to an entry only after registry normalization.
 ALL_AGENTS = [
-    "grok-build",
-    "grok",  # alias
-    "claude-code",
-    "claude-code-decompose",
-    "codex",
-    "deepseek-harness",
-    "local-harness",
-    "some-external-plugin",
+    *ADAPTER_ENV_ALLOWLIST,
+    *[alias for alias in GROK_AGENT_ALIASES if alias not in ADAPTER_ENV_ALLOWLIST],
+    UNKNOWN_AGENT,
 ]
 
 #: Agents a SandboxManager can actually be built for (the manager resolves
 #: the adapter through the plugin registry, which raises for unknown names).
-SPAWNABLE_AGENTS = [agent for agent in ALL_AGENTS if agent != "some-external-plugin"]
+SPAWNABLE_AGENTS = [agent for agent in ALL_AGENTS if agent != UNKNOWN_AGENT]
 
 #: agent -> a credential env var that MUST pass for that agent.
 CREDENTIAL_CASES = [
@@ -166,8 +172,28 @@ class TestAllowlistConstruction:
             SandboxConfig(agent="grok").child_env_allowlist()
         ) == set(SandboxConfig(agent="grok-build").child_env_allowlist())
 
+    def test_every_allowlisted_adapter_is_swept(self):
+        """The sweep must stay *derived* (T32 #682).
+
+        Regression pin: if `ALL_AGENTS` is ever turned back into a hand-copied
+        list, a newly allowlisted adapter silently stops being swept -- and the
+        suite stays green. This test is what makes that loud.
+        """
+        missing = [name for name in ADAPTER_ENV_ALLOWLIST if name not in ALL_AGENTS]
+        assert not missing, (
+            f"allowlist entries missing from the sweep: {missing} -- "
+            "ALL_AGENTS must stay derived from ADAPTER_ENV_ALLOWLIST"
+        )
+        assert len(ALL_AGENTS) == len(set(ALL_AGENTS)), "duplicate identities"
+        assert any(alias in ALL_AGENTS for alias in GROK_AGENT_ALIASES), (
+            "the alias path (registry normalization) must stay covered"
+        )
+        assert UNKNOWN_AGENT not in ADAPTER_ENV_ALLOWLIST, (
+            "the unknown-identity case must remain genuinely unknown"
+        )
+
     def test_unknown_agent_gets_base_and_shared_only(self):
-        names = SandboxConfig(agent="some-external-plugin").child_env_allowlist()
+        names = SandboxConfig(agent=UNKNOWN_AGENT).child_env_allowlist()
         assert "PATH" in names
         assert "UC_*" in names
         for credential in ("ANTHROPIC_API_KEY", "XAI_API_KEY", "OPENAI_API_KEY"):
@@ -180,7 +206,7 @@ class TestAllowlistConstruction:
         monkeypatch.setattr(
             registry_mod, "api_key_env_for", lambda _agent: "PLUGIN_API_KEY"
         )
-        names = SandboxConfig(agent="some-external-plugin").child_env_allowlist()
+        names = SandboxConfig(agent=UNKNOWN_AGENT).child_env_allowlist()
         assert "PLUGIN_API_KEY" in names
 
     def test_explicit_agent_argument_wins_over_config(self):
