@@ -943,3 +943,151 @@ $ python .trellis/scripts/task.py current
 - ⚠️ **`add_session.py` 没有 dry-run**：`--no-commit` 只跳过 **git 提交**，**不**跳过写盘（本 session 亲测：探针调用直接写出一个 session 34，随后 `git checkout --` 逐字节回滚，72662 bytes / 812 行确认复原）。⇒ 想预览就**别碰真脚本**，或先 `git stash`/记录哈希。
 - **补记类 session 的判据**（可复用）：只有当内容能由**已推送的一手产物逐条还原**时才补 —— 否则就是把「没记录」换成「编的记录」。本 session 的取舍：转录提交正文与关闭评论（都是一手且已推送），**不推测任何未留痕的过程**。
 - **`.trellis/workspace/JameryW/` 那本账**（363 处占位符 / 3 处重复编号 49·74·98）仍**只被 pin 住**（`[legacy]`，`ADVISORY` 另报 index 写 119 而实为 123）⇒ 已由 `LEGACY_JOURNALS` 显式冻结并写明理由；**建议另开票**处置或明确接受它作为历史数据冻结。
+
+
+## Session 35: T30: #680 —— 给 `.trellis/tasks` 的 jsonl 引用建守卫（#678 选项 C 的落地）
+
+**Date**: 2026-09-18
+**Task**: T30 / #680 —— `.trellis/tasks/**/*.jsonl` 的 `.trellis` 引用必须可解析
+**Branch**: `main`
+
+### Summary
+
+交付 **#680 / T30**：把「`.trellis/tasks/**/*.jsonl` 的 `.trellis` 引用必须可解析」做成检查器 —— 即 **#678 自己建议的 `A + C` 里那个从未落地的 C**。新增 `scripts/check-tasks-refs.py`（守卫）+ `scripts/check-tasks-refs-selftest.py`（消融自检，同时是 CI 的一步）+ `tests/python/test_check_tasks_refs.py`（14 用例），并把独立小 job 接进 `ci-scripts.yml`。
+
+真实语料实测：**787 refs / 14 dangling / 47 malformed**。前两项与 #678 一致（悬空数**修正了 #678 记录的 7**），第三项是**本票首次发现的另一个缺陷类**，已记账、**不在本票修**。
+
+本 session 的**主要收获不是守卫本身，而是守卫在实现期暴露的三处「自己的错」**——其中两处会让守卫**看起来对、其实错**。逐条留在下面。
+
+### 为什么 C 从未落地（一手证据）
+
+```
+$ grep -c 'jsonl' scripts/check-spec-refs.py      -> 0
+$ grep -c '\.trellis/tasks' scripts/check-spec-refs.py -> 0
+$ grep -n 'SPEC_DIR =' scripts/check-spec-refs.py
+797:SPEC_DIR = ROOT / ".trellis" / "spec"
+```
+
+`check-spec-refs.py` 的语料是 **`SPEC_DIR = .trellis/spec`**，全文 `jsonl` 与 `.trellis/tasks` **零命中** ⇒ 任务上下文引用**不在任何守卫的索引里**。#678 修了**因**（`archive_task_dir` 归档时重指自引用，`7ba7ad8`；存量迁移 `f3ee6dd`），并写下建议 **"A + C"** —— **A 交付了，C 没有**。
+
+### 三处「自己的错」（按发现顺序）
+
+#### ① 守卫**无法对合成仓测试** ⇒ 第一版测试其实在审真仓
+
+首版 `ROOT = pathlib.Path(__file__).resolve().parents[1]`。测试在 `tmp_path` 里造仓、`subprocess` 跑守卫 —— 但守卫**按自己的 `__file__` 定位真仓**。于是 13 个「合成仓」测试全部在审**真仓**，第一批之所以全绿是**数字碰对了**（真仓恰好 787/14）。
+
+**判据**：一个测试在**换掉被测输入**后仍然通过，它就什么都没测。**修法**：加 `--root DIR`（测试传合成仓；CI 裸跑，保证判词只关于该提交），并对不存在的 git 仓退 2。
+
+#### ② 索引来自 git、**语料来自文件系统** ⇒ 同一提交两个判词（T26 缺陷搬家）
+
+首版 `collect()` 用 `TASKS_DIR.rglob("*.jsonl")` 取语料 —— **文件系统**。而未跟踪的 `.jsonl`（草稿）在作者机上被审、在 CI 上不存在 ⇒ **同一提交两个判词**。这正是本仓 T26 记为「`os.walk` 会见 gitignore 文件」的同一缺陷，只是从**索引**搬到了**语料**。
+
+**实测（语料改跟踪集前后）**：
+
+| 语料来源 | 工作树（本票目录在） | 干净检出 `worktree`（目录不在） |
+|---|---|---|
+| 文件系统 `rglob` | **788** / 14 / 47 | **787** / 14 / 47 ← 两个数不同 |
+| 跟踪集（修后） | **787** / 14 / 47 | **787** / 14 / 47 ← 一致 |
+
+**修法**：语料 = 跟踪集，并以 `test_untracked_carrier_is_not_audited` 钉住（突变 `corpus-from-filesystem` 打红它）。
+
+#### ③ **基线的 788 是我数错了量**
+
+我一度写下「788，因为本票自己的 jsonl 被计入」。**实测更正**：本票 `implement.jsonl` 里确有 9 处 `.trellis` 字面量，但**全部在 `detail` 散文里**；守卫**只统计 `file` 键**，本票只有 **1** 条（`.trellis/workflow.md`）。且它**提交前未被跟踪** ⇒ 守卫读 **787**；`git add` 之后读 **788**。**两者都合法**，测试断言 `in (787, 788)`。
+
+**教训**：数「引用」必须用**守卫自己的口径**。我用 `grep` 数全部 `.trellis` token 得 9 —— 那是在数另一个量。
+
+### 消融自检（入库为 CI 的一步）
+
+`scripts/check-tasks-refs-selftest.py`：**6 个突变，全部变红，红集两两不同**，按字节恢复且由**独立进程**复算 sha256 认证（`a74deb2a…`）。
+
+| 突变 | 打红用例数 |
+|---|---|
+| `existence-from-filesystem`（存在性改看文件系统） | 1 |
+| `swallow-malformed`（吞掉坏行） | 3 |
+| `never-dangling`（永不悬空） | 7 |
+| `no-prefix-filter`（去掉 `.trellis` 前缀过滤） | 3 |
+| `empty-exclude-set`（清空排除集） | 1 |
+| `corpus-from-filesystem`（语料改回文件系统） | 1 |
+
+**自检在本次抓到了两样东西，都删掉了**：
+
+1. **一个装饰测试**：`test_exclude_set_is_applied_on_top_of_git` 初版把 `.scratch/note.md` 当「守卫的引用」来测排除集 —— 但该路径**不以 `.trellis` 开头**，会被前缀过滤**先**跳过 ⇒ **永远不会红**。改为直接断言 `_repo_index()` 的两半。
+2. **一个假突变**：`crlf-sensitive-reader` 我试了两次 —— ① 改尾随 CR 分支只让守卫**崩溃**（崩溃会打红测试但**不钉住任何东西**）；② `split("\n")` 取代 `splitlines()` 是**零效果**（`line.strip()` 已去掉 CR）。**⇒ 连对应的 CRLF 测试一并删除。**
+
+**判据**：一个**永远不会红**的测试是装饰，不是覆盖；留着一个假突变会让「6 个突变全红」变成**假话**。这是「没有红过的检查器不是证据」的硬币背面 —— **也没法被红过的，同样不算证据**。
+
+**CRLF 轴为何天然无险**（实测，非推理）：真实语料 **542/577** 个载体在本机是 CRLF、**0** 个含孤立 CR；守卫用 `splitlines()` + `line.strip()` ⇒ **天生 EOL 无关**。本机 `core.autocrlf=true` ⇒ 同一提交本机 CRLF、CI LF，实测两侧判词一致。
+
+### 47 条 MALFORMED —— 另一个缺陷类，本票不修
+
+守卫首跑就报 47 行「不是合法 JSON」，分布在 5 个 2026-06/09 归档任务（`06-24-multi-repo-config` 20 行、`09-14-t9-merge-barrier` 8、`09-15-t12-affinity-placement` 8、`09-14-t10-context-compiler` 7、`09-14-t11-env-allowlist` 4）。
+
+**根因（实测）**：这些文件是**把 JSON 数组写进了 `.jsonl`**，不是损坏 —— 每行以 `,` 结尾（数组元素分隔符），**去掉行尾逗号后逐行 `json.loads` 全部通过**（9/9、8/8、8/8、4/4；`06-24` 两个文件整文件 `json.loads` 直接得到 `list`）。**⇒ 无数据丢失**，是格式约定错用。
+
+**关键判据**：把这 6 个文件全部按上述方式恢复后取 `.trellis` 引用（`file` 与 `path` 两键）共 **2 条、悬空 0** ⇒ **本票的 14 不是漏计**，两个缺陷类**互相独立**。
+
+**为何不在本票修**：本票治的是「引用必须可解析」，这 47 行的缺陷是「载体不是合法 JSONL」——**修法、判据、风险都不同**（动的是归档记录的内容格式）。按仓规「只记录测量与根因，不臆造」⇒ **记账，另裁**。**不为它加白名单**（同 DANGLING：白名单是把红关掉）。
+
+### Main Changes
+
+| 文件 | 改动 | numstat |
+|---|---|---|
+| `scripts/check-tasks-refs.py` | **新增**守卫（`git ls-files` ∩ `EXCLUDE_DIRS` 索引 + 跟踪集语料 + `--audit`/`--json`/`--root`） | +243 |
+| `scripts/check-tasks-refs-selftest.py` | **新增**消融自检（6 突变 + 红集不相交 + 独立进程认证） | +242 |
+| `tests/python/test_check_tasks_refs.py` | **新增** 14 用例（合成仓 + 真 CLI 子进程 + 真实语料基线） | +431 |
+| `.github/workflows/ci-scripts.yml` | **新增独立 job `tasks-refs`**（4 步：ruff / 守卫 / pytest / 消融自检；**无 `paths`**） | +47/-0 |
+| `.trellis/tasks/archive/2026-09/09-18-t30-…/{prd,implement,check,task.json}` | 任务目录（prd 含 6 条实现期实测更正；`task.json` 归档后手填 `commit`） | — |
+
+**裁决（本票当场定，写明理由）**：
+- **`DANGLING` 与 `MALFORMED` 都是结构性失败 ⇒ 退非零**（清单有限、能被 `archive_task_dir` 的自愈路径止血 ⇒ **红是可修的**）。
+- **不设白名单**（`EXPECTED_DANGLING` 那是把红关掉，不是修它；14 条已在 #680 记账）。
+- **basename-only 命中计为悬空**（路径写法错误，与 `check-spec-refs.py` 的 `PATH_FORM` 同类），不是 advisory。
+- **CI 不加 `paths`**：守卫读**开放输入集**（任何归档目录、任何被引文件都能翻判词），过滤会**蒙住**它 —— 与 `ci-scripts.yml` 既有的 `spec-refs` 同形。
+
+### Testing
+
+| 检查 | 结果 |
+|---|---|
+| `scripts/check-tasks-refs.py`（真实语料） | `787 refs / 14 dangling / 47 malformed`，**从干净 `worktree` 复算同值** |
+| `python scripts/check-tasks-refs-selftest.py` | **SELF-CHECK PASSED**：6 突变全红、红集两两不同、恢复 sha256 `a74deb2a…` 独立进程认证 |
+| `pytest tests/python/test_check_tasks_refs.py` | **14 passed** |
+| `pytest …test_check_tasks_refs.py …test_check_spec_refs.py` | **26 passed**（两个守卫测试同跑，互不影响） |
+| Python 套件收集数 | **1196 → 1210** = **+14**，与本票新用例数**恰好相等** ⇒ 无附带改动 |
+| `ruff check`（0.16.3，三个新文件） | All checks passed |
+| `ast.parse(feature_version=(3,9))` | 三个文件全通过 |
+
+### Delivered
+
+- `2f88e44` `feat(scripts): guard .trellis/tasks jsonl references (#680)`（**本地**，见下）
+- 归档：`.trellis/tasks/archive/2026-09/09-18-t30-tasks-jsonl-ref-guard/`（`task.json` 已手填 `commit=2f88e44`）
+
+### 未完成 / 阻塞（诚实记账）
+
+⚠️ **`2f88e44` 未推送**。`git push origin main` 两次失败：
+
+```
+fatal: unable to access 'https://github.com/JameryW/UltimateCoders.git/':
+Failed to connect to github.com:443 over proxy 127.0.0.1 after 2048 ms
+```
+
+`git ls-remote origin refs/heads/main` **同样失败** ⇒ **远端仍为 `37509c3`，本地领先 1**。⇒ **不能写「已推送」**：本仓铁律是「『已推送』只能由 `git ls-remote` 回读背书」。**CI 未跑**（无网）⇒ **`2f88e44` 的 CI 结论未知**，按仓规**实现票必须先 CI 绿再关票** ⇒ **#680 暂不关**。
+
+### Next Steps
+
+1. **网络恢复后**：`git push origin main` → `git ls-remote` 回读确认 `2f88e44` → 等 CI（新 job `tasks-refs` 在 3.9/3.12 两档）→ 绿后关 #680（贴**验收映射**）。
+   ⚠️ **预期 `tasks-refs` job 是红的**：它跑守卫，而 14 悬空 + 47 malformed **仍在**。**这是守卫在说真话，不是守卫坏了** —— 需在 #680 的关票评论里写明，或另开票处置那 47 条。
+2. **47 条 MALFORMED 的处置**（另一个缺陷类，本票只记账）—— 判据与修法已写在 prd.md「实现期实测」第 5 条。
+3. **14 条悬空（#678 的 B 类）** —— 其中 2 条是**新形状**（退役 `JameryW/workspace` 身份目录 / 归档时目录套目录），判定规则不唯一 ⇒ **机械回填会写错**，须单独裁。
+4. **#656 P2 本体** —— 仍是唯一**外部阻塞**项（需「方案第 21 节」原文）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2f88e44` | `feat(scripts): guard .trellis/tasks jsonl references (#680)` |
+
+> ⚠️ 本地提交，**未推送**（网络不通；详见上一节「未完成 / 阻塞」）。
+### Status
+
+[OK] **本地已完成** —— 守卫 + 自检 + 14 用例 + CI 接线全部落地并实测；⚠️ **未推送、CI 未跑 ⇒ #680 暂不关**。
