@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-18-t33-rpc-to-roster-passthrough-pin/prd.md", "reason": "本票 PRD：三处 RPC 字段映射的消融证据、阳性对照、顺带发现的自指反例与四条验收"}
+{"file": "crates/uc-grpc/src/worker_service.rs", "reason": "改动面：测试模块新增穿过 RPC 边界的 placement 钉（register_worker + worker_heartbeat → placement_target → 字面量 subject）"}
+{"file": "crates/uc-grpc/proto/engine.proto", "reason": "契约真源：RegisterWorkerRequest.capabilities / WorkerHeartbeatRequest.recent_files / per_worker_topic 三字段的语义与「gateway 重界」承诺（本票不改）"}
+{"file": "crates/uc-grpc/src/placement.rs", "reason": "下游真源：place() / MAX_RECENT_FILES / PER_WORKER_SUBJECT_PREFIX（本票只在测试里断言，不改其内容）"}
+{"file": "tests/python/test_check_tasks_refs.py", "reason": "同 change 更新：task context 语料计数钉值 (787,788) → (788,789)"}

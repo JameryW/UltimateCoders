@@ -1,0 +1,2 @@
+{"file": "crates/uc-grpc/src/worker_service.rs", "reason": "验收 1/2/3：新测试未突变时绿；m1/m2/m3 各自单独施加时必须分别变红；lib 计数 249 → 250 且 0 failed"}
+{"file": "tests/python/test_check_tasks_refs.py", "reason": "验收 4：语料钉值 (787,788) → (788,789)，两条都必须可复算"}

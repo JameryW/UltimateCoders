@@ -384,7 +384,7 @@ def test_exclude_set_is_applied_on_top_of_git(tmp_path):
 
 
 def test_real_corpus_reproduces_the_recorded_numbers():
-    """Real corpus as of T32 / #682: 787 references / 0 dangling / 0 malformed.
+    """Real corpus as of T33 / #683: 788 references / 0 dangling / 0 malformed.
 
     History: #680 recorded 787-or-788 references with 14 dangling / 47 malformed.
     The reference count was 787 and NOT 788-while-that-ticket-existed: the corpus
@@ -407,6 +407,10 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     else did (still 0 dangling / 0 malformed). Same rule as above: the move is
     recorded here in the same change, not absorbed by a wider tolerance.
 
+    T33 / #683 is the same move once more: its `implement.jsonl` cites its own
+    `prd.md` and nothing else under `.trellis/`, so 788 -> 789. Its `check.jsonl`
+    cites two in-repo paths (not `.trellis`-prefixed) and therefore adds nothing.
+
     This is a tripwire, not a whitelist: if a future change moves any of these
     numbers, it must be updated in the same change.
     """
@@ -417,13 +421,13 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     malformed = [r for r in rows if r["verdict"] == "MALFORMED"]
 
     # The corpus is the TRACKED set, so this ticket's own `implement.jsonl`
-    # counts only once committed: 787 while it is untracked, 788 once it is
+    # counts only once committed: 788 while it is untracked, 789 once it is
     # (which is how CI always sees it). Those two ARE the reachable states for
     # the current ticket, so they are the pair. T31's window was wider only
     # because that ticket had two contributing jsonl files, giving it one
     # intermediate state; those values are unreachable now, and leaving them in
     # would mask a real -1 drift. Pinning the reachable set is the point.
-    assert len(refs) in (787, 788), f"reference count drifted: {len(refs)}"
+    assert len(refs) in (788, 789), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 

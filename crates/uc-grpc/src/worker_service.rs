@@ -2015,6 +2015,68 @@ mod tests {
         assert_eq!(w.projects, vec!["alpha".to_string()]);
     }
 
+    /// T33 #683 — the placement signals must survive the RPC boundary.
+    ///
+    /// Every input `placement_target` reads arrives over the wire: the two
+    /// heartbeat fields (`recent_files`, `per_worker_topic`) and the register
+    /// field (`capabilities`). The placement tests below inject those through
+    /// `WorkerRegistry::register` / `heartbeat_with_signals` directly, and the
+    /// `register_worker_rpc_*` tests above stop at "accepted" — nothing joined
+    /// the two halves, so a drift in the handler's field mapping was invisible.
+    /// Measured 2026-09-18: dropping `recent_files` (`&[]`), `per_worker_topic`
+    /// (`false`) or `capabilities` (`Vec::new()`) at the RPC boundary left the
+    /// whole crate green — 249 passed, 0 failed, each with the recompile
+    /// confirmed. This test goes in through the RPC and asks placement to
+    /// decide, then pins the **literal** subject: a symbolic assertion here
+    /// (e.g. comparing against `PER_WORKER_SUBJECT_PREFIX`) would move with the
+    /// constant and could not pin it.
+    #[tokio::test]
+    async fn placement_signals_survive_the_rpc_boundary() {
+        let server = make_server();
+
+        let registered = server
+            .register_worker(Request::new(RegisterWorkerRequest {
+                worker_id: "w-rpc".to_string(),
+                capabilities: vec!["code".to_string()],
+                max_capacity: 4,
+                metadata: r#"{"hostname":"box-rpc"}"#.to_string(),
+                contract_version: CONTRACT_VERSION.to_string(),
+                projects: vec![],
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(registered.success, "{:?}", registered.error);
+
+        let beat = server
+            .worker_heartbeat(Request::new(WorkerHeartbeatRequest {
+                worker_id: "w-rpc".to_string(),
+                current_load: 0,
+                contract_version: CONTRACT_VERSION.to_string(),
+                recent_files: vec!["src/auth.rs".to_string()],
+                per_worker_topic: true,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(beat.accepted, "{:?}", beat.error);
+
+        let reg = server.worker_registry().read().await;
+        let picked = reg
+            .placement_target(
+                &["code".to_string()],
+                "",
+                &["src/auth.rs".to_string()],
+                &no_hosts(),
+                &std::collections::HashSet::new(),
+            )
+            .expect("the RPC-registered worker is targetable on its affinity signal");
+        assert_eq!(picked.worker_id, "w-rpc");
+        assert_eq!(picked.subject, "uc.subtask.execute.w.w-rpc");
+        assert_eq!(picked.affinity_hits, 1);
+        assert_eq!(picked.load_percent, 0);
+    }
+
     // ── T12 #654 / D12 #649 — affinity placement signals ────────────
 
     /// Register a worker and immediately give it placement signals.
