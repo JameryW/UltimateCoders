@@ -1,2 +1,2 @@
-{"file": ".trellis/tasks/06-27-deep-analysis-of-omp-session-interruption-causes/research/interruption-causes-catalog.md", "reason": "Verify all P2 fixes against the master catalog"}
-{"file": ".trellis/tasks/06-27-deep-analysis-of-omp-session-interruption-causes/research/uc-extension-interruption.md", "reason": "Verify ControlSignalSubscriber and event system fixes"}
+{"file": ".trellis/tasks/archive/2026-06/06-27-deep-analysis-of-omp-session-interruption-causes/research/interruption-causes-catalog.md", "reason": "Verify all P2 fixes against the master catalog"}
+{"file": ".trellis/tasks/archive/2026-06/06-27-deep-analysis-of-omp-session-interruption-causes/research/uc-extension-interruption.md", "reason": "Verify ControlSignalSubscriber and event system fixes"}

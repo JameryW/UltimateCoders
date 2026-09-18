@@ -4,4 +4,4 @@
 {"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Dashboard event consumption, SSE — context for R2/R3"}
 {"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "Worker heartbeat, checkpoint — R4/R5 reference"}
 {"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Orchestrator/Worker capabilities — R1 auto-scheduling context"}
-{"file": ".trellis/tasks/06-24-oh-my-pi-orchestrator/prd.md", "reason": "omp PRD — R6/R7 reference for Phase 3-4 gaps"}
+{"file": ".trellis/tasks/archive/2026-06/06-24-oh-my-pi-orchestrator/prd.md", "reason": "omp PRD — R6/R7 reference for Phase 3-4 gaps"}

@@ -384,17 +384,26 @@ def test_exclude_set_is_applied_on_top_of_git(tmp_path):
 
 
 def test_real_corpus_reproduces_the_recorded_numbers():
-    """#680 records the real corpus: 787 references / 14 dangling / 47 malformed.
+    """Real corpus as of T31 / #681: 785 references / 0 dangling / 0 malformed.
 
-    The number is 787 and NOT 788-while-this-ticket-exists. The corpus is the
-    tracked set, so this ticket's own `implement.jsonl` -- which cites
-    `.trellis/workflow.md` under a `file` key -- only counts once it is
-    committed. Before that the guard reads the same 787 as a clean checkout at
-    `37509c3`; after that it reads 788. Both are correct, and the determinism
-    test below is what keeps that from becoming two verdicts for one commit.
+    History: #680 recorded 787-or-788 references with 14 dangling / 47 malformed.
+    The reference count was 787 and NOT 788-while-that-ticket-existed: the corpus
+    is the tracked set, so #680's own `implement.jsonl` -- which cites
+    `.trellis/workflow.md` under a `file` key -- only counted once committed.
 
-    When a future ticket fixes the 14 (or the 47), this test is expected to be
-    updated in the same change -- it is a tripwire, not a whitelist.
+    T31 cleaned the residue, and the numbers moved by exactly the amount the
+    cleanup predicts:
+      * 788 -> 785 references  = -3, the three deletions whose targets
+        (`.trellis/spec/backend.md`, `.trellis/spec/backend/workspace-config-spec.md`
+        x2) never existed anywhere in the repo -- they were dropped rather than
+        invented.
+      * 14 -> 0 dangling        = 11 repointed + 3 deleted.
+      * 47 -> 0 malformed       = 27 trailing-comma lines + 18 array entries
+        (the 2 files were `[ {..}, .. ]` arrays, whose 2 bracket lines also
+        failed to parse).
+
+    This is a tripwire, not a whitelist: if a future change moves any of these
+    numbers, it must be updated in the same change.
     """
     result = _run(REPO_ROOT, "--json")
     rows = json.loads(result.stdout.decode())
@@ -402,9 +411,9 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     dangling = [r for r in rows if r["verdict"] == "DANGLING"]
     malformed = [r for r in rows if r["verdict"] == "MALFORMED"]
 
-    assert len(refs) in (787, 788), f"reference count drifted: {len(refs)}"
-    assert len(dangling) == 14, f"dangling count drifted: {len(dangling)}"
-    assert len(malformed) == 47, f"malformed count drifted: {len(malformed)}"
+    assert len(refs) in (784, 785), f"reference count drifted: {len(refs)}"
+    assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
+    assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 
 
 def test_untracked_carrier_is_not_audited(tmp_path):
