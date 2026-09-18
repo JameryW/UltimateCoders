@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Optional
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS_DIR = ROOT / ".agents" / "skills"
@@ -35,7 +33,7 @@ REQUIRED_FILES = (
 )
 
 
-def skill_name(skill_file: Path) -> Optional[str]:
+def skill_name(skill_file: Path) -> str | None:
     text = skill_file.read_text(encoding="utf-8")
     match = re.match(r"^---\s*$([\s\S]*?)^---\s*$", text, re.MULTILINE)
     if match is None:

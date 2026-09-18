@@ -16,12 +16,28 @@ name: Scripts CI
 #     flip a verdict.  The job is deliberately tiny (no Rust build, no matrix
 #     over Python for the suite -- see below) so that running it on every push
 #     stays cheap.
-#   * `ruff` is scoped to the two named files, NOT to `scripts/`.  `ruff check
-#     scripts/` is red today on pre-existing issues in check-codex-issue-flow.py
-#     (I001 + UP045, last touched in fc9b5ce) and this workflow owns neither.
-#     `ruff format --check` is not run at all: it fails on the guard both before
-#     and after #675 slice C (verified against the `git show HEAD:` copy), so
-#     wiring it would import a large unrelated reformat.
+#   * `ruff` inside the two guard jobs is scoped to the NAMED files, not to
+#     `scripts/`: each guard job also runs its guard and its tests, so its
+#     greenness has to stay self-contained.  That shape used to be FORCED --
+#     `ruff check scripts/` was red on two pre-existing issues in
+#     check-codex-issue-flow.py (I001 + UP045, last touched fc9b5ce), which T26
+#     declined to adopt and T34 / #684 paid off.  Retiring it also measured what
+#     the shape cost: with a throwaway `scripts/*.py` carrying one F401, all
+#     three named-file invocations in this repo stayed GREEN while `ruff check
+#     scripts/` went red.  So a file ADDED to `scripts/` was linted by nothing
+#     unless someone remembered to edit a workflow.  `scripts-lint` is the
+#     umbrella that closes that gap -- the next guard added to `scripts/` is
+#     linted from birth.  It lives here rather than in a workflow of its own
+#     because `paths:` is workflow-level in Actions, not job-level: a correctly
+#     filtered pure-lint workflow cannot share a file with `spec-refs` /
+#     `tasks-refs`, which must NOT be filtered (they read an open input set).
+#     `ruff format --check` is still not run at all: it fails on the guard both
+#     before and after #675 slice C (verified against the `git show HEAD:`
+#     copy), so wiring it would import a large unrelated reformat.
+#   * `.trellis/scripts/**` and `.claude/hooks/**` stay outside every ruff
+#     target, by REGISTRATION rather than by silence: `ci-trellis.yml`'s header
+#     records the framework scripts (28 tracked `.py`, exactly 1 of them linted
+#     there) and `.trellis/.template-hashes.json` the three hooks.
 #
 # The Python matrix keeps 3.9 because the guard claims 3.9 compatibility (it
 # leans on `from __future__ import annotations` and avoids 3.10+ runtime
@@ -107,3 +123,18 @@ jobs:
         # mutations, each must redden, no two may redden an identical set, and
         # the restore is certified by a separate process.
         run: python scripts/check-tasks-refs-selftest.py
+
+  scripts-lint:
+    name: ruff lint (the whole scripts/ directory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - name: ruff check scripts/
+        # Directory-wide ON PURPOSE -- see the header.  The named-file steps in
+        # the two jobs above are measurably blind to a file that has just been
+        # ADDED to `scripts/`; this one is not.
+        run: ruff check scripts/

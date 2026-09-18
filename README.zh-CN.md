@@ -430,7 +430,7 @@ cargo clippy --workspace -- -D warnings
 cargo fmt --all -- --check
 
 # Python
-ruff check python/ tests/
+ruff check python/ tests/ scripts/
 
 # UC Orchestrator
 cd packages/uc-orchestrator && npx tsc --noEmit

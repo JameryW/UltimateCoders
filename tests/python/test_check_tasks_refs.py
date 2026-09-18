@@ -411,6 +411,12 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     `prd.md` and nothing else under `.trellis/`, so 788 -> 789. Its `check.jsonl`
     cites two in-repo paths (not `.trellis`-prefixed) and therefore adds nothing.
 
+    T34 / #684 is that same move again: its `implement.jsonl` cites its own
+    `prd.md` and nothing else under `.trellis/`, so 789 -> 790, and its
+    `check.jsonl` cites two non-`.trellis` paths. The ticket's subject is lint
+    coverage, which does not touch this corpus at all -- the +1 is purely the
+    ticket's own existence, exactly as #682 and #683 were.
+
     This is a tripwire, not a whitelist: if a future change moves any of these
     numbers, it must be updated in the same change.
     """
@@ -421,13 +427,13 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     malformed = [r for r in rows if r["verdict"] == "MALFORMED"]
 
     # The corpus is the TRACKED set, so this ticket's own `implement.jsonl`
-    # counts only once committed: 788 while it is untracked, 789 once it is
+    # counts only once committed: 789 while it is untracked, 790 once it is
     # (which is how CI always sees it). Those two ARE the reachable states for
     # the current ticket, so they are the pair. T31's window was wider only
     # because that ticket had two contributing jsonl files, giving it one
     # intermediate state; those values are unreachable now, and leaving them in
     # would mask a real -1 drift. Pinning the reachable set is the point.
-    assert len(refs) in (788, 789), f"reference count drifted: {len(refs)}"
+    assert len(refs) in (789, 790), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 
