@@ -177,6 +177,7 @@ P1（Scope、Commit Barrier、Context Compiler、Sandbox 白名单、affinity pl
 **T19 的残余 race 窗口（如实记账，未消除）**：本门是**花名册检查**，不是投递保证。候选 ≥2 且含生产者时，共享 work-queue 仍**可能**投给生产者。本票把最坏形状（生产者是唯一候选人 ⇒ 静默自审）变成可见的 `PENDING`，**没有**在共享队列上建立投递保证 —— 与 D16 否决 D 的理由同源。
 
 **P2 地图截至 2026-09-18 复核的状态**：开放决策 **0**、待落地票 **0**（本日一手复核：`#656` 正文尾段与其唯一评论（2026-09-18）口径一致）；**P2-1 / P2-2 / P2-3 的「本体」仍无据** —— Optimizer 算法（三个比率*算什么*、输出给谁、谁消费）、review 策略（审什么、几轮、失败怎么重试）、market scheduling 三者都需要外部「方案第 21 节」原文才可能转成决策票/实现票，**本件不臆造其内容**。
+**P2 开票前置勘察（同日）**：仓内**已确证的前置**与「只有外部『方案第 21 节』原文能回答的问题」已分列成文 —— 见同目录 `durable-runtime-p2-recon.md`。它只列事实与空位，**不构成本体设计**；原文到达后据此开票。
 
 **T20 交付（2026-09-16，T20 #671）与 §六 的覆盖边界（2026-09-17 收口审计补记）**：T19 同票改正了 `agent-capability-spec.md` 里「默认能力集包含 `review`」那一条，而同一份规范的前约 250 行仍在描述**已被删除的层** —— T20 把那六个幽灵签名（`_self_evaluate` / `_classify_error` / `_adaptive_retry` / `_select_worker` / `schedule_subtasks` / `_gather_prior_context`，全仓命中数 **0**，死于 #111/#161、已约三个月）连同其上的 §3 死契约（`_record_experience` / `confidence_threshold` / `experience_key` / `FALLBACK_TOOL`）与 §6 两个不存在的测试名一并删除并留痕（2 行留痕 + 指向现行收口点），另修正两处默认能力事实错误（漏 `decompose`；混淆 base seed 与 advertised set，后者实跑 **13** 项），并把 `test_default_capabilities` 由成员资格断言升级为**绝对钉**（任务 `09-16-t20-capability-spec-reconciliation`，`6d7653c` + `d2f4f49`；**零运行时行为变更**，且同票补掉 T19 收口遗漏的一处同源假话）。**本件此前只记到 T19 —— 故在此补记。**
 
