@@ -1,0 +1,3 @@
+{"file": "scripts/check-line-endings.py", "reason": "验收 1/2/3 的复算对象：真仓 rc 0 且报 tracked file(s)/text scanned/binary skipped: 9/gitlink(s) skipped: 1；整改前同一命令 rc 1 且恰好 5 条具名失败（计数与手算一致）；3 条判据各有独立失败消息；突变自检逐条打红"}
+{"file": "tests/python/test_check_line_endings.py", "reason": "验收 4/5：5 passed；每条判据被独立突变打红（打红集合不相交 ⇒ 无装饰判据）；二进制分类器正反两向都非空"}
+{"file": ".github/workflows/ci-scripts.yml", "reason": "验收 6：全仓守卫必须落在无 paths 的 workflow（T35 判据：paths 对封闭输入集是正确的，对全仓游走是蒙眼布）；落在此文件同时避开新增第 11 套 workflow 会移动的 T37 计数词与 README 表格行"}
