@@ -264,3 +264,111 @@ T35 / #685 立起这条铁律，T36 / #686 **只手工执行过一次**（把 `c
 - 账 2（`ruff format --check` **76 文件** ⇒ 大票）、账 4（`add_session.py` 个人 index 行数取自填充前，下次自愈）、账 5（README `Checks` 列散文数字 —— 语义映射 + 两版语言不同 ⇒ **明确不作**，继续记）延续。
 - 延续：`.trellis/.template-hashes.json` 无 job 校验；`.trellis/scripts/**`(27) 与 `.claude/hooks/**`(3) 按登记排除。
 - #656（P2 本体）仍只等外部「方案第 21 章」原文。
+
+
+## Session 47: T40 guard every tracked file against mixed line endings (#690)
+
+**Date**: 2026-09-19
+**Task**: T40 guard every tracked file against mixed line endings (#690)
+**Branch**: `main`
+
+### Summary
+
+把「逐票手工实测行尾」升格为全仓守卫：5 个混合行尾文件（合计 7149 处 lone LF）整改为 LF，新增 scripts/check-line-endings.py（3 条判据）+ 测试，job 落在无 paths 的 ci-scripts.yml。修前 rc 1 恰好 5 条具名失败、修后 rc 0；CI 两腿逐字与本地一致。
+
+### Main Changes
+
+## 缺口的一手读数（HEAD `9624968`）
+
+5 个**已跟踪**文件的工作树副本自相矛盾（同一文件里既有 CRLF 又有裸 LF），合计 **7149 处 lone LF**：
+
+| 文件 | CRLF | lone LF |
+|---|---|---|
+| `dashboard/index.html` | 12 | 1 |
+| `dashboard/src/grpc/engine_pb.ts` | 102 | 3532 |
+| `packages/uc-orchestrator/src/grpc/engine_pb.ts` | 102 | 3532 |
+| `tests/python/test_dashboard_metrics.py` | 566 | 65 |
+| `tests/python/test_worker_capabilities.py` | 230 | 19 |
+
+**为什么没人看见（实测，非推演）**：`core.autocrlf=true`（来自沙箱 PortableGit 的**系统** gitconfig，不是本仓的选择）在 `git add` 时把 CRLF 归一成 LF，于是混合的工作树与它自己的 index blob **仍然相等**：
+
+- `git diff` / `git diff --cached` 对「只差行尾」的残留是**空**的；
+- `git status --porcelain` 修之前报**干净**；把 5 个文件归一之后反而报 ` M`，而 `git diff` 依旧空、`git diff-files --raw` 的目的 sha **全是 0**、`git update-index --refresh` 说 "needs update"，一次 `git add` **什么都没暂存**就把状态清掉了。
+
+⇒ **`git status` 对行尾不携带任何方向的信息**，「工作树是干净的」**不是**内容判据。
+
+**缺口在作用域与武装，不在知识**：`check-journal-ledger.py` 早就在算每个 journal 的 `crlf` / `lone_lf`，但它只覆盖 journal，且自己的 docstring 写着 "printed, never a verdict"。
+
+## 三条判据（5 条独立失败消息）
+
+| # | 判据 | 失败消息 |
+|---|---|---|
+| J1 | **非空性**（两面）：扫到 ≥1 个跟踪文件；二进制分类器**确实**跳过了一些 | `scanned N tracked file(s) (expected >= 1)` / `no binary file was skipped -- the classifier is broken` |
+| J2 | **index blob** 不混行尾（跨平台确定） | `<path>: index blob mixes line endings (n CRLF, m lone LF)` |
+| J3 | **工作树副本**不混行尾 | `<path>: working tree mixes line endings (n CRLF, m lone LF)` |
+
+**只判「混不混」，绝不判「该用哪种」**：后者是逐文件属性且**环境相关**（本机 checkout CRLF、CI checkout LF）⇒ 写成契约会在 CI 上错。J3 在 CI 上绿是因为 CI 的 checkout **确实**是齐的（正确的判词，不是空判）；而一旦有人从非 autocrlf 机器提交了混合 blob，它以混合形态落地 ⇒ J3 立刻红。
+
+## 真实漂移（本票自带；合成突变只是补充）
+
+修之前跑**发布的**守卫：**rc 1，恰好 5 条具名失败**，计数与上表手算**逐字一致**。修之后 **rc 0**。
+
+5 个文件统一为 **LF** —— 而这正是 index 一直都在存的（实测 **5/5** 与各自 index blob 逐字节相同）⇒ **它们不出现在本票任何 diff 里**，唯一证据是守卫从 5 条具名失败变成 0 条。
+
+## 测量改变了实现（两处）
+
+- **gitlink 不是 blob**：`git cat-file --batch` 用 `:<path>` 读 `vendor/oh-my-pi` 会失败（mode `160000`，内容是一个 commit）⇒ 初版守卫报出**第 6 条假失败**。改为 `git ls-files --stage -z` 暴露 mode 字节、跳过 `160000`，并单独报 `gitlink(s) skipped: N`。
+- **突变机制换了一种**：原计划靠「删掉 NUL 探测」打红 J1，实现改成**删掉那个二进制 fixture** —— 同一条消息变红，但不需要改被测代码，也不会与「第二条突变打红同一条消息」混淆。
+
+## 门禁接线（为何是 job 而不是第 11 套 workflow）
+
+全仓游走的守卫（输入集 = 整个已跟踪 index）在 T35 判据下**不能带 `paths`**（带过滤只会对翻转判词的改动失明）⇒ 必须落在无过滤的 `ci-scripts.yml`。做成 **job** 而不是新 workflow：workflow 计数保持 **10** ⇒ T37 的 README 表格与计数词**一字不动**，本票因此**不碰 README**。既有 9 套 workflow 的 `paths`/`steps` **一条未改**（`git diff` 的 `.github/workflows/**` 只有这一个文件，且只有新增）。
+
+## 实现期两处新发现（都是跑出来的）
+
+1. **新产物移动了另一个测试文件的钉值**（T39 那条教训重演）：新 job 的 `run:` 步新增 2 个**去重后**的文件引用 ⇒ `test_check_workflow_inputs.py` 的真仓摘要 `18 run-step reference(s)` → **20**。该值由 10 套 workflow 文件的**内容**决定，与本票新增多少跟踪文件无关 ⇒ 是**单值**（不是可达对），同 change 改掉。判据：跑测试时它**当场变红**。
+2. **任务目录的提交时机决定 `implement.jsonl` 该写哪个路径**：实测 T39 —— 四个任务文件**全**加在归档提交（`d3a6103`），实现提交里**一个都没有**（逐个 `git log --diff-filter=A` 查证）。而语料 = **已跟踪**集合，且要求被引用的 `.trellis` 目标**也**已跟踪 ⇒ 实测「只暂存 jsonl、不暂存 `prd.md`」会得到**真的** `795 ok / 1 dangling`。于是：实现提交里任务目录**整体保持未跟踪**（语料停在 795），且 `implement.jsonl` **从一开始就写归档后的路径**（`archive/2026-09/...`），否则 `task.py archive` 一移动目录，引用立刻悬挂。
+3. 顺带实测到一个**会被误读的中间态**：任务目录只暂存一半时守卫报 `tracked file(s): 1839, text scanned: 1830` —— **这个值 CI 永远不会看到**（任务文件是整批在归档提交里落地的）⇒ 计数钉值仍然只有两个可达态 `(1836,1827)` 与 `(1840,1831)`。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1d27a1d` | (see git log) |
+| `6e36424` | (see git log) |
+
+### Testing
+
+- [OK] **修前 rc 1、恰好 5 条具名失败**，计数与手工复算**逐字一致**（12/1、102/3532、102/3532、566/65、230/19）；**修后 rc 0**
+- [OK] **5 个文件逐字节复核**：`CR == 0`，且与各自 index blob **逐字节相同 5/5** ⇒ 它们**不出现在本票任何 diff 里**
+- [OK] 新增测试 **5 passed**：真仓 pin（两条内容属性钉死 + 文件计数钉成两个可达态）/ 5 文件保持 LF-only 且与 index 逐字节同 / 四条突变覆盖断言 / 二进制分类器**正反两向** / 与 `git ls-files --eol` 的跨实现「**一致 + 非空**」
+- [OK] 每条判据被**独立**突变打红，且打红集合**不相交**（A 造工作树混合 ⇒ **不得**报 J2；B 塞 index 混合 blob ⇒ **不得**报 J3）
+- [OK] 六守卫均 `rc 0`：`check-spec-refs` / `check-tasks-refs` / `check-journal-ledger` / `check-readme-ci-table` / `check-workflow-inputs` / `check-line-endings`
+- [OK] `ruff check` 三条全绿（本票两文件 / `scripts/` / `python/ tests/`）
+- [OK] **语料钉值 `(795,796)` 的两个可达态都实测**：任务目录未跟踪 ⇒ **795 ok**；归档提交落盘后 ⇒ **796 ok / 0 dangling / 0 malformed**
+- [OK] **行尾守卫计数钉值的两个可达态都实测**：**1836/1827**（实现提交，任务目录未跟踪）与 **1840/1831**（归档后）
+- [OK] `test_check_tasks_refs.py` **14 passed**；三个受影响测试文件合计 **25 passed**
+- [OK] **本地跑满全套**（不跑子集）：1226 collected = **1215 passed + 10 skipped + 1 failed**；那 1 条是沙箱 `safe-delete` 的**每轮**批量删除计数（`count 1819 > threshold 50`）在 temp 清理时触发 ⇒ **环境产物、非回归**（该文件**单独跑 27/27 通过**）
+- [OK] **Python 总收集数 1221 → 1226**（= 本票新增 5 例，逐字吻合）
+- [OK] **CI（实现提交 `1d27a1d`）恰好 4 套触发、全绿**：**Scripts CI 7/7**（含新 job **两腿** success）、**Python CI**（dashboard checks + ruff lint + 两腿 test 全 success）、**README CI Table CI**（success）、**Workflow Inputs CI**（success）；**Rust / TypeScript 正确地未触发** —— 5 个归一文件与 index 逐字节相同 ⇒ 没有任何 TS 路径变动
+- [OK] **CI 逐字判词与本地一致**：两腿都报 `tracked file(s): 1836, text scanned: 1827, binary skipped: 9, gitlink(s) skipped: 1` + `line endings check passed.`，各 **5 passed**、ruff `All checks passed!`；3.9 腿跑通 ⇒ `from __future__ import annotations` 前提**仍成立**
+- [OK] CI 上那条 `PytestConfigWarning: Unknown config option: asyncio_mode` 与**姊妹 job 同一告警**（该 job 只装 `ruff pytest`）⇒ **既有、非本票引入**，不夹带修
+- [OK] 验收 6 实测：`git diff` 的 `.github/workflows/**` 只有 `ci-scripts.yml` **一个文件**、且**只有新增**（`paths` 一条未改）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- [OK] **已完成** —— 两笔提交（`1d27a1d` 实现 + `6e36424` 归档）的 CI **全绿** ⇒ **#690 可关**（贴验收映射）。
+- **本票立起的判据（可复用到下一条）**：**`git status` 不是内容判据。** 判「工作树是否干净」只认 `git diff`；判「行尾有没有残留」只能读字节。
+- **本票付的学费（写进技能）**：① **`core.autocrlf` 把「行尾」变成 git 结构性看不见的一层** ⇒ 任何字节级判据都不能拿 `git status` / `git diff` 做代理；② **`git ls-files --stage` 的 mode 字节**是区分 gitlink 与 blob 的唯一可靠来源（`:<path>` 读不了 submodule）；③ **只判客户能判的那一半** —— 环境相关的属性（该用哪种行尾）不进契约，只判不变量（混不混）；④ **一个新 `run:` 步引用新文件，会移动另一个测试文件的钉值**，与 T39「README 计数词移动了另一个测试文件的突变锚点」**同形** ⇒ **加产物先 grep 谁钉了它**。
+- **账 6（本票新增，未偿）**：**没有 `.gitattributes`**。本票只修残留、**不立策略**：加属性文件会把「checkout 用哪种行尾」升为全仓策略并影响下次 clone 的 1600+ 文件，需要独立证据与决策；且本沙箱的 `autocrlf=true` 是**环境注入**的，加属性文件会让环境差异从「显式」变「静默」。
+- **账 7（本票新增，未偿）**：守卫的 **J3 是本机与 CI 判词可能合法分叉的唯一一条**（本机 worktree CRLF、CI worktree LF）。今天两侧都绿且**双方都是正确判词**，但它意味着**「本机绿」不能推「CI 绿」**（反之亦然）。已把理由写进守卫 docstring；真出现分叉时按「只判 mixed、绝不判 which」复核。
+- **账 8（本票顺手实测出的账，未偿）**：T39 的 journal（Session 46）把 `.trellis/scripts/**` 写成 **27**，而 `ci-scripts.yml:39` 与今天的实测都写 **28**（`git ls-files .trellis/scripts | grep -c '\.py$'` = 28 = 6 顶层 + 22 嵌套）。差 1 —— 正是「手抄的机器可读面必须脚本对账」（T36 那条）的又一例。⚠️ **归档 journal 是历史记录，不回改 T39 的 Session 46**，在此登记更正即可。
+- ⚠️ 顺带实测的**锚点陷阱**（值得记住）：`git ls-files '.trellis/scripts/**/*.py'` 返回 **22**，而 `git ls-files .trellis/scripts | grep '\.py$'` 返回 **28** —— pathspec 里的 `**/` 在本机 git 上**不匹配顶层文件**，于是同一个问题有两个「正确答案」。⇒ **数「全仓某类文件」时不要用 `**/` 前缀**。
+- 账 1（`docker compose` 挂载闭包）、账 2（`ruff format --check` **78** 文件 ⇒ 大票）、账 4（`add_session.py` 个人 index 行数取自填充前，下次自愈）、账 5（README `Checks` 列散文 —— 语义映射 + 两版语言不同 ⇒ **明确不作**）延续。
+- 延续：`.trellis/.template-hashes.json` 无 job 校验；`.trellis/scripts/**`（**28** 个跟踪 `.py`，其中恰好 1 个被 lint，按登记排除）与 `.claude/hooks/**`（3）按登记排除。
+- #656（P2 本体）仍只等外部「方案第 21 章」原文。
