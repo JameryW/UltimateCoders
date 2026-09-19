@@ -1,5 +1,37 @@
 name: Python CI
 
+# WHY THIS WORKFLOW IS TRIGGERED BY `crates/**` (T36 / #686)
+# ----------------------------------------------------------
+# The `test` job builds the Rust extension before running pytest:
+#
+#     maturin develop --release --manifest-path crates/uc-python/Cargo.toml
+#
+# `crates/uc-python` depends on `uc-types`, `uc-engine` (features storage + indexing)
+# and `uc-grpc`, so that single command compiles four crates plus the workspace root
+# manifests. Those Rust sources are therefore inputs of this workflow: a change to any
+# of them changes the extension the Python tests exercise. Before this ticket the
+# `paths` list carried no `crates/**` entry at all, so a Rust-only push ran Rust CI and
+# left the Python half of the engine unchecked -- a gate that cannot fire for its own
+# inputs looks exactly like a gate that passes.
+#
+# Measured 2026-09-19 over the real push history of `main` (300 runs / 219 push heads;
+# each push's file set = `git diff --name-only <previous push head>..<head>`; ground
+# truth = whether the runs API reports a Python CI run for that head):
+#   * the matcher reproduces GitHub's own verdict exactly -- the old `paths` matched
+#     65/218 pushes and the API shows Python CI ran for 65/218;
+#   * 43/218 pushes changed the extension's dependency closure while the old `paths`
+#     matched none of them, and Python CI ran for 0 of those 43;
+#   * every one of the 65 pushes that did run still matches the widened list (no loss).
+#
+# WHY THE DEPENDENCY CLOSURE AND NOT `crates/**`
+# ---------------------------------------------
+# `crates/uc-grpc-server` is not a dependency of `uc-python` (it is a separate binary
+# crate), so it is deliberately absent here: listing it would trigger this workflow for
+# changes that cannot affect the extension. The list above is derived from
+# `crates/uc-python/Cargo.toml`'s `[dependencies]`, not guessed.
+#
+# MAINTENANCE RULE: when `crates/uc-python/Cargo.toml` gains a crate dependency that
+# lives under `crates/`, add it to both `paths` lists in the same change.
 on:
   workflow_dispatch:
   push:
@@ -10,6 +42,13 @@ on:
       - "pyproject.toml"
       - ".github/workflows/ci-python.yml"
       - "dashboard/**"
+      # the extension this job compiles -- see the header note above
+      - "crates/uc-python/**"
+      - "crates/uc-types/**"
+      - "crates/uc-engine/**"
+      - "crates/uc-grpc/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
   pull_request:
     branches: [main]
     paths:
@@ -18,6 +57,13 @@ on:
       - "pyproject.toml"
       - ".github/workflows/ci-python.yml"
       - "dashboard/**"
+      # the extension this job compiles -- see the header note above
+      - "crates/uc-python/**"
+      - "crates/uc-types/**"
+      - "crates/uc-engine/**"
+      - "crates/uc-grpc/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
 
 jobs:
   lint:
