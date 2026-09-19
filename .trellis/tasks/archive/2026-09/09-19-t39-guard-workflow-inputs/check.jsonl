@@ -1,0 +1,2 @@
+{"file": "scripts/check-workflow-inputs.py", "reason": "验收 1/2/3/4 的复算对象：真仓 rc 0 且报 9 workflow / 7 套带过滤 / 12 条引用 / 0 未覆盖；4 条判据各有独立消息；历史对照 130c343^ 红（报 crates/uc-python/Cargo.toml）而 130c343 与 HEAD 绿；两组件正负例都通过"}
+{"file": ".github/workflows/ci-workflow-inputs.yml", "reason": "验收 9：推送后被触发且两腿（3.9/3.12）success；本票**不动任何既有 workflow 的 paths/steps**；该文件自检 —— 其 run: 点名的两个文件都在它自己的 paths 里"}

@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/archive/2026-09/09-19-t39-guard-workflow-inputs/prd.md", "reason": "本票 PRD：缺口的一手读数（9 套 workflow / 12 条引用 / 0 未覆盖）、「结构化抽取 + 剥注释」为何必需（粗糙扫描会把头注里的引用当输入、把散文里的假 glob 当引用）、历史背书（同一段代码在 130c343^ 上红、130c343 上绿）、四条判据各自的失败消息、两个手写组件的正负对照真理表、消融设计（真实漂移 + 历史对照 + 合成突变，含一条阴性对照）、九条验收、四个非目标与两笔新账"}
+{"file": "scripts/check-workflow-inputs.py", "reason": "本票主产物：4 条判据（非空性 / push 覆盖 / pull_request 覆盖 / 空 paths = 死门禁）+ 声明常量 TOP_LEVEL_DIRS + 引用抽取器（结构化取 run: 正文、剥 shell 注释）+ 路径匹配器；输入集封闭为 .github/workflows/*.yml（不读 README、不读全仓文件树 ⇒ T35 判据下 paths 过滤正确）"}
+{"file": "tests/python/test_check_workflow_inputs.py", "reason": "同 change 新增：真仓 pin + 沙箱单点突变（A push 删除覆盖 / B PR 删除覆盖 / C paths=[] / D 清空 all runs / E 新增未覆盖引用 / F 删掉整个 paths 块作阴性对照）+ 两组件真理表（匹配器 4 正 3 负、抽取器 3 正 3 负）+ 覆盖断言强制 4 条判据无一落空"}
+{"file": "tests/python/test_check_tasks_refs.py", "reason": "同 change 更新：语料钉值 (793,794) → (794,795)"}
+{"file": "README.md", "reason": "被校验方（推论 A）：新增第 10 套 workflow ⇒ § CI 表必然少一行、段首计数必然变小；本票补第 10 行并把 `Nine` 改为 `Ten`（计数词表已含 ten ⇒ 不改守卫）"}
+{"file": "README.zh-CN.md", "reason": "同上（中文版）：补第 10 行并把「九套独立工作流」改为「十套独立工作流」"}

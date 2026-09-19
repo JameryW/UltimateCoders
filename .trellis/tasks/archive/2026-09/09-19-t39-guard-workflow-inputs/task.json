@@ -1,0 +1,33 @@
+{
+  "id": "09-19-t39-guard-workflow-inputs",
+  "name": "t39-guard-workflow-inputs",
+  "title": "T39 把「门禁依赖的输入文件必须全列进 paths」升格为守卫（workflow run: 步的引用 vs paths）",
+  "description": "承接 T35/T36 立起、但只被手工执行过一次的铁律：workflow 的 run: 步里点名的仓内文件必须在同一 workflow 的 on.push.paths / on.pull_request.paths 里被覆盖。基线实测全绿，且同一段抽取代码在 T36 修之前的 ci-python.yml（130c343^）上当场报出 crates/uc-python/Cargo.toml 未被覆盖（真实历史漂移，非合成）。新增 scripts/check-workflow-inputs.py（封闭输入集 .github/workflows/*.yml）+ 独立 workflow + 消融测试；不推导 Cargo 语义闭包、不读 README、不读全仓文件树。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Jamery Wang",
+  "assignee": "Jamery Wang",
+  "createdAt": "2026-09-19",
+  "completedAt": "2026-09-19",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "841a97d",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "scripts/check-workflow-inputs.py",
+    ".github/workflows/ci-workflow-inputs.yml",
+    "tests/python/test_check_workflow_inputs.py",
+    "README.md",
+    "README.zh-CN.md",
+    "tests/python/test_check_tasks_refs.py"
+  ],
+  "notes": "单笔实现：`ci(workflows): guard that the files a workflow's run: steps name are covered by its paths` = 新增守卫 scripts/check-workflow-inputs.py（4 条判据 / 7 条失败消息，各带独立判词）+ 接线 .github/workflows/ci-workflow-inputs.yml（3.9/3.12 矩阵、paths 三条、不动任何既有 workflow）+ 消融测试 tests/python/test_check_workflow_inputs.py（6 例；4 处语料突变 + 3 个退化沙箱覆盖非空性家族 + 2 个阴性对照）+ 两版 README 补第 10 行与计数「Nine→Ten / 九套→十套」（推论 A 同票修）+ 语料钉值 (793,794) → (794,795)。**历史两方向消融（本票最强取证，非合成）**：让**实际发布的守卫**跑在三个真实修订的语料上 —— `130c343^`（T36 修之前）**rc 1** 且精确点名 `ci-python.yml: push paths do not cover crates/uc-python/Cargo.toml` 与同一条 pull_request 判词；`130c343`（T36 修复）**rc 0**；`HEAD` **rc 0**。该对照**不进 pytest**（`actions/checkout` 默认 `fetch-depth: 1` ⇒ 测试时取不到历史 blob），作为可复算脚本留在记忆层 `.workbuddy/memory/tools/t39-historical-ablation.py`。**真实漂移（本票独有）**：新增第 10 套 workflow 让两版 README 的表**必然少一行**，`ci-readme-ci-table.yml` 当场先红（`prose says Nine workflow(s), but 10 exist` + `workflows on disk but not in table: ['ci-workflow-inputs.yml']`），补行后转绿 —— 两态都亲眼看到。**测量改变了实现**：初版 `covered_by` 用 `fnmatch` + `prefix/**` 快捷式，与 check-readme-ci-table.py 的匹配器在**恰好两处**不一致 —— `('scripts/*.py','scripts/sub/a.py')`（fnmatch 的 `*` 会跨 `/`）与 `('scripts/**','scriptsX/a.py')`（前缀无边界，即 #678 同款坑）；两者都会让本守卫与 README 守卫对**同一份 YAML** 给出不同判词 ⇒ 改为段内作用域 glob，并由 `test_the_two_path_matchers_agree` 把两份副本钉在一起（表内必须同时含 True 与 False，否则「两个恒 False 的匹配器」也算一致）。**新产物移动了别处的钉值（已记账）**：第 10 套 workflow 把计数词从 Nine 移到 Ten，`test_check_readme_ci_table.py` 里两处**引用 README 真实措辞**的突变锚点随之失效；锚点计数断言**在锚点处大声失败**（`anchor occurs 0x, expected 1`）而非静默替换成空操作，已移动并加注释记录该耦合。**突变按分支计数**：4 处语料突变（push 丢文件 / pull_request 丢文件 / push 变空过滤 / pull_request 变空过滤）+ 3 个退化沙箱（空 workflows 目录 / 无带过滤 workflow / 抽不到引用）覆盖 7 条判词，**断言的是「判词清单被覆盖」而非突变数**；两个阴性对照必须保绿（无过滤的 workflow、既不监听 push 也不监听 pull_request 的 workflow）。两条**元断言**（判词覆盖、一致性表非空）各自在**一次性副本**上做了消融（不改被跟踪文件 —— 上一票学到「打断的消融会留下突变态、连备份都可能是突变态」）。**CI 读数（推送 `841a97d`）**：10 套中**恰好 4 套**触发 —— 新 workflow（**两腿 success**，各报 `workflows: 10 workflow(s), 9 path-filtered, 18 run-step reference(s), 13 subject to coverage` 且各自 **`6 passed`**）、README CI Table CI（success）、Scripts CI（**5/5**）、Python CI（**4/4**，两腿逐字 **`1213 passed, 8 skipped`** = 基线 1207 + 本票 6）；tasks-refs job 内 `scanned 794 ... / 794 ok / 0 dangling / 0 malformed`（pin 的首个可达态）+ `SELF-CHECK PASSED: 6 mutations, all distinct`。六守卫 `rc 0`；ruff 三条全绿；本地**跑满全套**`tests/python/`：1211 passed, 10 skipped = **1221** 收集（= 1215 + 本票 6）。**零 `paths`/`steps` 变更**（`.github/workflows/` 唯一改动是**新增一个文件**）。账 1 **部分偿还**（「字面点名」这一半；Cargo 语义闭包那一半仍阻塞）；**账 A（本票新增）**：`TOP_LEVEL_DIRS` 是声明常量，新增顶层目录若忘记登记则该目录下的引用**不被抽取**（静默盲区），缓解 = 常量打进输出 + 测试钉住内容，是否改为「从文件树推导」与**非目标 3** 冲突 ⇒ 记待决；**账 B（本票新增）**：`run:` 里的引用**可能是产物**（如 `--out python/foo.py`）⇒ 会误红，本轮不引入豁免表（空表的判据是装饰），真出现再引入**带理由**的豁免表；账 2（`ruff format --check` 76 文件）、账 4（`add_session.py` index 行数估值）、账 5（README `Checks` 列散文数字）延续。",
+  "meta": {}
+}
