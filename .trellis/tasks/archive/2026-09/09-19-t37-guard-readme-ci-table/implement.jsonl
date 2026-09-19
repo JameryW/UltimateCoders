@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/archive/2026-09/09-19-t37-guard-readme-ci-table/prd.md", "reason": "本票 PRD：缺口一手读数表、结论 A–H、五方案取舍（为何 PyYAML、为何独立 workflow、为何不自动生成表格）、七条判据各自的可定位失败消息、两路消融（真实漂移 + 八处合成突变）、七条验收、非目标与三笔账"}
+{"file": "scripts/check-readme-ci-table.py", "reason": "主产出：把 README CI 触发面表与 on.push.paths 对账的守卫。七条判据各带独立失败消息；根目录由 __file__/../.. 推导（故测试可整目录沙箱化，生产代码里无 test-only 钩子）"}
+{"file": ".github/workflows/ci-readme-ci-table.yml", "reason": "接线：单 job、矩阵 3.9+3.12、paths 过滤（封闭输入集，T35 判据）。头注写明为何独立文件（paths 是 workflow 级）、为何用 PyYAML、为何保留 3.9 腿"}
+{"file": "tests/python/test_check_readme_ci_table.py", "reason": "消融自检：真仓 pin（并钉住报告的 workflow 数）+ 八处单点突变，断言七条判据无一条落空；锚点必须带期望出现次数（ci-trellis.yml 的头注散文曾吸收过一次突变）"}
+{"file": "README.md", "reason": "被校验方（同 change 更新，推论 A）：CI 段 8 行 → 9 行（补本票新建的 workflow），段首 Eight → Nine，脚注重写为「每个带过滤的 workflow 自身 YAML 也命中自己的 paths」"}
+{"file": "README.zh-CN.md", "reason": "同上（中文版）：补齐第 9 行、段首计数与脚注同步重写"}
+{"file": "tests/python/test_check_tasks_refs.py", "reason": "同 change 更新：语料钉值 (792,793)（本票 implement.jsonl 只引用自己的 prd.md，故 792 → 793）"}

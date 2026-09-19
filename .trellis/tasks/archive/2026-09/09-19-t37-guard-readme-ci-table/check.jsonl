@@ -1,0 +1,2 @@
+{"file": ".github/workflows/ci-readme-ci-table.yml", "reason": "验收 7：推送后实测被触发且两腿（3.9/3.12）success；其余 workflow 的判词与基线一致"}
+{"file": "scripts/check-readme-ci-table.py", "reason": "验收 1/2/3 的复算对象：真仓 rc 0 且报告 9 workflow；消融脚本沙箱化解析的正是此文件"}
