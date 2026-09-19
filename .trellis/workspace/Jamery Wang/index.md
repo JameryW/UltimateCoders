@@ -7,8 +7,8 @@
 ## Current Status
 
 <!-- @@@auto:current-status -->
-- **Active File**: `journal-2.md`
-- **Total Sessions**: 44
+- **Active File**: `journal-3.md`
+- **Total Sessions**: 45
 - **Last Active**: 2026-09-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1932 | Active |
+| `journal-3.md` | ~41 | Active |
+| `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 45 | 2026-09-19 | T38 guard the README CI prose count and the footnote's two claims (#688) | `adb33ae`,  `d8cac38` | `main` |
 | 44 | 2026-09-19 | T37 guard the README CI trigger table against the workflow YAML (#687) | `940dfb4`,  `e4bde60` | `main` |
 | 43 | 2026-09-19 | T36 list the Rust inputs the Python test job compiles (#686) | `130c343`, `79543c4`, `dc3545a` | `main` |
 | 42 | 2026-09-19 | T35 arm the Codex issue-flow wiring guard (#685) | `fc7f6a3`, `f25acd7` | `main` |
