@@ -1,0 +1,2 @@
+{"file": ".github/workflows/ci-python.yml", "reason": "验收 1/2/3/7/8：yaml.safe_load 通过、paths 11 条且 push/pull_request 逐条相同、job/step 数与改前逐字相同；消融脚本解析的是工作树里的此文件；推送后实测被触发"}
+{"file": "crates/uc-python/Cargo.toml", "reason": "验收 4：消融 C 的结构性断言的依据——闭包成员命中、uc-grpc-server 不命中"}

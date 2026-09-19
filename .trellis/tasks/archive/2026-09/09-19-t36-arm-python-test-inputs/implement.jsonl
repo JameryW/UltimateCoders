@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/archive/2026-09/09-19-t36-arm-python-test-inputs/prd.md", "reason": "本票 PRD：缺口读数表、结论 A–I、闭包推导、「为什么不是 crates/**」五方案对比、历史语料消融（模拟器自校 65=65 / A 0 违例 / B 43-43 / C 结构性 5-5）、十条验收、非目标与三笔账"}
+{"file": ".github/workflows/ci-python.yml", "reason": "改动面：给 test job 的 paths 补上它自己编译的 6 条输入（uc-python 依赖闭包 + 工作区根），并在文件头写明闭包推导与维护规则"}
+{"file": "crates/uc-python/Cargo.toml", "reason": "闭包的推导依据：其 [dependencies] = uc-types + uc-engine(storage,indexing) + uc-grpc；据此判定 uc-grpc-server 不在闭包内"}
+{"file": "tests/python/test_check_tasks_refs.py", "reason": "同 change 更新：语料计数钉值 (790,791) → (791,792)"}
+{"file": "README.md", "reason": "同 change 更新（推论 A）：CI 段把 Python CI 的触发面写成 python/ tests/ pyproject.toml —— 补完 paths 后该陈述变为假；实测该段整体早已过期（段首写 Two workflows，实为 8 套）故整段重写"}
+{"file": "README.zh-CN.md", "reason": "同上（中文版）：CI 段表格与段首陈述同步重写为 8 套 workflow 与真实触发路径"}
