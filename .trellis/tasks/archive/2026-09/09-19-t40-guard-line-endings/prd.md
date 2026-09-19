@@ -134,17 +134,18 @@ J3 会红。它的即时价值在本机：今天就有 5 个红灯（本票的�
 
 ## 六、验收（逐条可复算）
 
-| # | 判据 |
-|---|---|
-| 1 | 修之前：`python scripts/check-line-endings.py` **rc 1** 且逐字点名那 5 个文件 |
-| 2 | 修之后：**rc 0**，打印扫到的文件数与跳过的二进制数 |
-| 3 | 5 个文件**逐字节复核**为 LF-only（`CR == 0`），且与各自 index blob **逐字节相同**（5/5）；它们**不出现在任何 diff 里** |
-| 4 | 三条判据各有独立失败消息；每个判据**至少一条**突变能打红它（覆盖断言强制） |
-| 5 | 与 `git ls-files --eol` 的跨实现对账通过（一致 **且** 非空） |
-| 6 | job 落在 `ci-scripts.yml`；**该 workflow 无 `paths`**；既有 9 套 workflow 的 `paths` 一字未改；**不新增 workflow** |
-| 7 | 语料钉值 `(795,796)`；`test_check_tasks_refs.py` 通过 |
-| 8 | Python 总收集数 = **1221 + 本票新增用例数**；本地跑满全套 |
-| 9 | CI 上 `ci-scripts.yml` 全 job success，且逐字判词与本地一致 |
+| # | 判据 | 终态读数（实测） |
+|---|---|---|
+| 1 | 修之前 rc 1 且逐字点名那 5 个文件；修之后 rc 0 | ✅ 修前 **rc 1，恰好 5 条具名失败**（12/1、102/3532、102/3532、566/65、230/19，与手算逐字一致）；修后 **rc 0** |
+| 2 | 修之后打印扫到的文件数与跳过的二进制数 | ✅ `tracked file(s): N, text scanned: M, binary skipped: 9, gitlink(s) skipped: 1`。**两个可达态都实测**：实现提交 **1836/1827**（任务目录未跟踪）、归档后 **1840/1831** ⇒ 测试钉的就是这两个 |
+| 3 | 5 个文件逐字节为 LF-only（`CR == 0`），且与各自 index blob 逐字节相同（5/5）；不出现在任何 diff 里 | ✅ `CR == 0` ×5；与 index blob 逐字节相同 **5/5**；`git diff` 里**一个都没有**（它们的 index 从一开始就是 LF） |
+| 4 | 三条判据各有独立失败消息；每条至少一条突变能打红（覆盖断言强制） | ✅ 5 条消息；四条突变（A 工作树 / B index blob / C 无二进制 / D 空 index）+ 覆盖断言；A **不得**报 J2、B **不得**报 J3 ⇒ 打红集合不相交 |
+| 5 | 与 `git ls-files --eol` 的跨实现对账通过（一致 **且** 非空） | ✅ 一致，且表内**同时含 `True` 与 `False`**（`assert verdicts == {True, False}`）；沙箱断言 `gitlinks == 1` |
+| 6 | job 落在 `ci-scripts.yml`；该 workflow 无 `paths`；既有 9 套 workflow 的 `paths` 一字未改；不新增 workflow | ✅ `jobs` 从 3 → 4（`line-endings` 两腿）；`on` 无 `paths`（YAML 解析确认）；`git diff -- .github/workflows/` 只有 `ci-scripts.yml`、只有新增；workflow 计数仍 **10** |
+| 7 | 语料钉值 `(795,796)`；`test_check_tasks_refs.py` 通过 | ✅ 两个可达态都实测：未跟踪 **795 ok**、归档后 **796 ok / 0 dangling / 0 malformed**；该文件 **14 passed** |
+| 8 | Python 总收集数 = 1221 + 本票新增用例数；本地跑满全套 | ✅ **1226 = 1221 + 5**（逐字吻合）；全套 **1215 passed + 10 skipped + 1 failed**，那 1 条是沙箱 `safe-delete` 每轮批量计数触发（该文件单独跑 27/27 通过） |
+| 9 | CI 上 `ci-scripts.yml` 全 job success，且逐字判词与本地一致 | ✅ Scripts CI **7/7**；两腿逐字 `1836/1827 … binary skipped: 9, gitlink(s) skipped: 1` + `line endings check passed.` + `5 passed` + ruff `All checks passed!`（3.9 腿跑通 ⇒ 兼容性前提仍成立） |
+| 10 | （新增，实测出的）本票不移动 README 的任何计数 | ✅ 只加 job 不加 workflow ⇒ T37 的 README 表格与计数词不动，本票**未碰 README**；`check-readme-ci-table` rc 0 |
 
 ## 七、非目标与账（未静默丢弃）
 
