@@ -389,14 +389,20 @@ from the same remote, and merge arbitration reconciles concurrent edits.
 
 ## CI
 
-Two independent CI workflows run on PRs targeting `main`:
+Eight independent workflows run on pushes and pull requests targeting `main`. All but `ci-scripts.yml` are path-filtered, so they only run when one of the listed paths changes; the workflow files themselves are the source of truth:
 
 | Workflow | Trigger paths | Checks |
 |----------|--------------|--------|
-| **Rust CI** | `crates/`, `Cargo.toml`, `Cargo.lock` | check, clippy, fmt, test (3 feature combos) |
-| **Python CI** | `python/`, `tests/`, `pyproject.toml` | ruff lint, pytest (3.9 + 3.12) |
+| **Rust CI** (`ci-rust.yml`) | `crates/**`, `Cargo.toml`, `Cargo.lock`, `docker/docker-compose.yml` | check, clippy, fmt, test (3 feature combos), postgres integration |
+| **Python CI** (`ci-python.yml`) | `python/**`, `tests/**`, `pyproject.toml`, `dashboard/**`, `crates/uc-python/**`, `crates/uc-types/**`, `crates/uc-engine/**`, `crates/uc-grpc/**`, `Cargo.toml`, `Cargo.lock` | ruff lint, dashboard build, pytest (3.9 + 3.12) |
+| **Dashboard CI** (`ci-dashboard.yml`) | `dashboard/**` | typecheck, build |
+| **TypeScript CI** (`ci-typescript.yml`) | `packages/uc-orchestrator/**`, `vendor/oh-my-pi/packages/mnemopi/**`, `vendor/oh-my-pi/packages/coding-agent/**` | `bun test` for each package |
+| **Scripts CI** (`ci-scripts.yml`) | *(no paths filter)* | spec-refs, tasks-refs, ruff lint |
+| **Trellis CI** (`ci-trellis.yml`) | `.trellis/scripts/**`, `tests/python/test_task_finish_fallback.py`, `tests/python/test_archive_repoints_refs.py` | framework-scripts tests |
+| **Journal CI** (`ci-journal.yml`) | `.trellis/workspace/**`, `.trellis/scripts/add_session.py`, `scripts/check-journal-ledger.py`, `tests/python/test_check_journal_ledger.py` | journal-ledger check + tests |
+| **Codex Issue-Flow CI** (`ci-codex-flow.yml`) | `.agents/skills/**`, `AGENTS.md`, `docs/agents/domain.md`, `docs/agents/issue-tracker.md`, `docs/agents/mattpocock-skills.md`, `docs/agents/triage-labels.md`, `docs/workflows/codex-issue-flow.md`, `scripts/check-codex-issue-flow.py` | issue-workflow wiring validation |
 
-Storage integration tests only run on `main` pushes or manual dispatch (requires Docker Compose infra).
+Every path-filtered workflow also lists its own YAML file in `paths`, so editing a workflow re-runs it, and every workflow supports manual dispatch. The PostgreSQL-backed suite runs on every PR; storage integration tests only run on `main` pushes or manual dispatch (requires Docker Compose infra).
 
 ## Configuration
 
