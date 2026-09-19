@@ -384,8 +384,8 @@ def test_exclude_set_is_applied_on_top_of_git(tmp_path):
 
 
 def test_real_corpus_reproduces_the_recorded_numbers():
-    """Real corpus as of T39 / #689: 794 references / 0 dangling / 0 malformed
-    (T39's own jsonl then moves it to 795 -- see the T39 note below).
+    """Real corpus as of T40 / #690: 795 references / 0 dangling / 0 malformed
+    (T40's own jsonl then moves it to 796 -- see the T40 note below).
 
     History: #680 recorded 787-or-788 references with 14 dangling / 47 malformed.
     The reference count was 787 and NOT 788-while-that-ticket-existed: the corpus
@@ -449,6 +449,13 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     workflow's `run:` steps must be covered by that workflow's `paths` -- does not
     touch this corpus at all; the +1 is purely the ticket's own existence.
 
+    T40 / #690 makes the same move a ninth time: its `implement.jsonl` cites its own
+    `prd.md` and nothing else under `.trellis/`, so 795 -> 796, and its `check.jsonl`
+    cites three non-`.trellis` paths. The ticket's subject -- normalising five files
+    whose working-tree copies mixed CRLF with lone LF, and turning the journal-only
+    mixed-ending ADVISORY into a repo-wide judgment -- does not touch this corpus at
+    all; the +1 is purely the ticket's own existence.
+
     This is a tripwire, not a whitelist: if a future change moves any of these
     numbers, it must be updated in the same change.
     """
@@ -459,13 +466,13 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     malformed = [r for r in rows if r["verdict"] == "MALFORMED"]
 
     # The corpus is the TRACKED set, so this ticket's own `implement.jsonl`
-    # counts only once committed: 794 while it is untracked, 795 once it is
+    # counts only once committed: 795 while it is untracked, 796 once it is
     # (which is how CI always sees it). Those two ARE the reachable states for
     # the current ticket, so they are the pair. T31's window was wider only
     # because that ticket had two contributing jsonl files, giving it one
     # intermediate state; those values are unreachable now, and leaving them in
     # would mask a real -1 drift. Pinning the reachable set is the point.
-    assert len(refs) in (794, 795), f"reference count drifted: {len(refs)}"
+    assert len(refs) in (795, 796), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 

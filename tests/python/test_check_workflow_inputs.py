@@ -159,7 +159,7 @@ def test_real_repo_is_reconciled() -> None:
         f"the guard must report how much it looked at; got:\n{out}"
     )
     expected = (
-        "workflows: 10 workflow(s), 9 path-filtered, 18 run-step reference(s), "
+        "workflows: 10 workflow(s), 9 path-filtered, 20 run-step reference(s), "
         "13 subject to coverage"
     )
     assert expected in out, f"the reported summary has moved; got:\n{out}"

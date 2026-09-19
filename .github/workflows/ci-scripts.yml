@@ -53,6 +53,26 @@ name: Scripts CI
 # uses `git ls-files` rather than `os.walk`, so a gitignored file can no longer
 # change the verdict (the T26 two-verdicts-for-one-commit defect).
 #
+# `line-endings` was added 2026-09-19 (#690, T40), the first guard here whose
+# subject is BYTES rather than references.  It is wired with no `paths` filter for
+# the same reason again: its input set is the whole tracked index (`git ls-files`
+# intersected with the working tree), so a filter would be blind to exactly the
+# change that flips a verdict -- adding or editing a file anywhere.  It also judges
+# the one thing `git` structurally cannot: `core.autocrlf` normalises CRLF on
+# `git add`, so `git diff` and `git status` are BOTH empty for a file whose
+# working-tree copy mixes CRLF and lone LF (measured: five such files, 7149 lone
+# LFs, reported clean).  The guard judges only "mixed", never "which ending" --
+# the correct ending is a per-file property and this machine checks out CRLF while
+# CI checks out LF, so a "must be LF" rule would be wrong here and would have to be
+# relaxed there.  Its J2 (index blob) is the platform-independent half; its J3
+# (working tree) is green in CI because CI's checkout genuinely is uniform, and
+# reddens the day a mixed blob is committed from a non-autocrlf machine.
+#
+# It lives in THIS file rather than a workflow of its own on purpose: a job added
+# here does not change the number of workflows, so T37's README table and its count
+# word stay true and a line-ending ticket does not have to touch the README.  A new
+# workflow file would move both.
+#
 # This job IS expected to be red while #680's residual 14 dangling / 47
 # malformed citations stand -- those are recorded in #680 and are deliberately
 # outside the guard ticket's scope.  A red run here means the guard is telling
@@ -138,3 +158,31 @@ jobs:
         # the two jobs above are measurably blind to a file that has just been
         # ADDED to `scripts/`; this one is not.
         run: ruff check scripts/
+
+  line-endings:
+    name: line ending guard (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - run: pip install ruff pytest
+      - name: ruff check (the guard and its test only)
+        # Self-contained rather than relying on the `scripts-lint` umbrella above:
+        # an unrelated `scripts/` lint regression must not redden THIS job's
+        # verdict, or a red run stops naming which surface broke.
+        run: ruff check scripts/check-line-endings.py tests/python/test_check_line_endings.py
+      - name: run the guard
+        # Exit code IS the verdict (there is no advisory mode: a mixed ending is
+        # always wrong, never merely suspicious).  The checkout is uniform, so
+        # this judgment is on the INDEX half plus a genuine worktree half.
+        run: python scripts/check-line-endings.py
+      - name: real repo + synthetic sandbox tests
+        # The sandbox tests force `core.autocrlf=false` so their meaning does not
+        # depend on the runner's gitconfig; the real-repo test pins the scan shape.
+        run: pytest tests/python/test_check_line_endings.py -v -o addopts=""
