@@ -389,7 +389,7 @@ from the same remote, and merge arbitration reconciles concurrent edits.
 
 ## CI
 
-Eight independent workflows run on pushes and pull requests targeting `main`. All but `ci-scripts.yml` are path-filtered, so they only run when one of the listed paths changes; the workflow files themselves are the source of truth:
+Nine independent workflows run on pushes and pull requests targeting `main`. All but `ci-scripts.yml` are path-filtered, so they only run when one of the listed paths changes; the workflow files themselves are the source of truth:
 
 | Workflow | Trigger paths | Checks |
 |----------|--------------|--------|
@@ -401,8 +401,9 @@ Eight independent workflows run on pushes and pull requests targeting `main`. Al
 | **Trellis CI** (`ci-trellis.yml`) | `.trellis/scripts/**`, `tests/python/test_task_finish_fallback.py`, `tests/python/test_archive_repoints_refs.py` | framework-scripts tests |
 | **Journal CI** (`ci-journal.yml`) | `.trellis/workspace/**`, `.trellis/scripts/add_session.py`, `scripts/check-journal-ledger.py`, `tests/python/test_check_journal_ledger.py` | journal-ledger check + tests |
 | **Codex Issue-Flow CI** (`ci-codex-flow.yml`) | `.agents/skills/**`, `AGENTS.md`, `docs/agents/domain.md`, `docs/agents/issue-tracker.md`, `docs/agents/mattpocock-skills.md`, `docs/agents/triage-labels.md`, `docs/workflows/codex-issue-flow.md`, `scripts/check-codex-issue-flow.py` | issue-workflow wiring validation |
+| **README CI Table CI** (`ci-readme-ci-table.yml`) | `README.md`, `README.zh-CN.md`, `.github/workflows/**`, `scripts/check-readme-ci-table.py`, `tests/python/test_check_readme_ci_table.py` | reconciles this table against the workflow YAML |
 
-Every path-filtered workflow also lists its own YAML file in `paths`, so editing a workflow re-runs it, and every workflow supports manual dispatch. The PostgreSQL-backed suite runs on every PR; storage integration tests only run on `main` pushes or manual dispatch (requires Docker Compose infra).
+Every path-filtered workflow's own YAML file also matches its `paths` (named directly, or through `.github/workflows/**`), so editing a workflow re-runs it, and every workflow supports manual dispatch. The PostgreSQL-backed suite runs on every PR; storage integration tests only run on `main` pushes or manual dispatch (requires Docker Compose infra).
 
 ## Configuration
 

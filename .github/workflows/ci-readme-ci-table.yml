@@ -1,0 +1,112 @@
+name: README CI Table CI
+
+# WHAT THIS GUARDS
+# ----------------
+# `scripts/check-readme-ci-table.py` reconciles the CI trigger table in
+# `README.md` / `README.zh-CN.md` against `on.push.paths` in
+# `.github/workflows/*.yml`. That table is a hand-written copy of a
+# machine-read surface, and nothing checked it.
+#
+# T36 / #686 measured what an unchecked copy costs: rewriting the table by hand
+# produced `docs/agents/*.md` for `ci-codex-flow.yml` -- a glob that file does
+# not have (it lists four named files). It looked entirely plausible; no amount
+# of re-reading would have caught it. A throwaway reconciliation script caught it
+# on sight, and that script was then left in an ignored directory where nobody
+# would run it again. This workflow is that script, kept and armed.
+#
+# Seven judgments, each with its own message so an ablation can pin them
+# separately: non-vacuity / workflow-set equality / push==pull_request symmetry /
+# no fabrication / no omission / filter shape / branches == [main].
+#
+# WHY A `paths` FILTER HERE, WHEN `ci-scripts.yml` DELIBERATELY HAS NONE
+# ---------------------------------------------------------------------
+# Same mechanical test as T35 / #685: a filter is correct when the guard reads a
+# CLOSED input set and a blindfold when it reads the whole repo. `spec-refs`
+# walks every file with `os.walk` and `tasks-refs` reads an open set of archived
+# directories, so those must stay unfiltered. This guard reads two hard-coded
+# READMEs plus one hard-coded directory -- `.github/workflows/`, which `.github/
+# workflows/**` covers in full, including the addition of a new file.
+#
+# `paths` is workflow-level in Actions, not job-level, so a correctly filtered
+# job cannot share a file with `ci-scripts.yml`. Hence its own file. No existing
+# workflow's `paths` or `steps` are touched by this change.
+#
+# WHY PyYAML INSTEAD OF A ZERO-DEPENDENCY PARSER
+# ----------------------------------------------
+# `ci-codex-flow.yml` is stdlib-only on purpose, and that argument is real --
+# but it was an argument about a guard that checks whether FILES EXIST. This one
+# compares YAML SEMANTICS. A hand-rolled subset parser would, on any change to
+# indentation, quoting, or inline lists, quietly return nothing -- and a guard
+# that quietly looks at nothing is green forever. That is the one failure this
+# ticket cannot afford, so it pays one `pip install pyyaml` (already a declared
+# runtime dependency of this project: `pyproject.toml:34`).
+# The hand-written half is the README table parser, and THAT is why the guard's
+# first assertion is non-vacuity: it must report having seen rows at all.
+#
+# WHY THE 3.9 LEG
+# ---------------
+# The guard writes `set[str] | None` and `list[str] | None`, which only run on
+# 3.9 because of `from __future__ import annotations`; the 3.9 leg keeps that
+# requirement from silently becoming false. Same reason as `ci-codex-flow.yml`.
+#
+# WHAT WAS MEASURED (T37 / #687)
+# ------------------------------
+# Real drift, not a synthetic mutation: adding this workflow makes the README
+# table one row short by construction, so the guard went red with exactly
+# "workflows on disk but not in table" before the ninth row was written, and
+# green after. Then eight synthetic mutations in a sandbox copy (a fabricated path
+# in a row / a real path deleted from a row / a workflow renamed to one that does
+# not exist / a YAML path added without touching the README / `push` changed
+# without `pull_request` / `branches` changed off `main` / a workflow's `paths`
+# filter deleted / the `## CI` heading renamed away), each applied alone and
+# byte-restored: 8/8 redden, and every judgment is reached by at least one of
+# them -- the point of listing axes is that "the count went red" is not the same
+# claim as "each branch is pinned".
+#
+# NOT IN SCOPE
+# ------------
+# Only the trigger-path table is reconciled. Other hand-copied machine surfaces
+# in the READMEs (baseline test counts, job counts) are still unguarded -- that
+# is recorded rather than widened into this ticket.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "README.zh-CN.md"
+      - ".github/workflows/**"
+      - "scripts/check-readme-ci-table.py"
+      - "tests/python/test_check_readme_ci_table.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "README.zh-CN.md"
+      - ".github/workflows/**"
+      - "scripts/check-readme-ci-table.py"
+      - "tests/python/test_check_readme_ci_table.py"
+
+jobs:
+  readme-ci-table:
+    name: README CI table (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - name: Install PyYAML + pytest
+        # PyYAML is the one deliberate dependency -- see the header note above.
+        # It is already a runtime dependency of the package (`pyproject.toml`).
+        run: pip install pyyaml pytest
+      - name: Run the reconciliation guard
+        # The exit code IS the verdict, unlike `spec-refs --audit`.
+        run: python scripts/check-readme-ci-table.py
+      - name: Run the guard's own tests
+        run: pytest tests/python/test_check_readme_ci_table.py -v -o addopts=""

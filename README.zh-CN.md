@@ -354,7 +354,7 @@ Worker 可以在容器中运行，并从外部 Git remote（GitHub/GitLab）同�
 
 ## CI
 
-面向 `main` 的推送与 PR 会运行八套独立工作流。除 `ci-scripts.yml` 外都是路径过滤的 —— 只有列出的路径发生变化才会运行；工作流文件本身是权威来源：
+面向 `main` 的推送与 PR 会运行九套独立工作流。除 `ci-scripts.yml` 外都是路径过滤的 —— 只有列出的路径发生变化才会运行；工作流文件本身是权威来源：
 
 | 工作流 | 触发路径 | 检查内容 |
 | --- | --- | --- |
@@ -366,8 +366,9 @@ Worker 可以在容器中运行，并从外部 Git remote（GitHub/GitLab）同�
 | **Trellis CI**（`ci-trellis.yml`） | `.trellis/scripts/**`、`tests/python/test_task_finish_fallback.py`、`tests/python/test_archive_repoints_refs.py` | framework-scripts 测试 |
 | **Journal CI**（`ci-journal.yml`） | `.trellis/workspace/**`、`.trellis/scripts/add_session.py`、`scripts/check-journal-ledger.py`、`tests/python/test_check_journal_ledger.py` | journal ledger 检查与测试 |
 | **Codex Issue-Flow CI**（`ci-codex-flow.yml`） | `.agents/skills/**`、`AGENTS.md`、`docs/agents/domain.md`、`docs/agents/issue-tracker.md`、`docs/agents/mattpocock-skills.md`、`docs/agents/triage-labels.md`、`docs/workflows/codex-issue-flow.md`、`scripts/check-codex-issue-flow.py` | issue 工作流接线校验 |
+| **README CI Table CI**（`ci-readme-ci-table.yml`） | `README.md`、`README.zh-CN.md`、`.github/workflows/**`、`scripts/check-readme-ci-table.py`、`tests/python/test_check_readme_ci_table.py` | 把本表与 workflow YAML 对账 |
 
-上述带路径过滤的工作流都会把自己的 YAML 文件列入 `paths`，因此改动工作流本身会重新触发它；所有工作流都支持手动触发。PostgreSQL 集成测试在每个 PR 上运行；存储集成测试只在推送到 `main` 或手动触发时运行，并需要 Docker Compose 基础设施。
+上述带路径过滤的工作流都会让自己的 YAML 文件命中 `paths`（直接列出，或经 `.github/workflows/**`），因此改动工作流本身会重新触发它；所有工作流都支持手动触发。PostgreSQL 集成测试在每个 PR 上运行；存储集成测试只在推送到 `main` 或手动触发时运行，并需要 Docker Compose 基础设施。
 
 ## 配置
 

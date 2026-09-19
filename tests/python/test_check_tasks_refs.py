@@ -384,8 +384,8 @@ def test_exclude_set_is_applied_on_top_of_git(tmp_path):
 
 
 def test_real_corpus_reproduces_the_recorded_numbers():
-    """Real corpus as of T36 / #686: 791 references / 0 dangling / 0 malformed
-    (T36's own jsonl then moves it to 792 -- see the T36 note below).
+    """Real corpus as of T37 / #687: 792 references / 0 dangling / 0 malformed
+    (T37's own jsonl then moves it to 793 -- see the T37 note below).
 
     History: #680 recorded 787-or-788 references with 14 dangling / 47 malformed.
     The reference count was 787 and NOT 788-while-that-ticket-existed: the corpus
@@ -431,6 +431,12 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     workflow `paths` lists the Rust inputs the Python test job compiles -- does not
     touch this corpus at all; the +1 is purely the ticket's own existence.
 
+    T37 / #687 makes the same move a sixth time: its `implement.jsonl` cites its own
+    `prd.md` and nothing else under `.trellis/`, so 792 -> 793, and its `check.jsonl`
+    cites two non-`.trellis` paths. The ticket's subject -- reconciling the README CI
+    trigger table against `on.push.paths` in the workflow YAML -- does not touch this
+    corpus at all; the +1 is purely the ticket's own existence.
+
     This is a tripwire, not a whitelist: if a future change moves any of these
     numbers, it must be updated in the same change.
     """
@@ -441,13 +447,13 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     malformed = [r for r in rows if r["verdict"] == "MALFORMED"]
 
     # The corpus is the TRACKED set, so this ticket's own `implement.jsonl`
-    # counts only once committed: 791 while it is untracked, 792 once it is
+    # counts only once committed: 792 while it is untracked, 793 once it is
     # (which is how CI always sees it). Those two ARE the reachable states for
     # the current ticket, so they are the pair. T31's window was wider only
     # because that ticket had two contributing jsonl files, giving it one
     # intermediate state; those values are unreachable now, and leaving them in
     # would mask a real -1 drift. Pinning the reachable set is the point.
-    assert len(refs) in (791, 792), f"reference count drifted: {len(refs)}"
+    assert len(refs) in (792, 793), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 
