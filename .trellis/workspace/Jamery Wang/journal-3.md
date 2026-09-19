@@ -88,12 +88,25 @@ T37 立起的判据是「**手抄的机器可读面必须有守卫**」，而它
 - **账 1（延续）**：`paths` ↔ `Cargo.toml` 一致性仍无守卫（需 CI 有 Rust 工具链 + 先裁对账口径，仓内无法坐实）。
 - 延续：`.trellis/.template-hashes.json` 无 job 校验；`.trellis/scripts/**`(27) 与 `.claude/hooks/**`(3) 按登记排除。
 
+## 补记（收尾时 CI 抓到本地子集漏掉的一处）
+
+推完账本提交后 **Journal CI 两腿变红**，而本地门禁全绿：`test_check_journal_ledger.py` 里有**两处把本台账的文件数钉死在 2**（`"this ledger: 2 file(s)"` 与 `len(ours) == 2`）。`journal-3.md` 是 **45 个 session 里第一次轮转**，这两处钉值从未需要移动过。
+
+| 项 | 读数 |
+|---|---|
+| 台账本身错了吗 | **没有** —— 守卫自始就报 `3 file(s), 45 session(s), 0 placeholder line(s), 45/45 conforming` |
+| 错的是什么 | 两处**描述它的字面量**：与 `test_check_tasks_refs.py` 的语料钉值**同种**（新产物必然移动的计数 ⇒ 必须同 change 更新） |
+| 为什么本地没看见 | 本地跑的是**子集** —— 我只跑了本票直改的两个测试文件，**没跑台账自己的测试文件** ⇒ 两腿 CI 都看到的红，在本地不可见 |
+| 补的动作 | 移动两处钉值（2 → 3）并写清来由；随后**本地跑满全套** `tests/python/`：**1205 passed, 10 skipped**（总数 1215，与 CI 的 `1207 + 8` 同量） |
+
+⚠️ 事故 2（同一天第二次「执行两次」）：修钉值的补丁脚本**报错但已写盘** —— 带沙箱升级的命令被执行两次，其中一次走完了全程。`git diff` 是唯一可信的判词（显示两处编辑各恰好一次、446 = 441 + 5）。另外我在同一个行数算术上**连错两次**，最后改成**从编辑定义推导**而非手算。
 ### Git Commits
 
 | Hash | Message |
 |------|---------|
 | `adb33ae` | `ci(workflows): guard the README CI prose count and the footnote's two claims (#688)` — 4 files, +219/−14（守卫 +113 / 测试 +92 / workflow 头注 +7−7 / 语料钉值 +14−4） |
 | `d8cac38` | `chore(task): archive 09-19-t38-guard-readme-ci-prose` — 4 files, +206（含 `task.json`，归档提交按仓规带上） |
+| `ef5792a` | `test(journal): move the two ledger file-count pins the Part 3 rotation invalidated (#688)` — 1 file, +7/−2 |
 
 ### Testing
 
@@ -109,6 +122,8 @@ T37 立起的判据是「**手抄的机器可读面必须有守卫**」，而它
 - [OK] **CI（推送 `adb33ae`）**：9 套 workflow 中**恰好 3 套**触发 —— 新 workflow（**两腿 success**，各报 `9 workflow(s) reconciled in 2 file(s)` 且各 **`4 passed`**）、**Scripts CI**（**5/5 success**）、**Python CI**（**4/4 success**）
 - [OK] CI 逐字读数：Python 两腿均 **`1207 passed, 8 skipped`**（基线 1206 + 本票 1 例）；tasks-refs job 内 **`793 ok / 0 dangling / 0 malformed`**（pin 的首个可达态）
 - [OK] **验收 7 实测**：`git diff` 的 `.github/workflows/**` 部分**全是 `#` 注释行**，`paths` / `steps` 零变更（既有 9 套 workflow 的 `paths` 一条未动）
+- [OK] **本地跑满全套** `tests/python/`：**1205 passed, 10 skipped**（总数 1215，与 CI 的 `1207 + 8` 同量；拆分差异来自本地无 PG/Docker 而多跳 2 个）
+- [OK] **CI（推送 `ef5792a`，修完钉值）**：3 套触发 —— **Journal CI 两腿 success**（各报 `this ledger: 3 file(s), 45 session(s), 0 placeholder line(s), 45/45 session(s) conforming`）、**Python CI 4/4 success**（两腿逐字 `1207 passed, 8 skipped`）、Scripts CI success
 
 ### Status
 
@@ -116,7 +131,7 @@ T37 立起的判据是「**手抄的机器可读面必须有守卫**」，而它
 
 ### Next Steps
 
-- 已直落 main（`adb33ae` 实现 + `d8cac38` 归档 + 本会话的账本提交）；`adb33ae` 上三套 CI **全绿** ⇒ **#688 可关**（贴验收映射）。
+- 已直落 main（`adb33ae` 实现 + `d8cac38` 归档 + `8929db8` 账本 + `ef5792a` 钉值修复）；`ef5792a` 上三套 CI **全绿** ⇒ **#688 可关**（贴验收映射）。
 - **本票立起的判据（可复用到下一条）**：**守卫自己的对账口径也是前提，也要被检查**。T37 的 `truth = paths - {自身}` 把一句脚注**当成了公理**；本票把它变成判据 9。⇒ 写守卫时问一句：**我算这个集合时，减掉的/加上的东西，是我检查过的，还是我假设的？**
 - **本票付的学费（写进技能）**：① **两方向消融**（旧守卫全绿 / 新守卫全红）比单向突变强 —— 它同时证明「缺口真实」与「修的就是这个缺口」；② **覆盖断言自身也要消融**，否则它可能本身就是自指断言；③ **绝对量兜底**在「备份已被污染」时是唯一可用的恢复依据（同一次运行里取的哈希无法自证）；④ 计数解析器**必须**把「找不到」当失败。
 - **账 5（本票新增）**：§ CI 段 `Checks` 列的散文数字、job 数、测试基线数**仍无守卫** —— 待决。
