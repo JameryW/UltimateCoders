@@ -1755,3 +1755,144 @@ CI（`e6b2d03`）：**Scripts CI success**（含新 job `ruff lint (the whole sc
 - **行为账（本会话实测踩到）**：`add_session.py --content-file` 指向**不存在的路径**时**静默**退回 `(Add details)`，无报错无警告（Git Bash 的 `/c/...` 传给 Windows Python 变成 `C:\c\...`）。唯一会红的是 `check-journal-ledger.py` 的占位符**整行相等**判据 ⇒ **写完账本必跑 ledger 守卫**，别信 `add_session` 自己打的 `[OK]`。
 - **未决账（不静默丢弃）**：`ruff format --check` 仍未接线（T34 记）；`.trellis/.template-hashes.json` 被 `.trellis/scripts/common/safe_commit.py` **读取**但**无 job 校验其与工作树一致** —— 是否应由 CI 校验取决于上游模板意图（同步时机 / 是否允许本地改），**仓内无法坐实** ⇒ **记账待决，不臆造**；`.trellis/scripts/**`(27) 与 `.claude/hooks/**`(3) 仍不在任何 ruff target 内（**已登记排除**，非欠账）。
 - #656（P2 本体）仍只等外部「方案第 21 节」原文。
+
+
+## Session 43: T36 list the Rust inputs the Python test job compiles (#686)
+
+**Date**: 2026-09-19
+**Task**: T36 list the Rust inputs the Python test job compiles (#686)
+**Branch**: `main`
+
+### Summary
+
+把 ci-python.yml 的 test job 真正编译的 Rust 依赖闭包（uc-types / uc-engine / uc-grpc + 工作区根）加进它的 paths —— 该 job 用 maturin 编译 crates/uc-python，但其 paths 一条 crates/** 都没有，历史语料显示 43/218 的推送因此让 Python 侧对引擎的检查静默不跑。不加 crates/**（uc-grpc-server 不在闭包内）。同票按推论 A 重写两版 README 过期的 CI 段（原文写 2 套 workflow，实为 8 套）。
+
+### Main Changes
+
+接 T35 / #685 立起的规则「门禁依赖的输入文件必须全列进 `paths`」，本票是把它用在一个**既有** job 上 —— 不是新立判据，而是拿既有判据去量一个此前没量过的面。
+
+缺口：`ci-python.yml` 的 `test` job 用 `maturin develop --release --manifest-path crates/uc-python/Cargo.toml` **编译 Rust**，再跑 `pytest tests/python/`；而它的 `paths`（`python/**`、`tests/**`、`pyproject.toml`、`dashboard/**`、自身）**一条 `crates/**` 都没有**。⇒ 只改 `crates/**` 的推送会让 Python 侧对引擎的检查**静默不跑**。
+
+## 起点一手复核（不继承上一轮叙述）
+
+| 检查 | 命令 / 依据 | 读数 |
+|---|---|---|
+| 日期 | `date` | `Sat Sep 19 08:35` |
+| HEAD | `git rev-parse HEAD` | `de35f0b` |
+| 远端 | `git ls-remote origin main` | `de35f0b`（回读，与本地相等） |
+| 工作树 | `git status --porcelain` | 空 |
+| 开放 issue | `gh issue list --state open` | **1**（#656，3 条评论，末次更新 `2026-09-18T13:45Z`，**无新内容**） |
+| 归档最大票号 | `ls .trellis/tasks/archive/2026-09/` | 最大 `-t35-` ⇒ 本票 **T36** |
+| issue 最大号 | `gh issue list --state all` | 685 ⇒ 本票 **#686** |
+
+⇒ 唯一可推进的仍是**框架卫生线**，且**不依赖**外部「方案第 21 节」。
+
+## 缺口的一手读数（HEAD `de35f0b`）
+
+| 检查 | 命令 / 出处 | 读数 |
+|---|---|---|
+| 该 job 是否编译 Rust | `ci-python.yml:68-73` | `maturin develop --release --manifest-path crates/uc-python/Cargo.toml` |
+| `paths` 是否含 crates | `ci-python.yml:7-20`（`push` + `pull_request`） | **0 条** `crates/**` |
+| 该 `paths` 是否**曾**含 crates | `git log -p -- .github/workflows/ci-python.yml \| grep '^[+-].*crates'` | 唯一命中是**那一步**（`maturin … crates/uc-python/Cargo.toml`），**没有一条 `paths` 条目** ⇒ **从未列过** |
+| 闭包推导 | `crates/uc-python/Cargo.toml` `[dependencies]` | `uc-types`、`uc-engine`（`default-features=false, features=["storage","indexing"]`）、`uc-grpc` |
+| 反向确认 | 同文件：**无** `uc-grpc-server` | 独立 binary crate ⇒ 不在闭包内 |
+| 其他根级构建配置 | `git ls-files 'rust-toolchain*' '.cargo/**' 'clippy.toml' 'rustfmt.toml' '**/build.rs'` | 只有 `crates/uc-grpc/build.rs`（**在** `crates/uc-grpc/**` 内）⇒ 闭包无遗漏项 |
+| Python 侧是否真消费 | `python/ultimate_coders/engine.py:17` | `from ultimate_coders._uc_core import PyEngine, PySearchQuery`（`try/except ImportError` 兜底 `None`） |
+| 谁在测它 | `git grep -ln 'ultimate_coders.engine\|PyEngine\|_uc_core' -- tests` | **2** 个文件：`test_async_engine.py`（25 条，本地 **25 passed in 0.61s**，**不在** 8 个 skipped 里）、`test_affinity_placement.py` |
+| 暴露面大小 | `git grep -c '#\[pyclass\]\|#\[pymethods\]' -- crates/uc-python` | `engine.rs` / `scheduler.rs` / `types.rs` + `lib.rs` 的 `#[pymodule]`，合计 **30+ 处**装饰器 |
+
+## 历史语料消融（可复算；语料与索引同源）
+
+1. `gh api "repos/…/actions/runs?branch=main&per_page=100&page=N"`（N=1,2,3）⇒ **300 runs / 219 push heads**（**218** 条可用改动集）。
+2. push 改动集 = `git diff --name-only <上一个 push head>..<本 push head>`；非祖先对 **0**。
+3. **地面真值** = API 里该 head 是否存在 `Python CI` run，与改动集计算**无关**。
+4. 匹配器把 `paths` 的 glob 逐条对上改动集（`a/**` 视作前缀 `a/`；非 glob 条目精确相等）。
+
+| 方向 | 读数 | 判读 |
+|---|---|---|
+| **模拟器自校（关键对照）** | 现行 `paths` 命中 **65/218**；API 显示 Python CI 跑了 **65/218** | **逐行一致** ⇒ 匹配器复刻了 GitHub 的判词，故它对**新** `paths` 的预测可信 |
+| **A 不丢覆盖** | Python CI 跑过的 65 条，新 `paths` **全部仍命中**（违例 **0**） | 只加不删 |
+| **B 本票要修的洞** | 改了闭包而旧 `paths` 命中 0 的推送 = **43**；其中 Python CI **真跑了 0 条**；新 `paths` **命中 43/43** | 「改动集 ⊄ 触发面」= **43/218 ≈ 20%** |
+| **C 不过度触发** | 语料内「只动闭包外 crate」的推送 = **0** ⇒ 该方向**在语料上为空**（如实记录，不谎报成已验证） | 改用**结构性断言**：`crates/uc-engine/src/x.rs` ✅ / `crates/uc-python/src/lib.rs` ✅ / `Cargo.lock` ✅ / `crates/uc-grpc-server/src/x.rs` ❌ / `crates/uc-grpc-server/Cargo.toml` ❌ ⇒ **5/5 符合预期** |
+
+**单提交直证**：`gh api ".../actions/runs?head_sha=1e613184…"` ⇒ `total_count = 1`，唯一 run = **Rust CI**（那次只改了 `crates/uc-engine/**`，Python CI 静默）。
+
+## 结论：加**推导出的闭包**，不加 `crates/**`
+
+| # | 结论 |
+|---|---|
+| A | 触发面必须**等于真正输入集**；该 job 的输入集是 `Cargo.toml` 推导出的闭包，不是整个工作区 |
+| B | 闭包 = **4 个 crate + 工作区根**（`Cargo.toml` / `Cargo.lock`）⇒ 精确 6 条 |
+| C | **`uc-grpc-server` 不在闭包内**（独立 binary）⇒ 加 `crates/**` 是**过度触发**（语料里有 2 笔只动它的提交） |
+| D | 只加 `crates/uc-python/**` **不够**：`uc-engine` 的语义变化会改变 extension 行为而不改 `uc-python` 一行 —— 那正是 T33「相邻两层各测各的 ⇒ 接缝无人守」的形状 |
+| E | 不新开「seam」workflow：`paths` 是 workflow 级 ⇒ 新 workflow 需自列 `crates/**` + `python/**` + `tests/**` + 自身（否则造出**新的**盲区），而省下的只是 `pytest` 那 ~31s —— **成本大头在 `maturin` 构建与 setup，两者都省不掉** |
+| F | 这**不是**已决冻结：T26 的「三选项」是关于 **`scripts/**`** 的裁决（`scripts/**` 不是该 job 的输入 ⇒ 选 C 正确）；触发面表（09-16）把两个触发集写成互不相交，**没有**把它记成欠账 |
+| G | 严重度是「中」不是「致命」：只有 2 个测试文件引用 extension，且 `engine.py:17` 的 import 在 `try/except ImportError` 里 ⇒ **按「输入集 = 触发面」修，不夸大成语义缺陷** |
+| H | **推论 A 同票修**：两版 README 把 Python CI 的触发面写成 `python/`、`tests/`、`pyproject.toml`，改完 `paths` 后该陈述**变为假** |
+| I | 顺带实测发现 README 的整个 CI 段**早就过期**：段首写「**Two** independent CI workflows」而仓内实有 **8** 套、触发是「**推送到 `main` 与面向 `main` 的 PR**」（原文只说 PR —— 而**推送**正是 T36 缺口隐形的原因）⇒ **整段重写**，不是只改两格 |
+
+## 变更
+
+1. `.github/workflows/ci-python.yml`（**4374 → 6912 B**，CRLF 152，loneLF 0）：`push` 与 `pull_request` 各由 5 条 `paths` 增至 **11 条**（`crates/uc-python/**`、`crates/uc-types/**`、`crates/uc-engine/**`、`crates/uc-grpc/**`、`Cargo.toml`、`Cargo.lock`），两处**逐字相同**；文件头写清闭包推导、65/65 与 43/218 的读数、**为什么不是 `crates/**`**、以及维护规则（`uc-python` 新增依赖 ⇒ `paths` 必须**同 change** 更新）。**job 3 个 / step 17 个与改前逐字相同**。
+2. `tests/python/test_check_tasks_refs.py`（**19699 → 20109 B**）：语料钉值 `(790,791)` → **`(791,792)`**；docstring 首行 `as of T35 / #685: 790` → `as of T36 / #686: 791`；新增 T36 段。
+3. `README.md`（**26017 → 27704 B**，CRLF 479 → 485）与 `README.zh-CN.md`（**22995 → 24722 B**，CRLF 441 → 447）：CI 段由「2 套工作流」重写为**实有 8 套**的完整表格，每行带 workflow 文件名与真实触发路径；并加一句把**工作流文件本身**指为权威来源。
+
+## 消融 —— 对账脚本先红后绿，再五轴突变
+
+写 README 表格时我**没有**从记忆里抄路径，而是写了个「README 表 ↔ workflow YAML」对账脚本。它**当场抓出我自己的错误**：我为 `ci-codex-flow.yml` 写了 `` `docs/agents/*.md` `` —— 该文件里**没有这个 glob**，是 4 个具名文件。修正后转绿。
+
+随后在**沙箱副本**上做 5 处单点突变（真仓未被触碰，每处按字节恢复）：
+
+| 突变 | 轴 | 实测 |
+|---|---|---|
+| **A** 行内加假路径 `crates/uc-nope/**` | 声称 ⊄ 真值 | rc 1 ✓ |
+| **B** 行内删真路径 `crates/uc-grpc/**` | 真值 ⊄ 声称 | rc 1 ✓ |
+| **C** 表里改名不存在的 `ci-journalX.yml` | workflow 存在性 | rc 1 ✓ |
+| **D** 只改 YAML（`ci-dashboard.yml` 加 `newdir/**`）不改 README | **真实漂移场景** | rc 1 ✓ |
+| **E** 只改 `push` 不改 `pull_request` | 一格不能描述两者 | rc 1 ✓ |
+
+**5/5 变红，且没有两条共享同一判词** ⇒ 该脚本的每条分支都被钉住，不是装饰。⚠️ B 与 D 打的是**同一条**分支（省略判据的两个漂移方向）—— 这本身没问题，但正因如此我补了 E，否则「`push != pull_request`」那条分支**没有任何突变到达**。
+
+## 账（未静默丢弃）
+
+- **账 1（本票新增）**：`paths` 与 `Cargo.toml` 的一致性**没有守卫**。是否值得写「从 `cargo metadata` 推导闭包并与 `paths` 对账」的守卫：**待决** —— 需 CI 有 Rust 工具链，且对账口径（是否含 dev/build-dependencies）需先裁，**仓内无法坐实**。
+- **账 2（本票新增）**：**README CI 段与 YAML 之间没有守卫**。本票为满足推论 A 把该段重写成「8 行 × 全路径」，等于新造了一处**会漂移的重复**（它刚漂移了 6 套 workflow 没人发现）。对账脚本已完成并通过 5 轴自检，但**留在 `.workbuddy/tmp/`（被 ignore）、未入库**。口径已探明：它读**封闭输入集**（写死的两份 README + `.github/workflows/*.yml`）⇒ 若做成 job，`paths` 过滤对它**是正确的**；但 `ci-scripts.yml` 无过滤且其 job 必须保持无过滤 ⇒ 该 job 只能放进那里并同样无过滤（守卫廉价，可接受）。**是否升格为正式守卫：记账待裁。**
+- **账 3（延续）**：`ruff format --check` 仍未接线；`.trellis/.template-hashes.json` 无 job 校验；`.trellis/scripts/**`(27) 与 `.claude/hooks/**`(3) 按登记排除。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `130c343` | `ci(python): list the Rust inputs the Python test job compiles (#686)` — 2 files, +56/−4（`ci-python.yml` +46，`test_check_tasks_refs.py` +14/−4） |
+| `79543c4` | `docs(readme): correct the CI trigger table to the eight real workflows (#686)` — 2 files, +22/−10 |
+| `dc3545a` | `chore(task): archive 09-19-t36-arm-python-test-inputs` — 4 files, +158（含 `task.json`，归档提交按仓规带上） |
+
+### Testing
+
+- [OK] `ci-python.yml` 通过 `yaml.safe_load`；`paths` **11** 条，`push` 与 `pull_request` **逐条相同**；job **3** / step **17** 与改前**逐字相同**（只动 `paths`）
+- [OK] 四个守卫均 `rc 0`：`check-codex-issue-flow` / `check-spec-refs` / `check-tasks-refs` / `check-journal-ledger`
+- [OK] `ruff check scripts/` 与 `ruff check python/ tests/` 均 `All checks passed!`
+- [OK] 语料钉值 `(791,792)` 的**两个可达态都实测到**：任务目录未跟踪 ⇒ **791 ok / 0 dangling / 0 malformed**；归档落盘后 ⇒ **792 ok / 0 dangling / 0 malformed**
+- [OK] `test_check_tasks_refs.py` **14 passed**；Python 总收集 **1211 不变**（判回归只看总收集数对账）
+- [OK] 闭包推导可复算：`crates/uc-python/Cargo.toml` 的 `[dependencies]` = `uc-types` + `uc-engine(storage,indexing)` + `uc-grpc`；**无** `uc-grpc-server`；`git ls-files` 确认无其他根级构建配置遗漏
+- [OK] 历史语料消融（300 runs / 218 可用推送）：模拟器自校 **65 = 65**（与 API 判词逐行一致）；A 违例 **0**；B **43/43**（旧 `paths` 命中 0，其中 Python CI 真跑 **0**）；C 结构性 **5/5**
+- [OK] 单提交直证：`1e61318`（只改 `crates/uc-engine/**`）API `total_count = 1`，唯一 run = **Rust CI** ⇒ Python CI 当年确实静默
+- [OK] **README ↔ YAML 对账（两版各一次）`rc 0`**：8 行工作流表格，每行声称的路径集 == 该 YAML 的 `paths` 去掉自身文件名
+- [OK] 该对账脚本**先红后绿**：初稿为 `ci-codex-flow.yml` 写了 `` `docs/agents/*.md` ``，而 YAML 里是 4 个具名文件、**没有这个 glob** ⇒ 当场变红，修正后转绿
+- [OK] **五轴单点突变 5/5 变红且无两条共享同一判词**（A 行内加假路径 / B 行内删真路径 / C 表里改名不存在的 workflow / D 只改 YAML 不改 README / E 只改 `push` 不改 `pull_request`），全在**沙箱副本**上做、真仓未触碰、每处按字节恢复
+- [OK] **CI（推送 `79543c4`）**：8 套 workflow 中**恰好 2 套**触发 —— **Scripts CI**（无 `paths` 过滤）与 **Python CI**（自身 YAML 在 `paths` 内）⇒ 这同时是这份触发面表的**实测背书**；判词 **Scripts CI 5/5 success**（`ruff lint (the whole scripts/ directory)` + 两个守卫 × 3.9/3.12）、**Python CI 4/4 success**
+- [OK] CI 逐字读数：Python 两腿均 **`1203 passed, 8 skipped`**（与基线一致）；tasks-refs job 内 **`791 ok / 0 dangling / 0 malformed`** + `SELF-CHECK PASSED: 6 mutations, all distinct`；pin 测试 **14 passed**
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 已直落 main（`130c343` 实现 + `79543c4` 文档 + `dc3545a` 归档 + 本会话的账本提交）；`79543c4` 上 Scripts CI 与 Python CI **全绿** ⇒ **#686 可关**（贴验收映射）。
+- **本票立起的判据（可复用到下一条）**：触发面的正确形状 = **该 job 真正读到的输入集**。判据不是「宁多勿少」，而是**推导**出来的闭包 —— 用 `crates/**` 会过度触发（`uc-grpc-server` 不在闭包内）。⚠️ 闭包是从 `Cargo.toml` 推的 ⇒ **新增依赖必须同 change 更新 `paths`**（文件头已写这条维护规则）。
+- **账 3（待裁）**：README CI 段与 YAML 之间**没有守卫**，而本票刚把该段重写成「8 行 × 全路径」= 新造一处会漂移的重复（它此前已漂移 6 套 workflow 无人发现）。对账脚本已完成、通过 5 轴突变自检，但**未入库**。口径已探明（读封闭输入集 ⇒ 过滤正确；只能放进无过滤的 `ci-scripts.yml`）。**是否升格为正式守卫：记账待裁。**
+- **账 2（待决）**：`paths` 与 `Cargo.toml` 的一致性无守卫；写「`cargo metadata` 推导闭包并对账」需 CI 有 Rust 工具链 + 先裁对账口径（是否含 dev/build-dependencies），**仓内无法坐实**。
+- **账 1（延续）**：`ruff format --check` 仍未接线；`.trellis/.template-hashes.json` 无 job 校验；`.trellis/scripts/**`(27) 与 `.claude/hooks/**`(3) 按登记排除。
+- #656（P2 本体）仍只等外部「方案第 21 节」原文。
