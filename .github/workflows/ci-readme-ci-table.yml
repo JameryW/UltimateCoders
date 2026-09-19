@@ -14,9 +14,12 @@ name: README CI Table CI
 # on sight, and that script was then left in an ignored directory where nobody
 # would run it again. This workflow is that script, kept and armed.
 #
-# Seven judgments, each with its own message so an ablation can pin them
+# Ten judgments, each with its own message so an ablation can pin them
 # separately: non-vacuity / workflow-set equality / push==pull_request symmetry /
-# no fabrication / no omission / filter shape / branches == [main].
+# no fabrication / no omission / filter shape / branches == [main] / prose count /
+# self-reference in `paths` / manual dispatch. The last three (T38 / #688) cover
+# the CI section's remaining hand-written claims -- the count word in the prose and
+# the two halves of the footnote -- all from the same closed input set.
 #
 # WHY A `paths` FILTER HERE, WHEN `ci-scripts.yml` DELIBERATELY HAS NONE
 # ---------------------------------------------------------------------
@@ -65,9 +68,10 @@ name: README CI Table CI
 #
 # NOT IN SCOPE
 # ------------
-# Only the trigger-path table is reconciled. Other hand-copied machine surfaces
-# in the READMEs (baseline test counts, job counts) are still unguarded -- that
-# is recorded rather than widened into this ticket.
+# The table, the prose count, and the footnote are reconciled. The `Checks` column
+# is free text and is NOT -- pinning it would turn a sentence into a contract, a
+# separate decision. Baseline test counts and job counts are likewise unguarded;
+# that is recorded rather than widened into this ticket.
 
 on:
   workflow_dispatch:

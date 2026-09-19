@@ -5,7 +5,9 @@ Two things are pinned here:
   * the real repo passes, and the guard reports having looked at both READMEs
     and every workflow -- a non-vacuity check from the outside, so a guard that
     quietly parses nothing cannot pass by being quiet;
-  * every judgment inside the guard is reached by at least one mutation.
+  * every judgment inside the guard is reached by at least one mutation;
+  * the two hand-written parsers (the `paths` matcher and the prose-count
+    reader) are pinned with positive AND negative controls.
 
 A guard that has never gone red is not evidence, and a set of mutations that all
 report the same message may be pinning only one branch. So each mutation is
@@ -25,6 +27,7 @@ of silently doing nothing.
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 import shutil
 import subprocess
@@ -49,6 +52,10 @@ JUDGMENTS = {
     "omission": "YAML has paths the row omits",
     "filter-shape": "no paths filter, but the row lists",
     "branches": "branches are",
+    "prose-count": "prose says",
+    "prose-count-missing": "no workflow count found",
+    "self-reference": "paths no longer covers its own workflow file",
+    "manual-dispatch": "no workflow_dispatch trigger",
 }
 
 # List items are matched with their indentation and quotes so the header
@@ -198,6 +205,37 @@ def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
             "\n## CI\n", "\n## Continuous Integration\n",
             1, "first",
         ),
+        (
+            "I the EN prose count drifts off the real number",
+            "prose-count", README,
+            "Nine independent workflows", "Eight independent workflows",
+            1, "first",
+        ),
+        (
+            "J the ZH prose count drifts off the real number",
+            "prose-count", README_ZH,
+            "\u4e5d\u5957\u72ec\u7acb\u5de5\u4f5c\u6d41",
+            "\u516b\u5957\u72ec\u7acb\u5de5\u4f5c\u6d41",
+            1, "first",
+        ),
+        (
+            "M the prose count is reworded past the parser",
+            "prose-count-missing", README,
+            "Nine independent workflows", "Several independent workflows",
+            1, "first",
+        ),
+        (
+            "K a workflow drops its own YAML from its paths",
+            "self-reference", f"{WORKFLOWS}/ci-dashboard.yml",
+            ITEM.format(path=f"{WORKFLOWS}/ci-dashboard.yml"), "",
+            2, "all",
+        ),
+        (
+            "L a workflow loses workflow_dispatch",
+            "manual-dispatch", f"{WORKFLOWS}/ci-journal.yml",
+            "  workflow_dispatch:\n", "",
+            1, "first",
+        ),
     ]
 
     covered: dict[str, str] = {}
@@ -216,6 +254,58 @@ def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
 
     missing = sorted(set(JUDGMENTS) - set(covered))
     assert not missing, f"judgments no mutation reaches: {missing}"
+
+
+def _load_guard():
+    """Import the guard as a module so its parsers can be pinned directly."""
+    spec = importlib.util.spec_from_file_location("check_readme_ci_table", GUARD)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_parsers_are_pinned_both_ways() -> None:
+    """Judgments 8 and 9 rest on hand-written parsers, so pin both directions.
+
+    A matcher that always returns True makes judgment 9 permanently green, and a
+    count parser that guesses makes judgment 8 meaningless. Positive controls alone
+    cannot tell those apart (T33 / #683: a positive control needs its own ablation),
+    so every row below has a negative twin.
+
+    The case-folding rows exist because the first draft looked the English word up
+    without folding it, and "Nine" (sentence-initial) found nothing in a table keyed
+    in lower case -- the guard reddened on the real repo, which is how it was found.
+    """
+    guard = _load_guard()
+
+    covers = [
+        (".github/workflows/ci-dashboard.yml",
+         ".github/workflows/ci-dashboard.yml", True),
+        (".github/workflows/**", ".github/workflows/ci-readme-ci-table.yml", True),
+        ("crates/**", "crates/uc-python/src/lib.rs", True),
+        ("docs/agents/*.md", "docs/agents/domain.md", True),
+        ("crates/**", "cratesfoo/x", False),
+        ("dashboard/**", "docs/dashboard/x", False),
+        ("docs/agents/*.md", "docs/agents/nested/domain.md", False),
+        (".github/workflows/ci-dashboard.yml",
+         ".github/workflows/ci-journal.yml", False),
+    ]
+    for pattern, path, expected in covers:
+        assert guard.pattern_covers(pattern, path) is expected, (
+            f"pattern_covers({pattern!r}, {path!r}) should be {expected}")
+
+    counts = [
+        ("Nine independent workflows run on pushes", "README.md", (9, "Nine")),
+        ("nine independent workflows", "README.md", (9, "nine")),
+        ("9 independent workflows", "README.md", (9, "9")),
+        ("\u4e5d\u5957\u72ec\u7acb\u5de5\u4f5c\u6d41", "README.zh-CN.md", (9, "\u4e5d")),
+        ("Several independent workflows", "README.md", None),
+        ("Nine workflows", "README.md", None),
+        ("twenty independent workflows", "README.md", None),
+    ]
+    for text, name, expected in counts:
+        got = guard.workflow_count(text, name)
+        assert got == expected, f"workflow_count({text!r}) = {got}, want {expected}"
 
 
 def test_mutations_are_independent(tmp_path) -> None:
