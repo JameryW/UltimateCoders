@@ -1,0 +1,2 @@
+{"file": ".github/workflows/ci-codex-flow.yml", "reason": "验收 1/2/10：yaml.safe_load 通过、job 数 1、paths 条目 9、step 数与设计一致；推送后实测被触发且为 success"}
+{"file": "scripts/check-codex-issue-flow.py", "reason": "验收 3/5/6：3.9 与 3.12 各跑一次 rc 0；合成根 6 处突变各自变红且集合两两不相交；真仓同一突变下 5/5 既有命令判词不变而本命令翻红，恢复由独立进程复算 sha256 认证"}

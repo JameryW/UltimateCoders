@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/archive/2026-09/09-19-t35-arm-codex-flow-guard/prd.md", "reason": "本票 PRD：缺口读数表、结论 A–H、「为何独立 workflow + 封闭输入集过滤」、两方向消融、十条验收、非目标与三笔账"}
+{"file": ".github/workflows/ci-codex-flow.yml", "reason": "改动面：新增单 job 零依赖 workflow 接入 check-codex-issue-flow.py，paths = 实测的 9 条封闭输入集；文件头记录守什么、为何独立成文件、消融读数、哪一半是模板登记面"}
+{"file": "scripts/check-codex-issue-flow.py", "reason": "改动面：docstring 点名谁运行它（本票接入前它被 0 个 workflow 调用）——从脚本侧补齐可发现性"}
+{"file": "docs/workflows/codex-issue-flow.md", "reason": "改动面：加一行指向守卫，让「守卫」从它所保护的文档侧可发现（该文件不在模板登记表内，属仓自有面）"}
+{"file": "tests/python/test_check_tasks_refs.py", "reason": "同 change 更新：语料计数钉值 (789,790) → (790,791)，并修掉 docstring 首行已过期的自述（仍写 as of T33: 788）"}
