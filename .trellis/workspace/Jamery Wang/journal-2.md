@@ -1592,3 +1592,166 @@ CI（`e6b2d03`）：**Scripts CI success**（含新 job `ruff lint (the whole sc
 - **记账未做**：`scripts/check-codex-issue-flow.py` 零个 workflow 运行它（一个 CI-safe 的 wiring 守卫无武装，漂移对每个门禁不可见）⇒ 是否接进门禁需另开票。
 - `.trellis/scripts/**`（27 处）与 `.claude/hooks/**`（3 处）仍不在任何 ruff target 内 —— **已登记排除**（`ci-trellis.yml` 头 / `.trellis/.template-hashes.json`），不是欠账。
 - #656（P2 本体）仍只等外部「方案第 21 节」原文。
+
+
+## Session 42: T35 arm the Codex issue-flow wiring guard (#685)
+
+**Date**: 2026-09-19
+**Task**: T35 arm the Codex issue-flow wiring guard (#685)
+**Branch**: `main`
+
+### Summary
+
+接 T34 落下的账：把 scripts/check-codex-issue-flow.py 接进门禁。该守卫守 21 条被断言路径（对外 50 个 tracked 文件）却被 0 个 workflow 运行 —— 21 条断言此前是宣称的能力、零执行。新建独立 workflow ci-codex-flow.yml（单 job、零依赖、3.9/3.12 矩阵、paths = 封闭输入集 9 条），因为 paths 是 workflow 级而 ci-scripts.yml 必须保持不过滤。两方向消融都做：6 处结构突变各自变红且集合两两不相交；同一真仓突变下 5/5 既有命令判词不变、只有新命令翻红。
+
+### Main Changes
+
+接 T34 / #684 落下的一条账：「`scripts/check-codex-issue-flow.py` 零个 workflow 运行它，是否接进门禁需另开票」。本票把它接进门禁 —— 21 条断言之前是**宣称的能力、零执行**。
+
+## 起点一手复核（不继承上一轮叙述）
+
+| 检查 | 命令 / 依据 | 读数 |
+|---|---|---|
+| 日期 | `date` | `Sat Sep 19 08:35` |
+| HEAD | `git rev-parse HEAD` | `8cae2fe` |
+| 远端 | `git ls-remote origin main` | `8cae2fe`（回读，与本地相等） |
+| 工作树 | `git status --porcelain` | 空 |
+| 开放 issue | `gh issue list --state open` | **1**（#656，3 条评论，末次更新 `2026-09-18T13:45Z`，**仍无「方案第 21 节」原文**） |
+| 归档最大票号 | `ls .trellis/tasks/archive/2026-09/` | 最大 `-t34-` ⇒ 本票 **T35** |
+| issue 最大号 | `gh issue list --state all` | 684 ⇒ 本票 **#685** |
+| P2 前置 | `docs/architecture/durable-runtime-p2-recon.md` | P2-1/P2-2 前置**已全部交付并关票**，P2-3 零落点 ⇒ **P2 本体无工可开** |
+
+⇒ 唯一可推进的是**框架卫生线**（T26→T34 一路在做的「检查器 / 门禁卫生」），且**不依赖**外部「方案第 21 节」。
+
+## 缺口的一手读数（HEAD `8cae2fe`）
+
+| 检查 | 命令 | 读数 |
+|---|---|---|
+| 谁在 workflow 里提到该守卫 | `git grep -l check-codex-issue-flow.py HEAD -- .github/workflows/` | 仅 `ci-scripts.yml`，且**只在文件头散文**（讲它那两处 ruff 错误）—— **无 job 运行它** |
+| 谁提到被守面 | `git grep -l -e '\.agents/' -e 'AGENTS.md' HEAD -- .github/workflows/` | **0 处** |
+| 唯一索引含该面的守卫 | `git grep -n os.walk HEAD -- scripts/check-spec-refs.py` | `:327` `os.walk(ROOT)` ⇒ 索引含 `.agents/**`；但该守卫 `--audit` **设计上从不失败**（劝告式）⇒ 判词恒绿 |
+| 模板登记 | `.trellis/.template-hashes.json`（323 条） | `.agents/skills` **51**、`AGENTS.md` **1**；`docs/agents/*.md`×4 与 `docs/workflows/codex-issue-flow.md` **均不在** |
+| 接进 CI 是否生来就红 | 逐条比对 21 条被断言路径 vs `git ls-files` | **21/21 全部 tracked** ⇒ 干净 checkout 即满足，**无生来红风险** |
+
+**`scripts/` 下其他 4 个守卫都有 job**（`check-spec-refs.py` → `ci-scripts.yml:spec-refs`；`check-tasks-refs.py` 与 `-selftest.py` → `:tasks-refs`；`check-journal-ledger.py` → `ci-journal.yml:journal-ledger`）⇒ **只有这一个没有**。这也解释了 T34 为什么只能把它写进账本、不能顺手接上。
+
+## 结论：过滤是**对的**，而且必须**独立成文件**
+
+| # | 结论 |
+|---|---|
+| A | 该守卫的输入集是**封闭的**：遍历 `REQUIRED_SKILLS`（14 项硬编码）与 `REQUIRED_FILES`（6 项硬编码），**从不 glob 目录** ⇒ 能翻转它判词的改动**恰好**是这 21 条路径（+ 守卫自身 + workflow 自身） |
+| B | 这与 `spec-refs`（`os.walk` 全仓）、`tasks-refs`（任意归档目录都可翻转）**不同族** ⇒ 那两个必须不过滤，这一个过滤**正确**。判据一句话：**守卫读封闭输入集时过滤正确，读全仓时过滤是蒙眼布** |
+| C | `paths` 是 **workflow 级**（T34 已记）⇒ 被过滤的 job **不能**与必须保持不过滤的 `ci-scripts.yml` 同文件 ⇒ **新建独立 workflow**，且**不动任何既有 workflow 的 `paths`/`steps`** |
+| D | 零依赖：守卫纯 stdlib（`re`/`pathlib`）⇒ job 内**无 `pip install`**，不会随依赖漂移。且它写 `-> str | None` / `list[str]`，靠 `from __future__ import annotations` 才在 3.9 上跑 ⇒ 3.9 矩阵腿把这条**隐性要求**钉住 |
+| E | 本票**只接入、不重构**：`.agents/skills/**`(51) 与 `AGENTS.md`(1) 在模板登记面里，本地修好会被同步覆盖；`docs/agents/*.md`(4) 与 `docs/workflows/codex-issue-flow.md` **既不在模板登记、此前也无任何门禁** |
+
+## 变更
+
+1. **新增** `.github/workflows/ci-codex-flow.yml`（**6055 B**，115 CRLF，loneLF 0，含尾 CRLF）：单 job `wiring`、矩阵 `["3.9","3.12"]`、**3 个 step**、**无 `pip install`**；`paths` 9 条（push 与 pull_request **逐条相同**）。文件头逐段写清：守什么 / 为什么必须独立成文件 / 为什么这里能过滤而 `ci-scripts.yml` 不能 / 为什么 3.9 腿有意义 / 两方向消融读数 / 非目标与两处账。
+2. `scripts/check-codex-issue-flow.py`：docstring 点名**谁运行它**（此前只写「不是什么」，读者无从知道它已被武装）。**3738 → 3984 B**，CRLF 102 → 107，行为逐字不变。
+3. `docs/workflows/codex-issue-flow.md`：新增 `## Repo-local wiring` 小节（置于 `## Large initiatives` 之前）指向守卫。**2223 → 2755 B**，CRLF 37 → 46。可发现性面：不读 workflow 的人也能找到入口。
+4. `tests/python/test_check_tasks_refs.py`：语料钉值 `(789,790)` → **`(790,791)`**（本票 `implement.jsonl` 自引 `prd.md`，是唯一的 `.trellis` 前缀引用 ⇒ +1）；**同票**修掉 docstring 首行已过期的自述（仍写 `as of T33 / #683: 788`，而其 T34 小节已写到 790 —— 同段落内自相矛盾）。**19140 → 19699 B**，462 → 470 行。
+
+> 注：`paths` 9 条用**逐条精确路径**而非 `docs/**` 宽 glob —— 守卫断言的正是这 4+1 个文件，精确列出才能让「`paths` 就是输入集」这句话**可逐条核对**。删除文件也会命中旧路径，故不丢信号。
+
+## 消融（两方向，缺一不算）
+
+### 方向一 —— 守卫有牙（合成根，**真仓未被触碰**）
+
+在 `tempfile` 合成根里搭出与真仓同形的结构（14 技能 + 6 文件 + `openai.yaml`），把守卫复制进去。基线在**合成根与真仓都为绿**（`rc 0`，`Codex issue workflow validation passed.`）。六处结构突变，**一次一处**：
+
+| 突变 | 期望失败行 | 实测 |
+|---|---|---|
+| M1 `AGENTS.md` 丢 `$ultimatecoders-issue-flow` 指针 | `AGENTS.md does not point to …` | rc 1 ✓ |
+| M2 某技能 `name:` 漂移（`tdd` → `tdd-renamed`） | `skill name mismatch: …` | rc 1 ✓ |
+| M3 入口技能插入 `[TODO` | `entry skill contains an unfinished TODO` | rc 1 ✓ |
+| M4 `agents/openai.yaml` 去掉 `default_prompt:` | `entry skill metadata is missing a default prompt` | rc 1 ✓ |
+| M5 入口技能丢掉 `$code-review` 引用 | `entry skill is missing reference: $code-review` | rc 1 ✓ |
+| M6 删除 `docs/agents/domain.md` | `missing workflow file: docs/agents/domain.md` | rc 1 ✓ |
+
+**失败集合两两不相交**（每条突变打红**唯一**一条断言）⇒ 没有哪条突变是装饰，六个断言族各自独立被钉住（判据取自 `topics/t30-guard.md`：「两处突变打红同一集合 ⇒ 其中一条是装饰」）。
+
+### 方向二 —— 旧形状对同一突变是瞎的（真仓，判词差）
+
+真仓 `AGENTS.md` 做一处突变（替换指针），**CI 今天实际在跑的 5/5 命令判词全部不变（GREEN）**，只有新接入的 `python scripts/check-codex-issue-flow.py` **翻红**：
+
+| 命令（既有） | M0 未改动 | M1 突变 | 判词 |
+|---|---|---|---|
+| `ruff check scripts/check-spec-refs.py tests/python/test_check_spec_refs.py` | GREEN | GREEN | 不变 |
+| `ruff check scripts/`（T34 新增的目录级） | GREEN | GREEN | 不变 |
+| `python scripts/check-spec-refs.py --audit` | GREEN | GREEN | 不变 |
+| `python scripts/check-tasks-refs.py --audit` | GREEN | GREEN | 不变 |
+| `python scripts/check-journal-ledger.py --verbose` | GREEN | GREEN | 不变 |
+| **`python scripts/check-codex-issue-flow.py`（本票接入）** | GREEN | **RED** | **翻转** |
+
+只证「新命令会红」**不够**（T19 判据）—— 必须让旧形状在**同一突变**下**保持绿**，才排除「只是重复旧覆盖、其实什么都没加」。
+
+**恢复口径（按字节 + 独立认证）**：`AGENTS.md` 的 `git ls-files --eol` 报 `i/lf w/crlf` ⇒ **blob 是 LF、工作树是 CRLF**，所以「与 blob 逐字节相等」**不是**正确的恢复判据；改为**快照工作树字节 → 恢复该快照**，并由三重独立证据认证：① **另一进程**从磁盘复算 sha256 = 快照值 `db9939a3e77770f6…`；② `git diff --exit-code HEAD -- AGENTS.md` `rc 0`；③ `git status --porcelain` 为空。
+
+> ⚠️ 这是 T34 记下的同类坑的**镜像**：T34 是「blob 是 CRLF、工作树是 LF」，这里是「工作树 CRLF、blob LF」—— **同一源（`core.autocrlf=true`），方向相反**。任何「与 blob 比对」的判据都必须**先问行尾方向**。
+
+## 门禁与 CI
+
+**本地**（`.venv/Scripts/python.exe`，ruff 0.16.3）：
+
+- `python scripts/check-codex-issue-flow.py` → `rc 0`，`Codex issue workflow validation passed.`（3.13 与本机 venv 各一次）
+- `ruff check scripts/` → `All checks passed!`（T34 的门禁未被本票打红）
+- `check-spec-refs.py --audit` → `rc 0`；`check-tasks-refs.py --audit` → `rc 0`，**`791 ok / 0 dangling / 0 malformed`**；`check-journal-ledger.py` → `rc 0`
+- `test_check_tasks_refs.py` → **14 passed**；Python 总收集 **1211 不变**
+- `yaml.safe_load` 通过；job 数 **1**、step 数 **3**、`paths` 条目 **9**（push/pull_request 逐条相同）；**既有 workflow 零改动**（`git diff --stat` 只含本票 4 个文件）
+- 被断言路径 **21**（逐条 vs `git ls-files` 全 tracked）
+
+**CI（`fc7f6a3`，push 后实测）**：
+
+| workflow | job | 结论 |
+|---|---|---|
+| **Codex Issue-Flow CI**（新） | `wiring (Python 3.9)` / `wiring (Python 3.12)` | **success** / **success** |
+| Scripts CI | 5/5（`ruff lint (the whole scripts/ directory)`、`spec-refs` ×2、`tasks-refs` ×2） | **success** |
+| Python CI | 4/4（`dashboard checks`、`test (3.9)`、`test (3.12)`、`ruff lint`） | **success** |
+
+新 workflow 的 `run the wiring guard` 步骤在 **Python 3.9.25** 上逐字输出 `Codex issue workflow validation passed.`（`run id 35410506423`）—— 3.9 腿确实把 `from __future__ import annotations` 这条隐性要求钉住了。`test (Python 3.9)` 日志：`1203 passed, 8 skipped in 30.78s`（与基线逐字同）。
+
+**语料钉值的两个可达态都被 CI 实测**：CI 上归档提交尚未推送 ⇒ `tasks-refs` 两个 Python 版本各报 **790 ok**；本地归档提交落盘后 ⇒ **791 ok**。两者都落在钉值 `(790,791)` 内。
+
+## 提交
+
+| Hash | Message |
+|---|---|
+| `fc7f6a3` | `ci(workflows): run the Codex issue-flow wiring guard in CI (#685)` — 4 files, +141/−4 |
+| `f25acd7` | `chore(task): archive 09-19-t35-arm-codex-flow-guard` — 4 files, +183（含 `task.json`，归档提交按仓规带上） |
+
+推送用 `-c http.proxy=` 单命令覆盖（本仓 `http.proxy` 指向**死端口**，直连会卡）；`git ls-remote origin main` 回读 = `fc7f6a3…` 背书。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fc7f6a3` | `ci(workflows): run the Codex issue-flow wiring guard in CI (#685)` — 4 files, +141/−4 |
+| `f25acd7` | `chore(task): archive 09-19-t35-arm-codex-flow-guard` — 4 files, +183（含 `task.json`） |
+
+### Testing
+
+- [OK] `python scripts/check-codex-issue-flow.py` → `rc 0`，逐字 `Codex issue workflow validation passed.`（本机 venv 与 3.13 各一次）
+- [OK] `ruff check scripts/` → `All checks passed!`（T34 的门禁未被本票打红）
+- [OK] `check-spec-refs.py --audit` `rc 0`；`check-tasks-refs.py --audit` `rc 0` + **`791 ok / 0 dangling / 0 malformed`**；`check-journal-ledger.py` `rc 0`
+- [OK] `test_check_tasks_refs.py` **14 passed**；Python 总收集 **1211 不变**（判回归只看总收集数对账）
+- [OK] `yaml.safe_load` 通过；job **1** / step **3** / `paths` **9**（push 与 pull_request 逐条相同）；**既有 workflow 零改动**，`git diff --stat` 只含本票 4 个文件
+- [OK] 被断言路径 **21/21 全部 tracked**（逐条 vs `git ls-files`）⇒ 接入无生来红风险
+- [OK] 消融方向一（守卫有牙，**真仓未被触碰**）：合成根 6 处结构突变 M1–M6 **各自单独施加都 rc 1**，失败集合**两两不相交**；基线在合成根与真仓**都为绿**
+- [OK] 消融方向二（**判据性**：旧形状对同一突变是瞎的）：真仓 `AGENTS.md` 一处突变下 **5/5 既有命令判词不变（GREEN）**，只有新命令 **RED** ⇒ 判词差成立，不是重复覆盖
+- [OK] 突变按**工作树字节快照**恢复（`git ls-files --eol` 报 `i/lf w/crlf` ⇒ 「等于 blob」**不是**正确判据），由**另一进程**复算 sha256 认证；`git diff --exit-code HEAD -- AGENTS.md` `rc 0`、`git status` 空
+- [OK] **CI（`fc7f6a3`）**：新 **Codex Issue-Flow CI 2/2 success**（`wiring (Python 3.9)` 日志逐字 `Codex issue workflow validation passed.`，运行时 3.9.25）；**Scripts CI 5/5 success**；**Python CI 4/4 success**（`test (3.9)` = `1203 passed, 8 skipped in 30.78s`，与基线逐字同）
+- [OK] 语料钉值的两个可达态都被 CI 实测：CI 侧归档未推 ⇒ **790 ok**（3.9 与 3.12 各一次）；本地归档落盘 ⇒ **791 ok** ⇒ 均落在钉值 `(790,791)` 内
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 已直落 main（`fc7f6a3` 实现 + `f25acd7` 归档 + 本会话的账本提交）；`fc7f6a3` 上 Codex Issue-Flow / Scripts / Python CI **全绿** ⇒ **#685 可关**（贴验收映射）。
+- **本票立起的判据**：`paths` 过滤的**对错取决于输入集是封闭还是开放** —— 读**封闭输入集**（硬编码路径表、从不 glob 目录）时过滤**正确**；读全仓 / 读开放目录集时过滤是**蒙眼布**。本票是前者（21 条固定路径），`spec-refs` / `tasks-refs` 是后者（故必须不过滤）。
+- **行为账（本会话实测踩到）**：`add_session.py --content-file` 指向**不存在的路径**时**静默**退回 `(Add details)`，无报错无警告（Git Bash 的 `/c/...` 传给 Windows Python 变成 `C:\c\...`）。唯一会红的是 `check-journal-ledger.py` 的占位符**整行相等**判据 ⇒ **写完账本必跑 ledger 守卫**，别信 `add_session` 自己打的 `[OK]`。
+- **未决账（不静默丢弃）**：`ruff format --check` 仍未接线（T34 记）；`.trellis/.template-hashes.json` 被 `.trellis/scripts/common/safe_commit.py` **读取**但**无 job 校验其与工作树一致** —— 是否应由 CI 校验取决于上游模板意图（同步时机 / 是否允许本地改），**仓内无法坐实** ⇒ **记账待决，不臆造**；`.trellis/scripts/**`(27) 与 `.claude/hooks/**`(3) 仍不在任何 ruff target 内（**已登记排除**，非欠账）。
+- #656（P2 本体）仍只等外部「方案第 21 节」原文。

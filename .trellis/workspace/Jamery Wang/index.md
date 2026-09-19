@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 41
+- **Total Sessions**: 42
 - **Last Active**: 2026-09-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1581 | Active |
+| `journal-2.md` | ~1743 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 42 | 2026-09-19 | T35 arm the Codex issue-flow wiring guard (#685) | `fc7f6a3`, `f25acd7` | `main` |
 | 41 | 2026-09-19 | T34 lint the whole scripts/ directory, retiring the name-files-only workaround (#684) | `e6b2d03`, `c1d8940` | `main` |
 | 40 | 2026-09-18 | T33 pin the WorkerService RPC -> roster field mapping (#683) | `82ab716`, `b895a7d` | `main` |
 | 39 | 2026-09-18 | T32：sandbox allowlist 测试的 agent 清单改为从 allowlist 自身推导 | `579843e`, `aa6898d` | `main` |
