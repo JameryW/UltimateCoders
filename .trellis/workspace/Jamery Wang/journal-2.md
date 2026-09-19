@@ -1896,3 +1896,105 @@ CI（`e6b2d03`）：**Scripts CI success**（含新 job `ruff lint (the whole sc
 - **账 2（待决）**：`paths` 与 `Cargo.toml` 的一致性无守卫；写「`cargo metadata` 推导闭包并对账」需 CI 有 Rust 工具链 + 先裁对账口径（是否含 dev/build-dependencies），**仓内无法坐实**。
 - **账 1（延续）**：`ruff format --check` 仍未接线；`.trellis/.template-hashes.json` 无 job 校验；`.trellis/scripts/**`(27) 与 `.claude/hooks/**`(3) 按登记排除。
 - #656（P2 本体）仍只等外部「方案第 21 节」原文。
+
+
+## Session 44: T37 guard the README CI trigger table against the workflow YAML (#687)
+
+**Date**: 2026-09-19
+**Task**: T37 guard the README CI trigger table against the workflow YAML (#687)
+**Branch**: `main`
+
+### Summary
+
+把 README 的 CI 触发面表（on.push.paths 的手抄副本，零守卫）升级为正式守卫并接进 CI：新增 scripts/check-readme-ci-table.py（7 条判据）+ ci-readme-ci-table.yml（3.9/3.12）+ 测试（8 处突变覆盖 7 条判据）。含一次真实漂移（新建第 9 套 workflow 必让表少一行）。
+
+### Main Changes
+
+## 缺口的一手读数（HEAD `4a5f1cc`）
+
+| 检查 | 命令 / 出处 | 读数 |
+|---|---|---|
+| 该表存在 | 两版 README § CI | 各 **8 行**，每行 = 一个 workflow + 其触发路径 |
+| 有没有人校验它 | `git grep -ln "README" -- scripts tests .github` | **0 处** —— 没有任何脚本或 workflow 读它 |
+| 它会不会自己说话 | —— | **不会**：改 `paths` 不打红任何东西；改 README 也不打红任何东西 |
+| 漂移史 | T36 / #686 重写时实测 | 该段此前漂称「**2 套**」而实有 **8 套**，**无人发现** |
+
+⇒ 一处**会漂移的重复 + 零守卫**，而它的职责是告诉读者「改什么会触发什么」。**错在这张表上 = 把触发面的知识污染给每一个人**（T36 里我正是照着错表去推「Rust CI 会跑」的）。
+
+**这个缺口不是推演出来的，是上一票撞出来的。** T36 重写该表时，我为 `ci-codex-flow.yml` 写了 `` `docs/agents/*.md` `` —— 该 YAML 里是 **4 个具名文件**、**没有这个 glob**。它格式正确、语气一致、看起来完全合理；**只靠阅读绝不会发现**。抓到我的是一个临时对账脚本，而它留在被 ignore 的目录里，**抓到一次就作废了**。本票就是把它升格为正式守卫。
+
+## 结论与取舍（逐条写明为什么不选另一条）
+
+| # | 结论 / 取舍 |
+|---|---|
+| A | 该表是 `on.push.paths` 的**手抄副本**，而「手抄」这一步**没有也不会**变可靠 ⇒ **必须**由机器对账，不能靠人读 |
+| B | 守卫的输入集是**封闭**的（写死的两份 README + `.github/workflows/` 这**一个**目录）⇒ 按 T35 / #685 判据，`paths` 过滤**是正确的** |
+| C | `paths` 是 **workflow 级** ⇒ 带过滤的 job **不能**放进必须保持无过滤的 `ci-scripts.yml` ⇒ **新建独立 workflow**，不动任何既有 `paths`/`steps` |
+| D | **PyYAML，不手写 YAML 子集解析器**：判据是「**永远不会红的守卫不是证据**」—— 手写解析器在缩进/引号/内联列表变化时**静默返回空**，守卫变**假绿**，这是本票**最不能**犯的错 |
+| E | 但 README 那一半**只能**手写解析（表格是给人读的）⇒ 用**非空性断言**防住「解析静默返回空」，这**比选哪个解析器更要紧** |
+| F | 本票**自带一次真实漂移**：新建第 9 套 workflow 后表格**必然**少一行 ⇒ 守卫**必然先红**。**这不是合成突变，是真漂移**，比任何沙箱消融都强 |
+| G | 顺带钉住另一条散文陈述：README 说各 workflow「都指向 `main`」⇒ 守卫一并校验 `branches == ["main"]`（同一份 YAML 读，不新增输入面） |
+
+七条判据（**各带自己的失败消息**，便于逐条消融钉住）：非空性 / 存在性 / 对称性 / 不虚构 / 不省略 / 过滤形状 / `branches == [main]`。判据 4/5 的对账口径：**声称集 == 该 YAML 的 `paths` 去掉自身 YAML 文件名**（自身文件由 README 的一句脚注统一说明，不占表格格子）。
+
+## 消融（两路，缺一不算）
+
+| 方向 | 做法 | 读数 |
+|---|---|---|
+| **一 真实漂移** | 新增第 9 套 workflow（本票自己）⇒ 表**必然**少一行 | 两版 README 各报一条 `workflows on disk but not in table: ['ci-readme-ci-table.yml']` ⇒ `rc 1`；补第 9 行 + 段首 `Eight`→`Nine` + 脚注重写 ⇒ `rc 0` |
+| **二 八处合成突变** | 沙箱副本，逐处单独施加并按字节恢复 | **8/8 变红**，且**七条判据每条至少被一处单独打到** |
+
+八处：A 行内加假路径 / B 行内删真路径 / C 表里改名不存在的 workflow / D 只改 YAML 不改 README / E 只改 `push` 不改 `pull_request` / F `branches` 改离 `main` / G 删掉某 workflow 的 `paths` 过滤块 / H 把 `## CI` 标题改名。
+
+⚠️ **两条方法论（T36 记下的，本票照做且被证明必要）**：
+1. **「每条分支都被钉住」>「突变数够多」** —— 第 6 条（过滤形状）与第 7 条（`branches`）在 A–D 里**根本走不到**；C 与 D 又都打在**同一条**省略判据上 ⇒ **必须**补 G 与 H，否则它们**没有任何突变到达**而照样有代码。测试因此**断言判据清单被覆盖**，而不是只看「rc 非零」。
+2. **一次只动一个轴** —— D **同时**改 `push` 与 `pull_request`，否则打红的是**对称性**而不是**省略**。
+
+## 两处锚点事故（不修就会让突变被静默吞掉）
+
+| 事故 | 症状 | 修法 |
+|---|---|---|
+| **E 的锚点落在散文里** | 断言是 `0 != 0` —— 突变**什么都没改**，守卫照绿 | `ci-trellis.yml` 的文件头注释里**第一处** `.trellis/scripts/**` 出现在**散文**中 ⇒ 第一次出现替换改的是注释。改为锚定 `      - "{path}"`（带缩进与引号）**并断言期望出现次数为 2**，锚点写错就**大声失败** |
+| **G 的多行锚点在 CRLF 文件里用 `\n`** | 锚点出现 **0 次**（期望 2） | `mutate()` 里多行锚点改用**该文件自己的行尾**；否则锚点匹配零次，突变**静默失效** |
+
+⇒ 八处突变**每一处的锚点都声明期望出现次数**，从「静默什么都不做」变成「大声失败」。这条是 T37 自己付的学费。
+
+## 账（未静默丢弃）
+
+- **账 1（延续 T36）**：`paths` 与 `Cargo.toml` 的一致性**仍无守卫**（需 CI 有 Rust 工具链 + 先裁对账口径，**仓内无法坐实**）。
+- **账 2（延续）**：`ruff format --check` 仍未接线；`.trellis/.template-hashes.json` 无 job 校验；`.trellis/scripts/**`(27) 与 `.claude/hooks/**`(3) 按登记排除。
+- **账 3（本票新增）**：本守卫只覆盖「**触发路径**」这一张表。README 里**其他**手抄的机器可读面（测试基线数、job 数等）**仍无守卫** —— 是否扩面：**待决**（先把这一张钉死，别一次铺太宽）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `940dfb4` | `ci(workflows): guard the README CI trigger table against the workflow YAML (#687)` — 6 files, +577/−8（守卫 213 / 新 workflow 112 / 测试 236 / 两版 README 各 +5−2 / 语料钉值 14） |
+| `e4bde60` | `chore(task): archive 09-19-t37-guard-readme-ci-table` — 4 files, +173（含 `task.json`，归档提交按仓规带上） |
+
+### Testing
+
+- [OK] 新守卫对当前真仓 `rc 0`，报告 **`9 workflow(s) reconciled in 2 file(s)`**
+- [OK] **真实漂移，先红后绿**（本票独有，非合成）：新建第 9 套 workflow 后，两版 README 各报一条 `workflows on disk but not in table: ['ci-readme-ci-table.yml']`；补第 9 行 + 段首 `Eight`→`Nine` + 脚注重写后转绿
+- [OK] **八处合成突变 8/8 变红**，且**七条判据每条至少被一处突变单独打到**（由 `test_every_judgment_is_pinned_by_a_mutation` 断言强制，不是靠人数出来的）：A 行内加假路径 / B 行内删真路径 / C 表里改名不存在的 workflow / D 只改 YAML 不改 README / E 只改 `push` 不改 `pull_request` / F `branches` 改离 `main` / G 删掉某 workflow 的 `paths` 过滤块 / H 把 `## CI` 标题改名
+- [OK] 突变全在**沙箱副本**上做、真仓未触碰、每处按字节恢复；`test_mutations_are_independent` 单独证明「恢复真的是恢复」（否则第 N+1 处测的是第 N 处）
+- [OK] 四个既有守卫均 `rc 0`：`check-codex-issue-flow` / `check-spec-refs` / `check-tasks-refs` / `check-journal-ledger`
+- [OK] `ruff check scripts/` 与 `ruff check python/ tests/` 均 `All checks passed!`；⚠️ 首轮实测出 **2 处真实 E501**（判据 3 与判据 6 的失败消息超 100 列），已按隐式拼接改写且**输出字符串逐字不变**
+- [OK] 语料钉值 `(792,793)` 的**两个可达态都实测到**：任务目录未跟踪 ⇒ **792 ok / 0 dangling / 0 malformed**；归档落盘后 ⇒ **793 ok / 0 dangling / 0 malformed**
+- [OK] `tests/python/test_check_tasks_refs.py` **14 passed**；Python 总收集数 **1211 → 1214**（= 本票新增 3 例，逐字吻合）
+- [OK] **CI（推送 `940dfb4`）**：9 套 workflow 中**恰好 3 套**触发 —— 新 workflow、**Scripts CI**（无 `paths` 过滤，**5/5 success**）、**Python CI**（`tests/python/**` 命中，**4/4 success**）⇒ 这同时是 README 第 9 行那条**新陈述的实测背书**
+- [OK] CI 逐字读数：新 workflow **两腿（3.9 + 3.12）均 success**、均报告 `9 workflow(s) reconciled in 2 file(s)` 且各自 **`3 passed`**（3.9 腿在跑 ⇒ `set[str] | None` 所依赖的 `from __future__ import annotations` 前提**仍成立**）；Python 两腿均 **`1206 passed, 8 skipped`**（基线 1203 + 本票 3 例）；tasks-refs job 内 `792 ok / 0 dangling / 0 malformed` + `SELF-CHECK PASSED: 6 mutations, all distinct`
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 已直落 main（`940dfb4` 实现 + `e4bde60` 归档 + 本会话的账本提交）；`940dfb4` 上三套 CI **全绿** ⇒ **#687 可关**（贴验收映射）。
+- **本票立起的判据（可复用到下一条）**：**手抄的机器可读面必须有守卫**。判据的落点不是「这张表对不对」，而是「**它还会不会再漂**」—— T36 已经写了一句「以 YAML 为准」的**劝告**，**仍然**是我自己写错的 ⇒ **一句话劝告不是判据**（本票据此把「只加一句说明」这个方案明确否决）。
+- **本票付的学费（写进技能）**：① 「**每条分支都被钉住**」>「突变数够多」；② **一次只动一个轴**；③ **锚点必须声明期望出现次数**，否则注释/散文会吸收突变而守卫照绿；④ 手写解析器（README 表格这一半）**必须**配非空性断言。
+- **账 1（延续 T36）**：`paths` ↔ `Cargo.toml` 一致性**仍无守卫**（需 CI 有 Rust 工具链 + 先裁对账口径，仓内无法坐实）。
+- **账 2（延续）**：`ruff format --check` 仍未接线；`.trellis/.template-hashes.json` 无 job 校验；`.trellis/scripts/**`(27) 与 `.claude/hooks/**`(3) 按登记排除。
+- **账 3（本票新增）**：README 里**其他**手抄的机器可读面（测试基线数、job 数等）**仍无守卫** —— 是否扩面：**待决**（先把这一张钉死，别一次铺太宽）。
+- #656（P2 本体）仍只等外部「方案第 21 节」原文。

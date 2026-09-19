@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 43
+- **Total Sessions**: 44
 - **Last Active**: 2026-09-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1881 | Active |
+| `journal-2.md` | ~1932 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 44 | 2026-09-19 | T37 guard the README CI trigger table against the workflow YAML (#687) | `940dfb4`,  `e4bde60` | `main` |
 | 43 | 2026-09-19 | T36 list the Rust inputs the Python test job compiles (#686) | `130c343`, `79543c4`, `dc3545a` | `main` |
 | 42 | 2026-09-19 | T35 arm the Codex issue-flow wiring guard (#685) | `fc7f6a3`, `f25acd7` | `main` |
 | 41 | 2026-09-19 | T34 lint the whole scripts/ directory, retiring the name-files-only workaround (#684) | `e6b2d03`, `c1d8940` | `main` |
