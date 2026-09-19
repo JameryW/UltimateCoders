@@ -389,7 +389,12 @@ def test_real_corpus_conforms(capsys):
     assert code == 0, out
     assert "journal ledger check passed." in out
     assert "STALE_SKELETON" not in out  # our declared strings still match the real skeleton
-    assert "this ledger: 2 file(s)" in out
+    # The ledger rotated to Part 3 during session 45's close-out, so the
+    # count of THIS ledger's files is 3, not 2. This literal has to move in
+    # the same change as the rotation -- the same rule as the corpus pin in
+    # test_check_tasks_refs.py.  It stayed at 2 for 44 sessions only because
+    # a rotation had never happened before.
+    assert "this ledger: 3 file(s)" in out
     assert "legacy (pinned, not fixed here): 3 file(s)" in out
 
 
@@ -403,7 +408,7 @@ def test_real_clean_ledger_is_red_under_the_substring_criterion(capsys):
     journals, error = guard.iter_journal_paths()
     assert error is None and journals
     ours = [p for p in journals if guard.journal_key(p) not in guard.LEGACY_JOURNALS]
-    assert len(ours) == 2  # the T-series ledger, journal-1 / journal-2
+    assert len(ours) == 3  # the T-series ledger: journal-1 / -2 / -3
     loose = 0
     strict = 0
     for path in ours:
