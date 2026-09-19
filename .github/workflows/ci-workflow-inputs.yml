@@ -1,0 +1,105 @@
+name: Workflow Inputs CI
+
+# WHAT THIS GUARDS
+# ----------------
+# A `run:` step names its inputs by relative path -- `crates/uc-python/Cargo.toml`,
+# `tests/python/test_nats_live_dispatch.py` -- and those files ARE the gate's
+# inputs. T35 / #685 established the rule that they must all appear in that
+# workflow's `paths`; T36 / #686 applied it once, by hand, to `ci-python.yml`.
+# `scripts/check-workflow-inputs.py` makes it mechanical for all of them.
+#
+# WHY IT MATTERS, MEASURED
+# ------------------------
+# The T36 measurement is the reason this workflow exists. `ci-python.yml`'s test
+# job compiles `crates/uc-python` with maturin while its `paths` named not one
+# `crates/**` entry, so 43 of 218 pushes -- about 20% -- let the Python-side
+# engine check silently not run. Nothing goes red when a gate does not run; that
+# is the entire failure mode.
+#
+# The extraction and coverage logic was then run against three real revisions:
+# `130c343^` (before T36) reports `crates/uc-python/Cargo.toml` as uncovered,
+# while `130c343` (the fix) and `HEAD` both report it covered. So the judgment is
+# backed by a real historical drift, not only by synthetic mutations. That three-
+# revision comparison is NOT a test here: `actions/checkout` defaults to
+# `fetch-depth: 1`, so the historical blobs are not present. It lives as a
+# re-runnable script in the notes layer instead, and its readings are in the
+# ticket and the journal.
+#
+# WHAT IS CHECKED
+# ---------------
+# Four judgments, each with its own message so an ablation can pin them one at a
+# time: non-vacuity (workflows parsed, a filtered workflow exists, references were
+# extracted at all) / every named file covered by `on.push.paths` / ... and by
+# `on.pull_request.paths` / a `paths` filter that exists but is empty is a gate
+# that can never trigger.
+#
+# WHY A `paths` FILTER HERE
+# -------------------------
+# Same mechanical test as T35 / #685: a filter is correct when the guard reads a
+# CLOSED input set, and a blindfold when it reads the whole repository. This guard
+# reads exactly `.github/workflows/*.yml` -- hard-coded directory, never the repo
+# file tree -- so `.github/workflows/**` covers its input set in full, including
+# the addition of a new workflow file. That choice is deliberate for a second
+# reason: a guard that derived its directory list from the file tree would have to
+# read the whole repo, and would then have to stay unfiltered. The declared
+# `TOP_LEVEL_DIRS` constant keeps the input set closed, at the cost that a new
+# top-level directory must be registered there in the same change.
+#
+# `paths` is workflow-level in Actions, not job-level, so a correctly filtered job
+# cannot share a file with `ci-scripts.yml` (whose jobs must stay unfiltered).
+# Hence its own file. No existing workflow's `paths` or `steps` are touched.
+#
+# WHY PyYAML, AND WHY THE 3.9 LEG
+# -------------------------------
+# This guard compares YAML semantics, so it parses YAML properly rather than
+# hand-rolling a subset parser that would quietly return nothing after a
+# whitespace change -- a guard that looks at nothing is green forever. PyYAML is
+# already a declared runtime dependency (`pyproject.toml`). The 3.9 leg exists
+# because the guard writes `list[str] | None`, which only runs on 3.9 thanks to
+# `from __future__ import annotations`; same reason as `ci-codex-flow.yml`.
+#
+# NOT IN SCOPE
+# ------------
+# No transitive-closure reasoning is attempted: `docker/docker-compose.yml`
+# mounts `./tikv.toml`, `./nats.conf` and `../`, so its input set is the
+# repository root and is not expressible as a `paths` entry. Cargo-semantic
+# closures ("a change to `uc-engine` should run Python CI") likewise remain
+# unguarded. Only literal, named files in `run:` steps are checked -- that is the
+# half of the rule that can be made mechanical today.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/check-workflow-inputs.py"
+      - "tests/python/test_check_workflow_inputs.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/check-workflow-inputs.py"
+      - "tests/python/test_check_workflow_inputs.py"
+
+jobs:
+  workflow-inputs:
+    name: Workflow inputs (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - name: Install PyYAML + pytest
+        # PyYAML is the one deliberate dependency -- see the header note above.
+        run: pip install pyyaml pytest
+      - name: Run the coverage guard
+        # The exit code IS the verdict.
+        run: python scripts/check-workflow-inputs.py
+      - name: Run the guard's own tests
+        run: pytest tests/python/test_check_workflow_inputs.py -v -o addopts=""
