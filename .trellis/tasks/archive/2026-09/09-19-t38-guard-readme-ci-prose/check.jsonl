@@ -1,0 +1,2 @@
+{"file": "scripts/check-readme-ci-table.py", "reason": "验收 1/2/3/4 的复算对象：真仓 rc 0 且仍报 9 workflow / 2 file；三条新判据各有独立消息；旧守卫（3004 版）对 I/J/K/L 全绿而新守卫全红；匹配器正负例都通过"}
+{"file": ".github/workflows/ci-readme-ci-table.yml", "reason": "验收 8：推送后被触发且两腿（3.9/3.12）success；本票**零 workflow 变更**，其 paths 已覆盖该脚本与其测试"}

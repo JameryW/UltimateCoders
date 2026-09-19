@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/archive/2026-09/09-19-t38-guard-readme-ci-prose/prd.md", "reason": "本票 PRD：三处缺口的实测读数（H1 段首计数 EN / H2 段首计数 ZH / H3 脚注「自身命中」/ H4 脚注「支持手动触发」）、结论 A–F、七方案取舍（为何扩既有守卫、为何计数词要有界词表、为何 J-self 的最小匹配器必须带真理表）、三条新判据各自的失败消息、两方向消融设计（旧守卫全绿 / 新守卫全红）、零 workflow 变更、八条验收、非目标与五笔账"}
+{"file": "scripts/check-readme-ci-table.py", "reason": "改动面：加 J-count（段首计数词 + 非空性）/ J-self（paths 覆盖自身 YAML，具名或 prefix/**）/ J-dispatch（workflow_dispatch）三条判据 + 最小路径匹配器；并把口径注释里「自身文件在 paths 里」由假设改写为 J-self 保证的前置条件（推论 A）"}
+{"file": "tests/python/test_check_readme_ci_table.py", "reason": "同 change 更新：JUDGMENTS 加三项（既有覆盖断言会自动要求新突变到达它们）+ 四处突变 I/J/K/L + 匹配器真理表（正负例都有，防「永远返回 True」的装饰）"}
+{"file": "tests/python/test_check_tasks_refs.py", "reason": "同 change 更新：语料钉值 (792,793) → (793,794)"}
+{"file": "README.md", "reason": "被校验方：§ CI 首段计数词 `Nine` 与脚注两句（「自身 YAML 也命中自己的 paths」「all workflows support manual dispatch」）—— 本票把这三处从「无人校验的手抄陈述」变为被机器对账的判据"}
+{"file": "README.zh-CN.md", "reason": "同上（中文版）：首段「九套独立工作流」与脚注同两句"}
