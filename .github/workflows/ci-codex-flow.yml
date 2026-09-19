@@ -1,0 +1,115 @@
+name: Codex Issue-Flow CI
+
+# WHAT THIS GUARDS
+# ----------------
+# `scripts/check-codex-issue-flow.py` asserts the repo-local wiring of the Codex issue
+# workflow: the 14 `.agents/skills/*/SKILL.md` directories exist and their `name:`
+# frontmatter matches, 6 required files exist (`AGENTS.md`, 4 under `docs/agents/`, and
+# `docs/workflows/codex-issue-flow.md`), `AGENTS.md` points at
+# `$ultimatecoders-issue-flow`, the entry skill carries no `[TODO` and references six
+# named things, and its `agents/openai.yaml` declares `default_prompt:`. That is 21
+# asserted paths over a 50-file tracked surface.
+#
+# WHY IT NEEDED ITS OWN WORKFLOW (T35 / #685)
+# -------------------------------------------
+# Measured 2026-09-19 at 8cae2fe: NOTHING ran it. `git grep -l
+# check-codex-issue-flow.py` hit `ci-scripts.yml` only inside that file's own header
+# prose, and no workflow mentioned `.agents/` or `AGENTS.md` at all. The one guard whose
+# index does cover that surface -- `check-spec-refs.py`, which walks the whole repo -- is
+# advisory by design and never fails on a dangling count. So 21 assertions were
+# advertised capability with zero execution. All four other guards in `scripts/` already
+# had a job; this was the only one that did not.
+#
+# WHY A `paths` FILTER HERE, WHEN `ci-scripts.yml` DELIBERATELY HAS NONE
+# ---------------------------------------------------------------------
+# The two input sets differ in kind, and the distinction is mechanical, not stylistic.
+# `spec-refs` indexes the whole repo (`os.walk`) and `tasks-refs` reads an open set of
+# archived directories, so a filter there would be blind to exactly the changes that flip
+# their verdict. This guard reads a CLOSED set: it iterates hard-coded dicts of 14 skill
+# names and 6 paths and never globs a directory. What can flip it is therefore exactly
+# the nine paths below. Rule of thumb: a filter is correct when the guard reads a closed
+# input set, and a blindfold when it reads the whole repo.
+#
+# `paths` is workflow-level in Actions, not job-level, so a correctly filtered job cannot
+# share a file with `ci-scripts.yml`, whose jobs must stay unfiltered. Hence its own file
+# rather than one more job beside `spec-refs` / `tasks-refs` / `scripts-lint`. No
+# existing workflow's `paths` or `steps` are touched by this change.
+#
+# NO DEPENDENCIES, AND WHY THE 3.9 LEG STILL MATTERS
+# --------------------------------------------------
+# The guard is pure stdlib (`re`, `pathlib`), so there is no `pip install` step and
+# nothing here can drift with a dependency. It writes `-> str | None` and `list[str]`,
+# which only run on 3.9 because of `from __future__ import annotations`; the 3.9 leg
+# keeps that requirement from silently becoming false.
+#
+# WHAT WAS MEASURED (T35 / #685), BOTH DIRECTIONS
+# -----------------------------------------------
+# Direction one -- the guard has teeth: six structural mutations in a synthetic root
+# (`AGENTS.md` loses the pointer / a skill's `name:` drifts / the entry skill grows a
+# `[TODO` / `openai.yaml` loses `default_prompt:` / the entry skill drops a reference / a
+# required doc is deleted) each redden on their own, and the six failure sets are
+# pairwise disjoint -- so no mutation is decoration and each assertion family is pinned
+# independently. Baseline is green in both the synthetic root and the real repo.
+# Direction two -- the pre-existing shape is blind to the same mutation: with one real
+# mutation in `AGENTS.md`, all 5/5 commands CI runs today stayed GREEN, including the
+# directory-wide `ruff check scripts/` that T34 added, and only this guard went red.
+# Proving "the new command reddens" is not enough; the old shape has to stay green on the
+# same mutation, or the new command may merely duplicate existing coverage.
+#
+# NOT IN SCOPE
+# ------------
+# `.agents/skills/**` (51 entries) and `AGENTS.md` (1) are registered in
+# `.trellis/.template-hashes.json`, i.e. template-synced surfaces; this workflow only
+# ARMS the existing assertions, it does not restructure them. The `docs/agents/*.md` (4)
+# and `docs/workflows/codex-issue-flow.md` half is NOT in that registry and had no gate
+# at all before this file existed.
+# Still open elsewhere: `ruff format --check` is wired nowhere (T34's ledger), and
+# nothing verifies `.trellis/.template-hashes.json` against the working tree (T35's
+# ledger -- whether CI should is a question only the upstream template's intent can
+# answer, so it is recorded rather than invented).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".agents/skills/**"
+      - "AGENTS.md"
+      - "docs/agents/issue-tracker.md"
+      - "docs/agents/triage-labels.md"
+      - "docs/agents/domain.md"
+      - "docs/agents/mattpocock-skills.md"
+      - "docs/workflows/codex-issue-flow.md"
+      - "scripts/check-codex-issue-flow.py"
+      - ".github/workflows/ci-codex-flow.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".agents/skills/**"
+      - "AGENTS.md"
+      - "docs/agents/issue-tracker.md"
+      - "docs/agents/triage-labels.md"
+      - "docs/agents/domain.md"
+      - "docs/agents/mattpocock-skills.md"
+      - "docs/workflows/codex-issue-flow.md"
+      - "scripts/check-codex-issue-flow.py"
+      - ".github/workflows/ci-codex-flow.yml"
+
+jobs:
+  wiring:
+    name: Codex issue-flow wiring (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - name: run the wiring guard
+        # No `pip install` on purpose: the guard is pure stdlib, so this step cannot
+        # drift on a dependency. The exit code IS the verdict here -- unlike
+        # `spec-refs --audit`, which is advisory and never fails.
+        run: python scripts/check-codex-issue-flow.py

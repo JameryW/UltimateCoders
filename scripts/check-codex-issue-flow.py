@@ -1,4 +1,9 @@
-"""Validate repository-local wiring for the Codex issue workflow."""
+"""Validate repository-local wiring for the Codex issue workflow.
+
+Armed by `.github/workflows/ci-codex-flow.yml` (T35 / #685), whose `paths` filter is
+exactly the set of paths this module reads. Before that ticket nothing ran this file --
+its 21 assertions were advertised capability with zero execution.
+"""
 
 from __future__ import annotations
 

@@ -32,6 +32,15 @@ Trellis does not create a second dependency graph. The tracker remains the autho
 
 Use `$tdd` at the agreed public seams, run the relevant project checks, and run `$code-review` against the fixed point before the Trellis final check. The existing Trellis lifecycle remains the only route for task state and the user-confirmed commit. Updating or closing a GitHub ticket is a separate, explicitly requested remote action.
 
+## Repo-local wiring
+
+`scripts/check-codex-issue-flow.py` holds this page and the skill directories together: it
+asserts that the 14 `.agents/skills/*/SKILL.md` entries exist with matching `name:`
+frontmatter, that `AGENTS.md` points at `$ultimatecoders-issue-flow`, that the entry skill is
+finished (no `[TODO`) and still references the six named paths and skills, that the four
+`docs/agents/*.md` files exist, and that this page exists.
+`.github/workflows/ci-codex-flow.yml` runs it whenever any of those paths changes.
+
 ## Large initiatives
 
 Use `$wayfinder` when the work is too uncertain or broad for a single planning context. Resolve its decision tickets first. Once the route is clear, turn the approved result into a spec and implementation tickets; do not treat the decision map itself as a coding backlog.
