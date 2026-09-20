@@ -1,0 +1,4 @@
+{"file": "scripts/check-spec-refs.py", "reason": "验收 1/2/3：rc 0 且输出含 UNANCHORED 计数；--audit 清单条数与计数逐条相等（同源）；假 mismatch 归零（0 of N have no matching quoted content）"}
+{"file": "tests/python/test_check_spec_refs.py", "reason": "验收 4/5/消融：全绿；M1（删「符号要有定义」）M2（删「无内容候选」）M3（复原过滤器）三条突变各有私有红灯且计数按预期移动"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "验收 5 的取证对象：降级后 refs 134 → 130、mentions 267 → 271，两个数字都要实测回填"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "验收 5 的取证对象：补锚后这两行的判词必须不因新增符号锚而变差（定义在范围内 ⇒ 应保持 OK）"}

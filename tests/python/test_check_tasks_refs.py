@@ -466,6 +466,18 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     the corpus is the tracked set and the task directory only becomes tracked in
     the archive commit -- so the implementation commit was green with the old pin.
 
+    T42 / #692 makes the move an eleventh time, and it is the FIRST whose delta is
+    bigger than one: earlier tickets' jsonl files each cited only their own `prd.md`
+    under `.trellis/`, whereas this ticket cites the three spec files it is the
+    evidence for as well -- so `implement.jsonl` contributes FOUR `.trellis` paths
+    (its own archived `prd.md` plus `backend/database-guidelines.md`,
+    `frontend/hook-guidelines.md`, `frontend/type-safety.md`) and `check.jsonl`
+    contributes TWO (the two it is the acceptance evidence for), giving 797 -> 803.
+    The ticket's subject -- exposing references whose line number cannot be verified,
+    and stopping a `path:line` pointer from being read as quoted code -- does not
+    touch this corpus at all; the +6 is purely the ticket's own existence.  Measured
+    tracked-state total after archive: 803, split confirmed per source file.
+
     This is a tripwire, not a whitelist: if a future change moves any of these
     numbers, it must be updated in the same change.
     """
@@ -476,13 +488,13 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     malformed = [r for r in rows if r["verdict"] == "MALFORMED"]
 
     # The corpus is the TRACKED set, so this ticket's own `implement.jsonl`
-    # counts only once committed: 796 while it is untracked, 797 once it is
+    # counts only once committed: 797 while it is untracked, 803 once it is
     # (which is how CI always sees it). Those two ARE the reachable states for
     # the current ticket, so they are the pair. T31's window was wider only
     # because that ticket had two contributing jsonl files, giving it one
     # intermediate state; those values are unreachable now, and leaving them in
     # would mask a real -1 drift. Pinning the reachable set is the point.
-    assert len(refs) in (796, 797), f"reference count drifted: {len(refs)}"
+    assert len(refs) in (797, 803), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 

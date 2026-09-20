@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/archive/2026-09/09-20-t42-unanchored-refs/prd.md", "reason": "本票 PRD：缺口=「判据缺位」而非「知识缺口」——守卫的两条咨询判据里只有 STALE 对行号敏感，内容锚只到文件级；口径 UNANCHORED 三合一（判词∈{OK,STALE} ∧ content_candidate_count==0 ∧ 行上符号都没有可找到的定义）；全量 60/134；A/B/C/D 四组实验与它们的期望；4 条可补符号锚 vs 56 条只能补文件级弱锚的可行性分层（这就是不开「重写」那扇门的依据）；判据/消融/验收/非目标"}
+{"file": "scripts/check-spec-refs.py", "reason": "本票主产物：新增 UNANCHORED 咨询类（不进 verdict，默认打印计数、--audit 列清单）——判据要求符号**有可找到的定义**才算出锚，以绕开「路径 token 咬出伪符号」的虚高；修内容候选过滤器，排除本身就是 path:line 形状的 span（修 p2-recon.md:67 那条恒真假 mismatch）；docstring 分类表同步"}
+{"file": "tests/python/test_check_spec_refs.py", "reason": "同 change 新增：合成语料（无锚 ref 被报出、且行号改错后输出不变 = 必要条件证明）、「有符号但无定义」必须仍算无锚（防抽取器伪符号）、ref 形状 span 不得成为内容候选、真实语料钉值（UNANCHORED 与 refs/mentions 计数）+ 三条消融各自的私有红灯"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "被修方（推论 A）：:64 与 :131 两条引用有「定义就落在被引范围内」的符号（ShortTermMemory / list_keys），补上符号锚即成为**唯一能验行号**的那一类；本票 4 条里的 2 条"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "被修方（推论 A）：:19（AgentEventType）与 :109（refresh_heartbeat）同样补符号锚；本票 4 条里的另 2 条"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "被修方（推论 A）：:26 上的 4 个 `xxx.py:1` 指针降级为提及 —— 模块首行是 docstring，行号 1 不携带信息，而提及本身是被检查的（MENTION_RESOLVED）"}
+{"file": "docs/architecture/durable-runtime-p2-recon.md", "reason": "缺陷 D 的取证对象：:67 引 check-spec-refs.py:250（T41 真实漂移过的那条）。它的内容候选是同一行上的另一个路径 ⇒ content_ok 恒 false ⇒ 守卫今天那句 1 reference(s) quote code absent 是噪音"}
