@@ -372,3 +372,151 @@ T35 / #685 立起这条铁律，T36 / #686 **只手工执行过一次**（把 `c
 - 账 1（`docker compose` 挂载闭包）、账 2（`ruff format --check` **78** 文件 ⇒ 大票）、账 4（`add_session.py` 个人 index 行数取自填充前，下次自愈）、账 5（README `Checks` 列散文 —— 语义映射 + 两版语言不同 ⇒ **明确不作**）延续。
 - 延续：`.trellis/.template-hashes.json` 无 job 校验；`.trellis/scripts/**`（**28** 个跟踪 `.py`，其中恰好 1 个被 lint，按登记排除）与 `.claude/hooks/**`（3）按登记排除。
 - #656（P2 本体）仍只等外部「方案第 21 章」原文。
+
+
+## Session 48: T41 widen the spec-reference guard to docs/ and fix the anchors it exposed (#691)
+
+**Date**: 2026-09-20
+**Task**: T41 widen the spec-reference guard to docs/ and fix the anchors it exposed (#691)
+**Branch**: `main`
+
+### Summary
+
+把 check-spec-refs.py 从单根（.trellis/spec）扩为多根（+docs）：探针实测 docs 下 34 refs / 40 mentions、2 条 fail-closed PATH_FORM；扩面后引用 98→134、提及 227→267；修掉 4 处真漂移锚点 + 2 处 PATH_FORM；新增命名空间隔离断言与 8 个测试（消融 3 突变打红 9/1/4，各有私有见证）；CI 两腿与本地逐字同。
+
+### Main Changes
+
+## 缺口的一手读数（HEAD `ed9f19c`，2026-09-20）
+
+守卫的覆盖根是**硬编码单根**：`SPEC_DIR = ROOT / ".trellis" / "spec"`（`:92`），`collect()` 只 `rglob` 那一根（`:464`）。
+而 `docs/**` 里同样是**手写 `path:line` 引用**，同样无人守。
+
+**决定性探针**：只把 `SPEC_DIR` / `_SPEC_PREFIX` 指向 `docs/`、守卫一字未改：
+
+| 项 | 读数 |
+|---|---|
+| 纳入文档 | **8** 个 `.md` |
+| `path:line` 引用 | **34** = OK 25 / STALE 6 / **PATH_FORM 2** / AMBIGUOUS 1 |
+| 无行号路径提及 | **40** = resolved 36 / **DANGLING 2** / MENTION_AMBIGUOUS 2 |
+
+**扩面即红**：`main():684` 的 fail-closed 集合是 `{MISSING_FILE, PATH_FORM, OUT_OF_RANGE}`，2 条 `PATH_FORM` 足以让它 `return 1`。
+两条都正是守卫自己 docstring 举的那个例子形状 —— 带目录却只按后缀解析：
+
+| 文档 | 引用 | 实际解析为 |
+|---|---|---|
+| `assessment.md:121` | `sandbox/agents/claude_code.rs:221` | `crates/uc-engine/src/sandbox/agents/claude_code.rs` |
+| `assessment.md:142` | `uc-types/src/agent.rs:210-232` | `crates/uc-types/src/agent.rs` |
+
+## 为什么现在没人发现（两条，都实测过）
+
+1. **作用域窄，不是知识缺口。** 守卫对「结构判据看不见漂移」的分析比 docs 的实际情形还准 —— 它自己的 docstring 写着
+   *"a census on 2026-09-16 found 149 references of which **0** were out of range, so purely structural checks
+   cannot see the drift at all"*。docs 侧同样是 **0 越界**，但**多出 2 条 PATH_FORM** ⇒ 守卫**能**看见，只是一直没看。
+2. **CI 接线成本是零。** `check-spec-refs.py` 跑在 `ci-scripts.yml:107`（`--audit`），而该 workflow **刻意没有 `paths`**
+   （头注：*NO `paths` filter … the guard walks the whole repository*）⇒ 扩面**不需要改任何 `paths`**。
+   对照 T35 判据：`paths` 对**封闭输入集**正确、对**全仓游走**是蒙眼布；本守卫扩面后输入集仍是开放集，且它所在的 workflow 本就无过滤。
+
+## 判据：只改作用域，一条判词都不动
+
+| 类别 | 判词 | 本票变化 |
+|---|---|---|
+| 结构，fail-closed | `MISSING_FILE` / `PATH_FORM` / `OUT_OF_RANGE` | 判据不变，**输入集扩到 `docs/**`** |
+| 咨询，永不失败 | `AMBIGUOUS` / `STALE` / `CONTENT_MISMATCH` | 判据不变 |
+| 提及，咨询 | `DANGLING` / `MENTION_AMBIGUOUS` | 判据不变；docs 的 2 条进豁免表 |
+
+**扩面实测**：引用 **98 → 134**（承载文件 **11 → 13**）；提及 **227 → 267**（承载文件 **26 → 32**）；结构违规 **0 → 2 → 0**。
+
+## 多根特有的一条新约束：命名空间隔离
+
+两张豁免表（`MENTION_EXEMPT` / `SUBJECT_REMOVED`）按「**相对 `.trellis/spec/`**」的 short 键控 —— 这在单根下天然无歧义
+（docstring `:595-597` 明写是为了让 `backend/directory-structure.md` 与 `frontend/directory-structure.md` 不撞）。
+多根后**同一个 short 可以在两个根下各存在一个文件**，于是为一边写的规则会**静默盖住**另一边。
+⇒ 处置不是「写注释说不会撞」，而是**在 `exemption_self_check` 里对语料断言**：同一 short 不得出现在两个根下。
+今天实测 `.trellis/spec/` 只有 `backend/frontend/guides`、`docs/` 只有 `agents/architecture/workflows` ⇒ **零碰撞**，但断言已就位。
+
+`_short_of()` 同时把「导入时冻结」的 `_SPEC_PREFIX` 改成**调用时求值**，这顺手修好了合成语料夹具（它 monkeypatch 的正是这两个常量）。
+
+## 修掉的锚点（推论 A：过期文档同票修）
+
+| 原引 | 改为 | 依据（一手读） |
+|---|---|---|
+| `graph_store.rs:806-808` | **`:920-930`** | :806 是结构体字面量尾部 + T10 文档注释；`CREATE TABLE execution_events` 在 :920，三列在 :928-930 |
+| `graph_store.rs:2290` | **`:2615`** | :2290 在 `merge_grants` 邻域；事件 INSERT 在 :2615 且**已**绑 `cost/tokens/duration_ms` |
+| `types.py:67-80` | **`:297`** | :67 已是 T15 的 `SubtaskUsage`；`SubtaskResult` 在 :297，其 `usage` 字段在 :316 |
+| `graph_store.rs:1030/1038` | **`:1167/1175`** | :1030/1038 分别是 `mirror_rejected` 与 `connect` 的注释；两个 INSERT 变体（shadow / 非 shadow）在 :1167 / :1175 |
+| `sandbox/agents/claude_code.rs:221` | 补 `crates/uc-engine/src/` | PATH_FORM |
+| `uc-types/src/agent.rs:210-232` | 补 `crates/` | PATH_FORM |
+
+§90 的结论（「今天缺的是契约与写入点」）已被 **T15 / #660** 补齐 ⇒ **加日期标记而非改写**（那是**当日**的缺口记录）。
+
+## 一处**本票自己造成**的「行号合法、内容错误」
+
+recon 文档引了 `scripts/check-spec-refs.py:233`（豁免串所在行）。本票往该文件插入约 65 行后，那串搬到 **250** ——
+**行号仍在范围内**，所以两个结构判据都不管（`OUT_OF_RANGE` 只管越界），`--audit` 的 STALE 也只认「命中的符号定义在别处」。
+**是人工读一手时发现的。** ⇒ 同票改成 `:250`。这条直接印证了本票的必要性：**「改文件」与「改引用」之间目前没有守卫。**
+
+## 门禁与接线
+
+| 项 | 读数 |
+|---|---|
+| 守卫 | `scanned 134 path:line references in 13 spec files`；`summary: 118 ok / 7 stale(advisory) / 9 ambiguous(advisory) / 0 structural failure(s)`；mentions `43 of 267 resolve to no file (43 exempt, **0 unclassified**)` |
+| CI 三方对账 | 本地 / CI **3.9** / CI **3.12** 三处**逐字相同**（上列三行完全一致） |
+| ruff | 本票 4 个 Python 文件 `All checks passed!` |
+| 其余守卫 | 七道全 rc 0 |
+| workflow | `ci-scripts.yml` 仍**无 `paths`**；`jobs` 数与既有 steps 未动，仅头注 +15 行；`check-workflow-inputs` 报 `10 workflow(s), 9 path-filtered, 20 run-step reference(s)`（与 T40 后态一致） |
+
+## 消融（三处**不同分支**的突变，各带私有见证）
+
+| 突变 | 打红 | 私有见证 |
+|---|---|---|
+| M1 只扫第一根 | **9** | 7 个（two-roots / docs 的 A·B·C / 必要条件证明 D / docs 豁免 F） |
+| M2 关掉命名空间断言 | **1** | `test_a_short_name_cannot_serve_two_namespaces` |
+| M3 `_locate_all` 恒空 | **4** | `test_subject_removed_banner_controls_the_exemption`、`test_real_corpus_has_no_untriaged_dangling_mention` |
+
+三组**不是全相交**，且每个分支都有**只属于它的红灯** ⇒ 无装饰分支。
+恢复后由**独立进程**复算 sha256 = `4bfb86887053c5b89e9d60069cea729619b03d73d1b5a3a8447a0249fd1bc7c9`，与突变前一致。
+新增测试 **8** 个（12 → 20）；其中 D 是**必要条件证明** —— 去掉第二个根后同一语料**一条都不报**。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f1453e0` | `ci(scripts): widen the spec-reference guard to docs/ and fix the anchors it exposes (#691)`（实现，7 文件 +240/-26） |
+| `f88c4d4` | `chore(task): archive 09-20-t41-guard-docs-refs`（归档，自动提交） |
+| `9fde653` | `docs(task): record T41's archived commit, restore the trailing newline, and move the corpus pin to (796, 797)` |
+
+### Testing
+
+- [OK] **全量 pytest**：`1234 collected` = **1223 passed / 1 failed / 10 skipped**。唯一失败
+  `test_check_journal_ledger.py::test_untracked_journal_is_invisible_to_the_index` **单独复跑 27/27 passed**
+  ⇒ 沙箱 safe-delete 的**累积**计数所致（与 T40 同因），**非回归**。
+- [OK] **本票测试文件**：`test_check_spec_refs.py` **20 passed**（+8 新测试）；`test_check_tasks_refs.py` **14 passed**（钉值 (796, 797) 已对齐）。
+- [OK] **七道守卫**全 rc 0；`check-line-endings` 报 `tracked file(s): 1840, text scanned: 1831, binary skipped: 9, gitlink(s) skipped: 1`。
+- [OK] **ruff**：本票 4 个 Python 文件 `All checks passed!`。
+- [OK] **消融**：M1/M2/M3 分别打红 **9 / 1 / 4**，各有私有见证；恢复后由**独立进程**复算
+  sha256 = `4bfb86887053c5b89e9d60069cea729619b03d73d1b5a3a8447a0249fd1bc7c9`（与突变前一致）。
+- [OK] **CI 4/4 绿**：Scripts CI（含 spec-refs 双 Python 腿）/ Python CI（`1226 passed, 8 skipped` ×2）/ Workflow Inputs CI / README CI Table CI。
+  Rust 与 TypeScript **未触发**（本票无相关改动）。CI 的 **3.9** 与 **3.12** 两腿与本地**逐字相同**：
+  `scanned 134 path:line references in 13 spec files` / `scanned 267 line-free path mentions in 32 spec files (201 resolved / 43 dangling / 23 ambiguous)` /
+  `summary: 118 ok / 7 stale(advisory) / 9 ambiguous(advisory) / 0 structural failure(s)`。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- **T41 / #691 已交付并关票**；#656（P2 本体）仍只等外部「方案第 21 节」原文。
+- 🔴 **新账（本票亲手踩到）**：**「改一个被文档按行号引用的文件后，必须 grep 谁引了它」目前没有守卫。**
+  本票往 `scripts/check-spec-refs.py` 插入了约 65 行，把 recon 文档引用的 `:233` 推移到 `:250` ——
+  **行号仍在范围内 ⇒ 两个结构判据都不报，STALE 也只认「符号定义在别处」**，靠人工读一手才发现。
+  这是「改文件」与「改引用」之间的接缝，值得单独一张票。
+- 延续：账 1（`docker compose` 挂载闭包）、账 2（`ruff format --check`，**从可复算读数重新起算**）、
+  账 4（`add_session.py` 个人 index 行数取自填充前，下次自愈）、账 5（README `Checks` 散文，**明确不作**）、
+  账 6（无 `.gitattributes`）、账 7（J3 本地/CI 合法分歧）、账 8（`27` vs `28` 计数更正）。
+- ⚠️ **`task.py archive` 的两个已知缺陷再次实测成立**：`commit` 不写（本次手工补 `f1453e0`）、
+  `task.json` **丢末尾换行**（已恢复）；`id` 由创建后手工补成全目录名，归档未破坏。
+- ⚠️ **`task.py validate` 对 post-archive 的 `prd.md` 路径报 not found**：T40 既定取舍（先写归档后路径），
+  CI 不跑 `validate`（已 grep 确认），属已知可接受中间态。
+- ⚠️ **沙箱升级会让命令执行两次**（T38 记录）本票复现一次：写盘脚本**报错但已写盘**，
+  逐项核对确认 4 处编辑**各落盘恰好一次**、无重复插入。
