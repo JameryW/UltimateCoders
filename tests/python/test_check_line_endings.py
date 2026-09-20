@@ -146,12 +146,18 @@ def test_real_repo_is_reconciled() -> None:
     ticket adds text files, so they are the honest non-vacuity pin.
 
     The file COUNTS do move -- every ticket adds tracked files -- so they are pinned
-    as this ticket's pair of reachable states, the way `test_check_tasks_refs.py`
-    pins its corpus: 1836/1827 once this ticket's guard and test are committed,
-    1840/1831 once its task directory is archived too.  Measured, not derived: the
-    first pair is what the guard printed with the two files staged, i.e. exactly the
-    tree CI checks out.  A change that moves either pair must update this set in the
-    same change; any third value means the scan changed shape.
+    as the current ticket's pair of reachable states, the way
+    `test_check_tasks_refs.py` pins its corpus: 1836/1827 was T40's pre-archive
+    state and 1840/1831 its post-archive one; T41 added no tracked file in its
+    implementation commit, so 1840/1831 is its pre-archive state as well, and its
+    archive commit -- four task files -- moves it to 1844/1835.  T40's 1836/1827 is
+    dropped as unreachable, the rule `test_check_tasks_refs.py` records for its
+    corpus: leaving it in would mask a real -1 drift.
+
+    The pair is MEASURED, not derived, and two independent counts agree: the guard's
+    own output, and `git ls-files` minus the one gitlink (1845-1 = 1844, so 1835 text
+    + 9 binary).  A change that moves either pair must update this set in the same
+    change; any third value means the scan changed shape.
     """
     r = subprocess.run([PY, str(GUARD)], capture_output=True, cwd=str(REPO))
     out = r.stdout.decode("utf-8", "replace")
@@ -161,7 +167,7 @@ def test_real_repo_is_reconciled() -> None:
     )
     m = re.search(r"tracked file\(s\): (\d+), text scanned: (\d+)", out)
     assert m, f"the guard must report how much it looked at; got:\n{out}"
-    assert (int(m.group(1)), int(m.group(2))) in {(1836, 1827), (1840, 1831)}, (
+    assert (int(m.group(1)), int(m.group(2))) in {(1840, 1831), (1844, 1835)}, (
         f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     )
     assert "line endings check passed." in out, out
