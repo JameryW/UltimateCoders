@@ -64,7 +64,7 @@
 
 - `.claude/skills/trellis-brainstorm/SKILL.md:171`（一行 brainstorm 提示）
 - `.scratch/durable-runtime-migration/map.md:19`（P0 地图的 out-of-scope 行）
-- `.trellis/spec/guides/cross-layer-thinking-guide.md:134` 与 `scripts/check-spec-refs.py:250`（「marketplace 下载」的通用例子与守卫的豁免串）
+- `.trellis/spec/guides/cross-layer-thinking-guide.md:134` 与 `scripts/check-spec-refs.py:322`（「marketplace 下载」的通用例子与守卫的豁免串；该行号被守卫判为**不可校验**，每次改守卫都要手工复核，见 T43/#693）
 
 `PlacementScore` **0**（除 P0 地图那一行）；`optimizer` 唯一命中是 `graph_store.rs:1545` 的注释「P2 Optimizer owns writers」。
 ⇒ 评估件「market scheduling 的范围无法在仓内坐实」**至今成立**。

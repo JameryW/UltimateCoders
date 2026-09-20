@@ -29,6 +29,7 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import subprocess
+import sys
 
 import pytest
 
@@ -436,10 +437,15 @@ def test_repo_index_is_built_from_git_not_from_the_filesystem():
 
 
 def _shape(module):
-    """Every field of a located reference except the line number itself."""
+    """Every field of a reference except the line number itself.
+
+    Both calibers are in here (T43 / #693): a `_shape` comparison is what
+    proves a line-number mutation invisible, and it must therefore be able
+    to see a change in either one.
+    """
     return [(r["spec"], r["spec_line"], r["ref"].split(":")[0], r["verdict"],
              r["symbol"], r["def_line"], r["offset"], r["unanchored"],
-             r["content_candidate_count"])
+             r["line_unchecked"], r["content_candidate_count"])
             for r in module.collect() if r["kind"] == "ref"]
 
 
@@ -638,3 +644,202 @@ def test_real_corpus_line_one_pointers_are_gone():
     assert (26, "python/ultimate_coders/agent/types.py", "MENTION_RESOLVED") in resolved
     assert (26, "python/ultimate_coders/config.py", "MENTION_RESOLVED") in resolved
 
+
+# --------------------------------------------------------------------------
+# Line-checkable references: `unanchored` is a subset (T43 / #693)
+# A: a content anchor alone leaves the line number unchecked -- the shape T42's
+#    count excluded while its wording claimed it.  B: the necessary-condition
+#    proof for that wider tier.  C: the positive control, same fixture, one
+#    symbol named.  D: the real-corpus census and the nesting between the two
+#    calibers.  E: the printed number must be the wider one.
+# --------------------------------------------------------------------------
+
+
+def test_a_content_anchor_alone_leaves_the_line_number_unchecked(guard):
+    """Ablation A -- the shape the narrow caliber excluded.
+
+    The spec line quotes `UC_CAP_BROWSER`, which does occur in the target, so
+    `content_candidate_count == 1` and T42's caliber reports `unanchored` False.
+    But `_content_anchor` is a *file-level* substring test, so the line number
+    is still compared against nothing: this row has an anchor AND an
+    unverifiable line number at the same time.  The quoted token has to be one
+    that is NOT also a symbol with a definition -- `run_loop` would become a
+    symbol anchor and the row would stop demonstrating anything.
+    """
+    spec = ".trellis/spec/backend/spec.md"
+    _write_files(guard.ROOT, {
+        "crates/one/worker.py": 'import os\n\n\n'
+                                'def run_loop():\n'
+                                '    return UC_CAP_BROWSER\n',
+        spec: "see `worker.py:2` for `UC_CAP_BROWSER`\n",
+    })
+    rows = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert [(r["verdict"], r["content_candidate_count"], r["content_ok"],
+             r["symbol"], r["unanchored"], r["line_unchecked"])
+            for r in rows] == [("OK", 1, True, None, False, True)], rows
+
+
+def test_moving_the_line_number_stays_invisible_with_only_a_content_anchor(guard):
+    """Ablation B -- the necessary-condition proof for the wider tier.
+
+    Same fixture shape and same one-token mutation as T42's test B, but the line
+    also quotes code that is present.  T42's caliber calls this row anchored;
+    the mutation is nevertheless invisible, which is the whole reason the
+    reported number had to change.  Without this, `line_unchecked` could be a
+    flag that is merely set more often.
+    """
+    spec = ".trellis/spec/backend/spec.md"
+    _write_files(guard.ROOT, {
+        "crates/one/worker.py": 'import os\n\n\n'
+                                'def run_loop():\n'
+                                '    return UC_CAP_BROWSER\n',
+        spec: "see `worker.py:5` for `UC_CAP_BROWSER`\n",
+    })
+    first = _shape(guard)
+    _write_files(guard.ROOT, {spec: "see `worker.py:4` for `UC_CAP_BROWSER`\n"})
+    assert _shape(guard) == first
+
+
+def test_the_same_fixture_is_visible_once_a_symbol_is_named(guard):
+    """Ablation C -- the positive control for B, on the identical corpus.
+
+    Only the spec line differs: it now names `run_loop`, whose definition line
+    the target contains.  The identical mutation moves the row OK -> STALE, so
+    B's silence is about the missing anchor and not about a dead mutation.
+    """
+    spec = ".trellis/spec/backend/spec.md"
+    _write_files(guard.ROOT, {
+        "crates/one/worker.py": 'import os\n\n\n'
+                                'def run_loop():\n'
+                                '    return UC_CAP_BROWSER\n',
+        spec: "see `worker.py:4` (`run_loop`) for `UC_CAP_BROWSER`\n",
+    })
+    inside = [(r["verdict"], r["offset"], r["unanchored"], r["line_unchecked"])
+              for r in guard.collect() if r["kind"] == "ref"]
+    _write_files(guard.ROOT,
+                 {spec: "see `worker.py:5` (`run_loop`) for `UC_CAP_BROWSER`\n"})
+    outside = [(r["verdict"], r["offset"], r["unanchored"], r["line_unchecked"])
+               for r in guard.collect() if r["kind"] == "ref"]
+    assert inside == [("OK", None, False, False)], inside
+    assert outside == [("STALE", -1, False, False)], outside
+
+
+def test_real_corpus_line_unchecked_census_is_reported():
+    """The number this ticket is about, measured on the real corpus.
+
+    T42 reported 53 of 130 under a sentence that read "so a changed line number
+    cannot be detected".  53 is only the tier with no anchor at all; the
+    property belongs to the 104 with no *positional* anchor, and only the 17
+    with a symbol anchor have a checked line number.  Moving any of these
+    numbers is a same-commit change.
+    """
+    guard = _load_guard()
+    refs = [r for r in guard.collect() if r["kind"] == "ref"]
+    located = [r for r in refs if r["verdict"] in ("OK", "STALE")]
+    assert len(refs) == 130, len(refs)
+    assert len(located) == 121, len(located)
+    assert sum(1 for r in located if r["line_unchecked"]) == 104
+    assert sum(1 for r in located if r["unanchored"]) == 53
+    assert sum(1 for r in located if r["symbol"] is not None) == 17
+
+
+def test_the_two_calibers_are_nested_and_their_difference_is_content_only():
+    """The nesting, plus the difference pinned by its *defining* property.
+
+    "The sets differ" alone would pass for any pair; the subset direction alone
+    would pass if `unanchored` were empty; a bare count alone would pass for a
+    wrong predicate that happens to move the same number of rows.  So the 51
+    are pinned by what makes them the difference: no symbol anchor, at least one
+    content candidate, verdict OK.
+    """
+    guard = _load_guard()
+    located = [r for r in guard.collect()
+               if r["kind"] == "ref" and r["verdict"] in ("OK", "STALE")]
+    leaked = [(r["spec"], r["spec_line"]) for r in located
+              if r["unanchored"] and not r["line_unchecked"]]
+    assert leaked == [], leaked
+    diff = [r for r in located if r["line_unchecked"] and not r["unanchored"]]
+    assert len(diff) == 51, len(diff)
+    assert [(r["symbol"], r["content_candidate_count"] > 0, r["verdict"])
+            for r in diff] == [(None, True, "OK")] * len(diff)
+
+
+def _run_guard(*args):
+    """The guard as CI runs it, so the wording comes from the real entry
+    point rather than from a helper that could drift from it."""
+    proc = subprocess.run([sys.executable, str(GUARD_PATH), *args],
+                          cwd=str(GUARD_PATH.parents[1]),
+                          capture_output=True, text=True, encoding="utf-8")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    return proc.stdout
+
+
+def test_the_summary_number_is_the_wider_one():
+    """Ablation E1 -- the defect WAS a wording over-claim, so pin the number.
+
+    T42's summary printed 53 next to "so a changed line number cannot be
+    detected".  The number beside that claim is now 104 of 121 located.
+    """
+    out = _run_guard()
+    claim = [line.strip() for line in out.splitlines()
+             if "unchecked line number" in line]
+    assert len(claim) == 2, claim          # the advisory and the summary line
+    assert claim[1].startswith("104 of 121"), claim[1]
+    assert "have NO checkable anchor" not in out
+
+
+def test_the_default_advisory_reports_the_wider_number():
+    """Ablation E2 -- the advisory line is separate code from the summary.
+
+    It is the half a reader sees without `--audit`, and it must carry both
+    numbers: the property and the tier.
+    """
+    out = _run_guard()
+    advisory = [line for line in out.splitlines()
+                if line.startswith("ADVISORY:")
+                and "unchecked line number" in line]
+    assert len(advisory) == 1, advisory
+    assert advisory[0].startswith("ADVISORY: 104 of 121"), advisory[0]
+    assert "(53 of them have no anchor at all" in advisory[0], advisory[0]
+
+
+def test_the_audit_list_marks_the_anchor_free_tier():
+    """Ablation E3 -- one row per counted reference, with the 53 marked.
+
+    Counting the rows pins that the list and the count have one source;
+    counting the marks pins that the narrower tier is still visible inside
+    the wider one.
+    """
+    out = _run_guard("--audit")
+    head = "have an UNCHECKED LINE NUMBER"
+    assert out.count(head) == 1
+    rest = out.split(head, 1)[1].split("\n", 1)[1]
+    rows = [line for line in rest.split("ADVISORY", 1)[0].splitlines()
+            if line.strip()]
+    assert len(rows) == 104, len(rows)
+    assert sum(1 for line in rows if "<- no anchor at all" in line) == 53
+
+
+def test_an_ambiguous_row_is_never_anchored(guard):
+    """The flags are located-only by construction, and that is pinned HERE.
+
+    An AMBIGUOUS row is the only shape that could have leaked into the
+    census, and it cannot: the anchor block sits inside `structural is
+    None`, and a `suffix_ambiguous` row skips it entirely.  So such a row
+    has `content_candidate_count` 0 even though its line quotes code (which
+    also means the quoted-code-absent advisory cannot fire for it) and both
+    flags are False.  T43/#693 removed the explicit `and verdict in {\"OK\",
+    \"STALE\"}` fence T42 had put on both fields, after measuring it to be a
+    no-op -- it could not fire, because the assignment it guards is already
+    unreachable from an AMBIGUOUS verdict.  This test keeps that construction
+    from regressing.
+    """
+    _write_files(guard.ROOT, {
+        "crates/one/dup.py": "SOME_TOKEN = 1\n",
+        "crates/two/dup.py": "SOME_TOKEN = 2\n",
+        ALPHA_PATH: "see `dup.py:1` for `SOME_TOKEN`\n",
+    })
+    rows = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert [(r["verdict"], r["content_candidate_count"], r["content_ok"],
+             r["unanchored"], r["line_unchecked"]) for r in rows] == [
+        ("AMBIGUOUS", 0, True, False, False)], rows

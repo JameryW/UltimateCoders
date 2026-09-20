@@ -58,22 +58,67 @@ ADVISORY (heuristic, never fails the build):
                  this branch, because its `PurePath` suffix is `.md:134` and
                  PATH_SPAN_RE did not list `md`.  Measured effect: `1 of 134
                  have no matching quoted content` -> `0`.
-  UNANCHORED     a *located* reference whose spec line carries neither a
-                 symbol with a findable definition nor any quoted code, so
-                 NEITHER advisory above can ever fire and its line number is
-                 unverifiable by construction.  Measured 2026-09-20
-                 (T42/#692): 60 of 134 references; mutating all 60 to a
-                 different in-range line number left the whole output
-                 byte-identical (0/60), while the same mutation on an anchored
-                 reference moved the stale count (7 -> 6) -- so the silence is
-                 structural, not a probe that failed to fire.  After this
-                 ticket's corpus work it is 53 of 130 (four references repaired
-                 into symbol anchors, four line-1 pointers downgraded to
-                 mentions).  `best is None`
-                 is the test, NOT "no symbol on the line": the extractor also
-                 bites words out of the path token itself (`worker.py:524` ->
-                 `worker`), and such a symbol has no definition to compare
-                 against.  Reported as a count, never as a verdict.
+  UNANCHORED     the *narrow tier* of LINE-UNCHECKED below: a located reference
+                 whose spec line carries neither a symbol with a findable
+                 definition nor any quoted code, so NEITHER advisory above can
+                 even be evaluated.  Measured 2026-09-20 (T42/#692): 60 of 134
+                 references; mutating all 60 to a different in-range line number
+                 left the whole output byte-identical (0/60), while the same
+                 mutation on an anchored reference moved the stale count
+                 (7 -> 6) -- so the silence is structural, not a probe that
+                 failed to fire.  After that ticket's corpus work it is 53 of
+                 130 (four references repaired into symbol anchors, four line-1
+                 pointers downgraded to mentions).  `best is None` is the test,
+                 NOT "no symbol on the line": the extractor also bites words out
+                 of the path token itself (`worker.py:524` -> `worker`), and such
+                 a symbol has no definition to compare against.  Reported as a
+                 count, never as a verdict.
+                 NOTE (T43/#693) -- the claim was narrowed, the number was not:
+                 T42's original wording read "NEITHER advisory can fire and its
+                 line number is unverifiable by construction", and the --audit
+                 header said "cannot be verified at all".  That reads as an iff;
+                 it is only one direction.  The CONTENT_MISMATCH table entry two
+                 entries above already says the content anchor is file-level, and
+                 a file-level anchor cannot verify a line number either -- so a
+                 reference that HAS a content anchor but no symbol anchor is
+                 equally unchecked while being excluded from this count.  The
+                 property that covers both is LINE-UNCHECKED.
+  LINE-UNCHECKED
+                 a *located* reference with no **positional** anchor: no symbol
+                 on its spec line has a findable definition, so the only
+                 position-sensitive comparison in this file -- the referenced
+                 range against a symbol's definition line -- never runs for it.
+                 Changing its line number to any other in-range value therefore
+                 cannot change the report.  NOT the same set as UNANCHORED: a
+                 reference may quote code that does occur in the target and still
+                 have an unchecked line number, because
+                 `_content_anchor(spec_line, body)` is a *file-level* substring
+                 test (`form in body`) that never reads the line number.
+                 Measured 2026-09-20 (T43/#693, HEAD 8952b47): 104 of 121
+                 located references (86%) -- 53 of them also UNANCHORED, the other
+                 51 content-anchor-only -- so only 17 of 121 have their line
+                 number checked at all.  Evidence, four parts:
+                 (a) static -- `start`/`end` are read in exactly three places:
+                     the OUT_OF_RANGE upper-bound check, the candidate ranking
+                     that computes `distance`, and the single comparison
+                     `not (start <= definition <= end)` that sets `offset`.
+                     Only the last is position-sensitive, and it sits inside
+                     `if best is not None`.
+                 (b) positive control -- moving 17 symbol-anchored references to
+                     a range that excludes their definition moved the stale count
+                     for 10 of them (stale 7 -> 8); the other 7 were already
+                     STALE, so their count could not move.  The same machinery
+                     that reports silence in (c) therefore does fire.
+                 (c) the claim -- moving all 51 content-anchor-only references to
+                     the farthest in-range line left rc and stdout byte-identical
+                     (0/51).
+                 (d) a live instance -- `docs/architecture/durable-runtime-p2-recon.md`
+                     line 67 cites this file's exemption string; T42's own
+                     docstring insertion moved that string and the guard still
+                     reported the reference OK, i.e. the hole is not hypothetical.
+                 `unanchored -> line_unchecked`, so `unanchored` is a subset and
+                 both are reported: UNANCHORED answers "has no anchor whatsoever",
+                 LINE-UNCHECKED answers "the line number is decoration".
   DANGLING       a *mention* (see below) that resolves to no file at all.
 
 MENTIONS (issue #675 -- the blind spot this tool used to have):
@@ -530,6 +575,7 @@ def collect() -> list[dict[str, Any]]:
             content_ok = True
             content_candidates: list[str] = []
             unanchored = False
+            line_unchecked = False
 
             # Two independent judgements, combined by precedence so that an
             # advisory (symbol) result can never mask a structural defect.
@@ -572,6 +618,13 @@ def collect() -> list[dict[str, Any]]:
                     # rather than "the line names no symbol", because the
                     # extractor also bites words out of the path token.
                     unanchored = not content_candidates and best is None
+                    # T43/#693: that is the narrow tier.  The property its prose
+                    # claims -- "a changed line number cannot be detected" --
+                    # belongs to the wider class, because the content anchor is a
+                    # file-level substring test and never reads the line number.
+                    # `best is not None` is what gives a reference a line number
+                    # that anything actually compares.
+                    line_unchecked = best is None
 
             if kind == "none":
                 verdict = "MISSING_FILE"
@@ -600,10 +653,21 @@ def collect() -> list[dict[str, Any]]:
                 "content": anchor,
                 "content_ok": content_ok,
                 "content_candidate_count": len(content_candidates),
-                # Only a *located* row can be unanchored: an AMBIGUOUS one has
-                # its own advisory already, and counting it here twice would
-                # inflate the census (measured: 9 rows are both).
-                "unanchored": unanchored and verdict in {"OK", "STALE"},
+                # Both flags are located-only BY CONSTRUCTION: they are
+                # assigned inside the block guarded by `structural is None`,
+                # and a `suffix_ambiguous` row -- the only route to an
+                # AMBIGUOUS verdict -- skips that block entirely.  T42 wrote
+                # this as an explicit `and verdict in {"OK", "STALE"}` fence
+                # and justified it with "measured: 9 rows are both"; the
+                # corpus does have 9 AMBIGUOUS rows, but they never reach the
+                # assignment, so the fence could not fire.  T43/#693 measured
+                # exactly that -- removing it changes no row on either corpus
+                # (ablation M5, a no-op) -- and deleted it rather than keep an
+                # unpinnable clause.  The guarantee stays structural at the
+                # assignment site, and
+                # `test_an_ambiguous_row_is_never_anchored` pins it there.
+                "unanchored": unanchored,
+                "line_unchecked": line_unchecked,
             })
 
         # Mentions (#675): the same path written WITHOUT a line number used to
@@ -790,7 +854,9 @@ def main() -> int:
     stale = [r for r in refs if r["verdict"] == "STALE"]
     content = [r for r in refs if not r["content_ok"]]
     unanchored = [r for r in refs if r["unanchored"]]
+    unchecked = [r for r in refs if r["line_unchecked"]]
     ok = [r for r in refs if r["verdict"] == "OK"]
+    located = len(ok) + len(stale)
     dangling = [r for r in mentions if r["verdict"] == DANGLING]
     mention_ambiguous = [r for r in mentions if r["verdict"] == MENTION_AMBIGUOUS]
     exempt_rows: list[tuple[dict[str, Any], str]] = []
@@ -854,16 +920,24 @@ def main() -> int:
         print(f"\nADVISORY: {len(content)} reference(s) quote code absent from the target "
               f"(run with --audit for the list).")
 
-    if args.audit and unanchored:
-        print(f"\nADVISORY: {len(unanchored)} located reference(s) have no checkable "
-              f"anchor -- neither a symbol with a findable definition nor quoted "
-              f"code -- so their line numbers cannot be verified at all:")
-        for row in sorted(unanchored, key=lambda r: (r["spec"], r["spec_line"])):
-            where = f"{row['spec'].split('/')[-1]}:{row['spec_line']}"
-            print(f"  {row['ref']:44s} -> {row['target'].split('/')[-1]:22s} ({where})")
-    elif not args.audit and unanchored:
-        print(f"\nADVISORY: {len(unanchored)} reference(s) have no checkable anchor "
-              f"(run with --audit for the list).")
+    if unchecked:
+        bare = (f"{len(unanchored)} of them have no anchor at all, so neither "
+                f"advisory can even be evaluated" if unanchored else
+                "none of them is anchor-free")
+        if args.audit:
+            print(f"\nADVISORY: {len(unchecked)} of {located} located reference(s) have "
+                  f"an UNCHECKED LINE NUMBER -- no symbol with a findable "
+                  f"definition, so nothing compares their line number to the "
+                  f"target ({bare}):")
+            for row in sorted(unchecked, key=lambda r: (r["spec"], r["spec_line"])):
+                where = f"{row['spec'].split('/')[-1]}:{row['spec_line']}"
+                mark = "  <- no anchor at all" if row["unanchored"] else ""
+                print(f"  {row['ref']:44s} -> {row['target'].split('/')[-1]:22s} "
+                      f"({where}){mark}")
+        else:
+            print(f"\nADVISORY: {len(unchecked)} of {located} located reference(s) have "
+                  f"an unchecked line number ({bare}; run with --audit for the "
+                  f"list).")
 
     if args.audit and dangling:
         print(f"\nADVISORY: {len(dangling)} line-free path mentions resolve to no file "
@@ -898,9 +972,10 @@ def main() -> int:
           f"{len(ambiguous)} ambiguous(advisory) / {len(structural)} structural failure(s)")
     print(f"         {len(content)} of {len(refs)} have no matching quoted content "
           f"(orthogonal to the verdict above)")
-    print(f"         {len(unanchored)} of {len(refs)} have NO checkable anchor: no "
-          f"symbol with a findable definition and no quoted code, so a changed "
-          f"line number cannot be detected (see UNANCHORED in the module docstring)")
+    print(f"         {len(unchecked)} of {located} located references have an "
+          f"unchecked line number: nothing compares it to the target, so a "
+          f"changed line number cannot be detected ({len(unanchored)} of those have "
+          f"no anchor at all; see LINE-UNCHECKED in the module docstring)")
     print(f"         mentions: {len(dangling)} of {len(mentions)} resolve to no file "
           f"({len(exempt_rows)} exempt by documented reason, {len(unclassified)} unclassified; "
           f"advisory, never failing -- see the module docstring)")
