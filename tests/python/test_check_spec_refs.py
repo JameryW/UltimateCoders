@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -452,9 +453,10 @@ def _shape(module):
 def test_a_located_reference_with_nothing_to_check_is_reported(guard):
     """Ablation A -- the "line names nothing" half of the caliber.
 
-    The path carries a directory, so the extractor finds no symbol in it
-    either (contrast D, whose bare basename `worker.py` yields the symbol
-    `worker`, which then has no definition).  A and D together are what
+    The span is nothing but a path carrying a line number, so the extractor
+    declines it outright (T44/#694 -- before that, what saved this row was the
+    directory part defeating IDENT_RE, which is exactly why the bare-basename
+    shape behaved differently; contrast D).  A and D together are what
     separates the two candidate calibers: a wrong one spelled "the line
     names a symbol" reds D but leaves A green, while a flag that is never
     set reds both -- measured as M1/M2 in the ablation run.
@@ -517,20 +519,31 @@ def test_the_same_mutation_is_visible_once_an_anchor_exists(guard):
 def test_a_symbol_with_no_definition_still_counts_as_unanchored(guard):
     """Ablation D -- the caliber, asserted directly.
 
-    `worker.py:2` DOES name a symbol: the extractor splits the path token and
-    takes `worker`, which has no definition anywhere to compare against.  A
-    caliber spelled as "the spec line names no symbol" would report False here
-    and silently drop every bare-basename reference from the census -- which is
-    most of it.
+    The line DOES name a symbol: `never_defined` is an ordinary identifier, not
+    a path token, so the extractor keeps it -- and nothing in the repo defines
+    it.  A caliber spelled as "the spec line names no symbol" would report
+    False here and silently drop every such reference from the census.
+
+    T44/#694 rewrote this fixture.  It used to rest on a *phantom*: `worker`,
+    bitten out of the path token `worker.py:2`, also had no definition.  That is
+    precisely the shape this ticket removed, so the distinction has to be built
+    from a real identifier now -- which is the more honest fixture anyway, since
+    81 of the 130 real reference lines name something with no definition
+    anywhere.  Quoting it in bold rather than in backticks is load-bearing: a
+    `_`-bearing inline span would also become a *content candidate*, and the
+    line would stop being unanchored for an unrelated reason.
     """
-    assert guard._symbols_on("see `worker.py:2` for the loop") == ["worker"]
+    assert guard._symbols_on("see `worker.py:2` for **never_defined**") == [
+        "never_defined"]
     _write_files(guard.ROOT, {
         "crates/one/worker.py": "import os\ndef run_loop():\n    return 1\n",
-        ".trellis/spec/backend/spec.md": "see `worker.py:2` for the loop\n",
+        ".trellis/spec/backend/spec.md":
+            "see `worker.py:2` for **never_defined**\n",
     })
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
     assert [r["unanchored"] for r in rows] == [True], rows
     assert [r["symbol"] for r in rows] == [None], rows
+    assert [r["content_candidate_count"] for r in rows] == [0], rows
 
 
 def test_a_path_pointer_is_a_pointer_not_quoted_code(guard):
@@ -843,3 +856,232 @@ def test_an_ambiguous_row_is_never_anchored(guard):
     assert [(r["verdict"], r["content_candidate_count"], r["content_ok"],
              r["unanchored"], r["line_unchecked"]) for r in rows] == [
         ("AMBIGUOUS", 0, True, False, False)], rows
+
+
+# --------------------------------------------------------------------------
+# One "is this a path?" question, one predicate (T44 / #694)
+#
+# `_symbols_on` used to ask `suffix in CODE_EXT`, which a `path:line` span
+# defeats -- `PurePath("worker.py:524").suffix` is `.py:524`, not a code
+# extension -- so the span survived and the split produced `worker`, `types`,
+# `step_condition` ... as PHANTOM symbols named after files.  `_content_anchor`
+# asked `PATH_SPAN_RE or suffix in CODE_EXT`, and T42 had already taught
+# PATH_SPAN_RE the `path[:line]` shape.  Two answers to one question.
+#
+# Measured on the pre-fix tree (`5ee7be2`): 89 of 130 reference lines carried a
+# phantom, 115-122 (row, word, target) triples depending on the calibre, and 0
+# of them was a definition in its own target.  That is why no VERDICT moves --
+# and why a verdict-level test here would have been vacuous, on the fixed code
+# and on the broken code alike.
+#
+# A: the predicate is one function.  B: the bite is gone, and a mixed span
+# keeps its real anchor.  C: the two consumers agree -- with the non-emptiness
+# assertion that makes agreement mean something.  D: the corpus moves exactly
+# where predicted and nowhere else.  E: the hazard tripwire, computed without
+# the fixed extractor.
+# --------------------------------------------------------------------------
+
+
+def test_the_path_predicate_is_one_function():
+    """Ablation A -- one predicate, two consumers, or they drift apart again.
+
+    Structural rather than behavioural, and deliberately so: the behavioural
+    difference is invisible on the corpus (no phantom ever became a `best`), so
+    a test that only compared outcomes would pass against the broken code.
+    T42 is the precedent -- it fixed the content-anchor side, wrote the reason
+    down, and left this side asking the narrower question.
+    """
+    source = GUARD_PATH.read_text(encoding="utf-8")
+    assert source.count("def _is_path_span(span: str) -> bool:") == 1
+    # Each half of the question is stated exactly once, inside it.  These
+    # anchors are the *code* forms on purpose: the prose form
+    # `PATH_SPAN_RE.match(span)` also occurs in the predicate's own docstring,
+    # so the first version of this test counted 2 and failed on its own prose.
+    assert source.count("pathlib.PurePath(span).suffix in CODE_EXT") == 1
+    assert source.count("return bool(PATH_SPAN_RE.match(span)) or") == 1
+    assert source.count("if _is_path_span(span):") >= 2
+
+
+def test_the_predicate_keeps_both_halves_of_the_question(guard):
+    """Ablation A2 -- the `path[:line]` half is what T42 contributed.
+
+    Dropping `PATH_SPAN_RE` from the shared predicate (M2) leaves the suffix
+    test, which is exactly the narrower question that caused the defect; these
+    two shapes are the ones that separate them.  `.py:524` is not a code
+    extension, which is the whole mechanism.
+    """
+    assert pathlib.PurePath("worker.py:524").suffix == ".py:524"
+    assert pathlib.PurePath("worker.py:524").suffix not in guard.CODE_EXT
+    assert guard._is_path_span("worker.py:524")
+    assert guard._is_path_span("crates/one/worker.py:2-4")
+    assert guard._is_path_span("guide.md:134")
+    assert guard._is_path_span("docs/architecture/note.md")
+    # ...and it is not so wide that a real anchor is swallowed
+    assert not guard._is_path_span("Task.to_dict")
+    assert not guard._is_path_span("prev.summary")
+
+
+def test_a_path_pointer_yields_no_symbol_at_all(guard):
+    """Ablation B -- the bite itself, at the unit level.
+
+    Four `path:line` shapes that used to yield a word named after the file,
+    plus the bare basename (already handled before T44), plus the mixed span
+    that must NOT lose its real anchor: only the path token's own words go.
+    """
+    for shape in ["worker.py:524", "sandbox.py:354", "step_condition.py:1-26",
+                  "worker.py:1487-1500", "worker.py"]:
+        assert guard._symbols_on(f"see `{shape}`") == [], shape
+    assert guard._symbols_on("`Task.to_dict` (`types.py:67-80`)") == [
+        "Task", "to_dict"]
+
+
+def test_both_consumers_agree_on_a_shape_table(guard):
+    """Ablation C -- agreement, plus the non-emptiness that makes it mean
+    something.
+
+    "The two agree" is satisfied by two implementations that both decline
+    everything, so the table has to contain shapes that are not paths and the
+    symbol extractor has to actually return something for them.  Every shape
+    carries one of `_` `.` `=` `"` -- the pre-filter `_content_anchor` applies
+    before the question is ever asked -- so this tests the predicate rather
+    than the pre-filter.
+    """
+    shapes = ["worker.py:524", "crates/one/worker.py:2-4", "guide.md:134",
+              "types.py", "Task.to_dict", "prev.files.contains",
+              "abort_on_failure=True", 'prev.summary.contains("text")']
+    kept: list[str] = []
+    for shape in shapes:
+        line = f"see `{shape}`"
+        by_symbols = guard._symbols_on(line) == []
+        _, candidates = guard._content_anchor(line, "nothing here\n")
+        by_content = candidates == []
+        assert by_symbols == by_content, (shape, by_symbols, by_content)
+        if not by_symbols:
+            kept.append(shape)
+    assert len(kept) >= 4, kept
+
+
+def _corpus_calibers(module):
+    """(lines that name anything, of those, lines that anchor nothing).
+
+    The guard uses the spec line but never exposes its text, so this re-reads
+    it the way `collect()` does (`split("\\n")`, index `spec_line - 1`).
+    """
+    cache: dict[str, list[str]] = {}
+    named = diverging = 0
+    for row in module.collect():
+        if row["kind"] != "ref":
+            continue
+        path = row["spec"]
+        if path not in cache:
+            cache[path] = (module.ROOT / path).read_text(
+                encoding="utf-8", errors="replace").split("\n")
+        if not module._symbols_on(cache[path][row["spec_line"] - 1]):
+            continue
+        named += 1
+        if row["symbol"] is None:
+            diverging += 1
+    return named, diverging
+
+
+def test_real_corpus_moves_only_where_predicted():
+    """Ablation D -- the corpus effect, which is NOT in the verdicts.
+
+    Removing the phantoms cannot move a verdict: `best` needs a definition and
+    none of the phantom words ever was one.  What it moves is the answer to
+    "does this line name anything at all" -- 115 -> 98 -- and the divergence
+    from the "the line names no symbol" caliber, 98 -> 81.  The 17 rows that
+    stop diverging are the ones whose only named words were phantoms, i.e. the
+    17 that made T43's stated reason for its caliber load-bearing at all.
+    """
+    guard = _load_guard()
+    rows = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert len(rows) == 130, len(rows)
+    assert _corpus_calibers(guard) == (98, 81)
+    # and the sides this ticket must NOT move, asserted in the same breath
+    assert sum(1 for r in rows if r["verdict"] == "OK") == 114
+    assert sum(1 for r in rows if r["verdict"] == "STALE") == 7
+    assert sum(1 for r in rows if r["verdict"] == "AMBIGUOUS") == 9
+    assert sum(1 for r in rows if r["symbol"] is not None) == 17
+    assert sum(1 for r in rows if r["unanchored"]) == 53
+    assert sum(1 for r in rows if r["line_unchecked"]) == 104
+
+
+_PATH_TOKEN_RE = re.compile(
+    r"[\w./\\:-]+\.(?:py|rs|ts|tsx|js|jsx|proto|toml|yml|yaml|json|sql|sh|md)"
+    r"(?::\d+(?:\s*[-\u2013]\s*\d+)?)?")
+
+
+def _path_words(module, line):
+    """Words a naive extractor takes out of a path token on this line.
+
+    Deliberately NOT `module._symbols_on`: after T44 that function declines
+    these spans outright, so a tripwire computed from it would be empty by
+    construction and could never fire.
+
+    The calibre is the WIDEST of the three measured on the pre-fix tree: every
+    span source `_symbols_on` reads (inline code, bold, heading), the path
+    token matched *anywhere* inside the span rather than only when the span is
+    nothing but a path, and no subtraction of words that are also named
+    legitimately elsewhere on the line.  Measured: 122 triples here, against
+    115 under "the span is nothing but a path" (the pre-fix extractor's own
+    answer) and 115 under "strip the path spans, subtract what remains".  Those
+    two agree *in total* while differing in composition by five rows each way,
+    so that agreement is a coincidence -- and a tripwire wants the wider one.
+    """
+    spans = re.findall(r"`([^`\n]+)`", line)
+    spans += re.findall(r"\*\*([^*\n]+)\*\*", line)
+    heading = re.match(r"^\s{0,3}#{1,6}\s+(.*?)\s*$", line)
+    if heading:
+        spans.append(heading.group(1))
+    words: list[str] = []
+    for span in spans:
+        for token in _PATH_TOKEN_RE.findall(span.strip()):
+            for part in re.split(r"[.\s()\[\],=:]+", token):
+                if (len(part) > 3 and module.IDENT_RE.fullmatch(part)
+                        and part not in module.SYMBOL_STOPWORDS
+                        and part not in words):
+                    words.append(part)
+    return words
+
+
+def test_no_path_word_is_ever_a_definition_in_its_own_target():
+    """Ablation E -- the tripwire for the hazard this ticket defuses.
+
+    The phantom words were harmless for a *contingent* reason: none of them
+    happened to be a definition in its own target file.  That is one `def` away
+    from breaking -- injecting `def worker` into `worker.py` turns 28 rows from
+    OK into a false STALE -- so the precondition is what gets pinned, and it
+    has to be computed without the fixed extractor or it would be vacuous.
+
+    Not self-referential: `_definitions` is read from the target body the same
+    way `collect()` reads it, and the positive control is a word that IS a
+    definition (`SubtaskResult` in `agent.rs`), so a `_definitions` that
+    returned nothing would fail this test rather than pass it.
+    """
+    guard = _load_guard()
+    control = guard._definitions(
+        (guard.ROOT / "crates/uc-types/src/agent.rs").read_bytes().decode(
+            "utf-8", "replace").split("\n"))
+    assert "SubtaskResult" in control, sorted(control)[:5]
+
+    cache: dict[str, list[str]] = {}
+    triples: list[tuple[str, str, bool]] = []
+    for row in guard.collect():
+        if row["kind"] != "ref" or not row["target"]:
+            continue
+        path = row["spec"]
+        if path not in cache:
+            cache[path] = (guard.ROOT / path).read_text(
+                encoding="utf-8", errors="replace").split("\n")
+        words = _path_words(guard, cache[path][row["spec_line"] - 1])
+        if not words:
+            continue
+        definitions = guard._definitions(
+            (guard.ROOT / row["target"]).read_bytes().decode(
+                "utf-8", "replace").split("\n"))
+        triples.extend((word, row["target"], word in definitions)
+                       for word in words)
+    assert len(triples) == 122, len(triples)      # measured, and non-empty
+    hits = [(word, target) for word, target, hit in triples if hit]
+    assert hits == [], hits

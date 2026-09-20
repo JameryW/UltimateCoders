@@ -453,6 +453,32 @@ def _definitions(lines: list[str]) -> dict[str, list[int]]:
     return found
 
 
+def _is_path_span(span: str) -> bool:
+    """A quoted span that is nothing but a path (optionally with `:line`).
+
+    T44/#694: this question used to be asked in two places with two different
+    answers.  ``_content_anchor`` asked ``PATH_SPAN_RE.match(span) or suffix in
+    CODE_EXT`` -- and PATH_SPAN_RE was taught the ``path[:line]`` shape in
+    T42/#692 precisely so that a pointer stops being read as quoted code --
+    while ``_symbols_on`` asked only ``suffix in CODE_EXT``.  ``PurePath(
+    "worker.py:524").suffix`` is ``.py:524``, which is *not* in CODE_EXT, so
+    the span survived there and was split into words: ``worker`` (>=4 chars,
+    IDENT_RE-fullmatch, not a stopword) came out as a **phantom symbol**.
+
+    Measured on the corpus at ``5ee7be2``: 89 of 130 reference lines carried at
+    least one such word, 115 (row, word, target) triples in total, and **0** of
+    those 115 was a definition in its own target file -- so no verdict moved,
+    and the fix below is invisible to the verdicts.  The defect is *latent*,
+    not harmless: injecting a single ``def worker`` into ``worker.py`` turns 28
+    rows from OK into a **false STALE** (symbol anchors 17 -> 45, UNANCHORED
+    53 -> 45, LINE-UNCHECK 104 -> 76).
+
+    So: one predicate, two consumers, and the two sides cannot drift apart
+    again.
+    """
+    return bool(PATH_SPAN_RE.match(span)) or pathlib.PurePath(span).suffix in CODE_EXT
+
+
 def _symbols_on(spec_line: str) -> list[str]:
     """Symbols named on a spec line, in order, deduped.
 
@@ -474,6 +500,20 @@ def _symbols_on(spec_line: str) -> list[str]:
     to drop (line 307 leaves 52 eligible references at 51).  Headings stay
     prose-tolerant on purpose: ``### Task Properties`` is one of the restored
     13, and the heading carries no other syntax to key off.
+
+    T44/#694: a span that is *nothing but a path* is now rejected by
+    ``_is_path_span`` instead of by ``suffix in CODE_EXT`` alone.  Both
+    consumers of that question share one predicate from now on, because asking
+    it twice in two places is exactly how this defect survived T42:
+    ``PurePath("worker.py:524").suffix`` is ``.py:524``, which is not in
+    CODE_EXT, so such a span used to pass the filter and yield ``worker`` -- a
+    *phantom symbol* named after the file itself.  Measured at ``5ee7be2``: 89
+    of 130 reference lines carried a phantom, 115 (row, word, target) triples
+    in all, and 0 of those 115 was a definition in its target.  With the
+    predicate in place the phantom set is empty, which the corpus *does* show:
+    lines that name anything at all go 115 -> 98, and their divergence from
+    "the line names no symbol" goes 98 -> 81.  The verdicts are unchanged,
+    because no phantom ever became a ``best``.
     """
     spans: list[str] = TICK_RE.findall(spec_line)
     spans += [b for b in BOLD_RE.findall(spec_line) if IDENT_RE.fullmatch(b.strip())]
@@ -483,7 +523,7 @@ def _symbols_on(spec_line: str) -> list[str]:
     out: list[str] = []
     for span in spans:
         span = span.strip()
-        if pathlib.PurePath(span).suffix in CODE_EXT:
+        if _is_path_span(span):
             continue
         for part in re.split(r"[.\s()\[\],=:]+", span):
             if len(part) > 3 and IDENT_RE.fullmatch(part) and part not in SYMBOL_STOPWORDS:
@@ -518,13 +558,18 @@ def _content_anchor(spec_line: str, body: str) -> tuple[str | None, list[str]]:
     content matching does not apply (the line quotes no code).  A None match with
     a non-empty candidate list means nothing quoted on the line occurs in the
     target at all.
+
+    "Is this span a path, so it is not quoted code?" is answered by
+    ``_is_path_span`` -- shared with ``_symbols_on`` since T44/#694, and that
+    sharing is the whole point: asked separately in two places, the two answers
+    diverged and one of them made phantom symbols out of file names.
     """
     candidates: list[str] = []
     for span in TICK_RE.findall(spec_line):
         span = span.strip()
         if len(span) < 4 or not CONTENT_TOKEN_RE.search(span):
             continue
-        if PATH_SPAN_RE.match(span) or pathlib.PurePath(span).suffix in CODE_EXT:
+        if _is_path_span(span):
             continue
         if span not in candidates:
             candidates.append(span)
@@ -615,8 +660,14 @@ def collect() -> list[dict[str, Any]]:
                     # T42/#692: neither advisory can fire for this row, so its
                     # line number cannot be verified.  `best is None` -- i.e.
                     # no named symbol has a definition to compare against --
-                    # rather than "the line names no symbol", because the
-                    # extractor also bites words out of the path token.
+                    # rather than "the line names no symbol".  T44/#694 is why
+                    # that distinction stays deliberate rather than incidental:
+                    # the extractor no longer bites words out of a path token,
+                    # so these two calibres now diverge on 81 rows instead of
+                    # 98 (see `_symbols_on`), and the 17 they stopped diverging
+                    # on are exactly the rows whose only "named" words were
+                    # phantoms.  The calibre itself does not move: it was, and
+                    # remains, "nothing here has a line number to compare".
                     unanchored = not content_candidates and best is None
                     # T43/#693: that is the narrow tier.  The property its prose
                     # claims -- "a changed line number cannot be detected" --
