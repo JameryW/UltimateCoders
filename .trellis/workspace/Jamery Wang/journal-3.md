@@ -791,3 +791,144 @@ M3 summary 计数回窄口径 → 红 1；M4 `--audit` 不再标「无锚」层�
 - 账：本机 `check-tasks-refs-selftest.py` 必中断，只信 CI。
 - ⚠️ 复现提示：CRLF 文件里做多行锚点必须用 `"\r\n".join([...])`；**补末尾换行同样要问方向**（本票栽过一次）。
 
+
+
+## Session 51: T44 the path predicate was asked twice with two answers — the phantom symbols are one def away from 28 false STALEs (#694)
+
+**Date**: 2026-09-20
+**Task**: T44 the path predicate was asked twice with two answers — the phantom symbols are one def away from 28 false STALEs (#694)
+**Branch**: `main`
+
+### Summary
+
+T43 的 journal 在「账」里留了一行：符号抽取器仍会把路径 token 咬成伪符号（`worker.py:524` → `worker`），那一票只在判据里绕开它、**没有**改抽取器 —— 本票就是那一行。缺陷的形状是「同一个问题被问了两遍、两个答案」：`_symbols_on` 问「这个 span 是不是纯路径」用的是 `suffix in CODE_EXT`，而 `PurePath("worker.py:524").suffix` 是 `.py:524`、**不在** `CODE_EXT` 里，于是 span 存活并被切成词；`_content_anchor` 问的是同一个问题，只是答案里多了 `PATH_SPAN_RE.match(span)`（T42 刚把 `path[:line]` 教给它）。T42 把理由写下来了，却只修了一边 —— 这正是「代码长出来的说法必须跟着代码走」。危害不是「无害」而是「潜伏」：伪符号只在它恰好是目标文件里的一个 `def` 时才能影响 `best`；在 `5ee7be2` 的语料上这个条件**恰好**不成立（115 个三元组命中 def = 0），所以判词一个都没动，但今天往 `worker.py` 追加一个 `def worker():`，**28 行**从 OK 变成假 STALE。修法 = 把问题收成一个谓词 `_is_path_span`，两个消费者都调它 ⇒ 两边不可能再各自漂移。
+
+### Main Changes
+
+- `scripts/check-spec-refs.py`：抽出 `_is_path_span(span)`（`bool(PATH_SPAN_RE.match(span)) or PurePath(span).suffix in CODE_EXT`），
+  `_symbols_on` 与 `_content_anchor` **都改成调它** —— 「这个 span 是不是纯路径」从此只有一处答案。
+  两个 docstring 分别记下来龙去脉；`_symbols_on` 那一份还带上本票的普查数字与危害注入读数。
+- `line_unchecked` 的注释重写：它原先写的是「抽取器会把路径 token 咬成词」这条**已被本票修掉**的解释
+  ⇒ 留着即可，但要说真话（这一层现在的含义是「没有东西可以拿来比行号」）；顺带记下「有名字的行 98 / 两侧分歧 81」。
+- `tests/python/test_check_spec_refs.py`：原 test D 原本**建立在伪符号上**（拿 `worker.py` 当「line 2 上没有符号」的样例）
+  ⇒ 改写为 bold 形式的 `**never_defined**`（内联 span 一旦带 `_` 会自己变成内容锚）；新增 6 条，覆盖谓词唯一性、
+  两侧同表、纯路径产出零符号、真语料口径、以及危害绊线。
+- 本票**不新增被跟踪文件**：实现提交里钉值不动，只有归档提交才移动它们（T43 的形状，不是 T42 的）。
+
+## 侦察：五个版本的探针，四次自我更正
+
+侦察的目标只有一个问题：**伪符号到底能不能成为 `best`**。逐版留下的更正（都是「量出来而不是猜」逼出来的）：
+
+- v1 的过滤器把目标形状排除在外、`(spec, line, ref)` 作字典键又吞掉 5 行 ⇒ 整支重写成 v2。
+- v2 `RecursionError`：补丁函数里回头调 `m._symbols_on`，而它已被自己替换掉 ⇒ v3 先绑 `_ORIG`。
+- **v2 的 62 是低估**：它用 `re.split(r"[._/\-]", …)`，含 `_`；而 `_symbols_on` 用的是 `[.\s()\[\],=:]+`，**不含** `_`
+  ⇒ `step_condition` / `graph_store` 根本删不掉。忠实读数是 88（v3）/ 89（v4）。
+- 我自己的散文一度与自己的数据矛盾（写「v2 也会删裸文件名」，而打印出来的行显示 v2 什么都没删）
+  ⇒ 微探针实测 `PurePath('step_condition.py:1-26').suffix == '.py:1-26'`，真因是**切分字符类不一致**，不是粗体/裸名处理。
+- v5 的散文写「这条理由不承重」，而它自己数出来的是 **17** ⇒ 更正为「承重」（且修完之后这句话不再成立，故一并删掉）。
+
+## 普查：三个口径必须一起读
+
+「伪符号」有三种合理定义，数目不同，**只有一个结论是三者共有的**：
+
+| 口径 | 定义 | 三元组 | 词种 | 命中 def |
+|---|---|---|---|---|
+| ① | 当时脚本内联的「mirror」读法 | 记录值 115 | 15 | **0** |
+| ② | 减法口径：把所有含路径 token 的 tick span 整段删掉后**仍抽得到**才不算 | **115** | **14** | **0** |
+| ③ | 最宽：token 出现在 span 内即算（相减之前） | **122** | **16** | **0** |
+
+- 本次**从修前提交 `5ee7be2` 的 blob 重新算过 ②**（不是引用当时的汇总）：115 三元组 / 14 词种 / **命中 def = 0** /
+  **89 of 130** 行带伪符号（其中 80 行有 target）—— 与 docstring 逐字相符。`worker` 一个词占 28 条，
+  与「注入 `def worker` 打红 28 行」是**同一个 28**。
+- ③ 是**绊线测试用的口径**（`122` 与 `hits == []` 都钉在测试里，非空且带正对照）—— 它比 ② 宽，
+  所以绊线不会因为口径收窄而变成装饰。
+- ① 与 ② 总数相同但**组成不同**（各 5 行，`t44_attr.log` 留了两串具体行）；① 的口径没有留脚本 ⇒ 见「账」。
+
+三者共有的结论：**命中 def 恒为 0** ⇒ 判词一个都没动，修法对判词不可见。而这是**偶然**的，不是结构性安全。
+
+## 修法：一个谓词、两个消费者
+
+- 唯一的**行为变更**在 `_symbols_on` 侧；`_content_anchor` 侧等价（它本来就含 `PATH_SPAN_RE`）。
+- 验收：`114 ok / 7 stale / 9 ambiguous / 0 structural`、带 symbol **17**、UNANCHORED **53**、LINE-UNCHECK **104**
+  —— 与修前**逐项相同**；变的只有「有名字的行」98 与「两侧分歧」81 这两个咨询口径。
+- 谓词本身有两个半边，各有一处突变能把它打红（见下），所以「一条谓词」不是把两处判断合并成一处的说法文章。
+
+## 危害是潜伏的，不是无害的（两态对照，今天在 HEAD 上重跑）
+
+| 守卫 | 注入前判词 | 注入后**字段级变化行** | 注入后判词 |
+|---|---|---|---|
+| 修前（`5ee7be2` 的 blob，52567 字节，sha `b70d7ba7…`） | 114 OK / 7 STALE / 9 AMBIG | **28** | 86 OK / **35 STALE** / 9 AMBIG |
+| 修后（工作树） | 同上 | **0** | 114 / 7 / 9（不变） |
+
+注入 = 往 `python/ultimate_coders/agent/worker.py` 追加 `def worker(): return None`。
+前 3 条变化示例：`agent-capability-spec.md:57 / 71 / 574` 都变成 `('STALE', 'worker', 2223)` ——
+**一个 `def` 换来 28 个假 STALE**。修法**卸掉**了这个危害，不只是绕开它。
+收尾：注入后 `worker.py` sha `e63b69ee…`；复原后**另一进程**复算 `55eb36de…` = 基线；守卫 sha 未变。
+
+## 消融：M1 ⊊ M2
+
+- **M1**（把 `_symbols_on` 侧的排除动作退回窄问题 `suffix in CODE_EXT`）→ 红 **5** 条；
+  **M2**（把共享谓词里的 T42 那一半拿掉）→ 红 **16** 条；**M1 − M2 = ∅**（M1 的红全是 M2 的子集）。
+- 形状与 T43 的教训一致：**宽破坏的红集合必须包含窄破坏的**，否则说明窄的那处没被真正钉住。
+- 两处都按字节复原，并由**另一进程**复算 sha256 回 `1caf167a…`。
+
+## 归档与钉值
+
+- 归档提交 `d48edaf`（6 文件，+132/−8）**自带**钉值同步：`check-line-endings` `(1852,1843) → (1856,1847)`
+  （4 个新文本文件，两数各 +4）、`check-tasks-refs` `(803,804) → (804,805)`。
+- 实现提交 `194793b`（2 文件，+307/−14）不新增被跟踪文件 ⇒ 两处钉值都不动。
+- `task.py archive` 的老账仍在：写出的 `task.json` **没有末尾换行**，补的必须是**文件自己用的那个** `\r\n`
+  （补一个裸 `\n` 会产成混合行尾文件，而 `git status` 结构上看不见）。
+
+## 顺带发现：`index.md` 里 Session 49 那行是错位的
+
+- `| 49 | 2026-09-20 | T42 … (#692) |` 落在 `## Notes` **之后**，而表体在 `<!-- @@@auto:session-history -->`
+  与闭合标记之间 ⇒ 表里 50 有、**49 没有**。
+- `add_session.py` 的 `update_index` **没有**任何能在标记区以外写一行的代码路径（唯一的行写入在标记区内）
+  ⇒ 这不是工具产物，是历史上手工或旁路脚本改的。
+- 本次归位（一行移动）。检查器不钉它（`check-journal-ledger` 只对 `Total Sessions` 给咨询），
+  但在这个文件里读表的人会漏掉一整票 —— 所以它不是纯格式问题。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `194793b` | (see git log) |
+| `d48edaf` | (see git log) |
+
+### Testing
+
+- [OK] `python scripts/check-spec-refs.py` **rc 0**：130 refs / 271 mentions / **114 ok / 7 stale / 9 ambiguous** /
+  0 structural failure；咨询行 **104 of 121**（53 无锚）—— 与修前逐项相同
+- [OK] `pytest tests/python/test_check_spec_refs.py -o addopts=` → **45 passed**（原 39）
+- [OK] 聚焦三文件（spec-refs + line-endings + tasks-refs）→ **64 passed**
+- [OK] 全量 `PYTHONPATH=python pytest tests/python/ -o addopts=` → **1249 passed, 10 skipped in 66.32s**
+  （+6 = 本票新增测试数）
+- [OK] 消融 M1/M2 **今天在 HEAD 上复跑**：M1 红 5、M2 红 16、**M1 − M2 = ∅**、两处均跨进程复算 sha 回 `1caf167a…`
+- [OK] 危害两态对照 **今天复跑**：修前守卫（`5ee7be2` 的 blob）字段级变化 **28 行**（114/7/9 → 86/35/9）；
+  修后守卫 **0 行**；注入后 `worker.py` sha `e63b69ee…`、复原后另一进程复算 `55eb36de…` = 基线
+- [OK] 修前口径复算（本次从 `5ee7be2` 的 blob 重算 ②）：**115 三元组 / 14 词种 / 命中 def = 0 / 89 of 130 行**
+- [OK] 三个守卫：journal-ledger（50/50 会话、0 占位符）、line-endings（1856 / 1847 / 9 / 1）、
+  tasks-refs（805 ok / 0 dangling / 0 malformed）全 rc 0
+- [OK] Scripts CI / Python CI 对 `194793b` 与 `d48edaf` **各自** success
+- [OK] 归档提交内同步钉值：line-endings `(1852,1843) → (1856,1847)`、tasks-refs `(803,804) → (804,805)`；
+  两个钉值测试文件 **19 passed**
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 账：`LINE-UNCHECKED` 仍是**咨询**，不进 verdict；要变成结构判据得先决定「怎么补这 104 条」。
+- 账：①（内联「mirror」口径）与 M1/M2 的数字都出自当时的工作树 —— M1/M2 的脚本留在
+  `.workbuddy/tmp/t44_ablate.py` 且今天已复跑；**① 的口径没有留脚本**，只剩 `t44_attr.log` 里的行列表
+  ⇒ 要么留脚本，要么别引用。
+- 账：`update_index` 的第二个副产品：`splitlines()` + `"\n".join()` 写回会**吞掉文件末尾换行**
+  （本次补回，方向按文件自己的 `\r\n`）；同一函数的行写入只发生在标记区内，所以 EOF 那行错位**不是**它干的。
+- 账：伪符号的**来源**已封死（不再产生），但「混合 span」（`` `Task.to_dict` (`types.py:67-80`) `` 这种
+  既含真符号又含路径）仍按混合处理 —— 本期只保证纯路径 span 不再被咬成符号。
+- ⚠️ 复现提示：`v4/v5` 探针把「当前 `_symbols_on`」当修前基准 ⇒ 修复落地后重跑只会得 0；要复算修前口径，
+  必须从 `git cat-file blob 5ee7be2:scripts/check-spec-refs.py` 取一份守卫副本。
+- ⚠️ 复现提示：CRLF 文件里做多行锚点必须用 `"\r\n".join([...])`；补末尾换行同样要问方向。

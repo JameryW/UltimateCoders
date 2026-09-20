@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 50
+- **Total Sessions**: 51
 - **Last Active**: 2026-09-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~823 | Active |
+| `journal-3.md` | ~910 | Active |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,7 +31,9 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 51 | 2026-09-20 | T44 the path predicate was asked twice with two answers — the phantom symbols are one def away from 28 false STALEs (#694) | `194793b`, `d48edaf` | `main` |
 | 50 | 2026-09-20 | T43 the unchecked-line-number caliber is 104/121, not 53/130 (#693) | `59fcf7c`, `b1fc293` | `main` |
+| 49 | 2026-09-20 | T42 expose references whose line number cannot be verified (#692) | `2527764`, `8af77e0` | `main` |
 | 48 | 2026-09-20 | T41 widen the spec-reference guard to docs/ and fix the anchors it exposed (#691) | `f1453e0`, `f88c4d4`, `9fde653` | `main` |
 | 47 | 2026-09-19 | T40 guard every tracked file against mixed line endings (#690) | `1d27a1d`, `6e36424` | `main` |
 | 46 | 2026-09-19 | T39 guard that a workflow's run: steps are covered by its paths (#689) | `841a97d`,  `d3a6103` | `main` |
@@ -89,4 +91,3 @@
 - Sessions are appended to journal files
 - New journal file created when current exceeds 2000 lines
 - Use `add_session.py` to record sessions
-| 49 | 2026-09-20 | T42 expose references whose line number cannot be verified (#692) | `2527764`, `8af77e0` | `main` |
