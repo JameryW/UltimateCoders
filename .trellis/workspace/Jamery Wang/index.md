@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 48
+- **Total Sessions**: 49
 - **Last Active**: 2026-09-20
 <!-- @@@/auto:current-status -->
 
@@ -88,3 +88,4 @@
 - Sessions are appended to journal files
 - New journal file created when current exceeds 2000 lines
 - Use `add_session.py` to record sessions
+| 49 | 2026-09-20 | T42 expose references whose line number cannot be verified (#692) | `2527764`, `8af77e0` | `main` |

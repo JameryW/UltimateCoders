@@ -536,3 +536,141 @@ recon 文档引了 `scripts/check-spec-refs.py:233`（豁免串所在行）。�
   CI 不跑 `validate`（已 grep 确认），属已知可接受中间态。
 - ⚠️ **沙箱升级会让命令执行两次**（T38 记录）本票复现一次：写盘脚本**报错但已写盘**，
   逐项核对确认 4 处编辑**各落盘恰好一次**、无重复插入。
+
+
+## Session 49: T42 expose references whose line number cannot be verified (#692)
+
+**Date**: 2026-09-20
+**Task**: T42 expose references whose line number cannot be verified (#692)
+**Branch**: `main`
+
+### Summary
+
+守卫有两条咨询锚，但只有一条对行号敏感：`STALE` 比的是符号**定义行**是否落在被引范围内，
+而内容锚只问「被引代码在不在文件里出现过」（**文件级**）。全量实测 134 条引用里 **60 条（44%）**
+两条锚都不可能有 ⇒ 它们的行号**无法被任何判据 falsify**。四组实验坐实：A 逐条改行号 **0/60 可见**；
+B（改文件名 ⇒ rc 0→1）/C（把定义移出范围 ⇒ stale 7→6）双对照证明探针本身有效；D 是 T41 刚修过的那条真实漂移，同样不可见。
+新增 **`UNANCHORED`** 咨询类（只计数，永不进 verdict）；另修一处假阳性：`PATH_SPAN_RE` 少 `md` ⇒
+`.md:134` 形状的**指针**被当成「被引代码」⇒ 那句 `1 of 134 have no matching quoted content` 全是噪音。
+语料侧补 4 条符号锚 + 降级 4 条 `:1` 指针：refs **134→130**、mentions **267→271**、UNANCHORED **60→53**、假 mismatch **1→0**。
+10 个新测试；8 处突变打红集合**两两不同**且 10 条新测试每条至少被打红一次；实现提交与归档提交**各自** CI 两腿绿。
+
+### Main Changes
+
+## 缺口：两条锚，只有一条看得见行号
+
+| 锚 | 判据 | 对行号敏感？ |
+|---|---|---|
+| `STALE` | 行上符号的**定义行**是否落在被引范围内 | **是** |
+| `CONTENT_MISMATCH` | 被引代码是否在目标文件里**出现过** | **否**（文件级） |
+| 提及类（`DANGLING` 等） | 文件是否存在 | **否**（与行号无关） |
+
+⇒ 一条引用若两者都没有，其行号**无法被任何判据反证** —— 这不是「知识缺口」，是**判据缺位**。
+
+## 四组实验（全在 HEAD `59509e1`，同一提交）
+
+| 实验 | 做法 | 读数 | 结论 |
+|---|---|---|---|
+| **A** | 60 条逐条把行号改成同范围内**另一个**值 | **0/60 输出变化**，rc 恒 0 | 沉默是结构性的，不是探针哑了 |
+| **B** 机制对照 | `worker.py:524` → `worker_typo.py:524` | rc **0 → 1** | 探针会响 |
+| **C** 判词对照 | `error-handling.md:320` 的 `sandbox.py:1007` → `:1324` | 输出变化，stale **7 → 6** | 行号确实被读 |
+| **D** 真实漂移 | `p2-recon.md:67` 的 `check-spec-refs.py:250` → `:290` | rc 0，stdout **逐字节相同** | 真实漂移也看不见 |
+
+## 为什么不开「重写那 60 条」这扇门（实测依据）
+
+只有 **4 条**能补出「定义**就落在**被引范围内」的符号锚 —— 只有这种锚**真能验行号**；
+其余 **56 条**即便硬补也只能得到**文件级**内容锚（**仍然验不了行号**）。有测量依据才动，本票只让洞**可见**。
+
+## 第二处缺陷（量 D 时撞出来的）
+
+`PATH_SPAN_RE` 没有 `md`，而 `PurePath('x.md:134').suffix == '.md:134'`（不是 `.md`）⇒
+**两个解析器都拒绝**这个形状 ⇒ 一个 `path:line` **指针**落进内容候选分支，被当成「被引代码」，
+而它**永远不可能**出现在目标里。这就是那句 `1 of 134 have no matching quoted content` 的全部来源，
+且正好落在 `p2-recon.md:67` —— T41 刚修过漂移的那一行。
+
+## 判据（本票新增）
+
+`unanchored = not content_candidates and best is None`，默认只打印计数，`--audit` 列清单，**永不进 verdict**。
+
+⚠️ 承重的是 `best is None`（**没有任何被点名的符号有可比较的定义**），而**不是**「行上没有符号」：
+抽取器会把路径 token 咬成伪符号（`worker.py:524` → `worker`），而它没有定义可对。
+口径写成后者，普查会掉近一半 —— 这就是突变 M2，也是「普查」与「口径」必须**并列断言**的原因。
+
+## 语料（推论 A：代码长过了文档，就同票把文档搬过去）
+
+| 文件:行 | 动作 | 结果 |
+|---|---|---|
+| `database-guidelines.md:64` | 补符号锚 | `ShortTermMemory` @45，`OK` |
+| `database-guidelines.md:131` | 补符号锚 | `list_keys` @270，`OK` |
+| `hook-guidelines.md:19` | 补符号锚 | `AgentEventType` @35，`OK` |
+| `hook-guidelines.md:109` | 补符号锚 | `refresh_heartbeat` @158，`OK` |
+| `type-safety.md:26` | 4 条 `:1` 指针**降级**为提及 | 首行是 import，`:1` 不携带信息；提及仍受 `MENTION_RESOLVED` 检查 |
+
+## 读数
+
+| 量 | 实现前（`59509e1`） | 实现后 | 说明 |
+|---|---|---|---|
+| `refs` | 134 | **130** | −4：降级的 `:1` 指针 |
+| `mentions` | 267 | **271** | +4：同一批 |
+| 无匹配引文（假 mismatch） | 1 | **0** | 内容候选过滤器修好 |
+| `UNANCHORED` | 60（口径度量，未输出） | **53** | 新可见 |
+| `ok / stale / ambiguous / structural` | 118 / 7 / 9 / 0 | **114 / 7 / 9 / 0** | 实现前由 134−7−9 推得 |
+
+**53 的分解**：61 − 4（补好符号锚的）− 4（降级的 `:1` 指针，它们**本身就是无锚的**）= 53。
+计划里估的是 57 —— **偏大 4**，因为漏算了降级那 4 条同时是分子。
+
+## 消融：8 处突变，打红集合两两不同
+
+| 突变 | 打到哪条分支 | 打红 |
+|---|---|---|
+| M1 `unanchored = False` | 新咨询类本身 | A / D / 普查 |
+| M2 口径写成「行上有符号」 | 判据口径 | D / 普查（**A 必须仍绿**） |
+| M3 `PATH_SPAN_RE` 丢 `md` | 内容候选过滤器 | E1 / E2 / 普查 |
+| M4 让行号对无锚行重新可见 | 必要条件证明的敏感性 | **B** / A / 两条既有测试 |
+| M5 丢掉「定义是否落在范围内」 | 阳性对照 | **C**（独此一条） |
+| M6 把语料修复改回无名符号 | 修复是活的 | repaired / 普查 |
+| M7 把 `:1` 指针改回来 | 降级是活的 | line_one_pointers / 普查 |
+| M8 让被引代码在目标里消失 | 真仓内容钉 | content（独此一条） |
+
+**两处与计划不符（据实记录）：**
+
+1. **计划 M1/M2 的第一版打红同一集合** ⇒ 被脚本自己的「同一集合即装饰」断言拦下。
+   原因：合成测试 A 当时用裸基名 `worker.py:2`，提取器会咬出符号 `worker` ⇒ A 与 D 同形，两条口径分不开。
+   修法：A 改成**带目录**的路径（行上无符号），于是 **M1 红 A、M2 不红 A**。
+2. **计划 M3「假 mismatch 回到 1」不成立**：光复原过滤器**已经不能**复现症状 ——
+   本票给守卫写的头注里就含 `md:134` 这个例子，而内容测试只问「这个子串在不在目标里」——
+   **记录缺陷的散文把缺陷掩住了**。故症状侧另配 M8，机制侧由 E1 钉；这条限度已写进那条真仓测试的 docstring。
+
+## 归档为何只有一个提交（流程改进）
+
+两处钉值都在**归档那一刻**移动（语料 = tracked 集合），所以**单归档提交必然 CI 红** —— T41 为此连红两轮。
+本票把钉值同步**并入归档提交**：`line-endings` `(1844,1835) → (1848,1839)`（4 个文本文件），
+`tasks-refs` `797 → 803`（**首个 delta > 1 的票**：`implement.jsonl` 贡献 4 条 `.trellis` 路径、`check.jsonl` 2 条，
+因为本票的 jsonl 不只引用自己的 prd，还引用它作证据的 3 个 spec 文件 —— 分解已按源文件核实并写进 docstring）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2527764` | fix(scripts): expose references whose line number cannot be verified, and stop reading `x.md:134` pointers as quoted code (#692) |
+| `8af77e0` | chore(task): archive 09-20-t42-unanchored-refs |
+
+### Testing
+
+- [OK] `python scripts/check-spec-refs.py` **rc 0**：130 refs / 271 mentions / 114 ok / 7 stale / 9 ambiguous / 0 structural / **0** content mismatch / **53 UNANCHORED**
+- [OK] `pytest tests/python/test_check_spec_refs.py -o addopts=""` → **30 passed**（原 20）
+- [OK] 全量 `PYTHONPATH=python pytest tests/python -o addopts=""` → **1234 passed, 10 skipped**（收集 1244 = 原 1234 + 本票 10，只看总数对账）
+- [OK] 消融 8 处突变：打红集合两两不同；10 条新测试每条至少被打红一次；恢复由**独立进程**按字节 + sha256 复核（8 个突变残留串各 0 次）
+- [OK] Scripts CI / Python CI 对 `2527764` 与 `8af77e0` **各自** success
+- [OK] 归档同提交内同步钉值后：line-endings `1848/1839` 通过、tasks-refs `803 ok / 0 dangling / 0 malformed`、ruff 干净、三个守卫测试文件 **49 passed**
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 账：`CONTENT_MISMATCH` 只到**文件级** —— 「引用的代码还在文件里，但行号已经指到别处」**仍无判据**。
+- 账：符号抽取器仍会把路径 token 咬成伪符号；本票只在 `UNANCHORED` 判据里绕开它，**没有**修抽取器。
+- 账：`check-tasks-refs-selftest.py` 本机必中断（只信 CI）。
+- ⚠️ 复现提示：CRLF 文件里做**多行锚点**必须用 `"\r\n".join([...])` —— 本会话为此栽了三次（锚点恒 0 次匹配）。
