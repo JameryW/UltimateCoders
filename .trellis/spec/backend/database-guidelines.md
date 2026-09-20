@@ -61,7 +61,7 @@ Every storage struct provides exactly three constructors:
 2. **`new_fallback()`** -- Always creates in-memory only (for testing / no-infra)
 3. **`with_client(client)`** -- Dependency injection with an existing client
 
-**Real example** (`crates/uc-engine/src/memory/short_term.rs:40-89`):
+**Real example** (`crates/uc-engine/src/memory/short_term.rs:40-89`, `ShortTermMemory::new`):
 
 ```rust
 // Variant 1: Try connect, fall back on error
@@ -128,7 +128,7 @@ TiKV keys use a structured prefix for efficient prefix scanning.
 | Project | `memory:project:{project_id}:{key}` | `memory:project:proj1:architecture` |
 | Global | `memory:global:{key}` | `memory:global:conventions` |
 
-Implementation (`crates/uc-engine/src/memory/short_term.rs:262-274`):
+Implementation (`crates/uc-engine/src/memory/short_term.rs:262-274`, `list_keys`):
 
 ```rust
 pub fn encode_key(key: &MemoryKey) -> String {

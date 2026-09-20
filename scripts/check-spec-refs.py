@@ -53,6 +53,27 @@ ADVISORY (heuristic, never fails the build):
                  can hold for the same reference.  This is the anchor that makes
                  the planned 148-reference rewrite safe: once a line number is
                  dropped, the quoted code is the only evidence left.
+                 T42/#692 closed one false-positive source here: a span that
+                 is itself a `path:line` pointer (`x.md:134`) used to reach
+                 this branch, because its `PurePath` suffix is `.md:134` and
+                 PATH_SPAN_RE did not list `md`.  Measured effect: `1 of 134
+                 have no matching quoted content` -> `0`.
+  UNANCHORED     a *located* reference whose spec line carries neither a
+                 symbol with a findable definition nor any quoted code, so
+                 NEITHER advisory above can ever fire and its line number is
+                 unverifiable by construction.  Measured 2026-09-20
+                 (T42/#692): 60 of 134 references; mutating all 60 to a
+                 different in-range line number left the whole output
+                 byte-identical (0/60), while the same mutation on an anchored
+                 reference moved the stale count (7 -> 6) -- so the silence is
+                 structural, not a probe that failed to fire.  After this
+                 ticket's corpus work it is 53 of 130 (four references repaired
+                 into symbol anchors, four line-1 pointers downgraded to
+                 mentions).  `best is None`
+                 is the test, NOT "no symbol on the line": the extractor also
+                 bites words out of the path token itself (`worker.py:524` ->
+                 `worker`), and such a symbol has no definition to compare
+                 against.  Reported as a count, never as a verdict.
   DANGLING       a *mention* (see below) that resolves to no file at all.
 
 MENTIONS (issue #675 -- the blind spot this tool used to have):
@@ -158,8 +179,14 @@ IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 CONTENT_TOKEN_RE = re.compile(r"[_.=\"]")
 
 # A quoted span that is nothing but a path (optionally with a line/range).
+# `md` is in this list as of T42/#692: a doc path carrying a line number
+# (`.trellis/spec/guides/x.md:134`) is a POINTER, not quoted code, and both
+# of the other parsers decline that shape -- REF_RE excludes `md` and
+# MENTION_PATH_RE excludes `:` -- so before this change it fell through to
+# the content-candidate branch and produced a permanent false
+# CONTENT_MISMATCH.
 PATH_SPAN_RE = re.compile(
-    r"^[\w./\\:-]+\.(?:py|rs|ts|tsx|js|jsx|proto|toml|yml|yaml|json|sql|sh)"
+    r"^[\w./\\:-]+\.(?:py|rs|ts|tsx|js|jsx|proto|toml|yml|yaml|json|sql|sh|md)"
     r"(?::\d+(?:\s*[-\u2013]\s*\d+)?)?$"
 )
 
@@ -502,6 +529,7 @@ def collect() -> list[dict[str, Any]]:
             anchor: str | None = None
             content_ok = True
             content_candidates: list[str] = []
+            unanchored = False
 
             # Two independent judgements, combined by precedence so that an
             # advisory (symbol) result can never mask a structural defect.
@@ -538,6 +566,12 @@ def collect() -> list[dict[str, Any]]:
                     anchor, content_candidates = _content_anchor(
                         spec_lines[spec_line_no - 1], body)
                     content_ok = anchor is not None or not content_candidates
+                    # T42/#692: neither advisory can fire for this row, so its
+                    # line number cannot be verified.  `best is None` -- i.e.
+                    # no named symbol has a definition to compare against --
+                    # rather than "the line names no symbol", because the
+                    # extractor also bites words out of the path token.
+                    unanchored = not content_candidates and best is None
 
             if kind == "none":
                 verdict = "MISSING_FILE"
@@ -566,6 +600,10 @@ def collect() -> list[dict[str, Any]]:
                 "content": anchor,
                 "content_ok": content_ok,
                 "content_candidate_count": len(content_candidates),
+                # Only a *located* row can be unanchored: an AMBIGUOUS one has
+                # its own advisory already, and counting it here twice would
+                # inflate the census (measured: 9 rows are both).
+                "unanchored": unanchored and verdict in {"OK", "STALE"},
             })
 
         # Mentions (#675): the same path written WITHOUT a line number used to
@@ -751,6 +789,7 @@ def main() -> int:
     ambiguous = [r for r in refs if r["verdict"] == "AMBIGUOUS"]
     stale = [r for r in refs if r["verdict"] == "STALE"]
     content = [r for r in refs if not r["content_ok"]]
+    unanchored = [r for r in refs if r["unanchored"]]
     ok = [r for r in refs if r["verdict"] == "OK"]
     dangling = [r for r in mentions if r["verdict"] == DANGLING]
     mention_ambiguous = [r for r in mentions if r["verdict"] == MENTION_AMBIGUOUS]
@@ -815,6 +854,17 @@ def main() -> int:
         print(f"\nADVISORY: {len(content)} reference(s) quote code absent from the target "
               f"(run with --audit for the list).")
 
+    if args.audit and unanchored:
+        print(f"\nADVISORY: {len(unanchored)} located reference(s) have no checkable "
+              f"anchor -- neither a symbol with a findable definition nor quoted "
+              f"code -- so their line numbers cannot be verified at all:")
+        for row in sorted(unanchored, key=lambda r: (r["spec"], r["spec_line"])):
+            where = f"{row['spec'].split('/')[-1]}:{row['spec_line']}"
+            print(f"  {row['ref']:44s} -> {row['target'].split('/')[-1]:22s} ({where})")
+    elif not args.audit and unanchored:
+        print(f"\nADVISORY: {len(unanchored)} reference(s) have no checkable anchor "
+              f"(run with --audit for the list).")
+
     if args.audit and dangling:
         print(f"\nADVISORY: {len(dangling)} line-free path mentions resolve to no file "
               f"({len(exempt_rows)} exempt by documented reason, {len(unclassified)} otherwise; "
@@ -848,6 +898,9 @@ def main() -> int:
           f"{len(ambiguous)} ambiguous(advisory) / {len(structural)} structural failure(s)")
     print(f"         {len(content)} of {len(refs)} have no matching quoted content "
           f"(orthogonal to the verdict above)")
+    print(f"         {len(unanchored)} of {len(refs)} have NO checkable anchor: no "
+          f"symbol with a findable definition and no quoted code, so a changed "
+          f"line number cannot be detected (see UNANCHORED in the module docstring)")
     print(f"         mentions: {len(dangling)} of {len(mentions)} resolve to no file "
           f"({len(exempt_rows)} exempt by documented reason, {len(unclassified)} unclassified; "
           f"advisory, never failing -- see the module docstring)")

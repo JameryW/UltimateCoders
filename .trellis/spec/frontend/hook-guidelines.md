@@ -16,7 +16,7 @@ All agent actions are recorded as events for audit, replay, and recovery. The `E
 
 ### AgentEventType Enum
 
-Defined in `crates/uc-engine/src/events.rs:34-91`. Every significant action is recorded:
+Defined in `crates/uc-engine/src/events.rs:34-91` (`AgentEventType`). Every significant action is recorded:
 
 | Event | Fields | When Emitted |
 |-------|--------|-------------|
@@ -106,7 +106,7 @@ The Orchestrator uses internal method callbacks rather than external callback re
 
 ### Error Handling in Callbacks
 
-Memory persistence failures are logged but do not fail the operation (`python/ultimate_coders/agent/orchestrator.py:149-161`):
+Memory persistence failures are logged but do not fail the operation (`python/ultimate_coders/agent/orchestrator.py:149-161`, `refresh_heartbeat`):
 
 ```python
 if self.engine is not None:

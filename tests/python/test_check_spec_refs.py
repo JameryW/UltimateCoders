@@ -415,3 +415,226 @@ def test_repo_index_is_built_from_git_not_from_the_filesystem():
     tracked = {rel for rel in listed.stdout.decode("utf-8").split("\0") if rel}
     indexed = {p for paths in guard._repo_index().values() for p in paths}
     assert sorted(indexed - tracked) == [], "index sees files git does not track"
+
+
+# --------------------------------------------------------------------------
+# Unanchored references (T42 / #692)
+#
+# A located reference is verifiable only through one of the two advisory
+# anchors: the symbol named on the spec line, or the code the line quotes.
+# 53 of the 130 references have NEITHER, so their line number is
+# unfalsifiable by construction -- measured 2026-09-20: mutating all 60
+# (pre-repair) to a different in-range value left the output byte-identical,
+# 0/60.
+#
+# A: the census is reported.  B: the necessary-condition proof -- the
+# mutation really is invisible.  C: the positive control -- the same mutation
+# IS visible when an anchor exists, so B cannot pass on a no-op mutation.
+# D: the caliber is `best is None`, not "no symbol on the line".  E: a
+# `path:line` span is a pointer, not quoted code (the false CONTENT_MISMATCH).
+# --------------------------------------------------------------------------
+
+
+def _shape(module):
+    """Every field of a located reference except the line number itself."""
+    return [(r["spec"], r["spec_line"], r["ref"].split(":")[0], r["verdict"],
+             r["symbol"], r["def_line"], r["offset"], r["unanchored"],
+             r["content_candidate_count"])
+            for r in module.collect() if r["kind"] == "ref"]
+
+
+def test_a_located_reference_with_nothing_to_check_is_reported(guard):
+    """Ablation A -- the "line names nothing" half of the caliber.
+
+    The path carries a directory, so the extractor finds no symbol in it
+    either (contrast D, whose bare basename `worker.py` yields the symbol
+    `worker`, which then has no definition).  A and D together are what
+    separates the two candidate calibers: a wrong one spelled "the line
+    names a symbol" reds D but leaves A green, while a flag that is never
+    set reds both -- measured as M1/M2 in the ablation run.
+    """
+    _write_files(guard.ROOT, {
+        "crates/one/target.py": "import os\ndef run_loop():\n    return 1\n",
+        ".trellis/spec/backend/spec.md":
+            "see `crates/one/target.py:2` for the loop\n",
+    })
+    assert guard._symbols_on("see `crates/one/target.py:2` for the loop") == []
+    rows = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert [r["verdict"] for r in rows] == ["OK"], rows
+    assert [r["unanchored"] for r in rows] == [True], rows
+    # It is the *silence* that makes it unanchored, not a failure: neither
+    # advisory fires for it, which is the whole point of the flag.
+    assert [r["content_candidate_count"] for r in rows] == [0], rows
+    assert [r["symbol"] for r in rows] == [None], rows
+
+
+def test_moving_the_line_number_is_invisible_without_an_anchor(guard):
+    """Ablation B -- the necessary-condition proof.
+
+    The claim "its line number cannot be verified" is structural only if the
+    mutation is genuinely invisible.  Without this, A could be passing on a
+    fixture where the guard never reads the line number at all.
+    """
+    spec = ".trellis/spec/backend/spec.md"
+    _write_files(guard.ROOT, {
+        "crates/one/worker.py": "import os\ndef run_loop():\n    return 1\n",
+        spec: "see `worker.py:2` for the loop\n",
+    })
+    first = _shape(guard)
+    _write_files(guard.ROOT, {spec: "see `worker.py:3` for the loop\n"})
+    assert _shape(guard) == first
+
+
+def test_the_same_mutation_is_visible_once_an_anchor_exists(guard):
+    """Ablation C -- the positive control for B.
+
+    Same corpus shape and the same one-token mutation, but the line now names
+    a symbol that has a definition.  The reference moves OK -> STALE, so the
+    guard does read line numbers and B\'s silence is about the missing anchor.
+    Real-corpus counterpart (measured 2026-09-20): the same mutation moved the
+    stale count 7 -> 6.
+    """
+    spec = ".trellis/spec/backend/spec.md"
+    body = ("# one\n# two\n# three\n# four\n# five\n# six\n# seven\n"
+            "# eight\n# nine\ndef run_loop():\n    return 1\n# twelve\n")
+    _write_files(guard.ROOT, {"crates/one/worker.py": body,
+                              spec: "see `worker.py:10-12` (`run_loop`)\n"})
+    inside = [(r["verdict"], r["offset"], r["unanchored"])
+              for r in guard.collect() if r["kind"] == "ref"]
+    _write_files(guard.ROOT, {spec: "see `worker.py:2-4` (`run_loop`)\n"})
+    outside = [(r["verdict"], r["offset"], r["unanchored"])
+               for r in guard.collect() if r["kind"] == "ref"]
+    assert inside == [("OK", None, False)], inside
+    assert outside == [("STALE", 8, False)], outside
+
+
+def test_a_symbol_with_no_definition_still_counts_as_unanchored(guard):
+    """Ablation D -- the caliber, asserted directly.
+
+    `worker.py:2` DOES name a symbol: the extractor splits the path token and
+    takes `worker`, which has no definition anywhere to compare against.  A
+    caliber spelled as "the spec line names no symbol" would report False here
+    and silently drop every bare-basename reference from the census -- which is
+    most of it.
+    """
+    assert guard._symbols_on("see `worker.py:2` for the loop") == ["worker"]
+    _write_files(guard.ROOT, {
+        "crates/one/worker.py": "import os\ndef run_loop():\n    return 1\n",
+        ".trellis/spec/backend/spec.md": "see `worker.py:2` for the loop\n",
+    })
+    rows = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert [r["unanchored"] for r in rows] == [True], rows
+    assert [r["symbol"] for r in rows] == [None], rows
+
+
+def test_a_path_pointer_is_a_pointer_not_quoted_code(guard):
+    """Ablation E -- the false CONTENT_MISMATCH source (#692).
+
+    Both parsers declined this shape for the wrong reason: the suffix test
+    sees `.md:134` (not a code extension) and PATH_SPAN_RE did not list `md`,
+    so a `path:line` POINTER reached the content-candidate branch as if it
+    were quoted code and could never occur in the target.  Real corpus effect:
+    `1 of 134 have no matching quoted content`, on `p2-recon.md:67`.
+    """
+    assert pathlib.PurePath("guide.md:134").suffix == ".md:134"
+    assert guard.PATH_SPAN_RE.fullmatch(".trellis/spec/guides/guide.md:134")
+    assert guard.PATH_SPAN_RE.fullmatch("crates/one/worker.py:2-4")
+    matched, candidates = guard._content_anchor(
+        "see `worker.py:2` cf `.trellis/spec/guides/guide.md:134`", "x = 1\n")
+    assert candidates == [], candidates
+    assert matched is None
+
+
+def test_a_doc_pointer_on_the_line_does_not_fake_a_content_mismatch(guard):
+    """Ablation E, end to end: the advisory itself must stay silent."""
+    _write_files(guard.ROOT, {
+        "crates/one/worker.py": "import os\ndef run_loop():\n    return 1\n",
+        "docs/architecture/note.md":
+            "see `crates/one/worker.py:2` as written in `docs/guides/other.md:9`\n",
+    })
+    rows = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert [r["content_candidate_count"] for r in rows] == [0], rows
+    assert [r["content_ok"] for r in rows] == [True], rows
+
+
+def test_real_corpus_unanchored_census_is_reported():
+    """The count this ticket is about, measured on the real corpus.
+
+    Moving any of these changes this number in the same commit, which is the
+    only thing keeping it from being a comment.  Each repair decrements it:
+    60 pre-repair -> 57 (one false content candidate removed) -> 53 (the four
+    symbol anchors below).
+    """
+    guard = _load_guard()
+    rows = guard.collect()
+    refs = [r for r in rows if r["kind"] == "ref"]
+    assert len(refs) == 130, len(refs)
+    assert sum(1 for r in refs if r["unanchored"]) == 53
+    assert sum(1 for r in rows if r["kind"] == "mention") == 271
+
+
+def test_real_corpus_has_no_false_content_mismatch():
+    """`1 of 134` -> `0` (T42/#692).
+
+    Honest limit, measured: reverting ONLY the regex no longer reproduces
+    the symptom, because this fix's own docstring in the guard quotes the
+    example `md:134`, and that substring then satisfies the same content
+    test -- the prose that documents the defect masks it.  So this pin is
+    reddened by a corpus mutation (a quoted token that stops occurring in
+    its target), while the regex revert is pinned by the synthetic
+    mechanism test above.
+    """
+    guard = _load_guard()
+    bad = [(r["spec"], r["spec_line"], r["ref"])
+           for r in guard.collect() if r["kind"] == "ref" and not r["content_ok"]]
+    assert bad == []
+
+
+def test_real_corpus_repaired_references_carry_their_symbol():
+    """The four corpus repairs are live and load-bearing.
+
+    Each row used to be unanchored.  Asserting the symbol AND its definition
+    line (not merely "no longer unanchored") pins that the anchor is the one
+    the edit meant: a line number that drifts out of the range turns these
+    STALE, which is precisely the judgement that did not exist before.
+    """
+    guard = _load_guard()
+    want = {
+        (".trellis/spec/backend/database-guidelines.md", 64):
+            ("crates/uc-engine/src/memory/short_term.rs", "ShortTermMemory", 45),
+        (".trellis/spec/backend/database-guidelines.md", 131):
+            ("crates/uc-engine/src/memory/short_term.rs", "list_keys", 270),
+        (".trellis/spec/frontend/hook-guidelines.md", 19):
+            ("crates/uc-engine/src/events.rs", "AgentEventType", 35),
+        (".trellis/spec/frontend/hook-guidelines.md", 109):
+            ("python/ultimate_coders/agent/orchestrator.py", "refresh_heartbeat", 158),
+    }
+    rows = [r for r in guard.collect()
+            if r["kind"] == "ref" and (r["spec"], r["spec_line"]) in want]
+    got = {(r["spec"], r["spec_line"]): (r["target"], r["symbol"], r["def_line"])
+           for r in rows}
+    assert got == want
+    assert [r["unanchored"] for r in rows] == [False] * 4, rows
+
+
+def test_real_corpus_line_one_pointers_are_gone():
+    """`types.py:1` x4 were pointers at line 1, not references.
+
+    Line 1 of each file is an import, so a `:1` pointer can never be anchored
+    and claims nothing checkable.  The four spans lost their line number and
+    became mentions, where "the file is gone" is still caught (asserted in
+    the type-safety spec: all four resolve as mentions now).
+    """
+    guard = _load_guard()
+    pointers = [(r["spec"], r["ref"]) for r in guard.collect()
+                if r["kind"] == "ref" and r["start"] == 1
+                and r["ref"].split(":")[0] in {"types.py", "memory.py",
+                                             "query.py", "config.py"}]
+    assert pointers == []
+    resolved = [(r["spec_line"], r["ref"], r["verdict"])
+                for r in guard.collect()
+                if r["kind"] == "mention"
+                and r["spec"] == ".trellis/spec/frontend/type-safety.md"]
+    assert (26, "python/ultimate_coders/agent/types.py", "MENTION_RESOLVED") in resolved
+    assert (26, "python/ultimate_coders/config.py", "MENTION_RESOLVED") in resolved
+

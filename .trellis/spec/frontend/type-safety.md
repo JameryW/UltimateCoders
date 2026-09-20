@@ -23,7 +23,7 @@ This is mandatory because:
 - It enables `X | Y` union syntax (though the codebase currently uses `Optional[X]`)
 - It prevents circular import issues with type hints
 
-**Real examples**: `python/ultimate_coders/agent/types.py:1`, `python/ultimate_coders/memory/memory.py:1`, `python/ultimate_coders/search/query.py:1`, `python/ultimate_coders/config.py:1`
+**Real examples**: `python/ultimate_coders/agent/types.py`, `python/ultimate_coders/memory/memory.py`, `python/ultimate_coders/search/query.py`, `python/ultimate_coders/config.py`
 
 ---
 
