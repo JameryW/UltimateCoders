@@ -674,3 +674,120 @@ B（改文件名 ⇒ rc 0→1）/C（把定义移出范围 ⇒ stale 7→6）双
 - 账：符号抽取器仍会把路径 token 咬成伪符号；本票只在 `UNANCHORED` 判据里绕开它，**没有**修抽取器。
 - 账：`check-tasks-refs-selftest.py` 本机必中断（只信 CI）。
 - ⚠️ 复现提示：CRLF 文件里做**多行锚点**必须用 `"\r\n".join([...])` —— 本会话为此栽了三次（锚点恒 0 次匹配）。
+
+
+## Session 50: T43 the unchecked-line-number caliber is 104/121, not 53/130 (#693)
+
+**Date**: 2026-09-20
+**Task**: T43 the unchecked-line-number caliber is 104/121, not 53/130 (#693)
+**Branch**: `main`
+
+### Summary
+T42 把「没有任何锚」的引用暴露出来了，但它给出的**性质**比它数出来的**集合**大：summary 行写的是
+"so a changed line number cannot be detected"，`--audit` 头部写的是 "cannot be verified at all"。
+内容锚是**文件级**的 —— `_content_anchor(spec_line, body)` 的实现就是 `if form in body`，**签名里根本没有行号**
+—— 所以「有内容锚、但没有符号锚」的引用**同样**行号不可检，而它被排除在 53 之外。
+
+本票把这条性质单独命名（`LINE-UNCHECKED`），`UNANCHORED` 降为它的**下位层级**，两个数一起打印：
+**104 / 121 located** 的行号不可检（其中 **53** 完全无锚），只有 **17 / 121** 的行号真的被比较过。
+口径变的是措辞与可见性，**不是**判据强度：仍然只打印、永不进 verdict。
+
+### Main Changes
+
+- `scripts/check-spec-refs.py`：新增行字段 `line_unchecked = best is None`；docstring 新增 `LINE-UNCHECKED`
+  条目（四段证据 a/b/c/d），并把 `UNANCHORED` 里那句 "its line number is unverifiable by construction"
+  收窄为下位情形、附 `NOTE (T43/#693)` 说明「收窄的是声称，不是数字」。
+- 默认 summary 行与 `--audit` 头部措辞分层：主数 `104 of 121`，括注 `53 of those have no anchor at all`；
+  `--audit` 逐行给无锚者打 `<- no anchor at all`。
+- 删掉 `unanchored and verdict in {"OK","STALE"}` 这道栅栏。T42 为它写的理由是「实测 9 条两者皆是」，
+  但赋值落在 `structural is None` 分支内，而 `suffix_ambiguous` —— 通往 AMBIGUOUS 判词的唯一路径 ——
+  会跳过整个分支 ⇒ 该栅栏**结构性不可达**（消融实测 red 0）。
+- `docs/architecture/durable-runtime-p2-recon.md:67` 的**活体漂移**：它引 `scripts/check-spec-refs.py:250`，
+  T42 的头注把那个串推到 277、本票推到 322，**两次守卫都报 OK** ⇒ 改成 `:322`，并注明该行号被守卫判为
+  不可校验、每次改守卫都要手工复核。
+- `tests/python/test_check_spec_refs.py` 30 → 39（+9）。
+
+## 缺口：两条锚，只有一条看得见行号
+
+| 锚 | 判定 | 看行号吗 |
+|---|---|---|
+| 符号锚（`best is not None`） | 符号**定义行**是否落在被引范围 | **是**（`offset` ⇒ `STALE`） |
+| 内容锚（`content_candidates`） | 被引代码是否在目标文件**出现过** | **否**（文件级） |
+
+## 静态证据：`start`/`end` 全仓只有三个消费者
+
+上界检查（`start > count or end > count` ⇒ `OUT_OF_RANGE`，只看上界）、候选排序里算 `distance`、
+以及**唯一**的位置敏感比较 `not (start <= definition <= end)`（置 `offset` ⇒ `STALE`）—— 最后这一处
+包在 `if best is not None` 里，所以没有符号锚的引用**永远走不到它**。这是机制，不是读数。
+
+## 分组与两条实验（HEAD `8952b47`）
+
+| 组 | 判据 | 条数 | 把行号改成同范围另一个值，输出会变吗 |
+|---|---|---|---|
+| P 符号锚 | `symbol is not None` | **17** | **10/17 会变**（阳性对照） |
+| W 仅内容锚 | `symbol is None and cc > 0` | **51** | **0/51**（rc 与 stdout 逐字节相同） |
+| U 无锚 | `symbol is None and cc == 0` | **53** | 0/53（T42 已测） |
+
+⇒ `LINE-UNCHECKED = best is None` = **104**，且两口径**嵌套**（U ⊂ LINE-UNCHECKED），差集**恰好 51 且全部
+`cc > 0`（已落断言，不是人工统计）**。P 组没动的 7 条**恰好就是基线那 7 条 STALE**（突变后仍 STALE，
+默认输出不打印 `offset`）—— 账能对上，不是含糊的「大部分」。
+
+## 为什么 v1 探针不能信（自更正记录）
+
+v1 用 `len(spec_text.split("\n"))`（**spec 文件**的行数）当上界，而不是该行自己的 **target** 行数 ⇒
+把 291 行的 `step_condition.py` 改到第 833 行 ⇒ 撞 `OUT_OF_RANGE` ⇒ **7 个假 CHANGED**，同时 13/17 被 `skip`。
+判据修成 `tc = g._line_count(row["target"])` + `assert 1 <= ns <= ne <= tc`，并**保持区间宽度**（只平移不缩放）。
+**教训：阳性对照自己也要过一遍「新值在哪个坐标系里合法」。** 另外 v1 没有阳性对照，「51/51 不可见」当时
+有平凡解释（机制根本没生效）—— P 组与每处 diff 恒为 `7 → 8 symbol-stale` 才把它排掉。
+另：普查与探针**不能同轮跑**，同轮跑出过污染的 `worker.py:498→499` 读数。
+
+## 消融：5 处突变，打红集合两两不同
+
+M1 `line_unchecked` 反转 → 红 7（私有 `test_the_same_fixture_is_visible_once_a_symbol_is_named`）；
+M2 `unanchored` 放宽成 `= line_unchecked` → 红 6（私有 `test_real_corpus_unanchored_census_is_reported`）；
+M3 summary 计数回窄口径 → 红 1；M4 `--audit` 不再标「无锚」层级 → 红 1；M5 默认咨询行回窄口径 → 红 1。
+两个口径各有**私有红灯** ⇒ 它们被独立钉住，不是同一个谓词的两个写法。
+期间发现 M3/M4 一度打红**同一个**测试（一个测试钉了三件事）⇒ 拆成三个。
+
+## 归档：钉值仍在归档提交才移动
+
+`line-endings` `(1848,1839) → (1852,1843)`（4 个文本文件，两数各 +4）；`tasks-refs` `803 → 804`（delta 回到 1：
+`implement.jsonl` 只引自己的归档 prd，`check.jsonl` 零条 `.trellis` 路径）。旧值 `(1844,1835)`、`797`
+按「不可达值会掩住 -1 漂移」的既有规则**删除**。
+
+🔴 **新增一条实测坑**：`task.py archive` 写出的 `task.json` **没有末尾换行**（T42 那份也一样）。给它补一个裸
+`\n` 会产成 `25 CRLF + 1 lone LF` 的**混合文件** —— 而 `git status` 结构上看不见（`autocrlf` 在 add 时抹平）。
+是 `check-line-endings.py` 在真实仓上报红抓住的：补的必须是**文件自己用的那个结尾**（`\r\n`）。
+修完按字节回读确认 `26 CRLF` 且 `endsNL` true，而不是相信写入。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `59fcf7c` | fix(scripts): report the whole unchecked-line-number class, not just the anchor-free tier (#693) |
+| `b1fc293` | chore(task): archive 09-20-t43-line-unchecked-refs |
+
+### Testing
+
+- [OK] `python scripts/check-spec-refs.py` **rc 0**：130 refs / 271 mentions / 114 ok / 7 stale / 9 ambiguous /
+  0 structural / 0 content mismatch / 咨询行 **104 of 121**（53 无锚）
+- [OK] `pytest tests/python/test_check_spec_refs.py -o addopts=` → **39 passed**（原 30）
+- [OK] 全量 `PYTHONPATH=python pytest tests/python/ -o addopts=` → **1243 passed, 10 skipped**（+9 = 本票新增测试数）
+- [OK] 消融 5 处突变全部非空、两两集合互不相同；两口径各有私有红灯
+- [OK] Scripts CI / Python CI 对 `59fcf7c` 与 `b1fc293` **各自** success
+- [OK] 归档同提交内同步钉值后：line-endings `1852/1843` 通过、tasks-refs `804 ok / 0 dangling / 0 malformed`、
+  ruff `scripts/` 干净、两个钉值测试文件 **19 passed**
+- [OK] `git ls-files` = 1853 ⇒ 1853 − 1 gitlink = 1852 = 1843 文本 + 9 二进制（**两个独立计数相符**）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 账：`LINE-UNCHECKED` 仍是**咨询**，不进 verdict；要变成结构判据需要先决定「怎么补这 104 条」。
+- 账：符号抽取器仍会把路径 token 咬成伪符号（`worker.py:524` → `worker`）；本票只在判据里绕开它，**没有**改抽取器。
+- 账：`--basetemp` 指定仓内目录会让守卫的索引源（`git ls-files`）为空 ⇒ 合成语料测试假红；本地不要省这一步。
+- 账：本机 `check-tasks-refs-selftest.py` 必中断，只信 CI。
+- ⚠️ 复现提示：CRLF 文件里做多行锚点必须用 `"\r\n".join([...])`；**补末尾换行同样要问方向**（本票栽过一次）。
+

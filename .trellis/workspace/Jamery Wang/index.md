@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 49
+- **Total Sessions**: 50
 - **Last Active**: 2026-09-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~409 | Active |
+| `journal-3.md` | ~823 | Active |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 50 | 2026-09-20 | T43 the unchecked-line-number caliber is 104/121, not 53/130 (#693) | `59fcf7c`, `b1fc293` | `main` |
 | 48 | 2026-09-20 | T41 widen the spec-reference guard to docs/ and fix the anchors it exposed (#691) | `f1453e0`, `f88c4d4`, `9fde653` | `main` |
 | 47 | 2026-09-19 | T40 guard every tracked file against mixed line endings (#690) | `1d27a1d`, `6e36424` | `main` |
 | 46 | 2026-09-19 | T39 guard that a workflow's run: steps are covered by its paths (#689) | `841a97d`,  `d3a6103` | `main` |
