@@ -3,7 +3,8 @@
 Background (issue #678, option C; ticket #680).  `.trellis/tasks/**/*.jsonl`
 records a task's context as `{"file": ".trellis/...", "reason": "..."}`.  Those
 references live outside every guard this repository has: `check-spec-refs.py`
-indexes `SPEC_DIR = .trellis/spec` only, so nothing reported a task-context
+indexes `.trellis/spec/` only -- plus `docs/` since T41 (#691), which still
+does not reach `.trellis/tasks/**` -- so nothing reported a task-context
 citation that stopped resolving.
 
 #678 fixed the *cause* -- `archive_task_dir` now repoints a task's own citations

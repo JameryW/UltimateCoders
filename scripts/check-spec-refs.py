@@ -1,4 +1,16 @@
-"""Audit `path:line` references inside `.trellis/spec/**`.
+"""Audit `path:line` references inside `.trellis/spec/**` and `docs/**`.
+
+T41 (#691) widened this from ONE root to two.  The scope was the only narrow
+thing about the guard: `docs/architecture/*.md` are decision inputs -- the P2
+assessment and its recon are what issue #656 would open tickets from -- and they
+pin conclusions to code with the very same `file:line` shorthand, while nothing
+verified them.  Measured 2026-09-20 at `ed9f19c`, this guard pointed at `docs/`
+and otherwise unchanged: 34 references (25 OK / 6 STALE / 2 PATH_FORM / 1
+AMBIGUOUS) and 40 mentions (36 resolved / 2 dangling / 2 ambiguous).  The two
+PATH_FORM were real -- `uc-types/src/agent.rs` where the file lives at
+`crates/uc-types/src/agent.rs`, i.e. exactly the example quoted under PATH_FORM
+below.  No `paths` change was needed: this guard runs in `ci-scripts.yml`, which
+deliberately has no filter.
 
 Background (issue #672): spec prose cites code as `worker.py:1035`.  Those line
 numbers drift whenever code is inserted above the target, because nothing
@@ -89,7 +101,12 @@ import sys
 from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SPEC_DIR = ROOT / ".trellis" / "spec"
+
+# Every root whose `*.md` files carry `path:line` references.  Two since T41
+# (#691): the specs proper, and the `docs/` decision inputs.  The order is not
+# semantic -- the two roots are separate NAMESPACES, and `exemption_self_check`
+# proves no short name resolves under both (see `_short_of`).
+SPEC_ROOTS: tuple[pathlib.Path, ...] = (ROOT / ".trellis" / "spec", ROOT / "docs")
 
 # Directories never scanned as *targets* of a reference.
 #
@@ -240,6 +257,12 @@ MENTION_EXEMPT: tuple[tuple[str, str, int, str], ...] = (
      "and this spec's own sample writes it with `tempfile.mkstemp` under `$CODEX_HOME`, "
      "so no such path is ever repo-relative.  Same class as `uc.scheduler.yaml` above: "
      "present at runtime, absent from the repo by design"),
+    ("agents/domain.md", "CONTEXT.md", 2,
+     "a file the repository is explicitly expected NOT to contain yet: `docs/agents/domain.md` "
+     "reads '**When present**, also read: `CONTEXT.md` ...' and explains that '`CONTEXT.md` and "
+     "`docs/adr/` are created lazily by `/domain-modeling`' -- absence is the documented "
+     "default, not a broken pointer.  Reached this table only when T41 (#691) widened the "
+     "scan to `docs/**`; before that it was outside every guard"),
     ("backend/taskservice-grpc-spec.md", "tui/src/**", 2,
      "deliberately historical section: the Ink/React TUI client was deleted in d7f4631 "
      "(2026-06-25, #157).  This spec's live subject is the TaskService gRPC surface, so the "
@@ -461,7 +484,7 @@ def _resolve(ref: str, index: dict[str, list[str]]):
 def collect() -> list[dict[str, Any]]:
     index = _repo_index()
     rows: list[dict[str, Any]] = []
-    for spec in sorted(SPEC_DIR.rglob("*.md")):
+    for spec in sorted(p for root in SPEC_ROOTS for p in root.rglob("*.md")):
         text = spec.read_text(encoding="utf-8", errors="replace")
         spec_lines = text.split("\n")
         spec_rel = spec.relative_to(ROOT).as_posix()
@@ -586,7 +609,29 @@ def collect() -> list[dict[str, Any]]:
     return rows
 
 
-_SPEC_PREFIX = SPEC_DIR.relative_to(ROOT).as_posix() + "/"
+def _short_of(rel_spec: str) -> str:
+    """The spec path relative to ITS OWN root -- the form both tables are keyed by.
+
+    Computed at CALL time rather than frozen at import: `SPEC_ROOTS` is what a
+    synthetic corpus re-points, and freezing the prefix made that a silent no-op.
+    Only the matching prefix is stripped, so a `.trellis/spec` short can never be
+    produced from a `docs` path (namespace isolation is asserted in
+    `exemption_self_check`, not merely intended here).
+    """
+    for root in SPEC_ROOTS:
+        prefix = root.relative_to(ROOT).as_posix() + "/"
+        if rel_spec.startswith(prefix):
+            return rel_spec[len(prefix):]
+    return rel_spec
+
+
+def _locate_all(short: str) -> list[pathlib.Path]:
+    """Every root that actually holds `short`.
+
+    Empty (absent), one (normal), or more (a namespace collision, which
+    `exemption_self_check` reports rather than resolving by list order).
+    """
+    return [root / short for root in SPEC_ROOTS if (root / short).is_file()]
 
 
 def _mention_exemption(rel_spec: str, ref: str) -> str | None:
@@ -596,7 +641,7 @@ def _mention_exemption(rel_spec: str, ref: str) -> str | None:
     unambiguous -- `directory-structure.md` exists under both `backend/` and
     `frontend/`, so a bare basename would collide.
     """
-    short = rel_spec[len(_SPEC_PREFIX):] if rel_spec.startswith(_SPEC_PREFIX) else rel_spec
+    short = _short_of(rel_spec)
     for spec, pattern, _expected, reason in MENTION_EXEMPT:
         if spec == short and fnmatch.fnmatch(ref, pattern):
             return reason
@@ -619,9 +664,10 @@ def _subject_removed_reason(short: str) -> str | None:
         reason: str | None = None
         if hit is not None:
             commit, text = hit
+            hits = _locate_all(short)
             try:
-                body = (SPEC_DIR / short).read_bytes().decode("utf-8", "replace")
-            except OSError:
+                body = hits[0].read_bytes().decode("utf-8", "replace")
+            except (IndexError, OSError):
                 body = ""
             reason = text if commit in body else None
         _ACK_CACHE[short] = reason
@@ -633,9 +679,28 @@ def exemption_self_check(rows: list[dict[str, Any]]) -> list[str]:
     problems: list[str] = []
     dangling = [r for r in rows if r["kind"] == "mention" and r["verdict"] == DANGLING]
 
+    # Namespace isolation (T41 / #691).  With one root, "the spec path relative
+    # to the root" was unambiguous by construction.  With two, the same short
+    # can name a file under each -- and a rule written for one namespace would
+    # then silently cover the other.  Asserted against the CORPUS, so adding
+    # e.g. `docs/guides/event-pipeline-spec.md` is caught the day it lands
+    # rather than the day someone notices the wrong exemption firing.
+    roots_of: dict[str, set[str]] = {}
+    for row in rows:
+        short = _short_of(row["spec"])
+        for root in SPEC_ROOTS:
+            prefix = root.relative_to(ROOT).as_posix() + "/"
+            if row["spec"].startswith(prefix):
+                roots_of.setdefault(short, set()).add(prefix)
+                break
+    for short, prefixes in sorted(roots_of.items()):
+        if len(prefixes) > 1:
+            problems.append(
+                f"short name is not namespace-unique: {short!r} appears under "
+                f"{sorted(prefixes)} -- a rule keyed by that short would cover both")
+
     def short_of(row: dict[str, Any]) -> str:
-        spec = row["spec"]
-        return spec[len(_SPEC_PREFIX):] if spec.startswith(_SPEC_PREFIX) else spec
+        return _short_of(row["spec"])
 
     for spec, pattern, expected, _reason in MENTION_EXEMPT:
         if pattern.strip() in {"*", "**", "*.*"}:
@@ -656,10 +721,11 @@ def exemption_self_check(rows: list[dict[str, Any]]) -> list[str]:
                 f"pattern, or update the count if the corpus legitimately changed")
 
     for short, (commit, _reason) in SUBJECT_REMOVED.items():
-        path = SPEC_DIR / short
-        if not path.is_file():
+        hits = _locate_all(short)
+        if not hits:
             problems.append(f"SUBJECT_REMOVED names a spec that does not exist: {short}")
             continue
+        path = hits[0]
         text = path.read_bytes().decode("utf-8", "replace")
         if commit not in text:
             problems.append(

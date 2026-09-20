@@ -2,8 +2,8 @@
 
 Context (#680, the C half of #678's "A + C").  `.trellis/tasks/**/*.jsonl`
 carries each task's context as `{"file": ".trellis/..."}`.  Nothing covered
-those paths: `check-spec-refs.py` indexes `SPEC_DIR = .trellis/spec` and never
-mentions `jsonl` or `.trellis/tasks`.  So when `archive_task_dir` moved a task
+those paths: `check-spec-refs.py` indexes `.trellis/spec/` (plus `docs/` since
+T41 / #691) and never mentions `jsonl` or `.trellis/tasks`.  So when `archive_task_dir` moved a task
 directory, the task's citations to its own files stopped resolving and no
 checker said a word -- that corpus is what #678 measured.
 

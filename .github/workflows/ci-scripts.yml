@@ -73,6 +73,21 @@ name: Scripts CI
 # word stay true and a line-ending ticket does not have to touch the README.  A new
 # workflow file would move both.
 #
+# `spec-refs` was WIDENED to a second root on 2026-09-20 (#691, T41):
+# `.trellis/spec/**` plus `docs/**`.  Nothing about the WIRING changed, and that is
+# the point -- because this file has no `paths` filter, a guard that starts reading
+# a new directory needs no filter edit either (T35's rule: a filter is correct for a
+# closed input set and a blindfold for an open one).  What changed is the corpus,
+# measured either side of the change on the same commit: references 98 -> 134 and
+# the files carrying them 11 -> 13; line-free mentions 227 -> 267 and their files
+# 26 -> 32; structural failures 0 -> 2 -> 0, where the two the wider scope exposed
+# were BOTH real and both the same shape the guard's own PATH_FORM note uses as its
+# example -- a slashed path whose directory prefix is wrong
+# (`uc-types/src/agent.rs` where the file lives at `crates/uc-types/src/agent.rs`,
+# and likewise `sandbox/agents/claude_code.rs`).  The `docs/` decision inputs are
+# what issue #656 would open P2 tickets from, so their citations rotting silently
+# was the one remaining unguarded step on that chain.
+#
 # This job IS expected to be red while #680's residual 14 dangling / 47
 # malformed citations stand -- those are recorded in #680 and are deliberately
 # outside the guard ticket's scope.  A red run here means the guard is telling

@@ -3,16 +3,18 @@
 `scripts/**` is in no CI workflow's `paths`, so this guard (and its exemption
 tables) could rot without anything noticing.  These tests pin the mechanism that
 stops the tables from becoming a silent blanket, and
-`.github/workflows/ci-scripts.yml` runs them whenever `scripts/**` or
-`.trellis/spec/**` changes.
+`.github/workflows/ci-scripts.yml` runs them -- that workflow deliberately has NO
+`paths` filter, which is the right shape for a corpus that is every `*.md` under
+`.trellis/spec/**` and (since T41 / #691) `docs/**`.
 
 Three properties of the guard shape this harness:
 
 * its filename has a hyphen, so it cannot be imported by name -- load it with
   ``importlib.util.spec_from_file_location``;
-* ``ROOT`` / ``SPEC_DIR`` / ``_SPEC_PREFIX`` are module-level constants read at
-  call time, so a synthetic corpus is built by monkeypatching those three (plus
-  clearing ``_ACK_CACHE``, which memoises the per-spec banner reads);
+* ``ROOT`` / ``SPEC_ROOTS`` are module-level constants read at call time, so a
+  synthetic corpus is built by monkeypatching those two (plus clearing
+  ``_ACK_CACHE``, which memoises the per-spec banner reads).  ``SPEC_ROOTS`` is a
+  TUPLE since T41 (#691), so a synthetic corpus can exercise both namespaces;
 * it has no import-time side effects (the scan runs under
   ``if __name__ == "__main__"``), so importing it is safe.
 
@@ -59,12 +61,15 @@ def guard(tmp_path):
     """The guard pointed at an empty synthetic repo, with both tables detached."""
     module = _load_guard()
     module.ROOT = tmp_path
-    module.SPEC_DIR = tmp_path / ".trellis" / "spec"
-    module._SPEC_PREFIX = ".trellis/spec/"
+    # BOTH roots (T41 / #691).  They live under tmp_path so the real repository is
+    # never read, and they are separate NAMESPACES: `_short_of` strips exactly one
+    # prefix, and the isolation tests below pin that a rule cannot cross over.
+    module.SPEC_ROOTS = (tmp_path / ".trellis" / "spec", tmp_path / "docs")
     module._ACK_CACHE.clear()
     module.MENTION_EXEMPT = ()
     module.SUBJECT_REMOVED = {}
-    module.SPEC_DIR.mkdir(parents=True, exist_ok=True)
+    for root in module.SPEC_ROOTS:
+        root.mkdir(parents=True, exist_ok=True)
     return module
 
 
@@ -233,6 +238,133 @@ def test_bold_prose_is_not_a_symbol_anchor(guard):
     assert row["target"] == "crates/one/target.py"
     assert row["symbol"] is None, "the prose word must not become the row's symbol"
     assert row["verdict"] == "OK", "no resolvable symbol -> no offset -> OK"
+
+
+# --------------------------------------------------------------------------
+# Two roots (T41 / #691)
+#
+# The ticket's whole content is scope, so every test here is about the SECOND
+# root: that it reaches the verdict (A/B/C), that it is what makes A/B/C
+# visible rather than incidental (D, the necessary-condition proof), that the
+# two namespaces cannot cover for one another (E), and that a rule written for
+# the docs namespace is corpus-checked like any other (F).
+# --------------------------------------------------------------------------
+
+
+def test_both_roots_are_scanned(guard):
+    """A spec under `docs/` must produce rows, and the rows must say which root."""
+    _write_files(guard.ROOT, {
+        "crates/one/target.py": "def f():\n    return 1\n",
+        ".trellis/spec/backend/spec.md": "see `crates/one/target.py:1`\n",
+        "docs/architecture/note.md": "see `crates/one/target.py:2`\n",
+    })
+    rows = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert {r["spec"] for r in rows} == {
+        ".trellis/spec/backend/spec.md", "docs/architecture/note.md"}, rows
+    assert {r["verdict"] for r in rows} == {"OK"}, rows
+
+
+def test_docs_reference_with_a_wrong_directory_is_structural(guard):
+    """Ablation A -- the shape that was actually broken in the real repo
+    (`uc-types/src/agent.rs` where the file lives at `crates/uc-types/src/agent.rs`)."""
+    _write_files(guard.ROOT, {
+        "crates/one/target.py": "x = 1\n",
+        "docs/architecture/note.md": "see `one/target.py:1`\n",
+    })
+    rows = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert [r["verdict"] for r in rows] == ["PATH_FORM"], rows
+
+
+def test_docs_reference_past_the_end_is_structural(guard):
+    """Ablation B."""
+    _write_files(guard.ROOT, {
+        "crates/one/target.py": "x = 1\n",
+        "docs/architecture/note.md": "see `crates/one/target.py:99`\n",
+    })
+    rows = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert [r["verdict"] for r in rows] == ["OUT_OF_RANGE"], rows
+
+
+def test_docs_reference_to_a_nonexistent_file_is_structural(guard):
+    """Ablation C."""
+    _write_files(guard.ROOT, {
+        "docs/architecture/note.md": "see `crates/one/ghost.py:1`\n",
+    })
+    rows = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert [r["verdict"] for r in rows] == ["MISSING_FILE"], rows
+
+
+def test_the_docs_root_is_what_makes_those_visible(guard):
+    """Ablation D -- the necessary-condition proof.
+
+    The same corpus, with the second root removed, reports NOTHING.  Without
+    this, A/B/C could be passing on some incidental property of the fixture
+    (e.g. the guard reading a directory it was not asked to read).
+    """
+    _write_files(guard.ROOT, {
+        "crates/one/target.py": "x = 1\n",
+        "docs/architecture/note.md": (
+            "a `one/target.py:1`\n"
+            "b `crates/one/target.py:99`\n"
+            "c `crates/one/ghost.py:1`\n"
+        ),
+    })
+    with_docs = [r["verdict"] for r in guard.collect() if r["kind"] == "ref"]
+    assert with_docs == ["PATH_FORM", "OUT_OF_RANGE", "MISSING_FILE"], with_docs
+
+    guard.SPEC_ROOTS = (guard.ROOT / ".trellis" / "spec",)
+    without_docs = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert without_docs == [], without_docs
+
+
+def test_a_short_name_cannot_serve_two_namespaces(guard):
+    """Ablation E -- namespace isolation.
+
+    A rule is keyed by the path RELATIVE TO ITS ROOT, which was unambiguous with
+    one root.  With two, the same short can exist under each, and a rule written
+    for one would silently fire in the other.  Asserted against the corpus.
+    """
+    _write_files(guard.ROOT, {
+        "crates/one/target.py": "x = 1\n",
+        ".trellis/spec/guides/twin.md": "see `crates/one/target.py`\n",
+        "docs/guides/twin.md": "see `crates/one/target.py`\n",
+    })
+    problems = guard.exemption_self_check(guard.collect())
+    assert any("not namespace-unique" in p for p in problems), problems
+    assert any("guides/twin.md" in p for p in problems), problems
+
+
+def test_a_docs_rule_is_corpus_checked_like_any_other(guard):
+    """Ablation F -- the rule added for `docs/agents/domain.md` is not a blanket.
+
+    It carries a declared hit count, so when its mentions stop matching the rule
+    is reported dead/drifted rather than quietly widening.
+    """
+    guard.MENTION_EXEMPT = (("agents/domain.md", "CONTEXT.md", 2, "fixture rule"),)
+    _write_files(guard.ROOT, {
+        "docs/agents/domain.md": "read `CONTEXT.md`, `CONTEXT.md` and `CONTEXT.md`\n",
+    })
+    problems = guard.exemption_self_check(guard.collect())
+    assert any("hit count drifted" in p for p in problems), problems
+    assert any("declares 2" in p for p in problems), problems
+
+
+def test_real_corpus_docs_root_is_live():
+    """The second root is not decorative in the real repo.
+
+    `docs/` contributes specs to the corpus, its one dangling name has a REASONED
+    exemption (0 unclassified), and the exemption tables are still in sync.
+    """
+    guard = _load_guard()
+    rows = guard.collect()
+    docs_specs = sorted({r["spec"] for r in rows if r["spec"].startswith("docs/")})
+    assert len(docs_specs) >= 6, docs_specs
+    assert guard.exemption_self_check(rows) == []
+
+    context = [r for r in rows
+               if r["ref"] == "CONTEXT.md" and r["verdict"] == guard.DANGLING]
+    assert len(context) == 2, context
+    assert all(guard._mention_exemption(r["spec"], r["ref"]) for r in context), context
 
 
 # --------------------------------------------------------------------------
