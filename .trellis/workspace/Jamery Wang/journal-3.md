@@ -484,6 +484,8 @@ recon 文档引了 `scripts/check-spec-refs.py:233`（豁免串所在行）。�
 | `f1453e0` | `ci(scripts): widen the spec-reference guard to docs/ and fix the anchors it exposes (#691)`（实现，7 文件 +240/-26） |
 | `f88c4d4` | `chore(task): archive 09-20-t41-guard-docs-refs`（归档，自动提交） |
 | `9fde653` | `docs(task): record T41's archived commit, restore the trailing newline, and move the corpus pin to (796, 797)` |
+| `77947ae` | `docs(journal): record session 48 (T41 / #691)` |
+| `527c3d6` | `test(scripts): move the line-endings pin to the reachable pair (1844, 1835)`（修 CI 红） |
 
 ### Testing
 
@@ -495,10 +497,19 @@ recon 文档引了 `scripts/check-spec-refs.py:233`（豁免串所在行）。�
 - [OK] **ruff**：本票 4 个 Python 文件 `All checks passed!`。
 - [OK] **消融**：M1/M2/M3 分别打红 **9 / 1 / 4**，各有私有见证；恢复后由**独立进程**复算
   sha256 = `4bfb86887053c5b89e9d60069cea729619b03d73d1b5a3a8447a0249fd1bc7c9`（与突变前一致）。
-- [OK] **CI 4/4 绿**：Scripts CI（含 spec-refs 双 Python 腿）/ Python CI（`1226 passed, 8 skipped` ×2）/ Workflow Inputs CI / README CI Table CI。
+- [OK] **CI 4/4 绿（只对实现提交 `f1453e0` 成立，不覆盖本 session 其余提交 —— 见下条）**：Scripts CI（含 spec-refs 双 Python 腿）/ Python CI（`1226 passed, 8 skipped` ×2）/ Workflow Inputs CI / README CI Table CI。
   Rust 与 TypeScript **未触发**（本票无相关改动）。CI 的 **3.9** 与 **3.12** 两腿与本地**逐字相同**：
   `scanned 134 path:line references in 13 spec files` / `scanned 267 line-free path mentions in 32 spec files (201 resolved / 43 dangling / 23 ambiguous)` /
   `summary: 118 ok / 7 stale(advisory) / 9 ambiguous(advisory) / 0 structural failure(s)`。
+- 🔴 **`9fde653` 与 HEAD `77947ae` 的 Scripts CI 实际都是红的**（我推 `9fde653` 时只验过 `f1453e0`）：
+  两腿逐字 `AssertionError: the scan size has moved: ('1844', '1835')` —— **T41 自己的归档任务目录多出 4 个
+  跟踪文件，把 `test_check_line_endings.py` 的计数钉值搬走了**。修法是 `527c3d6`：钉值
+  `{(1836,1827),(1840,1831)}` → `{(1840,1831),(1844,1835)}`（T40 的 `(1836,1827)` 判为**不可达而删除**，
+  与 `test_check_tasks_refs.py` 同一口径）。两个可达态的**两种独立计数互证**：守卫自身输出，以及
+  `git ls-files` 1845 − 1 个 gitlink = 1844 = **1835 文本 + 9 二进制**；非空性钉值（`binary skipped: 9` /
+  `gitlink(s) skipped: 1`）未动。该断言的**两个方向都在本轮观测到**：集合外的值报红、集合内的值转绿。
+- 🔴 **新铁律（本 session 亲手踩到）**：「**CI 绿**」只对**验过的那棵树**成立 —— 实现票的 CI 绿**不覆盖**
+  归档提交与 journal 提交。**每个提交各自要等 CI**，否则红会拖到票关闭之后才被发现。
 
 ### Status
 
@@ -506,11 +517,16 @@ recon 文档引了 `scripts/check-spec-refs.py:233`（豁免串所在行）。�
 
 ### Next Steps
 
-- **T41 / #691 已交付并关票**；#656（P2 本体）仍只等外部「方案第 21 节」原文。
+- **T41 / #691 交付完成**：实现 → 归档 → 账本/journal → `527c3d6` 修正 CI 钉值，**CI 全绿后才关票**；
+  #656（P2 本体）仍只等外部「方案第 21 节」原文。
 - 🔴 **新账（本票亲手踩到）**：**「改一个被文档按行号引用的文件后，必须 grep 谁引了它」目前没有守卫。**
   本票往 `scripts/check-spec-refs.py` 插入了约 65 行，把 recon 文档引用的 `:233` 推移到 `:250` ——
   **行号仍在范围内 ⇒ 两个结构判据都不报，STALE 也只认「符号定义在别处」**，靠人工读一手才发现。
   这是「改文件」与「改引用」之间的接缝，值得单独一张票。
+- 🔴 **账 9（同一类，跨守卫）**：**归档一张票会移动「别的」守卫测试里的计数钉值**。T39→T40 动的是
+  `test_check_tasks_refs.py` 的语料对，本票又动了 `test_check_line_endings.py` 的扫描计数对 ——
+  两者都是「+4 个跟踪文件」引起的。⇒ 归档提交前先 `grep -rn "tracked file(s)\|len(refs)" tests/ scripts/`
+  并按 **整行相等** 判据自查，或直接跑满全套（行尾守卫在 CI 上独立成腿，本地单跑守卫脚本**看不见**这条）。
 - 延续：账 1（`docker compose` 挂载闭包）、账 2（`ruff format --check`，**从可复算读数重新起算**）、
   账 4（`add_session.py` 个人 index 行数取自填充前，下次自愈）、账 5（README `Checks` 散文，**明确不作**）、
   账 6（无 `.gitattributes`）、账 7（J3 本地/CI 合法分歧）、账 8（`27` vs `28` 计数更正）。
