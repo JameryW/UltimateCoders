@@ -485,6 +485,13 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     counter-example that a delta can be bigger than one and a total alone would not
     say why.
 
+    T44 / #694 makes the move a thirteenth time, and the delta is one again -- T43's
+    shape rather than T42's: its `implement.jsonl` cites its own archived `prd.md`
+    under `.trellis/` and nothing else, giving 804 -> 805.  Its other two entries cite
+    `scripts/check-spec-refs.py` and `tests/python/test_check_spec_refs.py`, which are
+    real paths but not `.trellis` ones, so they are outside this corpus by
+    construction -- the same reason T43's delta was one.
+
     This is a tripwire, not a whitelist: if a future change moves any of these
     numbers, it must be updated in the same change.
     """
@@ -495,13 +502,13 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     malformed = [r for r in rows if r["verdict"] == "MALFORMED"]
 
     # The corpus is the TRACKED set, so this ticket's own `implement.jsonl`
-    # counts only once committed: 803 while it is untracked, 804 once it is
+    # counts only once committed: 804 while it is untracked, 805 once it is
     # (which is how CI always sees it). Those two ARE the reachable states for
     # the current ticket, so they are the pair. T42's window was wider only
     # because its jsonl files cited six `.trellis` paths between them, giving it
     # one intermediate state; those values are unreachable now, and leaving them
     # in would mask a real -1 drift. Pinning the reachable set is the point.
-    assert len(refs) in (803, 804), f"reference count drifted: {len(refs)}"
+    assert len(refs) in (804, 805), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 

@@ -1,0 +1,2 @@
+{"file": "scripts/check-spec-refs.py", "reason": "验收 1/2/3：rc 0；refs=130、判词 114/7/9 与基线逐字相同；「是不是路径」只剩一份实现（grep `PurePath(` / `.suffix in CODE_EXT` 仅命中 _is_path_span 内部）"}
+{"file": "tests/python/test_check_spec_refs.py", "reason": "验收 4/5/6：语料钉值 98/81 与 17/53/104 逐字不变；危害绊线 triples>=100 且 hits==0；M1（复原符号侧旧判据）与 M2（把共享谓词收窄回 T42 之前）红灯集合互不相同"}

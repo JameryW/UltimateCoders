@@ -156,16 +156,19 @@ def test_real_repo_is_reconciled() -> None:
     1848/1839.  T43 is that shape a third time: no tracked file in its
     implementation commit (the guard, its test and one doc are modifications), so
     1848/1839 is its pre-archive state as well, and its archive commit -- four task
-    files -- moves it to 1852/1843.
+    files -- moves it to 1852/1843, which is T44's pre-archive state as well: T44 adds
+    no tracked file in its implementation commit either (the guard and its test are
+    both modifications), so its archive commit -- four task files -- moves it to
+    1856/1847.
 
     Pinned as the current ticket's pair of reachable states, and the older values are
     dropped as unreachable: 1836/1827 (T40's pre-archive), 1840/1831 (T40's
-    post-archive) and now 1844/1835 (T42's pre-archive) -- each would mask a real -1
-    drift if left in, the rule `test_check_tasks_refs.py` records for its corpus,
-    applied to this one.
+    post-archive) and 1844/1835 / 1848/1839 (T42's and T43's pre-archive states) --
+    each would mask a real -1 drift if left in, the rule `test_check_tasks_refs.py`
+    records for its corpus, applied to this one.
 
     The pair is MEASURED, not derived, and two independent counts agree: the guard's
-    own output, and `git ls-files` minus the one gitlink (1853-1 = 1852, so 1843 text
+    own output, and `git ls-files` minus the one gitlink (1857-1 = 1856, so 1847 text
     + 9 binary).  A change that moves either pair must update this set in the same
     change; any third value means the scan changed shape.
     """
@@ -177,7 +180,7 @@ def test_real_repo_is_reconciled() -> None:
     )
     m = re.search(r"tracked file\(s\): (\d+), text scanned: (\d+)", out)
     assert m, f"the guard must report how much it looked at; got:\n{out}"
-    assert (int(m.group(1)), int(m.group(2))) in {(1848, 1839), (1852, 1843)}, (
+    assert (int(m.group(1)), int(m.group(2))) in {(1852, 1843), (1856, 1847)}, (
         f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     )
     assert "line endings check passed." in out, out
