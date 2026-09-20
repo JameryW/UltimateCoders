@@ -147,21 +147,25 @@ def test_real_repo_is_reconciled() -> None:
 
     The file COUNTS do move -- every ticket adds tracked files -- so they are pinned
     as the current ticket's pair of reachable states, the way
-    `test_check_tasks_refs.py` pins its corpus: 1836/1827 was T40's pre-archive
-    state and 1840/1831 its post-archive one; T41 added no tracked file in its
-    implementation commit, so 1840/1831 is its pre-archive state as well, and its
-    archive commit -- four task files -- moved it to 1844/1835.  T41 also added no
-    tracked file in ITS implementation commit (the guard, its test and three spec
-    files are all modifications), so 1844/1835 is T42's pre-archive state too, and
-    T42's archive commit -- four task files -- moves it to 1848/1839.
+    `test_check_tasks_refs.py` pins its corpus: T41 added no tracked file in its
+    implementation commit, so 1840/1831 is its pre-archive state as well as T40's
+    post-archive one, and its archive commit -- four task files -- moved it to
+    1844/1835.  T42 added no tracked file in ITS implementation commit (the guard,
+    its test and three spec files are all modifications), so 1844/1835 is its
+    pre-archive state too, and T42's archive commit -- four task files -- moved it to
+    1848/1839.  T43 is that shape a third time: no tracked file in its
+    implementation commit (the guard, its test and one doc are modifications), so
+    1848/1839 is its pre-archive state as well, and its archive commit -- four task
+    files -- moves it to 1852/1843.
 
     Pinned as the current ticket's pair of reachable states, and the older values are
-    dropped as unreachable: 1836/1827 (T40's pre-archive) and now 1840/1831 (T40's
-    post-archive) both mask a real -1 drift if left in -- the rule
-    `test_check_tasks_refs.py` records for its corpus, applied to this one.
+    dropped as unreachable: 1836/1827 (T40's pre-archive), 1840/1831 (T40's
+    post-archive) and now 1844/1835 (T42's pre-archive) -- each would mask a real -1
+    drift if left in, the rule `test_check_tasks_refs.py` records for its corpus,
+    applied to this one.
 
     The pair is MEASURED, not derived, and two independent counts agree: the guard's
-    own output, and `git ls-files` minus the one gitlink (1845-1 = 1844, so 1835 text
+    own output, and `git ls-files` minus the one gitlink (1853-1 = 1852, so 1843 text
     + 9 binary).  A change that moves either pair must update this set in the same
     change; any third value means the scan changed shape.
     """
@@ -173,7 +177,7 @@ def test_real_repo_is_reconciled() -> None:
     )
     m = re.search(r"tracked file\(s\): (\d+), text scanned: (\d+)", out)
     assert m, f"the guard must report how much it looked at; got:\n{out}"
-    assert (int(m.group(1)), int(m.group(2))) in {(1844, 1835), (1848, 1839)}, (
+    assert (int(m.group(1)), int(m.group(2))) in {(1848, 1839), (1852, 1843)}, (
         f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     )
     assert "line endings check passed." in out, out

@@ -478,6 +478,13 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     touch this corpus at all; the +6 is purely the ticket's own existence.  Measured
     tracked-state total after archive: 803, split confirmed per source file.
 
+    T43 / #693 makes the move a twelfth time, and the delta is back to one: its
+    `implement.jsonl` cites only its own archived `prd.md` under `.trellis/`, and its
+    `check.jsonl` cites no `.trellis` path at all, giving 803 -> 804.  Counted per
+    source file rather than read off the total, because T42 is the standing
+    counter-example that a delta can be bigger than one and a total alone would not
+    say why.
+
     This is a tripwire, not a whitelist: if a future change moves any of these
     numbers, it must be updated in the same change.
     """
@@ -488,13 +495,13 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     malformed = [r for r in rows if r["verdict"] == "MALFORMED"]
 
     # The corpus is the TRACKED set, so this ticket's own `implement.jsonl`
-    # counts only once committed: 797 while it is untracked, 803 once it is
+    # counts only once committed: 803 while it is untracked, 804 once it is
     # (which is how CI always sees it). Those two ARE the reachable states for
-    # the current ticket, so they are the pair. T31's window was wider only
-    # because that ticket had two contributing jsonl files, giving it one
-    # intermediate state; those values are unreachable now, and leaving them in
-    # would mask a real -1 drift. Pinning the reachable set is the point.
-    assert len(refs) in (797, 803), f"reference count drifted: {len(refs)}"
+    # the current ticket, so they are the pair. T42's window was wider only
+    # because its jsonl files cited six `.trellis` paths between them, giving it
+    # one intermediate state; those values are unreachable now, and leaving them
+    # in would mask a real -1 drift. Pinning the reachable set is the point.
+    assert len(refs) in (803, 804), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 

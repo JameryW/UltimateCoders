@@ -1,0 +1,2 @@
+{"file": "scripts/check-spec-refs.py", "reason": "验收 1/2/3：rc 0；输出同时含 `line_unchecked` 主数与 `unanchored` 下位数；--audit 清单条数与计数逐条相等（同源）；措辞不带完备性断言（不再出现 `cannot be verified at all`）"}
+{"file": "tests/python/test_check_spec_refs.py", "reason": "验收 4/5：全绿且总收集数只增不减；M1（把 line_unchecked 谓词改成 `best is not None`）与 M2（把 unanchored 谓词放宽成 `best is None`）两条突变的红灯集合互不相交 —— M2 只该打红 unanchored 的钉值，不该打红 line_unchecked 的"}
