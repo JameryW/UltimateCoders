@@ -1,0 +1,4 @@
+{"file": "scripts/check-spec-refs.py", "reason": "验收 1/2：修复后 rc 0 且 scanned 的 spec 文件数含 docs；未修那两条 PATH_FORM 的文档时 rc 1 且恰好 2 条具名 PATH_FORM（与探针手算逐条对上）"}
+{"file": "tests/python/test_check_spec_refs.py", "reason": "验收 4/5：全绿；消融 A–F 各自打红，尤其 D（少掉 docs 根后 A·B·C 全不报）必须实测而非推理"}
+{"file": "docs/architecture/durable-runtime-migration-assessment.md", "reason": "验收 2 的取证对象：2 条 PATH_FORM 在修复前是本票唯一的结构性红灯来源"}
+{"file": ".github/workflows/ci-scripts.yml", "reason": "验收 6：paths 与既有 steps 未被改动，头注含 T41 段"}
