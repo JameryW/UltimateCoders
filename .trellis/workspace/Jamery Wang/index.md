@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 51
-- **Last Active**: 2026-09-20
+- **Total Sessions**: 52
+- **Last Active**: 2026-09-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~910 | Active |
+| `journal-3.md` | ~1026 | Active |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 52 | 2026-09-22 | P2 runtime policy baseline — verify, commit, archive | `d747b563`, `bb9e016e` | `main` |
 | 51 | 2026-09-20 | T44 the path predicate was asked twice with two answers — the phantom symbols are one def away from 28 false STALEs (#694) | `194793b`, `d48edaf` | `main` |
 | 50 | 2026-09-20 | T43 the unchecked-line-number caliber is 104/121, not 53/130 (#693) | `59fcf7c`, `b1fc293` | `main` |
 | 49 | 2026-09-20 | T42 expose references whose line number cannot be verified (#692) | `2527764`, `8af77e0` | `main` |

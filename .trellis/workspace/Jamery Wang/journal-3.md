@@ -932,3 +932,95 @@ T43 的 journal 在「账」里留了一行：符号抽取器仍会把路径 tok
 - ⚠️ 复现提示：`v4/v5` 探针把「当前 `_symbols_on`」当修前基准 ⇒ 修复落地后重跑只会得 0；要复算修前口径，
   必须从 `git cat-file blob 5ee7be2:scripts/check-spec-refs.py` 取一份守卫副本。
 - ⚠️ 复现提示：CRLF 文件里做多行锚点必须用 `"\r\n".join([...])`；补末尾换行同样要问方向。
+
+
+## Session 52: P2 runtime policy baseline — verify, commit, archive
+
+**Date**: 2026-09-22
+**Task**: P2 runtime policy baseline — verify, commit, archive
+**Branch**: `main`
+
+### Summary
+
+Verified the uncommitted P2 baseline end-to-end, committed it as one work commit, and archived the task.
+
+### Main Changes
+
+## Session 52: P2 runtime policy baseline — verify, commit, archive
+
+**Date**: 2026-09-22
+**Task**: `09-20-p2-runtime-policy` (now `archive/2026-09/09-20-p2-runtime-policy`)
+**Branch**: `main`
+
+### Summary
+
+The P2 baseline implementation (written in a prior session, left uncommitted)
+was verified end-to-end against its spec, committed as one work commit, and
+the task archived. This session wrote no production code: the only edits are
+the verification note in the task's `research/notes.md` and the `commit`
+pointer in the archived `task.json`.
+
+### Main Changes
+
+- Re-ran every P2 acceptance check on the dirty tree; all green (see Testing).
+- Independent spec review (read-only subagent) over the full diff vs
+  `runtime-policy-spec.md` + `prd.md`/`design.md`: all three scenarios PASS,
+  no wrong-vs-correct violations, no over-claims.
+- Work commit `d747b563` (17 files, +1198/−20): runtime report, review
+  verdicts, capacity placement, spec pointers, P2 architecture doc.
+- Archive commit `bb9e016e` via `task.py archive` (auto-commit).
+- Pre-existing failure recorded, not repaired: `cargo clippy -D warnings`
+  fails on `crates/uc-grpc/src/server.rs:3717` (`let_unit_value`) — that file
+  is outside this task's diff.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d747b563` | feat(runtime): P2 baseline diagnostics, review verdicts, capacity placement |
+| `bb9e016e` | chore(task): archive 09-20-p2-runtime-policy |
+
+### Testing
+
+All re-run today on this tree (nothing copied from prior notes):
+
+- [OK] `.venv pytest tests/python/test_review_policy.py tests/python/test_workflow_orchestration.py` → **72 passed** (`review.py` 100% coverage in the report)
+- [OK] `cargo test -p uc-engine --lib runtime_metrics` → **3 passed**
+- [OK] `cargo test -p uc-grpc --lib` → **226 passed** (placement filter 30, no affinity regressions)
+- [OK] `cargo check -p uc-grpc-server` → clean
+- [OK] `cargo check -p uc-engine --no-default-features --features storage --example runtime_report` → clean
+- [OK] `cargo test -p uc-engine --test runtime_report_integration --no-run` → compiles (live-PG test stays `#[ignore]` by design; no DB claimed)
+- [OK] `cargo fmt --check` → clean; `ruff check` on review/worker/sandbox/tests → clean
+- [FAIL, pre-existing] `cargo clippy -p uc-engine -p uc-grpc -- -D warnings` → one error at `server.rs:3717`, file untouched by this task
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Next architecture slice TBD — P2 doc's deferred follow-ups: adaptive
+  optimization (needs objective + failed-attempt usage), strict review
+  independence (admission/delivery enforcement), repair loops (versioned graph
+  expansion), monetary market (bids/budgets).
+- Optional: fix the pre-existing clippy `let_unit_value` at `server.rs:3717`.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d747b563` | (see git log) |
+| `bb9e016e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
