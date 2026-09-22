@@ -1024,3 +1024,95 @@ All re-run today on this tree (nothing copied from prior notes):
 ### Next Steps
 
 - None - task complete
+
+
+## Session 53: Gateway dispatch live roster test — close #656 residual 1 (gateway half)
+
+**Date**: 2026-09-22
+**Task**: Gateway dispatch live roster test — close #656 residual 1 (gateway half)
+**Branch**: `main`
+
+### Summary
+
+Test-only slice: dispatch decisions on an RPC-built live roster; committed and archived.
+
+### Main Changes
+
+## Session 53: gateway dispatch live roster test — close #656 residual 1 (gateway half)
+
+**Date**: 2026-09-22
+**Task**: `09-22-gateway-dispatch-live-roster` (now `archive/2026-09/09-22-gateway-dispatch-live-roster`)
+**Branch**: `main`
+
+### Summary
+
+Delivered a test-only slice closing the gateway-side half of #656 residual 1:
+`dispatch_gate` / `placement_target` now decide on a roster built purely
+through real RPCs against a real `GrpcServer`. Planned via trellis-brainstorm
+(scope A: roster-decision layer, no NATS — user-confirmed), implemented and
+checked via subagents, committed, archived. No production code touched.
+
+### Main Changes
+
+- New `crates/uc-grpc/tests/dispatch_live_roster.rs` (274 lines, 3 tests):
+  harness mirrors `grpc_integration.rs` but clones `worker_registry()`
+  (`server.rs:2546`, pub) before `into_services()`; roster of producer /
+  reviewer / affine-twin (`per_worker_topic=false`) / legacy built entirely
+  via `register_worker` / `worker_heartbeat` RPCs.
+- Gate verdicts through the wire: `NoCapableWorker`, T19
+  `NoIndependentReviewer` (both holders excluded) + single-exclusion
+  `Dispatch` precision, affinity target + zero-overlap shared fallback,
+  version-mismatch refused / legacy accepted-but-undispatchable.
+- Wire-fidelity tripwire: twin ties on every signal and sorts first, wins
+  unless the RPC-populated `per_worker_topic` filter holds.
+- 3.3 judgment: no spec update — test pins existing contracts, no new
+  pattern/decision (worker-service-spec has no test-mapping table).
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dda54dd2` | test(grpc): live roster dispatch decisions through real RPCs |
+| `2f2f2ea3` | chore(task): archive 09-22-gateway-dispatch-live-roster |
+
+### Testing
+
+- [OK] `cargo test -p uc-grpc --test dispatch_live_roster` → **3 passed**
+- [OK] Mutation: twin flipped to `per_worker_topic=true` → placement test
+  **red** (`affine-twin` vs `live-producer`) → restored → green (not vacuous)
+- [OK] `cargo test -p uc-grpc --lib` → **226 passed**; `cargo fmt --check` clean
+- [OK] trellis-check: 0 issues (roster purity grep, verdict-vs-spec,
+  determinism all verified)
+- [NOTE] `cargo clippy -p uc-grpc --tests`: only pre-existing `server.rs`
+  warnings (`:3717`, `:9073`, `:9120`, `:9155`), untouched, out of scope
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- #656 live inputs now: only the T19 shared-queue race window (denied
+  decision D, pending §21) + P2-3 market (ungrounded, pending §21).
+  Gateway decision side has live coverage; delivery side already had it.
+- Consider a #656 progress comment recording residual-1 closure.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dda54dd2` | (see git log) |
+| `2f2f2ea3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
