@@ -23,6 +23,7 @@ use crate::ultimate_coders::*;
 /// supplementing (and eventually replacing) NATS-based heartbeat tracking.
 pub struct WorkerRegistry {
     workers: HashMap<String, RegisteredWorker>,
+    placement_policy: crate::placement::PlacementPolicy,
     /// T19 #670 — rejected-dispatch counters.
     ///
     /// **Two counters, not one.** "No reviewer exists other than the producer"
@@ -104,9 +105,15 @@ impl WorkerRegistry {
     pub fn new() -> Self {
         Self {
             workers: HashMap::new(),
+            placement_policy: crate::placement::PlacementPolicy::default(),
             no_independent_reviewer: AtomicU64::new(0),
             producer_identity_unknown: AtomicU64::new(0),
         }
+    }
+
+    /// Set before serving traffic; candidate eligibility is policy-independent.
+    pub fn set_placement_policy(&mut self, policy: crate::placement::PlacementPolicy) {
+        self.placement_policy = policy;
     }
 
     /// Review dispatches refused because *every* capability-matching worker was
@@ -457,7 +464,12 @@ impl WorkerRegistry {
                 max_capacity: w.max_capacity,
             })
             .collect();
-        crate::placement::place(&candidates, file_constraints, sibling_hosts)
+        crate::placement::place_with_policy(
+            &candidates,
+            file_constraints,
+            sibling_hosts,
+            self.placement_policy,
+        )
     }
 
     /// Mark workers with stale heartbeats as unavailable (returns stale worker IDs).
@@ -2540,6 +2552,46 @@ mod tests {
         assert_eq!(constrained.worker_id, "w-other");
         assert_eq!(constrained.affinity_hits, 1);
         assert_eq!(reg.no_independent_reviewer_count(), 0);
+    }
+
+    #[test]
+    fn capacity_placement_preserves_eligibility_and_review_exclusion() {
+        let mut reg = WorkerRegistry::new();
+        reg.set_placement_policy(crate::placement::PlacementPolicy::Capacity);
+        signalled_with_caps(&mut reg, "producer", "a", 0, &["review"], &[], true);
+        signalled_with_caps(&mut reg, "reviewer", "b", 1, &["review"], &[], true);
+        signalled_with_caps(&mut reg, "wrong-cap", "a", 0, &["code"], &[], true);
+        signalled_with_caps(&mut reg, "legacy-topic", "a", 0, &["review"], &[], false);
+        signalled_with_caps(&mut reg, "wrong-scope", "a", 0, &["review"], &[], true);
+        signalled_with_caps(&mut reg, "wrong-version", "a", 0, &["review"], &[], true);
+        reg.workers
+            .get_mut("wrong-scope")
+            .expect("registered")
+            .projects = vec!["elsewhere".into()];
+        reg.workers
+            .get_mut("wrong-version")
+            .expect("registered")
+            .contract_version = "old".into();
+        let target = reg
+            .placement_target(
+                &["review".into()],
+                "p1",
+                &[],
+                &no_hosts(),
+                &set(&["producer"]),
+            )
+            .expect("independent eligible reviewer");
+        assert_eq!(target.worker_id, "reviewer");
+        reg.deregister("reviewer").expect("registered reviewer");
+        assert!(reg
+            .placement_target(
+                &["review".into()],
+                "p1",
+                &[],
+                &no_hosts(),
+                &set(&["producer"])
+            )
+            .is_none());
     }
 
     #[test]

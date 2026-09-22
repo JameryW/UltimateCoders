@@ -348,6 +348,8 @@ class AgentOutput:
     stderr_tail: str = ""  # last ~10 lines of stderr (for diagnostics)
     # List of tool call names extracted from the agent output
     tool_calls: list[str] = field(default_factory=list)
+    had_failed_step: bool = False
+    failed_file_changes: list[FileChange] = field(default_factory=list)
     # Per-step usage records for a multi-agent workflow (T18 #668).
     #
     # An adapter never sets this: it describes the *chain*, not one adapter's

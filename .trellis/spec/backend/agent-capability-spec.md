@@ -76,7 +76,9 @@ Advertising `review` by default would let every producing worker claim its own r
 turn review into self-assessment with no code change anywhere else. The opt-in is the
 *cheaper* of the two enforcement points — a worker that never opted in cannot even become a
 candidate — so the dispatch-side exclusion set (T19 #670) only has to reason about workers
-that *did* opt in.
+that *did* opt in. The output contract for a node that actually requires
+`review` is in [`runtime-policy-spec.md`](./runtime-policy-spec.md); do not
+treat a description containing "review" as that contract.
 
 **Known limit**, specified in `worker-service-spec.md` and repeated here because this spec is
 easy to over-read: the gateway's gate is a **roster check, not a delivery guarantee**.

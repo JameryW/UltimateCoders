@@ -196,7 +196,10 @@ is the producer, the work-queue may still deliver the review to it. The gate onl
 removes the *worst* shape (the producer as the sole candidate). Closing the
 window needs per-worker subjects everywhere **plus** promoting affinity from
 preference to gate — rejected as structurally impossible for legacy workers
-(no per-worker subject) and as colliding with D12.
+(no per-worker subject) and as colliding with D12. Opt-in
+`UC_PLACEMENT_POLICY=capacity` changes ranking only
+([runtime-policy-spec.md](./runtime-policy-spec.md)); it does not make this
+roster check a delivery guarantee.
 
 ⚠️ **`"review"` is not a default worker capability** (`UC_CAP_REVIEW` opts in,
 `worker.py:498`), so the fail-closed paths are reachable only in clusters that
@@ -288,4 +291,5 @@ still comes first for the rest.
 | `UC_GRPC_ENDPOINT` | No | — | gRPC server address for WorkerService registration (e.g., `http://localhost:50051`) |
 | `UC_GRPC_ADDR` | No | `[::]:50051` | gRPC server listen address (Rust server side) |
 | `UC_SCALE_HOSTS` | No | _(unset = `local`)_ | Comma/semicolon list of docker connection specs for cross-host ScaleWorkers fan-out |
+| `UC_PLACEMENT_POLICY` | No | `affinity` | `affinity` or `capacity`. Any other value, including blank, fails gateway startup. See [runtime-policy-spec.md](./runtime-policy-spec.md) |
 | `UC_COMPOSE_FILE` / `UC_COMPOSE_PROJECT` | No | `/app/docker/docker-compose.yml` / `docker` | Compose target for the scale action |

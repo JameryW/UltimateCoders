@@ -16,6 +16,7 @@ pub mod metadata;
 pub mod migration_lock;
 pub mod rate_limiter;
 pub mod repos_config;
+pub mod runtime_metrics;
 pub mod sandbox;
 pub mod scheduler;
 pub mod search;

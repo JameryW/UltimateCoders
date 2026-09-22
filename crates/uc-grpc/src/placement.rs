@@ -27,12 +27,21 @@
 //! wins among equally affine workers — this is precisely D12's "tie-break
 //! lowest load".
 //!
+//! That order is the default [`PlacementPolicy::Affinity`] policy. Opt-in
+//! [`PlacementPolicy::Capacity`] (`UC_PLACEMENT_POLICY=capacity`) ranks by
+//! exact `current_load / max_capacity`, then affinity, locality, and
+//! `worker_id`. Zero file overlap stays eligible. A full or zero-capacity
+//! worker is skipped, and no remaining dedicated candidate still means the
+//! shared subject. [`place`] keeps the affinity default.
+//!
 //! # Soft semantics
 //!
-//! [`place`] returns `None` whenever no candidate clears
+//! Affinity [`place`] returns `None` whenever no candidate clears
 //! [`MIN_AFFINITY_HITS`] (or none declared a per-worker topic / none is
-//! available). The caller then publishes to the shared subject — every node
-//! stays dispatchable through overflow, and a scoring outage, a stale
+//! available). Capacity mode may still select a zero-overlap worker; with
+//! no dedicated candidate it uses the same shared subject. The caller then
+//! publishes there. Every node stays dispatchable through overflow, and a
+//! scoring outage, a stale
 //! heartbeat, or a legacy worker degrades to exactly the pre-T12 behavior.
 //! A node is never stranded by a score.
 
@@ -68,6 +77,28 @@ pub const MAX_RECENT_FILES: usize = 64;
 /// score and the fetch). Load and locality therefore decide *among*
 /// affinity-bearing candidates.
 pub const MIN_AFFINITY_HITS: usize = 1;
+
+/// Both policies are soft preferences over the same hard-gated roster.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum PlacementPolicy {
+    #[default]
+    Affinity,
+    Capacity,
+}
+
+impl std::str::FromStr for PlacementPolicy {
+    type Err = uc_types::EngineError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "affinity" => Ok(Self::Affinity),
+            "capacity" => Ok(Self::Capacity),
+            _ => Err(uc_types::EngineError::ConfigError(
+                "UC_PLACEMENT_POLICY must be affinity or capacity".into(),
+            )),
+        }
+    }
+}
 
 /// The dispatch subject reserved for one worker.
 pub fn per_worker_subject(worker_id: &str) -> String {
@@ -169,7 +200,8 @@ impl PlacementCandidate<'_> {
         if self.max_capacity == 0 {
             return 100;
         }
-        (self.current_load * 100) / self.max_capacity
+        ((u64::from(self.current_load) * 100) / u64::from(self.max_capacity))
+            .min(u64::from(u32::MAX)) as u32
     }
 }
 
@@ -179,7 +211,8 @@ pub struct Placement {
     pub worker_id: String,
     /// Subject the caller must publish to.
     pub subject: String,
-    /// File-overlap count that justified the choice (≥ [`MIN_AFFINITY_HITS`]).
+    /// File-overlap count. Affinity mode returns a placement only when this
+    /// is at least [`MIN_AFFINITY_HITS`]; capacity mode may return zero.
     pub affinity_hits: usize,
     pub load_percent: u32,
     /// Whether the worker shares a host with a sibling node's worker.
@@ -196,6 +229,22 @@ pub fn place(
     file_constraints: &[String],
     sibling_hosts: &std::collections::HashSet<String>,
 ) -> Option<Placement> {
+    place_with_policy(
+        candidates,
+        file_constraints,
+        sibling_hosts,
+        PlacementPolicy::Affinity,
+    )
+}
+
+/// Capacity mode may target zero-affinity workers. No dedicated candidate
+/// means shared-queue fallback, just as in affinity mode.
+pub fn place_with_policy(
+    candidates: &[PlacementCandidate<'_>],
+    file_constraints: &[String],
+    sibling_hosts: &std::collections::HashSet<String>,
+    policy: PlacementPolicy,
+) -> Option<Placement> {
     let sibling_hosts: std::collections::HashSet<&str> =
         sibling_hosts.iter().map(|h| h.as_str()).collect();
 
@@ -203,19 +252,34 @@ pub fn place(
         .iter()
         .filter_map(|c| {
             let hits = affinity_hits(file_constraints, c.recent_files);
-            if hits < MIN_AFFINITY_HITS {
+            if (policy == PlacementPolicy::Affinity && hits < MIN_AFFINITY_HITS)
+                || (policy == PlacementPolicy::Capacity
+                    && (c.max_capacity == 0 || c.current_load >= c.max_capacity))
+            {
                 return None;
             }
             let host = host_from_metadata(c.metadata);
-            Some(Placement {
-                worker_id: c.worker_id.to_string(),
-                subject: per_worker_subject(c.worker_id),
-                affinity_hits: hits,
-                load_percent: c.load_percent(),
-                same_host: host.as_deref().is_some_and(|h| sibling_hosts.contains(h)),
-            })
+            Some((
+                c,
+                Placement {
+                    worker_id: c.worker_id.to_string(),
+                    subject: per_worker_subject(c.worker_id),
+                    affinity_hits: hits,
+                    load_percent: c.load_percent(),
+                    same_host: host.as_deref().is_some_and(|h| sibling_hosts.contains(h)),
+                },
+            ))
         })
-        .min_by(|a, b| {
+        .min_by(|(ca, a), (cb, b)| {
+            if policy == PlacementPolicy::Capacity {
+                // Exact fractions, without rounded percentages or float NaNs.
+                // Products of two u32 values fit u64, including wire extremes.
+                return (u64::from(ca.current_load) * u64::from(cb.max_capacity))
+                    .cmp(&(u64::from(cb.current_load) * u64::from(ca.max_capacity)))
+                    .then_with(|| b.affinity_hits.cmp(&a.affinity_hits))
+                    .then_with(|| b.same_host.cmp(&a.same_host))
+                    .then_with(|| a.worker_id.cmp(&b.worker_id));
+            }
             // affinity desc → load asc → locality desc → worker_id asc.
             b.affinity_hits
                 .cmp(&a.affinity_hits)
@@ -223,12 +287,137 @@ pub fn place(
                 .then_with(|| b.same_host.cmp(&a.same_host))
                 .then_with(|| a.worker_id.cmp(&b.worker_id))
         })
+        .map(|(_, placement)| placement)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn capacity_policy_can_prefer_idle_worker_without_affinity() {
+        let busy_files = files(&["src/a.rs"]);
+        let candidates = vec![
+            PlacementCandidate {
+                worker_id: "busy",
+                metadata: "",
+                recent_files: &busy_files,
+                current_load: 3,
+                max_capacity: 4,
+            },
+            PlacementCandidate {
+                worker_id: "idle",
+                metadata: "",
+                recent_files: &[],
+                current_load: 0,
+                max_capacity: 4,
+            },
+        ];
+        let target = place_with_policy(
+            &candidates,
+            &busy_files,
+            &HashSet::new(),
+            PlacementPolicy::Capacity,
+        )
+        .expect("capacity has a target");
+        assert_eq!(target.worker_id, "idle");
+        assert_eq!(target.affinity_hits, 0);
+        assert_eq!(
+            place(&candidates, &busy_files, &HashSet::new())
+                .expect("default affinity target")
+                .worker_id,
+            "busy"
+        );
+    }
+
+    #[test]
+    fn capacity_policy_compares_exact_fractions_and_wire_extremes() {
+        let candidates = vec![
+            PlacementCandidate {
+                worker_id: "a",
+                metadata: "",
+                recent_files: &[],
+                current_load: 2,
+                max_capacity: 999,
+            },
+            PlacementCandidate {
+                worker_id: "z",
+                metadata: "",
+                recent_files: &[],
+                current_load: 1,
+                max_capacity: 999,
+            },
+        ];
+        let target =
+            place_with_policy(&candidates, &[], &HashSet::new(), PlacementPolicy::Capacity)
+                .expect("available capacity");
+        assert_eq!(
+            target.worker_id, "z",
+            "rounded percentages would tie and choose a"
+        );
+        let extreme = PlacementCandidate {
+            worker_id: "huge",
+            metadata: "",
+            recent_files: &[],
+            current_load: u32::MAX - 1,
+            max_capacity: u32::MAX,
+        };
+        assert_eq!(extreme.load_percent(), 99);
+    }
+
+    #[test]
+    fn capacity_policy_ties_are_stable_and_unavailable_workers_overflow() {
+        let mut candidates = vec![
+            PlacementCandidate {
+                worker_id: "z",
+                metadata: "",
+                recent_files: &[],
+                current_load: 0,
+                max_capacity: 4,
+            },
+            PlacementCandidate {
+                worker_id: "a",
+                metadata: "",
+                recent_files: &[],
+                current_load: 0,
+                max_capacity: 4,
+            },
+        ];
+        for _ in 0..2 {
+            assert_eq!(
+                place_with_policy(&candidates, &[], &HashSet::new(), PlacementPolicy::Capacity)
+                    .expect("idle candidate")
+                    .worker_id,
+                "a"
+            );
+            candidates.reverse();
+        }
+        for c in &mut candidates {
+            c.max_capacity = 0;
+        }
+        assert!(
+            place_with_policy(&candidates, &[], &HashSet::new(), PlacementPolicy::Capacity)
+                .is_none()
+        );
+        for c in &mut candidates {
+            c.max_capacity = 1;
+            c.current_load = 1;
+        }
+        assert!(
+            place_with_policy(&candidates, &[], &HashSet::new(), PlacementPolicy::Capacity)
+                .is_none()
+        );
+        assert_eq!(
+            "capacity".parse::<PlacementPolicy>().expect("valid"),
+            PlacementPolicy::Capacity
+        );
+        assert_eq!(
+            "affinity".parse::<PlacementPolicy>().expect("valid"),
+            PlacementPolicy::Affinity
+        );
+        assert!("auction".parse::<PlacementPolicy>().is_err());
+    }
 
     fn files(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()

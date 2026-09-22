@@ -29,6 +29,7 @@ from ultimate_coders.agent.llm import (
     LLMRetryExhaustedError,
     _classify_llm_error,
 )
+from ultimate_coders.agent.review import REVIEW_INSTRUCTIONS, parse_review
 from ultimate_coders.agent.sandbox import (
     AgentOutput,
     SandboxConfig,
@@ -822,6 +823,16 @@ class Worker:
             # attempt's successful checkpoint and return a stale result
             # without running anything at all.
             checkpoint = await self._load_checkpoint(subtask)
+            checkpoint_review = (
+                parse_review(json.dumps(checkpoint.get("review"))) if checkpoint else None
+            )
+            if checkpoint and "review" in subtask.required_capabilities and (
+                checkpoint_review is None or not checkpoint_review.approved
+                or checkpoint.get("modified_files")
+            ):
+                # Old checkpoints without a verdict are not evidence of an
+                # approved review. Re-execute instead of replaying false success.
+                checkpoint = None
             if checkpoint is not None and checkpoint.get("success"):
                 logger.info(
                     "Subtask %s attempt %s already has a result, replaying it "
@@ -847,6 +858,7 @@ class Worker:
                     modified_files=mod_files,
                     recent_tool_calls=checkpoint.get("tool_calls", []),
                     stderr_tail=checkpoint.get("stderr_tail", ""),
+                    review=checkpoint_review,
                 )
 
             # Inject context from completed dependencies. T10 #652: prefer
@@ -1167,6 +1179,8 @@ class Worker:
                 "error": result.summary if not result.success else None,
                 "stderr_tail": result.stderr_tail,
             }
+            if result.review is not None:
+                data["review"] = result.review.to_dict()
             await _engine_call(
                 self.engine, "write_memory", "write_memory_async",
                 key_scope="checkpoint",
@@ -1213,6 +1227,11 @@ class Worker:
         If context_block is provided, prepends it to the subtask prompt.
         If workspace_handle is provided, executes in the workspace directory.
         """
+        # Match the gateway's exact capability predicate; prose containing
+        # "review" must not silently opt a normal task into a new contract.
+        is_review = "review" in subtask.required_capabilities
+        if is_review:
+            context_block = f"{context_block}\n\n{REVIEW_INSTRUCTIONS}".strip()
         # Declare edit intent for conflict tracking
         declared_files: list[str] = []
         if subtask.file_constraints:
@@ -1316,13 +1335,28 @@ class Worker:
                 list(subtask.file_constraints)
                 + [fc.file_path for fc in output.file_changes]
             )
+            review = parse_review(output.summary) if is_review else None
+            success = output.success
+            error = "" if output.success else output.summary[:2000]
+            if is_review:
+                if not output.success:
+                    review = None
+                elif output.file_changes or output.failed_file_changes:
+                    success, error, review = False, "Review modified files", None
+                elif output.had_failed_step:
+                    success, error, review = False, "Review workflow contained a failed step", None
+                elif review is None:
+                    success, error = False, "Review returned no valid JSON verdict"
+                elif not review.approved:
+                    success, error = False, "Review rejected: " + "; ".join(review.issues)
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
                 modified_files=output.file_changes,
                 summary=output.summary,
-                success=output.success,
-                error="" if output.success else output.summary[:2000],
+                success=success,
+                error=error[:2000],
+                review=review,
                 stderr_tail=stderr_tail,
                 recent_tool_calls=output.tool_calls[-5:],
                 # T15 #660 / D13 #657: the adapters have parsed token/cost out
@@ -1392,6 +1426,8 @@ class Worker:
         """
         step_outputs: list[AgentOutput] = []
         all_file_changes: list[FileChange] = []
+        failed_file_changes: list[FileChange] = []
+        had_failed_step = False
         # T18 #668: one record per *executed* unit, in execution order. A step
         # skipped by its condition contributes nothing here (see
         # `_step_usage`), which is what makes a gap in `step_index` readable as
@@ -1435,6 +1471,9 @@ class Worker:
                 )
                 if output.success:
                     all_file_changes.extend(output.file_changes)
+                else:
+                    had_failed_step = True
+                    failed_file_changes.extend(output.file_changes)
                 last_output = output
 
                 if not output.success and step.abort_on_failure:
@@ -1457,6 +1496,8 @@ class Worker:
                         # path. Includes the failing step (collected above the
                         # abort check).
                         step_usages=step_usages,
+                        had_failed_step=had_failed_step,
+                        failed_file_changes=failed_file_changes,
                     )
                 # abort_on_failure=False: log and continue to next step.
                 if not output.success:
@@ -1544,6 +1585,9 @@ class Worker:
                 step_usages.append(_step_usage(si, group, gs.agent, output))
                 if output.success:
                     all_file_changes.extend(output.file_changes)
+                else:
+                    had_failed_step = True
+                    failed_file_changes.extend(output.file_changes)
                 last_output = output
                 if not output.success and gs.abort_on_failure:
                     group_failed = True
@@ -1572,6 +1616,8 @@ class Worker:
                     # collected, exactly as they were never appended to
                     # `step_outputs` (pre-existing behaviour, not new here).
                     step_usages=step_usages,
+                    had_failed_step=had_failed_step,
+                    failed_file_changes=failed_file_changes,
                 )
 
         # All steps completed (or non-aborting failures). Return the last
@@ -1611,10 +1657,15 @@ class Worker:
             summary=last_output.summary,
             file_changes=all_file_changes,
             token_usage=last_output.token_usage,
+            # Ordinary chains keep last-step success, including a non-aborting
+            # earlier failure. Explicit review fail-closed uses had_failed_step
+            # and failed_file_changes in _execute_in_sandbox.
             success=last_output.success,
             stderr_tail=last_output.stderr_tail,
             tool_calls=last_output.tool_calls,
             step_usages=step_usages,
+            had_failed_step=had_failed_step,
+            failed_file_changes=failed_file_changes,
         )
 
     async def _run_single_step(
@@ -1657,6 +1708,17 @@ class Worker:
             context_block,
             file_constraints_str,
         )
+        # Step templates opt into dependency context with {{context}}. An
+        # explicit review still has to see the verdict contract when the
+        # template omits that placeholder. Single-agent execution prepends
+        # the same block unconditionally.
+        if (
+            "review" in subtask.required_capabilities
+            and REVIEW_INSTRUCTIONS not in rendered
+        ):
+            prefix = context_block.strip()
+            if prefix:
+                rendered = f"{prefix}\n\n{rendered}"
 
         # ponytail: per-step agent_config override — merge step config over
         # the subtask-level resolved config (step wins on conflict).

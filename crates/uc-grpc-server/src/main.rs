@@ -758,6 +758,10 @@ async fn start_scheduler(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Validate before constructing backends or starting background subscribers.
+    let placement_policy = std::env::var("UC_PLACEMENT_POLICY")
+        .unwrap_or_else(|_| "affinity".into())
+        .parse::<uc_grpc::placement::PlacementPolicy>()?;
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse()?))
         .init();
@@ -827,6 +831,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             GrpcServer::with_backends(engine, task_backend, event_store)
         }
     };
+
+    grpc_server
+        .worker_registry()
+        .write()
+        .await
+        .set_placement_policy(placement_policy);
+    tracing::info!(?placement_policy, "Worker placement policy configured");
 
     // Provision the UC_SUBTASKS JetStream stream (T5 #641 / D4 #633 Q1):
     // stream creation is the gateway's job now — workers fail fast on their

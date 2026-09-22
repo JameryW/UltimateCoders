@@ -385,9 +385,11 @@ async def test_execute_steps_continues_when_abort_on_failure_false():
     out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
 
     assert w._sandbox_manager.execute.await_count == 2
-    # Last step's output wins.
+    # Last step's output wins. The failed step stays visible without
+    # turning a non-aborting ordinary chain into a failed workflow.
     assert out.summary == "ok2"
     assert out.success is True
+    assert out.had_failed_step is True
 
 
 @pytest.mark.asyncio
