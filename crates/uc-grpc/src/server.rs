@@ -3714,7 +3714,7 @@ pub fn spawn_pause_grace_timer(
     // Replace any in-flight timer for this task.
     cancel_pause_grace_timer(&task_id, timers.clone());
     #[cfg(not(feature = "messaging"))]
-    let _ = nats_client; // unit placeholder — no control plane to publish to
+    let _ = &nats_client; // unit placeholder — no control plane to publish to
     let tid = task_id.clone();
     let handle = tokio::spawn(async move {
         tokio::time::sleep(grace).await;
@@ -9051,6 +9051,10 @@ mod tests {
     /// The grace timer fires after the window, drives the graph plane's
     /// fail_running_attempts verb, and bridges each outcome into the legacy
     /// store (InProgress → Pending on re-arm).
+    // NOTE: `timer_nats()` is unit under `not(messaging)` (clippy::unit_arg),
+    // but hoisting it would break `--all-features` builds where
+    // `PauseGraceNats` is `Option<Client>` — so allow instead of hoisting.
+    #[allow(clippy::unit_arg)]
     #[tokio::test]
     async fn pause_grace_timer_fires_and_bridges_after_grace() {
         let (store, sink, timers) = wired_shared_store().await;
@@ -9098,6 +9102,10 @@ mod tests {
     /// Resuming before the grace lapses leaves the attempts untouched: the
     /// still-paused guard inside the timer observes the resumed task and
     /// no-ops.
+    // NOTE: `timer_nats()` is unit under `not(messaging)` (clippy::unit_arg),
+    // but hoisting it would break `--all-features` builds where
+    // `PauseGraceNats` is `Option<Client>` — so allow instead of hoisting.
+    #[allow(clippy::unit_arg)]
     #[tokio::test]
     async fn pause_grace_timer_skips_when_task_resumed_before_fire() {
         let (store, sink, timers) = wired_shared_store().await;
@@ -9142,6 +9150,10 @@ mod tests {
 
     /// Resume cancels the armed timer: the window lapses with the task
     /// running and the graph plane is never asked to fail anything.
+    // NOTE: `timer_nats()` is unit under `not(messaging)` (clippy::unit_arg),
+    // but hoisting it would break `--all-features` builds where
+    // `PauseGraceNats` is `Option<Client>` — so allow instead of hoisting.
+    #[allow(clippy::unit_arg)]
     #[tokio::test]
     async fn resume_cancels_pause_grace_timer() {
         let (store, sink, timers) = wired_shared_store().await;
