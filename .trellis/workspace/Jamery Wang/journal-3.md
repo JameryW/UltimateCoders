@@ -1116,3 +1116,89 @@ checked via subagents, committed, archived. No production code touched.
 ### Next Steps
 
 - None - task complete
+
+
+## Session 54: Clear uc-grpc clippy baseline warnings
+
+**Date**: 2026-09-23
+**Task**: Clear uc-grpc clippy baseline warnings
+**Branch**: `main`
+
+### Summary
+
+Lint-only slice: 4 server.rs warnings silenced cfg-robustly; committed and archived.
+
+### Main Changes
+
+## Session 54: clear uc-grpc clippy baseline warnings
+
+**Date**: 2026-09-23
+**Task**: `09-23-clippy-server-warnings` (now `archive/2026-09/09-23-clippy-server-warnings`)
+**Branch**: `main`
+
+### Summary
+
+Lint-only slice clearing the 4 pre-existing `server.rs` clippy warnings
+(surfaced by the P2 / live-roster work's `--tests` runs). Planned from repo
+evidence (cfg analysis fixed both shapes, no user decision existed),
+implemented + checked via subagents, committed, archived. Zero behavior
+change, one file, 4 hunks.
+
+### Main Changes
+
+- `server.rs:3717` (`let_unit_value`, cfg `not(messaging)` only): landed as
+  `let _ = &nats_client;` — the prescribed bare statement was empirically
+  verified to trade for `path_statements`, and `drop()` for
+  `dropping_copy_types`. PRD req 1 updated to record the chosen shape.
+- Three pause-grace tests: `#[allow(clippy::unit_arg)]` + rationale comment
+  (hoist suggestion would break `--all-features` where `PauseGraceNats` is
+  `Option<Client>`). No hoisting, no assertion changes.
+- 3.3 judgment: no spec update (no clippy guideline file exists; no new
+  contract — a 4-hunk lint fix).
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ab505c59` | chore(clippy): silence 4 baseline warnings in uc-grpc server |
+| `f8c16d0d` | chore(task): archive 09-23-clippy-server-warnings |
+
+### Testing
+
+- [OK] `cargo clippy -p uc-grpc --tests` → **zero warnings** (was 4)
+- [OK] `cargo clippy -p uc-grpc --tests --all-features` → **compiles,
+  zero warnings** (cfg-robustness proof)
+- [OK] `cargo test -p uc-grpc --lib` → **226 passed** (incl. all 3
+  pause-grace tests)
+- [OK] `cargo fmt --check` clean; trellis-check 0 issues
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- `cargo clippy -p uc-grpc --tests` is now clean under both cfgs; consider
+  promoting it to a CI gate or a repo guard script if warning-free baselines
+  should be pinned (would need a task + decision on scope: uc-grpc only vs
+  --workspace).
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ab505c59` | (see git log) |
+| `f8c16d0d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
