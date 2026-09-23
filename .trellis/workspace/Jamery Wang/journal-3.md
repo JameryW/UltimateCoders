@@ -1172,7 +1172,18 @@ Same-push fallout fixed: journal dedup, recon pointer, guard pins with per-row a
 
 ### Main Changes
 
-(Add details)
+- Journal CI (20 problems): sessions 52–55 double-written by my
+  `--content-file` misuse (full entries where Main-Changes-only bodies
+  belong). Deleted the 4 skeleton wrappers (126 lines, CRLF-pure).
+  Ledger back to 55/55, 0 placeholders.
+- Spec-refs: mentions 271→275 (+4 P2 mentions, row-verified via a
+  `9be830df` worktree `--json` diff); recon `dispatch_gate` pointer
+  repaired to `:326` (P2 +7 shift; transient OK→STALE resolved in-change,
+  so 114/7 kept with comment).
+- Tasks-refs pair →(812,814) with per-file accounting (P2 0 +
+  live-roster 3 + clippy slices 2+2; +2 = this ticket's own jsonl once
+  tracked; archive repoint verified 814 ok / 0 dangling).
+- Line-endings pair moved with per-file accounting (T44 method).
 
 ### Git Commits
 
@@ -1183,7 +1194,11 @@ Same-push fallout fixed: journal dedup, recon pointer, guard pins with per-row a
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] 4 guards rc 0 (spec 114/7/9 + mentions 275; tasks 814 post-archive;
+  endings pass; ledger 55/55)
+- [OK] pytest pin files 91 passed; trellis-check 0 issues
+- [OK] Rust CI on the red head already success (new clippy gate first run)
+- [PENDING] Journal/Scripts/Python CI on the repair push — verified by CI
 
 ### Status
 
@@ -1191,4 +1206,5 @@ Same-push fallout fixed: journal dedup, recon pointer, guard pins with per-row a
 
 ### Next Steps
 
-- None - task complete
+- Watch the repair push's CI: Journal + Scripts + Python must go green
+- Durable lesson: never pass full session entries as `--content-file`
