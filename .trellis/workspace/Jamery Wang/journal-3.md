@@ -1202,3 +1202,85 @@ change, one file, 4 hunks.
 ### Next Steps
 
 - None - task complete
+
+
+## Session 55: CI clippy covers all targets
+
+**Date**: 2026-09-23
+**Task**: CI clippy covers all targets
+**Branch**: `main`
+
+### Summary
+
+One-line CI slice: clippy job now lints all targets; committed and archived.
+
+### Main Changes
+
+## Session 55: CI clippy covers all targets
+
+**Date**: 2026-09-23
+**Task**: `09-23-clippy-all-targets` (now `archive/2026-09/09-23-clippy-all-targets`)
+**Branch**: `main`
+
+### Summary
+
+One-line CI slice closing the hole that hid 3 of the 4 `ab505c59`
+warnings: the clippy job was lib-only, so `#[cfg(test)]` code was never
+linted. Extended the job with `--all-targets`; no guard script (clippy
+ownership stays in CI), no production changes. Implemented + checked via
+subagents, committed, archived.
+
+### Main Changes
+
+- `.github/workflows/ci-rust.yml:79`: `cargo clippy --workspace --
+  -D warnings` → `cargo clippy --workspace --all-targets -- -D warnings`.
+- Evidence recorded in task `research/notes.md`: why test warnings escape,
+  why `:3717` stayed green anyway (toolchain drift, not acted on), why no
+  guard script, `--workspace --all-targets` green on arrival.
+- 3.3 judgment: no spec update (CI config change, no contract).
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cd6d74a7` | ci(rust): lint all targets in clippy job |
+| `0ecad204` | chore(task): archive 09-23-clippy-all-targets |
+
+### Testing
+
+- [OK] `cargo clippy --workspace --all-targets -- -D warnings` (exact CI
+  command incl. `-D`) → **exit 0, zero warnings**
+- [OK] trellis-check: diff is exactly 1 line, flag order correct, no other
+  jobs/paths touched
+- [NOTE] CI-green itself not claimed (job can't run locally)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Next push to main touching `crates/**` will exercise the extended gate
+  for the first time — watch the clippy job.
+- #656 remaining inputs unchanged: T19 race (denied D, pending §21),
+  P2-3 market (ungrounded, pending §21).
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cd6d74a7` | (see git log) |
+| `0ecad204` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
