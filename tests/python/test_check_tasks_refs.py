@@ -492,6 +492,20 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     real paths but not `.trellis` ones, so they are outside this corpus by
     construction -- the same reason T43's delta was one.
 
+    Repair (red main, 2026-09-23) makes the move a fourteenth time, and the delta
+    is seven -- the first multi-ticket window since T42, because FOUR task dirs
+    archived since T44 (P2 runtime policy, gateway live-roster, two clippy slices).
+    Counted per carrier file rather than read off the total (T42 is the standing
+    counter-example for deltas bigger than one, T44 the standing method): P2
+    contributes 0 (its check/implement.jsonl carry only `_example` lines, which
+    have no `file` key and are skipped by construction, never malformed);
+    live-roster contributes 3 (implement cites worker-service-spec.md and
+    runtime-policy-spec.md, check cites worker-service-spec.md); each clippy
+    slice contributes 2 (check + implement cite the slice's own archived
+    research/notes.md). 805 -> 812, split confirmed per source file, and the only
+    new tracked .jsonl carriers since T44's archive are those eight files -- no
+    stray, so no stop-and-report.
+
     This is a tripwire, not a whitelist: if a future change moves any of these
     numbers, it must be updated in the same change.
     """
@@ -502,13 +516,20 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     malformed = [r for r in rows if r["verdict"] == "MALFORMED"]
 
     # The corpus is the TRACKED set, so this ticket's own `implement.jsonl`
-    # counts only once committed: 804 while it is untracked, 805 once it is
+    # counts only once committed: 812 while it is untracked, 814 once it is
     # (which is how CI always sees it). Those two ARE the reachable states for
-    # the current ticket, so they are the pair. T42's window was wider only
+    # the current ticket, so they are the pair. The +2 is this ticket's own
+    # existence, T44's shape: implement.jsonl and check.jsonl each cite
+    # research/notes.md under `.trellis/`, and the `_example` lines carry no
+    # `file` key so they are skipped, never counted. T42's window was wider only
     # because its jsonl files cited six `.trellis` paths between them, giving it
     # one intermediate state; those values are unreachable now, and leaving them
     # in would mask a real -1 drift. Pinning the reachable set is the point.
-    assert len(refs) in (804, 805), f"reference count drifted: {len(refs)}"
+    # ⚠️ The 814 state assumes the two citations still resolve once tracked:
+    # they are written in pre-archive form, so they resolve on a plain commit
+    # but would DANGLING if task.py archive moves the dir first (T40 rule --
+    # rewrite to archive/... paths before archiving, or commit unarchived).
+    assert len(refs) in (812, 814), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 

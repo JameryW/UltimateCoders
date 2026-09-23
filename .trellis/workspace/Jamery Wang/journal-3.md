@@ -937,18 +937,6 @@ T43 的 journal 在「账」里留了一行：符号抽取器仍会把路径 tok
 ## Session 52: P2 runtime policy baseline — verify, commit, archive
 
 **Date**: 2026-09-22
-**Task**: P2 runtime policy baseline — verify, commit, archive
-**Branch**: `main`
-
-### Summary
-
-Verified the uncommitted P2 baseline end-to-end, committed it as one work commit, and archived the task.
-
-### Main Changes
-
-## Session 52: P2 runtime policy baseline — verify, commit, archive
-
-**Date**: 2026-09-22
 **Task**: `09-20-p2-runtime-policy` (now `archive/2026-09/09-20-p2-runtime-policy`)
 **Branch**: `main`
 
@@ -1005,38 +993,6 @@ All re-run today on this tree (nothing copied from prior notes):
   expansion), monetary market (bids/budgets).
 - Optional: fix the pre-existing clippy `let_unit_value` at `server.rs:3717`.
 
-
-### Git Commits
-
-| Hash | Message |
-|------|---------|
-| `d747b563` | (see git log) |
-| `bb9e016e` | (see git log) |
-
-### Testing
-
-- [OK] (Add test results)
-
-### Status
-
-[OK] **Completed**
-
-### Next Steps
-
-- None - task complete
-
-
-## Session 53: Gateway dispatch live roster test — close #656 residual 1 (gateway half)
-
-**Date**: 2026-09-22
-**Task**: Gateway dispatch live roster test — close #656 residual 1 (gateway half)
-**Branch**: `main`
-
-### Summary
-
-Test-only slice: dispatch decisions on an RPC-built live roster; committed and archived.
-
-### Main Changes
 
 ## Session 53: gateway dispatch live roster test — close #656 residual 1 (gateway half)
 
@@ -1098,38 +1054,6 @@ checked via subagents, committed, archived. No production code touched.
 - Consider a #656 progress comment recording residual-1 closure.
 
 
-### Git Commits
-
-| Hash | Message |
-|------|---------|
-| `dda54dd2` | (see git log) |
-| `2f2f2ea3` | (see git log) |
-
-### Testing
-
-- [OK] (Add test results)
-
-### Status
-
-[OK] **Completed**
-
-### Next Steps
-
-- None - task complete
-
-
-## Session 54: Clear uc-grpc clippy baseline warnings
-
-**Date**: 2026-09-23
-**Task**: Clear uc-grpc clippy baseline warnings
-**Branch**: `main`
-
-### Summary
-
-Lint-only slice: 4 server.rs warnings silenced cfg-robustly; committed and archived.
-
-### Main Changes
-
 ## Session 54: clear uc-grpc clippy baseline warnings
 
 **Date**: 2026-09-23
@@ -1184,38 +1108,6 @@ change, one file, 4 hunks.
   --workspace).
 
 
-### Git Commits
-
-| Hash | Message |
-|------|---------|
-| `ab505c59` | (see git log) |
-| `f8c16d0d` | (see git log) |
-
-### Testing
-
-- [OK] (Add test results)
-
-### Status
-
-[OK] **Completed**
-
-### Next Steps
-
-- None - task complete
-
-
-## Session 55: CI clippy covers all targets
-
-**Date**: 2026-09-23
-**Task**: CI clippy covers all targets
-**Branch**: `main`
-
-### Summary
-
-One-line CI slice: clippy job now lints all targets; committed and archived.
-
-### Main Changes
-
 ## Session 55: CI clippy covers all targets
 
 **Date**: 2026-09-23
@@ -1266,21 +1158,3 @@ subagents, committed, archived.
   P2-3 market (ungrounded, pending §21).
 
 
-### Git Commits
-
-| Hash | Message |
-|------|---------|
-| `cd6d74a7` | (see git log) |
-| `0ecad204` | (see git log) |
-
-### Testing
-
-- [OK] (Add test results)
-
-### Status
-
-[OK] **Completed**
-
-### Next Steps
-
-- None - task complete

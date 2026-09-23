@@ -35,7 +35,7 @@
 | 项 | 票 | 一手锚点（2026-09-18） |
 |---|---|---|
 | review 成为图节点 | T16 #661（承 D14 #658） | `node_type_for()` 由 capability 派生，`graph_nodes.type` 从此**有写者**（`graph_store.rs:352-358`）；D14 留下的「谁插入 review 节点」取 (b)：想 review 就写带 `review` capability + 依赖边的节点（`:345-351`） |
-| 「必须由产出者之外的人执行」 | T19 #670（承 D16 #669 裁决 A） | `requires_independence()` 是**唯一**条件（`graph_store.rs:381-383`），节点打标与网关派发口**共用**它（`:360-367` 明写不要另行推导）；`dispatch_gate` 收 `ReviewIndependence`（`crates/uc-grpc/src/worker_service.rs:319-324`），`placement_target` 带 `exclude`（`:440-447`） |
+| 「必须由产出者之外的人执行」 | T19 #670（承 D16 #669 裁决 A） | `requires_independence()` 是**唯一**条件（`graph_store.rs:381-383`），节点打标与网关派发口**共用**它（`:360-367` 明写不要另行推导）；`dispatch_gate` 收 `ReviewIndependence`（`crates/uc-grpc/src/worker_service.rs:326`），`placement_target` 带 `exclude`（`:440-447`） |
 | 匹配语义 | T19 | **精确相等**，非子串、非忽略大小写：`"code-review"` / `"Review"` 都是普通 subtask（`graph_store.rs:369-371`，测试 `:3893`） |
 | 已知未解 | D16 裁决 5 | `required_capabilities` 是 capability 与 `steps[].agent` 的**并集**（`graph_store.rs:373-379`）；`agent == "review"` 会把节点提升为 review 节点。该冲突**已知、刻意不在此解决** |
 

@@ -589,7 +589,17 @@ def test_real_corpus_unanchored_census_is_reported():
     refs = [r for r in rows if r["kind"] == "ref"]
     assert len(refs) == 130, len(refs)
     assert sum(1 for r in refs if r["unanchored"]) == 53
-    assert sum(1 for r in rows if r["kind"] == "mention") == 271
+    # 271 -> 275 across the P2-baseline window (re-measured 9be830df -> HEAD
+    # on the red-main repair ticket, keyed on spec+line+ref then re-checked by
+    # (ref, verdict) multiset to survive P2's +2 line shift in
+    # agent-capability-spec.md): +3 from the new runtime-policy-spec.md:5,6,7
+    # (p2-policy doc, worker-service spec, agent-capability spec -- all
+    # backticked) and +1 from agent-capability-spec.md's new backticked
+    # runtime-policy-spec.md link. worker-service-spec.md's two added
+    # runtime-policy links are plain markdown (not backticked), so the guard
+    # never sees them -- net 0 there. All four are MENTION_RESOLVED, so the
+    # unclassified count is untouched.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 275
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -999,6 +1009,13 @@ def test_real_corpus_moves_only_where_predicted():
     assert len(rows) == 130, len(rows)
     assert _corpus_calibers(guard) == (98, 81)
     # and the sides this ticket must NOT move, asserted in the same breath
+    # (OK / STALE deliberately NOT moved on the red-main repair ticket: the
+    # pushed head transiently measured 113 / 8 -- exactly one flip,
+    # durable-runtime-p2-recon.md:38 dispatch_gate OK -> STALE, off +7 with
+    # the def at worker_service.rs:326 after P2's placement_policy lines --
+    # and this same change repairs that pointer to :326 per the T42/T43 rule,
+    # re-measured back to 114 / 7. Pinning the transient 113 / 8 alongside
+    # the repair would be the blind bump this discipline exists to prevent.)
     assert sum(1 for r in rows if r["verdict"] == "OK") == 114
     assert sum(1 for r in rows if r["verdict"] == "STALE") == 7
     assert sum(1 for r in rows if r["verdict"] == "AMBIGUOUS") == 9
