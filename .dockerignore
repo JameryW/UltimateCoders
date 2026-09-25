@@ -1,7 +1,11 @@
 target/
 **/target/
+.env*
+**/.env*
 .git/
 .github/
+.scratch/
+**/.scratch/
 *.pyc
 __pycache__/
 **/__pycache__/

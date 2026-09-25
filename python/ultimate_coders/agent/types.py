@@ -340,6 +340,9 @@ class Subtask:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     parent_id: str = ""
     description: str = ""
+    # Original task request, including output and safety constraints that an
+    # LLM decomposition may omit from an individual subtask description.
+    user_request: str = ""
     status: SubtaskStatus = SubtaskStatus.PENDING
     assigned_worker: str | None = None
     depends_on: list[str] = field(default_factory=list)

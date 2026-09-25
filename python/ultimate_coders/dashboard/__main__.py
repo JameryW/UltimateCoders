@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(
         f"Dashboard API: http://localhost:{args.port}/dashboard/\n"
-        f"Dashboard UI:  http://localhost:5173  (Vite dev; run `cd dashboard && bun run dev`)\n"
+        "Dashboard UI:  http://localhost:8081  (Docker Compose app profile)\n"
         f"NATS: {nats_banner}",
         flush=True,
     )

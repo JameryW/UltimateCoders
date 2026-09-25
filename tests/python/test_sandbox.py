@@ -328,6 +328,7 @@ class TestCodexAdapter:
 
         assert request["command"] == "codex"
         assert request["args"][0] == "exec"
+        assert "--json" in request["args"]
         assert "Implement feature" in request["args"]
         assert "--sandbox" in request["args"]
         assert "workspace-write" in request["args"]
@@ -344,6 +345,36 @@ class TestCodexAdapter:
         assert len(output.file_changes) == 1
         assert output.file_changes[0].file_path == "src/feature.rs"
         assert output.file_changes[0].change_type == ChangeType.CREATED
+
+    def test_parse_output_json_final_message(self):
+        adapter = CodexAdapter()
+        result = ExecResult(
+            exit_code=0,
+            stdout="\n".join([
+                json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+                json.dumps({"type": "item.completed", "item": {"type": "error", "message": "metadata warning"}}),
+                json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "First draft"}}),
+                json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "Gateway and Worker communicate over NATS and gRPC."}}),
+                json.dumps({"type": "turn.completed", "usage": {"input_tokens": 10}}),
+            ]),
+            stderr="Codex progress goes to stderr",
+        )
+        output = adapter.parse_output(result)
+        assert output.success
+        assert output.summary == "Gateway and Worker communicate over NATS and gRPC."
+
+    def test_parse_output_json_turn_failed_even_with_zero_exit_code(self):
+        adapter = CodexAdapter()
+        result = ExecResult(
+            exit_code=0,
+            stdout="\n".join([
+                json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+                json.dumps({"type": "turn.failed", "error": {"message": "provider unavailable"}}),
+            ]),
+        )
+        output = adapter.parse_output(result)
+        assert not output.success
+        assert "provider unavailable" in output.summary
 
     def test_parse_output_timeout(self):
         adapter = CodexAdapter()

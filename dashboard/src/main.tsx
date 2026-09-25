@@ -2,7 +2,6 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
 import HomePage from "./pages/HomePage.tsx";
-import TuiPage from "./pages/TuiPage.tsx";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { initMermaid } from "./lib/mermaid.ts";
 import { useEffect, useState } from "react";
@@ -17,14 +16,12 @@ try {
   }
 } catch { /* ignore */ }
 
-// The operations dashboard still renders Mermaid task graphs. Initialize its
-// lazy renderer once at the application boundary so it remains available when
-// the dashboard is opened after the overview or TUI route.
+// The operations dashboard renders Mermaid task graphs. Initialize its lazy
+// renderer once at the application boundary.
 initMermaid();
 
-// The product overview owns `/`; the legacy operations dashboard and terminal
-// remain first-class routes. Keeping the routes hash-based preserves direct
-// links from the dashboard's existing panel navigation.
+// The product overview owns `/`; the operations dashboard remains at
+// `#/dashboard` for existing deep links.
 // eslint-disable-next-line react-refresh/only-export-components -- entry file root component
 function Root() {
   const [hash, setHash] = useState(() => window.location.hash);
@@ -36,14 +33,11 @@ function Root() {
     return () => window.removeEventListener("hashchange", handleHashChange);
   }, []);
 
-  if (hash.startsWith("#/tui")) return <TuiPage />;
   if (isDashboardPath || hash.startsWith("#/dashboard")) return <App />;
   return <HomePage />;
 }
 
-/** ponytail: last-resort root error boundary. Panel-level ErrorBoundaries
- * catches anything that escapes so the TUI shows a recoverable error screen
- * instead of a white screen. */
+/** Last-resort root error boundary for the overview and dashboard. */
 // eslint-disable-next-line react-refresh/only-export-components -- entry file with router and root boundary
 function RootErrorFallback(error: Error, retry: () => void) {
   return (

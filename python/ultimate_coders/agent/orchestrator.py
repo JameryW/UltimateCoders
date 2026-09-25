@@ -369,6 +369,7 @@ class Orchestrator:
                 id=f"{task_id}-s{i}",
                 parent_id=task_id,
                 description=desc,
+                user_request=description,
                 status=SubtaskStatus.PENDING,
                 depends_on=depends_on,
                 file_constraints=item.get("file_constraints", []) or [],
@@ -406,6 +407,7 @@ class Orchestrator:
                 id=f"{task_id}-s{i}",
                 parent_id=task_id,
                 description=line,
+                user_request=description,
                 status=SubtaskStatus.PENDING,
                 depends_on=[],  # no deps for simple split
                 agent_config=agent_config or {},
@@ -496,7 +498,14 @@ class Orchestrator:
                 self._schedule_arbitration(task)
         elif any(st.status == SubtaskStatus.FAILED for st in task.subtasks):
             done_statuses = (SubtaskStatus.COMPLETED, SubtaskStatus.FAILED)
-            if all(st.status in done_statuses for st in task.subtasks):
+            # A failed prerequisite can leave its descendants Pending forever.
+            # Keep running independent ready work, but fail the parent once
+            # nothing is active or eligible to run.
+            active_statuses = (SubtaskStatus.ASSIGNED, SubtaskStatus.IN_PROGRESS)
+            if all(st.status in done_statuses for st in task.subtasks) or (
+                not any(st.status in active_statuses for st in task.subtasks)
+                and self.select_next_subtask(task) is None
+            ):
                 task.status = TaskStatus.FAILED
 
     async def _publish_task_update(self, task: Task) -> None:

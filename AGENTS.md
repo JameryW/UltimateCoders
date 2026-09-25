@@ -4,25 +4,26 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Project Overview
 
-**UltimateCoders** — 分布式 AI Coding 系统，分为 **Orchestrator/Gateway** 和 **Distributed Worker** 两个独立部署单元。Gateway 以 OMP Extension + Rust gRPC Server 为核心，Worker 以 Python 为执行引擎，通过 NATS 消息 + gRPC WorkerService 通信，共享分层 Memory，并集成多 Git 仓库的混合检索能力（Text + Semantic + AST）。
+**UltimateCoders** — 分布式 AI Coding 系统。默认 Docker 应用由 Web Dashboard、Dashboard API、Rust Gateway、NATS 和 Python Worker 组成。OMP Extension 是可选的本机终端入口。系统共享分层 Memory，并集成多 Git 仓库的混合检索能力（Text + Semantic + AST）。
 
 ## Architecture
 
-- **Orchestrator/Gateway** (独立部署):
-  - **OMP Extension** (TypeScript): UC Orchestrator — 任务编排 + UI 组件 + LLM tools + Coding Agent
+- **Dashboard/Gateway** (独立部署):
+  - **Web Dashboard** (React) + **Dashboard API** (FastAPI): 任务提交、监控和事件流
   - **Rust gRPC Server** (5 crates): uc-types, uc-engine, uc-grpc, uc-grpc-server, uc-python
     - EngineService / TaskService / DashboardService / **WorkerService**
     - WorkerRegistry — 能力感知调度（capabilities + load matching）
 - **Distributed Worker** (独立部署, 可多实例扩缩容):
   - **Python Worker/Sandbox**: gRPC WorkerService 注册 + NATS subtask 执行
-- **桥接**: PyO3 FFI (本地) + gRPC-Web (OMP→Rust) + gRPC WorkerService (Worker→Gateway) + NATS (subtask dispatch)
+- **可选本机入口**: OMP Extension (TypeScript) 通过 `run-omp.sh` 启动，提供 `/uc` 命令和 LLM tools
+- **桥接**: PyO3 FFI (本地) + gRPC-Web (Dashboard→Rust) + gRPC WorkerService (Worker→Gateway) + NATS (subtask dispatch)
 - **存储**: TiKV (短期 Memory) + Qdrant (长期 Memory + 语义检索) + PostgreSQL (结构化元数据)
 
 ## Repository Structure
 
 ```
 ultimate-coders/
-├── run-omp.sh               # Start OMP with UC extension (primary entry point)
+├── run-omp.sh               # Start optional native OMP extension
 ├── run-gateway.sh           # Manage standalone containerized gateway
 ├── run-cluster.sh           # Start local distributed cluster (NATS + workers)
 ├── Cargo.toml               # Rust workspace root
@@ -61,7 +62,7 @@ cargo check                  # Check all crates
 cargo test -p uc-engine      # Run engine tests (no features)
 maturin develop              # Build Rust extension + install
 cargo run -p uc-grpc-server  # Start gRPC gateway server
-./run-omp.sh                 # Start OMP with UC extension (primary)
+./run-omp.sh                 # Start optional native OMP extension
 ./run-omp.sh --server        # Also start gRPC server in background
 ./run-omp.sh --build         # Ensure Python package is built first
 ./run-omp.sh --standalone    # Standalone: gateway in a container (in-memory/external storage)
@@ -78,9 +79,9 @@ cargo run -p uc-grpc-server  # Start gRPC gateway server
 ./run-cluster.sh --standalone --workers 2 # Container gateway + storage + host workers
 
 # Distributed deployment (Docker, raw compose)
-docker compose --profile gateway up   # Start gateway (Rust gRPC server)
-docker compose --profile worker up --scale worker=3  # Start 3 workers (SAME HOST only)
-docker compose --profile app up       # Start all services (gateway + orchestrator + workers)
+docker compose -f docker/docker-compose.yml --profile gateway up   # Start gateway (Rust gRPC server)
+docker compose -f docker/docker-compose.yml --profile worker up --scale worker=3 worker  # Start 3 workers (SAME HOST only; configure external NATS/Gateway)
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml --profile app up  # Local checkout + all services
 
 # Gateway-only standalone (storage external, no TiKV/Qdrant/PG/NATS started)
 # Inject external storage addresses via env/.env; empty = in-memory fallback
@@ -147,10 +148,10 @@ edits.
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Orchestrator/Gateway (独立部署)                   │
+│  Dashboard/Gateway (独立部署)                      │
 │                                                   │
-│  OMP Extension ──gRPC-Web──→ Rust gRPC Server    │
-│  (TypeScript)                  ├─ EngineService   │
+│  Web Dashboard ──gRPC-Web──→ Rust gRPC Server    │
+│  Dashboard API (FastAPI)       ├─ EngineService   │
 │                                ├─ TaskService     │
 │                                ├─ DashboardService│
 │                                └─ WorkerService   │

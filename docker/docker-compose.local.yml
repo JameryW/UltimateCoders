@@ -1,0 +1,25 @@
+# Local development: run coding tasks against this checkout.
+# Use alongside docker-compose.yml when UC_REPO_URL is unset:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml --profile app up --build
+# Remote-git workers use the named workspace volume from the base compose file.
+services:
+  worker:
+    # Docker Desktop reports Windows bind mounts as owned by another UID.
+    # Trust only this explicitly mounted checkout and its generated worktrees.
+    environment:
+      GIT_CONFIG_COUNT: "2"
+      GIT_CONFIG_KEY_0: "safe.directory"
+      GIT_CONFIG_VALUE_0: "/workspace"
+      GIT_CONFIG_KEY_1: "safe.directory"
+      GIT_CONFIG_VALUE_1: "/workspace/.uc/worktrees/*"
+    volumes:
+      - ..:/workspace:rw
+  nats-worker:
+    environment:
+      GIT_CONFIG_COUNT: "2"
+      GIT_CONFIG_KEY_0: "safe.directory"
+      GIT_CONFIG_VALUE_0: "/workspace"
+      GIT_CONFIG_KEY_1: "safe.directory"
+      GIT_CONFIG_VALUE_1: "/workspace/.uc/worktrees/*"
+    volumes:
+      - ..:/workspace:rw

@@ -115,6 +115,9 @@ function App() {
   const [lastUpdate, setLastUpdate] = useState<string | undefined>();
   // ── Task selection ────────────────────────────────────────
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [historicalTaskEvents, setHistoricalTaskEvents] = useState<Record<string, TaskEvent[]>>({});
+  const [historicalTaskErrors, setHistoricalTaskErrors] = useState<Record<string, string>>({});
+  const visibleTaskId = selectedTaskId ?? dashboard.tasks.tasks[0]?.id ?? null;
 
   // ── gRPC-Web hooks ─────────────────────────────────────────
 
@@ -152,6 +155,49 @@ function App() {
     mergeGrpcTasks: dashboard.mergeGrpcTasks,
     enabled: true,
   });
+
+  useEffect(() => {
+    if (!visibleTaskId) return;
+    let cancelled = false;
+    listEvents(visibleTaskId, 500).then(({ events }) => {
+      if (cancelled) return;
+      const history = events.slice().reverse().map((event): TaskEvent => {
+        const subtaskId = event.details.subtask_id;
+        const data = { ...event.details };
+        delete data.task_id;
+        delete data.subtask_id;
+        return {
+          timestamp: event.timestamp,
+          type: event.type,
+          task_id: visibleTaskId,
+          subtask_id: typeof subtaskId === "string" ? subtaskId : undefined,
+          data,
+        };
+      });
+      setHistoricalTaskEvents((previous) => ({ ...previous, [visibleTaskId]: history }));
+      setHistoricalTaskErrors((previous) => {
+        const updated = { ...previous };
+        delete updated[visibleTaskId];
+        return updated;
+      });
+    }).catch((error) => {
+      if (cancelled) return;
+      console.warn("[Dashboard] task history failed:", error);
+      setHistoricalTaskErrors((previous) => ({ ...previous, [visibleTaskId]: String(error) }));
+    });
+    return () => { cancelled = true; };
+  }, [dashGrpcState, listEvents, visibleTaskId]);
+
+  const interactionLog = useMemo(() => {
+    if (!visibleTaskId) return dashboard.interactionLog;
+    const history = historicalTaskEvents[visibleTaskId];
+    if (!history?.length) return dashboard.interactionLog;
+    const newestHistoricalTime = new Date(history[history.length - 1]!.timestamp).getTime();
+    const live = (dashboard.interactionLog[visibleTaskId] ?? []).filter(
+      (event) => new Date(event.timestamp).getTime() > newestHistoricalTime,
+    );
+    return { ...dashboard.interactionLog, [visibleTaskId]: [...history, ...live] };
+  }, [dashboard.interactionLog, historicalTaskEvents, visibleTaskId]);
 
   /** Refresh every dashboard surface through the live Gateway before reporting status. */
   const fetchDashboardInitial = dashboard.fetchInitial;
@@ -198,13 +244,13 @@ function App() {
   }, [auth.isChecking, authReady, grpcState, listWorkers, getSchedulerStatus, listEvents, listTasks]);
 
   useEffect(() => {
-    if (dashGrpcState !== "connected" && grpcState === "connected") {
+    if (grpcState === "connected") {
       listTasks().then((data) => {
         if (data.available) dashboard.mergeGrpcTasks(data);
       }).catch((err) => { console.warn("[Dashboard] listTasks failed (grpc→dash merge):", err); });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dashboard object changes every render; mergeGrpcTasks (stable useCallback) is already in deps
-  }, [dashGrpcState, grpcState, listTasks, dashboard.mergeGrpcTasks]);
+  }, [grpcState, listTasks, dashboard.mergeGrpcTasks]);
 
   useEffect(() => {
     if (needsSyncCountRef.current <= 0) return;
@@ -351,8 +397,8 @@ function App() {
 
   // Selected task for detail view
   const selectedTask: TaskSummary | null = useMemo(
-    () => dashboard.tasks.tasks.find((t) => t.id === selectedTaskId) ?? null,
-    [dashboard.tasks.tasks, selectedTaskId],
+    () => dashboard.tasks.tasks.find((t) => t.id === visibleTaskId) ?? null,
+    [dashboard.tasks.tasks, visibleTaskId],
   );
 
   // ── Auth gate ─────────────────────────────────────────────────
@@ -412,9 +458,11 @@ function App() {
         scheduler={dashboard.scheduler}
         eventLog={dashboard.eventLog}
         metrics={dashboard.metrics}
-        interactionLog={dashboard.interactionLog}
+        interactionLog={interactionLog}
         selectedTask={selectedTask}
-        selectedTaskId={selectedTaskId}
+        selectedTaskId={visibleTaskId}
+        taskHistoryLoading={visibleTaskId !== null && !(visibleTaskId in historicalTaskEvents) && !(visibleTaskId in historicalTaskErrors)}
+        taskHistoryError={visibleTaskId ? historicalTaskErrors[visibleTaskId] : undefined}
         onSelectTask={setSelectedTaskId}
         onPauseTask={handlePauseTask}
         onResumeTask={handleResumeTask}

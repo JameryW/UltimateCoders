@@ -47,6 +47,7 @@ AGENT_ALIASES = ("local-llm",)
 DEFAULT_MAX_TURNS = 30
 RUN_COMMAND_TIMEOUT_SECS = 120
 MAX_READ_BYTES = 256 * 1024
+DEFAULT_READ_BYTES = 8 * 1024
 MAX_WRITE_BYTES = 256 * 1024
 
 # Deliberately SHORT — large instruction blobs are what break small models.
@@ -60,7 +61,8 @@ Work step by step with your tools:
 - done (with a summary) when finished
 
 Rules: stay inside the working directory; make minimal edits; always finish
-by calling done.
+by calling done. Follow the requested output and restrictions exactly; do
+not invent extra work.
 """
 
 _TOOLS: list[dict[str, Any]] = [
@@ -71,9 +73,12 @@ _TOOLS: list[dict[str, Any]] = [
             "path": {"type": "string"}}, "required": ["path"]}}},
     {"type": "function", "function": {
         "name": "read_file",
-        "description": "Read a UTF-8 text file (relative path).",
+        "description": "Read a UTF-8 text file (relative path), 8 KiB at a time by default.",
         "parameters": {"type": "object", "properties": {
-            "path": {"type": "string"}}, "required": ["path"]}}},
+            "path": {"type": "string"},
+            "offset": {"type": "integer", "minimum": 0},
+            "max_bytes": {"type": "integer", "minimum": 1, "maximum": MAX_READ_BYTES},
+        }, "required": ["path"]}}},
     {"type": "function", "function": {
         "name": "write_file",
         "description": "Create or overwrite a UTF-8 file (relative path).",
@@ -249,13 +254,27 @@ def _tool_read_file(root: Path, args: dict[str, Any]) -> str:
     target = _safe_resolve(root, str(args.get("path") or ""))
     if not target.is_file():
         return json.dumps({"error": f"not a file: {args.get('path')}"})
-    data = target.read_bytes()[:MAX_READ_BYTES]
+    try:
+        offset = int(args.get("offset", 0))
+        max_bytes = int(args.get("max_bytes", DEFAULT_READ_BYTES))
+    except (TypeError, ValueError):
+        return json.dumps({"error": "offset and max_bytes must be integers"})
+    if offset < 0 or not 1 <= max_bytes <= MAX_READ_BYTES:
+        return json.dumps({"error": "invalid read range"})
+    with target.open("rb") as source:
+        source.seek(offset)
+        data = source.read(max_bytes)
     try:
         text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return json.dumps({"error": "not a UTF-8 text file"})
+    except UnicodeDecodeError as exc:
+        if exc.reason != "unexpected end of data" or exc.end != len(data):
+            return json.dumps({"error": "not a UTF-8 text file"})
+        # Keep the paging offset on a character boundary.
+        data = data[:exc.start]
+        text = data.decode("utf-8")
     return json.dumps(
-        {"content": text, "truncated": len(data) == MAX_READ_BYTES},
+        {"content": text, "truncated": offset + len(data) < target.stat().st_size,
+         "next_offset": offset + len(data)},
         ensure_ascii=False,
     )
 

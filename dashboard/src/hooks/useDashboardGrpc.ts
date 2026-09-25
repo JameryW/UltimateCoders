@@ -135,6 +135,7 @@ function grpcEventProtoToDashboardEvent(ev: DashboardEventProto): DashboardEvent
       details[key] = value;
     }
   }
+  if (ev.taskId) details.task_id = ev.taskId;
   return {
     timestamp: ev.timestamp,
     type: ev.type,

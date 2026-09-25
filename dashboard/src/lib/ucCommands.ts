@@ -18,6 +18,7 @@ export interface UcSubmitResult {
   success: boolean;
   taskId: string;
   status: string;
+  error?: string;
   subtaskCount: number;
   subtasks: Array<{
     id: string;
@@ -189,7 +190,7 @@ export async function executeUcCommand(
         return {
           action,
           success: false,
-          message: name + " failed · " + (result.status || "server rejected"),
+          message: name + " failed · " + (result.error || result.status || "server rejected"),
           tone: "error",
           submitResult: result,
         };

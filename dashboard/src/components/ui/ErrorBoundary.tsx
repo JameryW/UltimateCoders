@@ -16,7 +16,7 @@ interface State {
 }
 
 /**
- * Minimal error boundary — keeps one TUI crash recoverable instead of blanking the page.
+ * Minimal error boundary — keeps a Dashboard crash recoverable instead of blanking the page.
  * Shows the error message and a retry button.
  */
 export class ErrorBoundary extends Component<Props, State> {

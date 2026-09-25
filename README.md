@@ -8,13 +8,13 @@
 
 Distributed AI coding system with shared layered memory and multi-repository hybrid retrieval across text, semantic, and AST indexes.
 
-The UC Orchestrator runs as an oh-my-pi (OMP) extension with terminal-native task interaction, subtask progress widgets, overlays, custom message rendering, and LLM-callable memory tools. The Python Worker/Sandbox defaults to the [xAI Grok Build](https://github.com/xai-org/grok-build) terminal coding agent (`grok`) for subtask execution; Claude Code and Codex remain supported adapters. OMP's local `runSubprocess` path remains separate for its own decomposition and execution flow. The Rust core handles indexing, search, memory, and scheduling, while a broadcast channel delivers live task events to TUI and API consumers.
+The default Docker app uses the Web Dashboard, Rust Gateway, NATS, and Python Workers. The optional oh-my-pi (OMP) extension remains available through `run-omp.sh` for native terminal workflows. The Python Worker/Sandbox defaults to the [xAI Grok Build](https://github.com/xai-org/grok-build) coding agent (`grok`); Claude Code, Codex, and the local harness are supported adapters. The Rust core handles indexing, search, memory, and scheduling, while a broadcast channel delivers live task events to Dashboard and API consumers.
 
 ## Key Features
 
 - **DAG orchestration**: decompose natural-language tasks into observable subtasks, schedule dependency waves, and stream submitted, running, completed, and failed states.
-- **Product home, operations dashboard, and TUI**: `/` explains capabilities and the execution path; the existing operations dashboard remains at `/dashboard` (and `#/dashboard`); `#/tui` connects to a real OMP session over WebSocket.
-- **Shared TUI / OMP command layer**: `run/status/tasks/workers/search/logs` use the same UC semantics and stream results through TaskEvent.
+- **Product home and operations dashboard**: `/` explains capabilities and the execution path; `/dashboard` and `#/dashboard` provide live operations.
+- **Optional OMP extension**: `run-omp.sh` provides native `/uc` commands and LLM-callable tools outside the default Docker app.
 - **Distributed workers**: workers register through `WorkerService`, publish heartbeats and capabilities, and receive capability- and load-aware dispatch from the Gateway; NATS carries cross-process subtasks.
 - **Rust core**: Engine, Task, Dashboard, and Worker services expose unified gRPC/gRPC-Web interfaces with task recovery, event broadcast, and in-memory fallback.
 - **Cross-repository hybrid retrieval**: one query can combine text, semantic, and AST retrieval across indexed Git repositories.
@@ -27,11 +27,10 @@ UltimateCoders turns terminal-based AI coding into an observable, schedulable ex
 
 | Capability | What it shows | User benefit |
 | --- | --- | --- |
-| Product dashboard home | Runtime Surface, OMP ↔ UC Loop, Command Deck, and use cases | Understand the product and enter a real execution path from one place |
+| Product dashboard home | Runtime Surface, product map, workflow, and use cases | Understand the product and enter a real execution path from one place |
 | Product map | Command, Control, Execution, Knowledge, and Event layers | See how entry points, orchestration, workers, context, and results connect |
-| Native OMP interaction | WebSocket PTY, live terminal output, and session takeover | Keep the terminal workflow while adding a browser control surface |
 | DAG orchestration | `run/submit` creates subtasks and schedules dependency waves | Break down, track, and recover complex work |
-| Unified control plane | TUI, OMP commands, and gRPC TaskService share command semantics | Keep task state consistent across entry points |
+| Unified control plane | Dashboard and gRPC TaskService share task state | Keep task state consistent across entry points |
 | Distributed workers | Registration, capabilities, heartbeats, and load-aware scheduling | Scale execution capacity around model and tool capabilities |
 | Search and memory | Text + Semantic + AST retrieval with TiKV/Qdrant/PostgreSQL memory | Give coding agents reusable context across repositories |
 | Reliable deployment | Rust Gateway, NATS, Docker, in-memory fallback, and task events | Move from a local workflow to a worker cluster without changing the product surface |
@@ -42,9 +41,9 @@ UltimateCoders turns terminal-based AI coding into an observable, schedulable ex
 
 - Rust 1.75+ (stable)
 - Python 3.9+
-- Bun (OMP runtime)
+- Bun (only for the optional OMP extension)
 - [Grok Build CLI](https://docs.x.ai/build/overview) (default worker executor)
-- Docker Compose (optional, for TiKV, Qdrant, PostgreSQL, and NATS)
+- Docker Compose (for the default app and its storage services)
 
 Install Grok Build and provide an xAI API key for the default worker:
 
@@ -58,20 +57,19 @@ export XAI_API_KEY=your-key
 ```bash
 git clone https://github.com/JameryW/UltimateCoders.git
 cd UltimateCoders
-./run-omp.sh --build
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml --profile app up --build
 ```
 
-`--build` builds the Python package first. The startup script launches the gRPC Gateway, FastAPI dashboard, Vite product UI, and OMP by default. Use `./run-omp.sh --no-server` when you only need OMP.
+The Compose app starts the Gateway, Dashboard API and UI, NATS, storage, and Workers. The optional OMP extension can be started separately with `./run-omp.sh`.
 
-The three entry points are:
+The browser entry points are:
 
 | Entry point | Use |
 | --- | --- |
-| `http://localhost:5173/` | Product home: capabilities, execution path, and Command Deck |
-| `http://localhost:5173/dashboard` or `http://localhost:5173/#/dashboard` | Existing operations dashboard: tasks, workers, events, scheduler, search, files, and metrics |
-| `http://localhost:5173/#/tui` | Real OMP PTY terminal: run shared UC commands and view live output |
+| `http://localhost:8081/` | Product home: capabilities and execution path |
+| `http://localhost:8081/dashboard` or `http://localhost:8081/#/dashboard` | Operations dashboard: tasks, workers, events, scheduler, search, files, and metrics |
 
-Common commands:
+Optional OMP commands:
 
 ```text
 /uc submit <description>    Submit a task
@@ -84,7 +82,7 @@ Common commands:
 ### 3. Start other modes
 
 ```bash
-# Distributed cluster: NATS + gRPC + multiple workers + OMP
+# Distributed cluster: NATS + gRPC + multiple workers + optional OMP
 ./run-cluster.sh --workers 2
 
 # Standalone Gateway: in-memory fallback or external storage
@@ -100,38 +98,35 @@ For build, test, configuration, and external Git deployment details, see [Buildi
 
 ![UltimateCoders technical architecture](docs/screenshots/execution-architecture.png)
 
-The diagram follows one task through the system: OMP/TUI handles interaction, the Rust Gateway owns TaskService, DAG scheduling, and worker registration, the Worker Pool executes subtasks, Search + Memory provide repository context, and Task Events return state to TUI, Dashboard, and API consumers.
+The diagram follows one task through the system: the Dashboard accepts requests, the Rust Gateway owns TaskService, DAG scheduling, and worker registration, the Worker Pool executes subtasks, Search + Memory provide repository context, and Task Events return state to the Dashboard and API consumers.
 
 | Layer | Components | Responsibility |
 | --- | --- | --- |
-| Interaction | OMP / TUI | Accept natural-language tasks through PTY, WebSocket, and gRPC-Web |
+| Interaction | Web Dashboard; optional native OMP | Accept natural-language tasks through gRPC-Web or `/uc` |
 | Control plane | Rust Gateway | Task persistence, DAG scheduling, TaskService, EngineService, and WorkerService |
 | Execution | Worker Pool | Dispatch by capability, heartbeat, and load to Grok Build, Claude Code, or Codex |
 | Knowledge | Search + Memory | Combine Text, Semantic, and AST retrieval with TiKV, Qdrant, and PostgreSQL memory |
-| Observability | Task Events | Broadcast submitted, running, completed, and failed states to TUI, Dashboard, and API |
+| Observability | Task Events | Broadcast submitted, running, completed, and failed states to Dashboard and API |
 
 ## Product Preview
 
-The product home (`/`) explains capabilities, the execution path, OMP interaction, and Command Deck. The existing operations dashboard (`#/dashboard`) remains the detailed monitoring surface, while `#/tui` connects to the real OMP PTY and Gateway TaskService.
+The product home (`/`) explains capabilities and the execution path. The operations dashboard (`#/dashboard`) is the live monitoring and task control surface.
 
 ### Dashboard home and live entry points
 
 The product home is the navigation layer between product understanding and real execution:
 
 - **Runtime Surface**: show Gateway status, version, task count, and WatchTask state through the existing gRPC-Web connection.
-- **OMP ↔ UC Loop**: trace `OMP terminal → UC Extension → Rust Gateway → Worker → TaskEvent` and switch the interaction trace by stage.
-- **Command Deck**: inspect service paths, example input, and typical output for `run`, `status`, `tasks`, `workers`, `search`, and `logs`.
-- **Product Map**: explain the responsibilities, protocols, and benefits of the Command, Control, Execution, Knowledge, and Event planes.
-- **Live handoff**: enter `#/tui` from the Command Deck or OMP flow; execution still uses the real WebSocket + gRPC-Web path.
-- **Single-session takeover**: the OMP PTY keeps one active browser session; another tab can use `Take over` to move the persistent session without restarting OMP.
+- **Product Map**: explain the responsibilities, protocols, and benefits of the Web, Control, Execution, Knowledge, and Event planes.
+- **Live handoff**: open `#/dashboard` to submit tasks and inspect the real Gateway state.
 
-Local preview: `http://127.0.0.1:4176/`; live terminal: `http://127.0.0.1:4176/#/tui`.
+Local Vite preview: `http://127.0.0.1:4176/`; operations dashboard: `http://127.0.0.1:4176/#/dashboard`.
 
 ### Product capabilities
 
 ![UltimateCoders product capabilities](docs/screenshots/product-capabilities.png)
 
-This overview covers DAG orchestration, capability-aware workers, Hybrid Search + Memory, native OMP interaction, event-driven recovery, and the path from a local workflow to a cluster.
+This overview covers DAG orchestration, capability-aware workers, Hybrid Search + Memory, event-driven recovery, and the path from a local workflow to a cluster.
 
 ### Product use cases
 
@@ -139,50 +134,15 @@ This overview covers DAG orchestration, capability-aware workers, Hybrid Search 
 
 UltimateCoders targets large-repository changes, parallel delivery, incident diagnosis, and local-to-cluster expansion. The recurring benefits are reusable context, observable execution, and scalable capacity.
 
-### TUI / OMP terminal
-
-`#/tui` is the OMP interaction entry point. The header shows session state, the command bar runs shared UC commands, and command results plus Gateway responses remain in the terminal. In Docker/WSL or environments with PTY/WebSocket support, the terminal also shows live OMP output.
-
-#### Full product walkthrough
-
-![UltimateCoders TUI full product walkthrough](docs/screenshots/tui-terminal.png)
-
-This view brings together the OMP connection, Gateway state, worker capabilities, search entry points, event log, real task submission, and TaskService queries.
-
-#### Command and capability catalog
-
-![UltimateCoders TUI command catalog](docs/screenshots/tui-command-catalog.png)
-
-The shared command bar exposes `status`, `tasks`, `workers`, `search`, `logs`, `submit/run`, and pause/resume/cancel actions. The product home explains the service path behind each command.
-
-#### DAG task submission
-
-![UltimateCoders TUI DAG task submission](docs/screenshots/tui-task-dag.png)
-
-Natural-language tasks go through the real TaskService, return a task ID, and enter the DAG scheduling path.
-
-### Product demo video
-
-<video controls preload="metadata" width="100%" poster="https://raw.githubusercontent.com/JameryW/UltimateCoders/main/docs/screenshots/execution-architecture.png">
-  <source src="https://raw.githubusercontent.com/JameryW/UltimateCoders/main/docs/videos/ultimatecoders-product-showcase.mp4" type="video/mp4">
-  Your browser does not support inline video. [Open the product demo video](https://raw.githubusercontent.com/JameryW/UltimateCoders/main/docs/videos/ultimatecoders-product-showcase.mp4).
-</video>
-
-[Download the full product demo](docs/videos/ultimatecoders-product-showcase.mp4) · [Open the video file directly](https://raw.githubusercontent.com/JameryW/UltimateCoders/main/docs/videos/ultimatecoders-product-showcase.mp4)
-
-The video starts with the product overview, use cases, and execution architecture, then walks through a real page session: OMP WebSocket connection, Gateway status, worker/search/log queries, a `run` task in TUI, a real task ID entering the DAG, and a `tasks` query against TaskService.
-
-See the [TUI interaction detail video](docs/videos/ultimatecoders-tui-demo.mp4) for command-bar, terminal-output, and OMP WebSocket details.
-
 ## Runtime and architecture
 
-The product dashboard (Vite + React) is available at `http://localhost:5173/` with the default Vite config. Its root route is the product overview; open `#/tui` for the real OMP PTY terminal connected to the Gateway TaskService over gRPC-Web. The existing operations dashboard remains at `#/dashboard`.
+The product dashboard (Vite + React) is available at `http://localhost:5173/` in development. Its root route is the product overview; the operations dashboard is at `#/dashboard`.
 
 See [docs/architecture.md](docs/architecture.md) for the detailed architecture reference. The runtime can be read in five layers:
 
 | Layer | Responsibility | Main interfaces |
 | --- | --- | --- |
-| Command | OMP, TUI and Dashboard entry points | `/uc`, Command Deck, gRPC-Web |
+| Web | Dashboard task entry and monitoring | gRPC-Web, TaskService |
 | Control | Task lifecycle, DAG scheduling and persistence | TaskService, TaskStore, control signals |
 | Execution | Local fallback and capability-aware Workers | WorkerService, NATS, sandbox |
 | Knowledge | Repository indexing, hybrid search and layered memory | Text, Semantic, AST, TiKV, Qdrant, PostgreSQL |
@@ -238,8 +198,8 @@ An independent process that bridges the gRPC TaskService with Python Worker/Sand
 5. Sends heartbeats to `uc.heartbeat` every 30 seconds
 
 The worker invokes `grok -p ... --output-format streaming-json` by default. Set
-`UC_CODING_AGENT=claude-code` or `UC_CODING_AGENT=codex` when an existing
-deployment needs one of the compatibility adapters.
+`UC_CODING_AGENT=local-harness` for a smaller local OpenAI-compatible model,
+or `UC_CODING_AGENT=claude-code` / `codex` when a deployment uses those CLIs.
 
 ### Multi-Worker Distributed Architecture
 
@@ -260,7 +220,7 @@ Multiple NATS Worker processes can collaborate on a single task:
 | `crates/` | Rust core, Engine API, gRPC services and PyO3 binding |
 | `packages/uc-orchestrator/` | OMP extension, DAG orchestration, UC tools and terminal UI |
 | `python/ultimate_coders/` | Python Engine facade, Worker/Sandbox, search, memory and FastAPI dashboard |
-| `dashboard/` | Vite + React product homepage, legacy operations dashboard and TUI terminal |
+| `dashboard/` | Vite + React product homepage and operations dashboard |
 | `docker/` | Gateway, Worker, storage and compose configuration |
 | `tests/python/` | Python unit tests |
 | `run-omp.sh`, `run-cluster.sh`, `run-gateway.sh` | Local, clustered and standalone startup entry points |
@@ -335,8 +295,9 @@ pytest tests/python/ -v        # Run Python tests
 ### Docker Compose (storage backends)
 
 ```bash
-# Build and start the complete local app, including the React Dashboard UI.
-docker compose -f docker/docker-compose.yml --profile app up --build
+# Build and start the complete local app against this checkout, including
+# the React Dashboard UI and a writable Git workspace for workers.
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml --profile app up --build
 # React UI: http://localhost:8081
 # Dashboard API: http://localhost:8080/dashboard/
 
@@ -349,6 +310,18 @@ docker compose -f docker/docker-compose.yml down
 # Stop and remove volumes
 docker compose -f docker/docker-compose.yml down -v
 ```
+
+For external Git workers (`UC_REPO_URL` set), use only the base compose file:
+their `/workspace` stays on the persistent `worker_workspace` volume. The
+local override bind-mounts this checkout at `/workspace` for both Python
+services and configures Git's `safe.directory` for that mount and its generated
+worktrees on Docker Desktop. Do not combine it with external Git sync.
+
+For a real coding task, start the configured LLM service before submitting.
+With Ollama on the Docker host, `ollama serve` must be reachable at
+`host.docker.internal:11434` from the workers, and `UC_OPENROUTER_MODEL`
+must name an installed Ollama model when Codex uses the local provider.
+The Gateway's storage health check does not test model generation.
 
 ### Distributed Worker + External Git Deployment
 
@@ -421,7 +394,7 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_POSTGRES_URL` | `postgresql://localhost:5432/ultimatecoders` | PostgreSQL connection URL |
 | `UC_NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL |
 | `UC_PROJECT_PATH` | - | Project path for sandbox execution |
-| `UC_CODING_AGENT` | `grok-build` | Worker coding agent (`grok-build`/`grok`, `claude-code`, or `codex`) |
+| `UC_CODING_AGENT` | `grok-build` | Worker coding agent (`grok-build`/`grok`, `local-harness`, `claude-code`, or `codex`) |
 | `XAI_API_KEY` | - | xAI API key for the default Grok Build worker agent |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for Claude Code calls |
 | `OPENAI_API_KEY` | - | OpenAI API key for Codex calls |

@@ -68,6 +68,33 @@ def _make_subtask_payload(
     }
 
 
+async def test_original_request_survives_remote_dispatch():
+    sender = _NatsWorker(project_path="/tmp/test", mode="default")
+    sender._orchestrator = MagicMock()
+    sender._orchestrator.assign_subtask = AsyncMock(return_value="remote")
+    sender._publisher = MagicMock()
+    sender._nc = MagicMock()
+    sender._nc.publish = AsyncMock()
+    original = "Read README.md and return only its first Markdown heading."
+    subtask = Subtask(
+        id="t-original-s0",
+        parent_id="t-original",
+        description="Read README.md",
+        user_request=original,
+    )
+
+    await sender._dispatch_remote(subtask)
+
+    payload = json.loads(sender._nc.publish.await_args.args[1])
+    receiver = _make_worker()
+    receiver._worker = MagicMock()
+    restored = receiver._build_subtask_from_data(
+        "t-original", "t-original-s0", payload,
+    )
+    assert restored is not None
+    assert restored.user_request == original
+
+
 # ── _ensure_subtask_transport: hard dependency, no fallback (T5 #641) ──
 
 
@@ -395,6 +422,47 @@ async def test_execute_and_report_acks_on_success():
 
     # ACK happened after execution
     ack.assert_awaited_once()
+
+
+async def test_long_running_subtask_renews_jetstream_ack_wait():
+    """An agent run beyond ack_wait must keep its lease until the final ACK."""
+    nw = _make_worker()
+    nw._SUBTASK_PROGRESS_INTERVAL_SECONDS = 0.01
+    finish = asyncio.Event()
+
+    async def execute(subtask):
+        await finish.wait()
+        result = MagicMock()
+        result.success = True
+        result.summary = "done"
+        result.modified_files = []
+        return result
+
+    worker = MagicMock()
+    worker.worker_id = "w-1"
+    worker.execute_subtask = execute
+    nw._worker = worker
+    publisher = MagicMock()
+    publisher.publish_event = AsyncMock()
+    publisher.publish_update = AsyncMock()
+    nw._publisher = publisher
+
+    js_msg = MagicMock()
+    js_msg.in_progress = AsyncMock()
+    js_msg.ack = AsyncMock()
+    running = asyncio.create_task(
+        nw._execute_and_report(Subtask(id="st-1", parent_id="t-1", description="d"), js_msg=js_msg)
+    )
+    await asyncio.sleep(0.035)
+    assert js_msg.in_progress.await_count >= 2
+    js_msg.ack.assert_not_awaited()
+
+    finish.set()
+    await running
+    js_msg.ack.assert_awaited_once()
+    renewals = js_msg.in_progress.await_count
+    await asyncio.sleep(0.025)
+    assert js_msg.in_progress.await_count == renewals
 
 
 async def test_execute_and_report_acks_on_failure():
