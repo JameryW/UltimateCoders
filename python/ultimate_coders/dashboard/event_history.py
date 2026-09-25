@@ -1,5 +1,7 @@
 """Read task history from the Gateway's durable NATS event stream."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import re
