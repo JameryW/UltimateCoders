@@ -132,6 +132,19 @@ class TestRunnerTools:
     def test_read_missing_file(self, tmp_path: Path) -> None:
         assert "error" in json.loads(_tool_read_file(tmp_path, {"path": "nope"}))
 
+    def test_read_large_file_in_utf8_safe_pages(self, tmp_path: Path) -> None:
+        (tmp_path / "readme.md").write_bytes(("# Heading\n" + "界" * 4000).encode("utf-8"))
+        first = json.loads(_tool_read_file(tmp_path, {"path": "readme.md"}))
+        assert first["content"].startswith("# Heading\n")
+        assert first["truncated"] is True
+        assert len(first["content"].encode()) <= 8192
+        second = json.loads(_tool_read_file(
+            tmp_path, {"path": "readme.md", "offset": first["next_offset"]},
+        ))
+        assert second["truncated"] is False
+        expected = (tmp_path / "readme.md").read_text(encoding="utf-8")
+        assert first["content"] + second["content"] == expected
+
 
 def _resp(tool_calls: list[tuple[str, dict]], text: str = "") -> SimpleNamespace:
     calls = [

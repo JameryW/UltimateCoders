@@ -70,6 +70,7 @@ class TestLLMDecomposition:
         st0 = task.subtasks[0]
         assert st0.id == "t-1-s0"
         assert st0.description == "Add foo() to bar.py"
+        assert st0.user_request == "Implement foo and call it"
         assert st0.depends_on == []
         assert st0.file_constraints == ["bar.py"]
         assert st0.expected_output == "foo() defined"
@@ -78,6 +79,7 @@ class TestLLMDecomposition:
         st1 = task.subtasks[1]
         assert st1.id == "t-1-s1"
         assert st1.description == "Call foo() from main"
+        assert st1.user_request == "Implement foo and call it"
         # 1-based index 1 → 0-based subtask s0
         assert st1.depends_on == ["t-1-s0"]
         assert st1.file_constraints == ["main.py"]

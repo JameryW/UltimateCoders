@@ -86,6 +86,27 @@ def test_complete_task_update_carries_rehydration_metadata():
     assert payload["project_id"] == "project-a"
 
 
+def test_complete_snapshot_preserves_original_request_for_gateway_dispatch():
+    original = "Read README.md and return only its first Markdown heading."
+    task = Task(
+        id="t-request",
+        description=original,
+        subtasks=[Subtask(
+            id="t-request-s0",
+            parent_id="t-request",
+            description="Read README.md",
+            user_request=original,
+        )],
+        status=TaskStatus.IN_PROGRESS,
+    )
+
+    full = _make_task_update_payload(task)
+    partial = _make_task_update_payload(task, partial=True)
+
+    assert original in full["subtasks"][0]["description"]
+    assert partial["subtasks"][0]["description"] == "Read README.md"
+
+
 @pytest.mark.asyncio
 async def test_task_snapshot_request_replies_with_complete_snapshots():
     """Gateway recovery receives complete snapshots owned by the Orchestrator."""

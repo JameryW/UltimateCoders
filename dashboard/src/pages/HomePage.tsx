@@ -25,9 +25,9 @@ const capabilities = [
   },
   {
     index: "04",
-    title: "OMP-native experience",
-    detail: "从 OMP TUI、Web Terminal 到 LLM tools 使用同一套 UC 命令和任务语义，减少上下文切换。",
-    signal: "OMP ↔ Web TUI",
+    title: "Dashboard-first control",
+    detail: "从 Web Dashboard 提交任务、查看 Worker 与执行事件，并控制暂停、恢复和取消。",
+    signal: "Dashboard ↔ Gateway",
     tone: "amber",
   },
   {
@@ -49,11 +49,11 @@ const capabilities = [
 const systemLayers = [
   {
     index: "01",
-    label: "Command surface",
-    title: "OMP + Web TUI + tools",
+    label: "Web interface",
+    title: "Dashboard + TaskService",
     route: "intent in",
-    detail: "从 OMP、Web TUI 或 LLM tool 发起同一套 UC 命令，不需要切换产品语义。",
-    tags: ["/uc", "#/tui", "TaskService"],
+    detail: "从 Dashboard 提交任务并查看结果，通过 TaskService 控制同一个执行图。",
+    tags: ["#/dashboard", "TaskService", "gRPC-Web"],
     tone: "mint",
   },
   {
@@ -88,154 +88,18 @@ const systemLayers = [
     label: "Event plane",
     title: "Signals that return",
     route: "observe + recover",
-    detail: "TaskEvent、Checkpoint 和结果流回到 OMP、TUI 与 Dashboard，执行过程可追踪、可恢复。",
+    detail: "TaskEvent、Checkpoint 和结果流回到 Dashboard，执行过程可追踪、可恢复。",
     tags: ["WatchTask", "checkpoint", "TaskEvent"],
     tone: "teal",
   },
 ] as const;
 
 const workflow = [
-  { step: "01", label: "Intent", title: "Describe the change", detail: "在 OMP 或 Web TUI 输入自然语言任务。" },
+  { step: "01", label: "Intent", title: "Describe the change", detail: "在 Dashboard 输入自然语言任务。" },
   { step: "02", label: "Plan", title: "Build the execution graph", detail: "Orchestrator 生成带依赖关系的 DAG。" },
   { step: "03", label: "Run", title: "Dispatch to the right worker", detail: "Gateway 按能力和负载调度 Worker。" },
-  { step: "04", label: "Observe", title: "Stream every state change", detail: "TaskEvent 通过 gRPC-Web / WebSocket 返回。" },
+  { step: "04", label: "Observe", title: "Stream every state change", detail: "TaskEvent 通过 gRPC-Web 返回。" },
   { step: "05", label: "Recover", title: "Resume with context", detail: "Memory、Checkpoint 和事件让执行可恢复。" },
-] as const;
-
-const ompJourney = [
-  {
-    step: "01",
-    actor: "OMP terminal",
-    channel: "YOU → OMP",
-    title: "Start with intent",
-    command: '/uc submit "upgrade auth flow"',
-    detail: "在 OMP 中使用熟悉的命令，或直接让 OMP Agent 调用 UC tools。",
-    trace: [
-      { tone: "prompt", prefix: "$", text: '/uc submit "upgrade auth flow"' },
-      { tone: "default", prefix: "✓", text: "command accepted · UC tools ready" },
-      { tone: "muted", prefix: "↳", text: "OMP hands intent to the UC Extension" },
-      { tone: "event", prefix: "●", text: "interaction_started" },
-    ],
-  },
-  {
-    step: "02",
-    actor: "UC Extension",
-    channel: "OMP → UC",
-    title: "Orchestrate the work",
-    command: "TaskService.SubmitTask",
-    detail: "Extension 将输入交给 Orchestrator，生成任务、依赖和执行波次。",
-    trace: [
-      { tone: "prompt", prefix: ">", text: "TaskService.SubmitTask" },
-      { tone: "default", prefix: "✓", text: "task created · 3 subtasks" },
-      { tone: "muted", prefix: "↳", text: "Orchestrator built dependency-safe waves" },
-      { tone: "event", prefix: "●", text: "TaskEvent · task_created" },
-    ],
-  },
-  {
-    step: "03",
-    actor: "Rust Gateway",
-    channel: "UC → GATEWAY",
-    title: "Coordinate execution",
-    command: "DAG · WorkerRegistry · NATS",
-    detail: "Gateway 按能力、负载和心跳选择 Worker，并负责状态持久化。",
-    trace: [
-      { tone: "prompt", prefix: ">", text: "DAG · WorkerRegistry · NATS" },
-      { tone: "default", prefix: "✓", text: "wave 1 ready · capability=code" },
-      { tone: "muted", prefix: "↳", text: "matched worker · claude-code-01" },
-      { tone: "event", prefix: "●", text: "TaskEvent · subtask_assigned" },
-    ],
-  },
-  {
-    step: "04",
-    actor: "Coding Worker",
-    channel: "GATEWAY → WORKER",
-    title: "Execute in a sandbox",
-    command: "Claude Code / Codex / Grok",
-    detail: "Worker 在隔离工作区执行子任务，结合 Search、Memory 和工具调用完成修改。",
-    trace: [
-      { tone: "prompt", prefix: ">", text: "Claude Code / Codex / Grok" },
-      { tone: "default", prefix: "✓", text: "sandbox started · worker online" },
-      { tone: "muted", prefix: "↳", text: "Search + Memory context loaded" },
-      { tone: "event", prefix: "●", text: "TaskEvent · file_modified" },
-    ],
-  },
-  {
-    step: "05",
-    actor: "TaskEvent stream",
-    channel: "EVENTS → OMP + TUI",
-    title: "Return every signal",
-    command: "assigned → started → completed",
-    detail: "事件实时回到 OMP 和 Web TUI；暂停、恢复、取消与结果查询走同一控制面。",
-    trace: [
-      { tone: "prompt", prefix: ">", text: "WatchTask / event stream" },
-      { tone: "event", prefix: "●", text: "TaskEvent · subtask_completed" },
-      { tone: "default", prefix: "✓", text: "result rendered in OMP" },
-      { tone: "muted", prefix: "↔", text: "same state visible in Web TUI" },
-    ],
-  },
-] as const;
-
-const commandDeck = [
-  {
-    command: "run",
-    label: "Start a task",
-    title: "Submit natural-language work",
-    detail: "从一句需求开始，让 UC 创建任务、拆解 subtasks 并进入 DAG 执行。",
-    route: "TaskService.SubmitTask → Orchestrator → DAG",
-    example: 'run "fix flaky heartbeat test"',
-    output: "task created · 3 subtasks · wave 1 ready",
-    tone: "mint",
-  },
-  {
-    command: "status",
-    label: "Gateway health",
-    title: "Inspect the control plane",
-    detail: "查看 Gateway、gRPC、存储和消息通道的可用状态，及时发现执行链路问题。",
-    route: "EngineService.Health → component checks",
-    example: "status",
-    output: "gateway healthy · gRPC connected · event stream watching",
-    tone: "blue",
-  },
-  {
-    command: "tasks",
-    label: "Task inventory",
-    title: "Query the execution graph",
-    detail: "查看任务总量、状态分布、subtasks 和最近更新时间，不用离开终端。",
-    route: "TaskService.ListTasks → TaskStore",
-    example: "tasks",
-    output: "8 tasks observed · 2 running · 3 completed",
-    tone: "violet",
-  },
-  {
-    command: "workers",
-    label: "Worker capacity",
-    title: "See who can execute",
-    detail: "查看 Worker 能力、负载、容量和心跳，理解每个 subtask 为什么被这样调度。",
-    route: "WorkerService → WorkerRegistry",
-    example: "workers",
-    output: "claude-code-01 · codex-02 · load 2/8",
-    tone: "amber",
-  },
-  {
-    command: "search",
-    label: "Hybrid context",
-    title: "Find code before editing",
-    detail: "用 Text、Semantic 和 AST 组合检索仓库，并把结果与 Memory 一起提供给 Agent。",
-    route: "SearchService → Text / Semantic / AST",
-    example: 'search "auth middleware"',
-    output: "hybrid search · 12 results · memory context attached",
-    tone: "rose",
-  },
-  {
-    command: "logs",
-    label: "Event stream",
-    title: "Follow every transition",
-    detail: "沿着统一 TaskEvent 流查看 assigned、started、file_modified、completed 和 failed。",
-    route: "WatchTask → TaskEvent → OMP + Web TUI",
-    example: "logs",
-    output: "subtask_started · file_modified · completed",
-    tone: "teal",
-  },
 ] as const;
 
 const scenarios = [
@@ -306,52 +170,10 @@ function formatSyncTime(timestamp: number | null) {
   }).format(timestamp);
 }
 
-function getGatewaySurfaceState(isLive: boolean, gatewayStatus: string) {
-  if (!isLive) {
-    return { label: "offline preview", tone: "offline" as const };
-  }
-
-  if (gatewayStatus === "healthy") {
-    return { label: "gateway ready", tone: "ready" as const };
-  }
-
-  if (gatewayStatus === "等待 Gateway") {
-    return { label: "gateway reachable", tone: "degraded" as const };
-  }
-
-  return { label: `gateway reachable · ${gatewayStatus}`, tone: "degraded" as const };
-}
-
-function getCommandOutput(
-  command: string,
-  fallback: string,
-  runtime: RuntimeSnapshot,
-  isLive: boolean,
-) {
-  if (!isLive) {
-    return fallback;
-  }
-
-  switch (command) {
-    case "status":
-      return `gateway ${runtime.gatewayStatus} · gRPC connected · event stream watching`;
-    case "tasks":
-      return runtime.taskTotal === null
-        ? fallback
-        : `${runtime.taskTotal} tasks observed · TaskService.ListTasks`;
-    case "logs":
-      return "TaskEvent stream · watching";
-    default:
-      return fallback;
-  }
-}
-
 export default function HomePage() {
   const { connectionState, healthCheck, listTasks } = useGrpcWeb({ enabled: true });
   const [runtime, setRuntime] = useState<RuntimeSnapshot>(initialRuntime);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [selectedOmpStep, setSelectedOmpStep] = useState(0);
-  const [selectedCommand, setSelectedCommand] = useState(0);
   const [activeSection, setActiveSection] = useState(() => window.location.hash.slice(1) || "/");
 
   const refreshRuntime = useCallback(async () => {
@@ -385,10 +207,6 @@ export default function HomePage() {
   }, []);
 
   const isLive = connectionState === "connected";
-  const gatewaySurfaceState = getGatewaySurfaceState(isLive, runtime.gatewayStatus);
-  const activeOmpStep = ompJourney[selectedOmpStep] ?? ompJourney[0]!;
-  const activeCommand = commandDeck[selectedCommand] ?? commandDeck[0]!;
-  const activeCommandOutput = getCommandOutput(activeCommand.command, activeCommand.output, runtime, isLive);
 
   return (
     <main className="home-page">
@@ -406,10 +224,7 @@ export default function HomePage() {
             <a className={`home-nav-link ${activeSection === "/" ? "home-nav-link-active" : ""}`} href="#/">Overview</a>
             <a className={`home-nav-link ${activeSection === "home-capabilities" ? "home-nav-link-active" : ""}`} href="#home-capabilities">Capabilities</a>
             <a className={`home-nav-link ${activeSection === "home-workflow" ? "home-nav-link-active" : ""}`} href="#home-workflow">Execution flow</a>
-            <a className={`home-nav-link ${activeSection === "home-omp" ? "home-nav-link-active" : ""}`} href="#home-omp">OMP loop</a>
-            <a className={`home-nav-link ${activeSection === "home-commands" ? "home-nav-link-active" : ""}`} href="#home-commands">Commands</a>
             <a className="home-nav-link" href="#/dashboard">Operations dashboard <span aria-hidden="true">↗</span></a>
-            <a className="home-nav-link" href="#/tui">TUI terminal <span aria-hidden="true">↗</span></a>
           </div>
         </nav>
 
@@ -418,10 +233,10 @@ export default function HomePage() {
             <div className="home-eyebrow"><span className="home-eyebrow-dot" /> ORCHESTRATE · EXECUTE · REMEMBER</div>
             <h1 id="home-hero-title">From intent to<br /><em>observable execution.</em></h1>
             <p className="home-hero-lede">
-              一个入口连接 OMP、Gateway、Worker、Search 和 Memory，把复杂 Coding 任务变成可调度、可观察、可恢复的执行链。
+              一个入口连接 Gateway、Worker、Search 和 Memory，把复杂 Coding 任务变成可调度、可观察、可恢复的执行链。
             </p>
             <div className="home-hero-actions">
-              <a className="home-button home-button-primary" href="#/tui">Open TUI terminal <span aria-hidden="true">→</span></a>
+              <a className="home-button home-button-primary" href="#/dashboard">Open dashboard <span aria-hidden="true">→</span></a>
               <a className="home-button home-button-secondary" href="#home-workflow">See how it works <span aria-hidden="true">↓</span></a>
             </div>
             <div className="home-trust-line">
@@ -535,119 +350,13 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="home-section home-omp-section" id="home-omp" aria-labelledby="omp-title">
-          <div className="home-section-heading home-section-heading-tight">
-            <div>
-              <div className="home-section-kicker">THE OMP ↔ UC LOOP</div>
-              <h2 id="omp-title">One command surface.<br /><em>Every signal comes back.</em></h2>
-            </div>
-            <p>OMP 不是被旁路的演示入口，而是 UC Orchestrator 的原生交互层。命令向下编排，事件向上回流。</p>
-          </div>
-          <div className="home-omp-layout">
-            <div className="home-omp-journey">
-              {ompJourney.map((item, index) => (
-                <button
-                  className={`home-omp-step ${selectedOmpStep === index ? "home-omp-step-active" : ""}`}
-                  key={item.step}
-                  type="button"
-                  aria-pressed={selectedOmpStep === index}
-                  aria-label={`Inspect OMP stage ${item.step}: ${item.title}`}
-                  onClick={() => setSelectedOmpStep(index)}
-                >
-                  <div className="home-omp-step-marker">
-                    <span>{item.step}</span>
-                    {index < ompJourney.length - 1 && <i aria-hidden="true" />}
-                  </div>
-                  <div className="home-omp-step-body">
-                    <div className="home-omp-step-meta"><span>{item.actor}</span><b>{item.channel}</b></div>
-                    <h3>{item.title}</h3>
-                    <code>{item.command}</code>
-                    <p>{item.detail}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <aside className="home-omp-console" aria-label="OMP interaction trace">
-              <div className="home-omp-console-head">
-                <span className="home-console-dots"><i /><i /><i /></span>
-                <span>omp / uc interaction trace</span>
-                <span className={`home-console-live ${gatewaySurfaceState.tone === "ready" ? "" : "home-console-live-warning"}`}>
-                  <span className={gatewaySurfaceState.tone === "ready" ? "" : "home-console-live-offline"} /> {gatewaySurfaceState.label}
-                </span>
-              </div>
-              <div className="home-omp-console-context">
-                <span>stage {activeOmpStep.step}</span>
-                <strong>{activeOmpStep.actor}</strong>
-                <small>{activeOmpStep.channel}</small>
-              </div>
-              <div className="home-omp-console-body">
-                {activeOmpStep.trace.map((line) => (
-                  <div className={`home-console-line home-console-${line.tone}`} key={`${activeOmpStep.step}-${line.text}`}>
-                    <span className={line.tone === "default" ? "home-console-ok" : ""}>{line.prefix}</span> {line.text}
-                  </div>
-                ))}
-              </div>
-              <div className="home-omp-bridge">
-                <span>OMP terminal</span><b>↔</b><span>Web TUI</span>
-                <small>shared UC command layer · shared TaskEvent stream</small>
-                <a className="home-omp-live-link" href="#/tui">open live terminal <span aria-hidden="true">↗</span></a>
-              </div>
-            </aside>
-          </div>
-        </section>
-
-        <section className="home-section home-command-section" id="home-commands" aria-labelledby="commands-title">
-          <div className="home-section-heading home-section-heading-tight">
-            <div>
-              <div className="home-section-kicker">THE COMMAND DECK</div>
-              <h2 id="commands-title">Make the system legible.<br /><em>From one command layer.</em></h2>
-            </div>
-            <p>这些不是静态菜单，而是 OMP、Web TUI 和 LLM tools 共享的 UC 能力入口。选择一个命令查看它连接的真实服务。</p>
-          </div>
-          <div className="home-command-layout">
-            <div className="home-command-list" role="tablist" aria-label="UC command capabilities">
-              {commandDeck.map((item, index) => (
-                <button
-                  className={`home-command-card home-tone-${item.tone} ${selectedCommand === index ? "home-command-card-active" : ""}`}
-                  key={item.command}
-                  type="button"
-                  role="tab"
-                  aria-selected={selectedCommand === index}
-                  aria-controls="home-command-panel"
-                  onClick={() => setSelectedCommand(index)}
-                >
-                  <span className="home-command-card-topline"><code>uc</code><strong>{item.command}</strong><i>↗</i></span>
-                  <span className="home-command-card-label">{item.label}</span>
-                </button>
-              ))}
-            </div>
-            <div className="home-command-panel" id="home-command-panel" role="tabpanel" aria-label={`${activeCommand.command} command details`}>
-              <div className="home-command-panel-head">
-                <span className="home-console-dots"><i /><i /><i /></span>
-                <span>uc command layer</span>
-                <span className={`home-command-panel-status ${gatewaySurfaceState.tone === "ready" ? "" : "home-console-live-warning"}`}>
-                  <span className={gatewaySurfaceState.tone === "ready" ? "" : "home-console-live-offline"} /> {gatewaySurfaceState.label}
-                </span>
-              </div>
-              <div className="home-command-prompt"><span>uc ❯</span><code>{activeCommand.example}</code></div>
-              <div className="home-command-details">
-                <div><span>capability</span><strong>{activeCommand.title}</strong></div>
-                <div><span>service path</span><code>{activeCommand.route}</code></div>
-                <div><span>returns</span><p>{activeCommandOutput}</p></div>
-              </div>
-              <p className="home-command-detail-copy">{activeCommand.detail}</p>
-              <a className="home-command-action" href="#/tui">run this in the live TUI <span aria-hidden="true">→</span></a>
-            </div>
-          </div>
-        </section>
-
         <section className="home-section home-scenarios-section" aria-labelledby="scenarios-title">
           <div className="home-section-heading home-section-heading-tight">
             <div>
               <div className="home-section-kicker">WHY IT MATTERS</div>
               <h2 id="scenarios-title">Designed for the work<br /><em>behind the prompt.</em></h2>
             </div>
-            <a className="home-inline-link" href="#/tui">Try the live terminal <span aria-hidden="true">↗</span></a>
+            <a className="home-inline-link" href="#/dashboard">Open live dashboard <span aria-hidden="true">↗</span></a>
           </div>
           <div className="home-scenario-grid">
             {scenarios.map((scenario) => (
@@ -661,20 +370,20 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="home-final-cta" aria-label="Open terminal">
+        <section className="home-final-cta" aria-label="Open dashboard">
           <div>
             <div className="home-section-kicker">READY WHEN YOU ARE</div>
             <h2>Turn the next idea<br /><em>into a traceable run.</em></h2>
           </div>
           <div className="home-final-actions">
-            <a className="home-button home-button-primary" href="#/tui">Launch UC terminal <span aria-hidden="true">→</span></a>
-            <span>OMP command layer · real Gateway connection · live task events</span>
+            <a className="home-button home-button-primary" href="#/dashboard">Open operations dashboard <span aria-hidden="true">→</span></a>
+            <span>real Gateway connection · live task events</span>
           </div>
         </section>
 
         <footer className="home-footer">
           <span>ULTIMATECODERS / PRODUCT OVERVIEW</span>
-          <span>Gateway-backed · OMP-native · worker-ready</span>
+          <span>Gateway-backed · dashboard-first · worker-ready</span>
         </footer>
       </div>
     </main>

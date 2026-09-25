@@ -268,6 +268,29 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: Tas
       {/* Progress bar */}
       <SubtaskProgressBar subtasks={subtasks} />
 
+      {/* Historical and live execution output */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[var(--text-primary)] font-medium">Interaction Log ({interactionLog.length})</span>
+          {subtasks.length > 1 && (
+            <select
+              value={filterSubtaskId}
+              onChange={(e) => setFilterSubtaskId(e.target.value)}
+              aria-label="Filter by subtask"
+              className="text-xs bg-[var(--bg-primary)] border border-[var(--border-color)] text-[var(--text-primary)] rounded px-2 py-1"
+            >
+              <option value="">All subtasks</option>
+              {subtasks.map((st) => (
+                <option key={st.id} value={st.id}>
+                  {truncate(st.description, 25)} ({shortId(st.id)})
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        <InteractionLog events={interactionLog} filterSubtaskId={filterSubtaskId || undefined} />
+      </div>
+
       {/* Event timeline */}
       <EventTimeline events={interactionLog} />
 
@@ -353,29 +376,6 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: Tas
           </div>
         </div>
       )}
-
-      {/* Interaction log with subtask filter */}
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[var(--text-primary)] font-medium">Interaction Log:</span>
-          {subtasks.length > 1 && (
-            <select
-              value={filterSubtaskId}
-              onChange={(e) => setFilterSubtaskId(e.target.value)}
-              aria-label="Filter by subtask"
-              className="text-xs bg-[var(--bg-primary)] border border-[var(--border-color)] text-[var(--text-primary)] rounded px-2 py-1"
-            >
-              <option value="">All subtasks</option>
-              {subtasks.map((st) => (
-                <option key={st.id} value={st.id}>
-                  {truncate(st.description, 25)} ({shortId(st.id)})
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-        <InteractionLog events={interactionLog} filterSubtaskId={filterSubtaskId || undefined} />
-      </div>
 
       {/* Output files */}
       <OutputFiles events={interactionLog} onNavigateFile={onNavigateFile} repoId={repoId} />

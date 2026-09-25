@@ -1,20 +1,13 @@
-# Incremental OMP runtime layer. The existing orchestrator image already
-# contains the compiled Rust/Python gateway extension; this image only adds
-# Bun, the OMP workspace, PTY support, and the UC extension.
-#
-# ponytail: `docker-orchestrator:latest` is a LOCAL tag — nothing in this
-# repo builds it directly. It is the maturin-built Python runtime image
-# (same content as the worker service image). If a rebuild fails with
-# "pull access denied", restore the tag first:
-#   docker tag docker-worker:latest docker-orchestrator:latest
-# (compose build order: `docker compose --profile app --profile worker
-# build worker orchestrator` also works — worker builds first.)
-FROM docker-orchestrator:latest
+# Incremental OMP runtime layer. Compose supplies the freshly built worker
+# image as the base_image build context, so a clean checkout needs no local
+# image tag or manual build ordering. This layer adds Bun, the OMP workspace,
+# and the UC extension.
+FROM base_image
 
 USER root
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl unzip util-linux \
+    && apt-get install -y --no-install-recommends curl unzip \
     && rm -rf /var/lib/apt/lists/*
 
 ENV BUN_INSTALL=/opt/bun \
@@ -22,10 +15,6 @@ ENV BUN_INSTALL=/opt/bun \
 
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.14" \
     && bun --version
-# websockets: TUI relay; prometheus-client: dashboard /metrics exporter
-# (the dashboard answers with a stub text response without it).
-RUN pip install --no-cache-dir websockets "prometheus-client>=0.20.0"
-
 COPY vendor/oh-my-pi /opt/oh-my-pi
 # The extension keeps repo-relative paths to the vendored OMP sources in its
 # tsconfig.  Preserve that path after relocating the repository into the
@@ -40,16 +29,15 @@ COPY python/ultimate_coders /app/python/ultimate_coders
 
 RUN cd /opt/oh-my-pi \
     && sed -i 's/minimumReleaseAge = 259200/minimumReleaseAge = 0/' bunfig.toml \
-    && sed -i '/^\[install\]/a registry = "https://registry.npmmirror.com"' bunfig.toml \
-    && bun install --no-save --ignore-scripts
+    && bun install --registry=https://registry.npmjs.org --no-save --ignore-scripts --verbose
 RUN cd /opt/oh-my-pi \
-    && bun add --no-save --ignore-scripts @oh-my-pi/pi-natives-linux-x64@16.1.16
+    && bun add --registry=https://registry.npmjs.org --no-save --ignore-scripts --verbose @oh-my-pi/pi-natives-linux-x64@16.1.16
 COPY packages/uc-orchestrator /opt/oh-my-pi/uc-orchestrator
 # The extension is copied after the OMP workspace install, so its own direct
 # dependencies would otherwise be absent from the runtime image.  Install
 # them here while keeping the vendored OMP packages as peer dependencies.
 RUN cd /opt/oh-my-pi/uc-orchestrator \
-    && /opt/bun/bin/bun install --no-save --ignore-scripts --omit=peer \
+    && /opt/bun/bin/bun install --registry=https://registry.npmjs.org --no-save --ignore-scripts --omit=peer --verbose \
     && test -f node_modules/nats/package.json \
     && test -f node_modules/@connectrpc/connect/package.json
 RUN cd /opt/oh-my-pi \
@@ -68,5 +56,4 @@ COPY docker/omp-entrypoint.sh /usr/local/bin/uc-omp.sh
 RUN sed -i 's/\r$//' /usr/local/bin/uc-omp.sh \
     && chmod +x /usr/local/bin/uc-omp.sh
 
-ENV UC_OMP_SCRIPT=/usr/local/bin/uc-omp.sh \
-    UC_OMP_WORKSPACE=/workspace/UltimateCoders
+ENV UC_OMP_WORKSPACE=/workspace/UltimateCoders

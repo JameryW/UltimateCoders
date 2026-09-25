@@ -1,6 +1,13 @@
 # ── Stage 1: Build the Rust extension via maturin ──────────────────
 FROM python:3.11-slim AS builder
 
+# Use the same reachable Debian mirror as the runtime stage. Otherwise the
+# compiler toolchain spends most of a clean build downloading from deb.debian.org.
+RUN sed -i \
+      -e 's|http://deb.debian.org/debian-security|https://mirrors.tuna.tsinghua.edu.cn/debian-security|g' \
+      -e 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' \
+      /etc/apt/sources.list.d/debian.sources
+
 RUN apt-get update && apt-get install -y \
     curl build-essential pkg-config libssl-dev protobuf-compiler git \
     && rm -rf /var/lib/apt/lists/*
@@ -21,7 +28,7 @@ COPY pyproject.toml ./
 # prometheus-client powers the dashboard /metrics exporter (the dashboard
 # degrades to a stub text response without it).
 RUN pip install --no-cache-dir \
-    "fastapi>=0.100.0" "uvicorn>=0.20.0" "websockets>=12.0" "jinja2>=3.1.0" \
+    "fastapi>=0.100.0" "uvicorn>=0.20.0" "jinja2>=3.1.0" \
     "sse-starlette>=1.6.0" "nats-py>=2.7.0" \
     "anthropic>=0.30.0" "litellm>=1.0.0" \
     "prometheus-client>=0.20.0"
@@ -35,17 +42,25 @@ RUN pip install --no-cache-dir "multilspy==0.0.15" \
     && python -c "import jedi_language_server; from multilspy.language_server import LanguageServer; print('multilspy + jedi OK')" \
     || echo "multilspy install skipped (non-fatal)"
 
-# ponytail: rust-analyzer — builder already has cargo/rustup. Install to a
-# known root so we can COPY the binary to the runtime stage. multilspy's
-# RustAnalyzer downloads its own copy, but having rust-analyzer in PATH is a
-# useful fallback and a build-time smoke check. Ensure the path always exists
-# (touch placeholder on failure) so the Stage 2 COPY never breaks the build.
-RUN cargo install --root /usr/local --locked rust-analyzer \
+# Install a standalone language server. The crates.io `rust-analyzer` package
+# has no binary, while the rustup component links against toolchain libraries
+# that are not present in the runtime image. Pin and verify the official
+# release artifact before copying it into that image.
+RUN curl -fL --retry 5 --retry-delay 2 \
+      https://github.com/rust-lang/rust-analyzer/releases/download/2026-09-21/rust-analyzer-x86_64-unknown-linux-gnu.gz \
+      -o /tmp/rust-analyzer.gz \
+    && echo 'b2d24ce2bda2ea05b1ad7c2917d205f8111775f703ccd908e6061803ae8257d0  /tmp/rust-analyzer.gz' | sha256sum -c - \
+    && gzip -dc /tmp/rust-analyzer.gz > /usr/local/bin/rust-analyzer \
+    && chmod 0755 /usr/local/bin/rust-analyzer \
     && /usr/local/bin/rust-analyzer --version \
-    || (touch /usr/local/bin/rust-analyzer \
-        && echo "rust-analyzer install skipped (non-fatal)")
+    && rm /tmp/rust-analyzer.gz
 
-COPY . .
+# Only the Rust workspace and Python package affect the extension build.
+# Copying the whole repository makes README/Compose edits rebuild the wheel
+# and every subsequent CLI layer, even though those files are unrelated.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+COPY python/ ./python/
 # The repo root Cargo.toml is a virtual workspace (no [package]), so maturin
 # must be pointed at the actual Python extension crate. Newer maturin also
 # requires a virtualenv for `develop`; point VIRTUAL_ENV at the system prefix
@@ -91,13 +106,6 @@ WORKDIR /app
 # Copy Node.js 22 + npm from the dedicated official Node runtime stage.
 COPY --from=node-runtime /usr/local/ /usr/local/
 
-# Copy installed Python packages (includes _uc_core .so + all deps)
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-
-# Copy rust-analyzer binary built in Stage 1 (multilspy downloads its own
-# copy, but having it in PATH is a useful fallback). Non-fatal if absent.
-COPY --from=builder /usr/local/bin/rust-analyzer /usr/local/bin/rust-analyzer
-
 # TypeScript LSP: install globally so multilspy (which needs node/npm in
 # PATH) can bootstrap typescript-language-server.
 RUN npm install -g typescript-language-server typescript \
@@ -138,6 +146,11 @@ RUN curl -fsSL https://x.ai/cli/install.sh | bash \
     && chmod -R a+rX /opt/grok
 ENV PATH="/opt/grok/bin:${PATH}"
 RUN grok --version
+
+# Keep the expensive CLI install layers independent of source changes in the
+# builder stage. The Python runtime and analyzer are copied only after them.
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin/rust-analyzer /usr/local/bin/rust-analyzer
 
 # Claude Code refuses --dangerously-skip-permissions under root. Keep the
 # container entrypoint root-owned so it can initialize an existing named

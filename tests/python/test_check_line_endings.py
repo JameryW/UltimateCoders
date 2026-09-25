@@ -175,18 +175,10 @@ def test_real_repo_is_reconciled() -> None:
     dispatch_live_roster.rs -- 7 + 23 + 1 = 31, all text (binary skipped still 9,
     gitlink(s) still 1, so the non-vacuity pins below are untouched).
 
-    Pinned as the current ticket's pair of reachable states, and the older values are
-    dropped as unreachable: 1836/1827 (T40's pre-archive), 1840/1831 (T40's
-    post-archive), 1844/1835 / 1848/1839 (T42's and T43's pre-archive states) and
-    now 1852/1843 / 1856/1847 (T43's post-archive / T44's pair) --
-    each would mask a real drift if left in, the rule `test_check_tasks_refs.py`
-    records for its corpus, applied to this one.
-
-    The pair is MEASURED, not derived, and two independent counts agree: the guard's
-    own output, and `git ls-files` minus the one gitlink (1888-1 = 1887, so 1878 text
-    + 9 binary; the 1892/1883 half is that plus the five listed task files, all
-    text -- re-measured by CI on the commit).  A change that moves either pair must
-    update this set in the same change; any third value means the scan changed shape.
+    The current index has 1892 tracked blobs: 1883 text and 9 binary, plus one
+    gitlink. The Dashboard cleanup adds ten text files and removes two text
+    files, giving 1900/1891 after commit. Both reachable pairs keep the binary
+    and gitlink classification pinned. Any other count needs investigation.
     """
     r = subprocess.run([PY, str(GUARD)], capture_output=True, cwd=str(REPO))
     out = r.stdout.decode("utf-8", "replace")
@@ -196,7 +188,10 @@ def test_real_repo_is_reconciled() -> None:
     )
     m = re.search(r"tracked file\(s\): (\d+), text scanned: (\d+)", out)
     assert m, f"the guard must report how much it looked at; got:\n{out}"
-    assert (int(m.group(1)), int(m.group(2))) in {(1887, 1878), (1892, 1883)}, (
+    # Dashboard cleanup deletes the browser TUI page and its test while adding
+    # the Dashboard API image, local Compose override, replacement route test,
+    # and two event-view files: ten additions minus two deletions.
+    assert (int(m.group(1)), int(m.group(2))) in {(1892, 1883), (1900, 1891)}, (
         f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     )
     assert "line endings check passed." in out, out

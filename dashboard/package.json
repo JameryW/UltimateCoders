@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "node --test tests/*.test.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "generate": "cd .. && PATH=dashboard/node_modules/.bin:$PATH buf generate"
@@ -15,8 +16,6 @@
     "@connectrpc/connect": "^2.1.2",
     "@connectrpc/connect-web": "^2.1.2",
     "@tanstack/react-virtual": "^3.14.3",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.0",
     "dompurify": "^3.4.10",
     "highlight.js": "^11.11.1",

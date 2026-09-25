@@ -6,7 +6,7 @@
 #   PostgreSQL         — structured metadata (symbols, references, repos)
 #   NATS JetStream     — async event stream (agent events, indexing jobs)
 #
-# The Orchestrator exposes the Dashboard API and WebSocket on port 8080.
+# The Dashboard API listens on port 8080.
 # The React UI is served separately by dashboard-ui on port 8081.
 #   docker run -p 8080:8080 ...
 
@@ -202,19 +202,21 @@ services:
       retries: 5
       start_period: 90s
 
-  # ── UltimateCoders Orchestrator (with Dashboard) ─────────────
-  # Run the Orchestrator with the embedded web dashboard.
+  # ── Dashboard API ───────────────────────────────────────────
+  # Serve the Dashboard API without the optional OMP terminal runtime.
   # The Dashboard API is available at http://localhost:8080/dashboard/;
   # open the React UI at http://localhost:8081.
   # Use: docker compose -f docker/docker-compose.yml --profile app up --build
   orchestrator:
-    image: docker-orchestrator:omp
+    image: docker-orchestrator:dashboard
     build:
       context: ..
-      dockerfile: docker/Dockerfile.omp
+      dockerfile: docker/Dockerfile.dashboard-api
+      additional_contexts:
+        base_image: service:worker
     profiles: ["app"]
     ports:
-      - "8080:8080"   # Dashboard web UI + SSE
+      - "8080:8080"   # Dashboard API + SSE
     depends_on:
       pd:
         condition: service_healthy
@@ -231,8 +233,6 @@ services:
       UC_QDRANT_URL: "http://qdrant:6334"
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
       UC_NATS_URL: "nats://nats:4222"
-      UC_OMP_SCRIPT: "/usr/local/bin/uc-omp.sh"
-      UC_OMP_WORKSPACE: "/workspace/UltimateCoders"
       # Run the dashboard from the bind-mounted checkout so a local
       # deployment uses the same Python source that was just verified.
       PYTHONPATH: "/workspace/UltimateCoders/python"
@@ -253,8 +253,8 @@ services:
     command: ["python", "-m", "ultimate_coders.dashboard", "--host", "0.0.0.0", "--port", "8080"]
 
   # ── Dashboard frontend (nginx) ──────────────────────────────────
-  # Serves the built React SPA and proxies /dashboard/api, /ws/tui,
-  # and gRPC-Web to the backend services. Access at http://localhost:8081
+  # Serves the built React SPA and proxies /dashboard/api and gRPC-Web.
+  # Access at http://localhost:8081.
   dashboard-ui:
     image: ultimatecoders-dashboard-ui:local
     build:
@@ -274,8 +274,9 @@ services:
   # Independent process that registers with the Gateway via gRPC
   # WorkerService, subscribes to NATS for subtask dispatch, and
   # executes subtasks via the Python Worker + Sandbox.
-  # Can be scaled: docker compose --profile worker up --scale worker=3
-  # Use: docker compose --profile worker up
+  # Can be scaled: docker compose --profile worker up --scale worker=3 worker
+  # Use: docker compose --profile worker up worker
+  # UC_NATS_URL and UC_GRPC_ENDPOINT can point to a separately deployed host.
   #
   # Git sync (Phase 1): when UC_REPO_URL is set, the worker clones
   # the external repo into /workspace on first start (persisted across
@@ -293,13 +294,17 @@ services:
       dockerfile: docker/Dockerfile
     profiles: ["worker", "app"]
     depends_on:
-      nats:
-        condition: service_healthy
+      # In the full app, Gateway health implies its NATS dependency is ready.
+      # The gateway profile is absent in a remote worker deployment, so the
+      # worker can still use the external endpoints configured below.
       gateway:
         condition: service_healthy
+        required: false
     environment:
-      UC_NATS_URL: "nats://nats:4222"
-      UC_GRPC_ENDPOINT: "http://gateway:50051"
+      # Remote workers start without a local Gateway; the process retries
+      # NATS and Gateway connections after startup or later disruptions.
+      UC_NATS_URL: "${UC_NATS_URL:-nats://nats:4222}"
+      UC_GRPC_ENDPOINT: "${UC_GRPC_ENDPOINT:-http://gateway:50051}"
       UC_PROJECT_PATH: "/workspace"
       # Coding agent selection is plugin-registry driven. Built-ins:
       # grok-build (default), claude-code, codex. In-tree plugin:
@@ -373,6 +378,9 @@ services:
       gateway:
         condition: service_healthy
     environment:
+      # The gateway consumes task snapshots and dispatches ready subtasks.
+      # Prevent this Python coordinator from scheduling the same node locally.
+      UC_GATEWAY_OWNS_DISPATCH: "true"
       UC_NATS_URL: "nats://nats:4222"
       UC_TIKV_PD_ENDPOINTS: "pd:2379"
       UC_QDRANT_URL: "http://qdrant:6334"

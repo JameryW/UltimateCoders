@@ -156,6 +156,7 @@ class TestAllowlistConstruction:
             ("codex", "OPENAI_DEFAULT_MODEL"),
             ("deepseek-harness", "DEEPSEEK_API_KEY"),
             ("local-harness", "OPENAI_API_KEY"),
+            ("local-harness", "OPENAI_API_BASE"),
         ],
     )
     def test_adapter_extensions_named_explicitly(self, agent, credential):
@@ -236,6 +237,13 @@ class TestBuildChildEnv:
             os.environ, {}, agent=agent
         )
         assert env[credential] == "test-credential"
+
+    def test_local_harness_inherits_litellm_endpoint_only_for_its_agent(self):
+        host = {"OPENAI_API_BASE": "http://host.docker.internal:11434/v1"}
+        local = SandboxConfig(agent="local-harness").build_child_env(host, {})
+        codex = SandboxConfig(agent="codex").build_child_env(host, {})
+        assert local["OPENAI_API_BASE"] == host["OPENAI_API_BASE"]
+        assert "OPENAI_API_BASE" not in codex
 
     def test_base_system_vars_pass(self, monkeypatch):
         monkeypatch.setenv("PATH", "/usr/bin:/bin")

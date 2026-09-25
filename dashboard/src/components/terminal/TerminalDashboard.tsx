@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventLogPanel } from "@/components/panels/EventLogPanel";
 import { FileBrowser, type FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { SearchPanel } from "@/components/panels/SearchPanel";
+import { TaskDetail } from "@/components/panels/TaskDetail";
 import { TasksPanel } from "@/components/panels/TasksPanel";
 import { WorkersPanel } from "@/components/panels/WorkersPanel";
 import type { GrpcConnectionState, GrpcSubmitResult, GrpcTaskActionResult } from "@/hooks/useGrpcWeb";
 import type { DashboardConnectionState } from "@/hooks/useDashboardGrpc";
 import type { Theme } from "@/hooks/useTheme";
 import { executeUcCommand } from "@/lib/ucCommands";
+import { latestDashboardEvents } from "@/lib/dashboardEvents";
+import { statusBadgeClass } from "@/lib/utils";
 import type {
   DashboardEvent,
   HealthData,
@@ -52,6 +55,8 @@ interface TerminalDashboardProps {
   interactionLog: Record<string, TaskEvent[]>;
   selectedTask: TaskSummary | null;
   selectedTaskId: string | null;
+  taskHistoryLoading: boolean;
+  taskHistoryError?: string;
   onSelectTask: (taskId: string | null) => void;
   onPauseTask: (taskId: string) => Promise<GrpcTaskActionResult>;
   onResumeTask: (taskId: string) => Promise<GrpcTaskActionResult>;
@@ -123,7 +128,7 @@ function OverviewView({
       <div className="terminal-runtime-banner">
         <span>UC / RUNTIME</span>
         <strong>{connected ? "Docker backend connected" : "Waiting for Docker backend"}</strong>
-        <small>Health · TaskService · DashboardService · WebSocket TUI</small>
+        <small>Health · TaskService · DashboardService · live events</small>
       </div>
 
       <section className="terminal-topology" aria-label="Cluster topology">
@@ -134,7 +139,7 @@ function OverviewView({
         <button className="terminal-topology-node operator" onClick={() => onView("tasks")}>
           <small>第 0 层 · 操作者</small>
           <strong>UC OPERATOR <em>submit / inspect / control</em></strong>
-          <span>真实任务入口 · gRPC-Web + TUI WebSocket</span>
+          <span>真实任务入口 · gRPC-Web</span>
         </button>
         <div className="terminal-topology-arrow">▼</div>
         <button className="terminal-topology-node engine" onClick={() => onView("overview")}>
@@ -196,7 +201,7 @@ function ClusterRail({
 }: Pick<TerminalDashboardProps, "connected" | "workers" | "tasks" | "eventLog" | "health" | "metrics"> & { onView: (view: TerminalView) => void }) {
   const onlineWorkers = workers.workers.filter((worker) => worker.is_available).length;
   const load = workers.workers.length ? workers.workers.reduce((sum, worker) => sum + worker.load_percent, 0) / workers.workers.length : 0;
-  const latestEvents = eventLog.slice(-5).reverse();
+  const latestEvents = latestDashboardEvents(eventLog);
   return (
     <aside className="terminal-cluster-rail">
       <div className="terminal-rail-head"><span>集群 / CLUSTER</span><b className={connected ? "online" : "offline"}><i /> {connected ? "ONLINE" : "OFFLINE"}</b></div>
@@ -256,6 +261,8 @@ export function TerminalDashboard({
   interactionLog,
   selectedTask,
   selectedTaskId,
+  taskHistoryLoading,
+  taskHistoryError,
   onSelectTask,
   onPauseTask,
   onResumeTask,
@@ -266,19 +273,26 @@ export function TerminalDashboard({
   onTaskCreated,
   onOptimisticAdd,
 }: TerminalDashboardProps) {
-  const [view, setView] = useState<TerminalView>("overview");
+  const [view, setView] = useState<TerminalView>("tasks");
   const [command, setCommand] = useState("");
   const [lastCommand, setLastCommand] = useState("—");
-  const [notice, setNotice] = useState({ text: "uc-tui 就绪 — 正在读取真实 Docker Gateway", tone: "info" });
+  const [notice, setNotice] = useState({ text: "Dashboard 就绪 — 正在读取真实 Docker Gateway", tone: "info" });
   const [clock, setClock] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
   const [fileBrowserNav, setFileBrowserNav] = useState<FileBrowserNavigateEvent | null>(null);
   const commandRef = useRef<HTMLInputElement>(null);
+  const historyRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (view === "tasks" && selectedTaskId && window.innerWidth <= 1300) {
+      historyRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+  }, [selectedTaskId, view]);
 
   const selectedTaskForCommand = selectedTaskId ?? selectedTask?.id ?? tasks.tasks[0]?.id;
   const runCommand = useCallback(async (rawValue = command) => {
@@ -349,14 +363,13 @@ export function TerminalDashboard({
       <header className="terminal-topbar">
         <div className="terminal-window-dots" aria-hidden="true"><i className="red" /><i className="yellow" /><i className="green" /></div>
         <div className={`terminal-brand ${connected ? "online" : "offline"}`}><span>ULTIMATE</span><strong>CODERS</strong></div>
-        <div className="terminal-brand-tag">distributed ai coding system · uc-tui</div>
+        <div className="terminal-brand-tag">distributed ai coding system · dashboard</div>
         <nav className="terminal-tabs" aria-label="视图切换">
           <span className="terminal-tabs-label">视图</span>
           {VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><b>{item.key}</b>{item.label}<small>{item.meta}</small></button>)}
         </nav>
         <div className="terminal-topbar-status"><i className={connected ? "online" : ""} />{connected ? "NATS" : "OFFLINE"}<small>{workers.total} workers</small><time>{formatClock(clock)}</time></div>
         <div className="terminal-topbar-connections"><ConnectionPill label="gRPC" state={grpcState} /><ConnectionPill label="Dash" state={dashGrpcState} /></div>
-        <a className="terminal-tui-entry" href="#/tui" aria-label="打开 TUI"><span>❯</span><small>TUI</small></a>
         <button className="terminal-theme-toggle" onClick={onToggleTheme} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}>{theme === "dark" ? "☼" : "◐"}</button>
         <button className="terminal-logout" onClick={onLogout} title="Logout">↪</button>
       </header>
@@ -393,11 +406,24 @@ export function TerminalDashboard({
           <div className="terminal-panel-head"><div><h1>{currentView.label}</h1><span>uc / {currentView.meta.toLowerCase()}</span></div><div className={`terminal-panel-meta ${connected ? "online" : "offline"}`}><i />{health.version ?? "engine"} · {connected ? "connected" : "waiting"}</div></div>
           <div className="terminal-view-body">
             {view === "overview" && <OverviewView health={health} workers={workers} tasks={tasks} eventLog={eventLog} connected={connected} onView={setView} />}
-            {view === "tasks" && <div className="terminal-data-view"><TasksPanel data={tasks} interactionLog={interactionLog} onFlush={onFlush} onPauseTask={onPauseTask} onResumeTask={onResumeTask} onCancelTask={onCancelTask} stale={grpcStale} grpcSubmitTask={grpcSubmitTask} onTaskCreated={onTaskCreated} onOptimisticAdd={onOptimisticAdd} onSelectTask={onSelectTask} selectedTaskId={selectedTaskId} onNavigateFile={setFileBrowserNav} /></div>}
-            {view === "workers" && <div className="terminal-data-view"><WorkersPanel workers={workers} tasks={tasks} stale={grpcStale} onJumpTask={onSelectTask} /></div>}
-            {view === "logs" && <div className="terminal-data-view"><EventLogPanel events={eventLog} stale={grpcStale} onSelectTask={onSelectTask} /></div>}
+            {view === "tasks" && <div className="terminal-data-view terminal-task-layout">
+              <TasksPanel data={tasks} interactionLog={interactionLog} onFlush={onFlush} onPauseTask={onPauseTask} onResumeTask={onResumeTask} onCancelTask={onCancelTask} stale={grpcStale} grpcSubmitTask={grpcSubmitTask} onTaskCreated={onTaskCreated} onOptimisticAdd={onOptimisticAdd} onSelectTask={onSelectTask} selectedTaskId={selectedTaskId} showInlineDetail={false} onNavigateFile={setFileBrowserNav} />
+              <section className="terminal-task-history" ref={historyRef} aria-label="Selected task history">
+                <div className="terminal-task-history-head">
+                  <span>任务状态与历史日志</span>
+                  {selectedTask && <span className={statusBadgeClass(selectedTask.status)}>{selectedTask.status}</span>}
+                </div>
+                {selectedTask ? <>
+                  <strong className="terminal-task-history-title">{selectedTask.description}</strong>
+                  <small className="terminal-task-history-meta">{selectedTask.id} · {taskHistoryLoading ? "正在读取历史日志…" : taskHistoryError ? `历史日志读取失败：${taskHistoryError}` : `${interactionLog[selectedTask.id]?.length ?? 0} 条日志`}</small>
+                  <TaskDetail key={selectedTask.id} task={selectedTask} interactionLog={interactionLog[selectedTask.id] ?? []} onNavigateFile={setFileBrowserNav} />
+                </> : <p className="terminal-empty-line">当前没有可查看的历史任务</p>}
+              </section>
+            </div>}
+            {view === "workers" && <div className="terminal-data-view"><WorkersPanel workers={workers} tasks={tasks} stale={grpcStale} onJumpTask={(id) => { onSelectTask(id); setView("tasks"); }} /></div>}
+            {view === "logs" && <div className="terminal-data-view"><EventLogPanel events={eventLog} stale={grpcStale} onSelectTask={(id) => { onSelectTask(id); setView("tasks"); }} /></div>}
             {view === "search" && <div className="terminal-data-view"><SearchPanel grpcState={grpcState} onNavigateFile={setFileBrowserNav} stale={grpcStale} /></div>}
-            {view === "memory" && <div className="terminal-empty-contract"><span className="terminal-empty-icon">◌</span><h2>Memory surface</h2><p>记忆检索仍由 EngineService 暴露；当前 dashboard Connect 合约未提供独立 Memory RPC。使用 TUI 或 Search 进入真实检索入口。</p><button onClick={() => setView("search")}>打开 Search</button></div>}
+            {view === "memory" && <div className="terminal-empty-contract"><span className="terminal-empty-icon">◌</span><h2>Memory surface</h2><p>记忆检索仍由 EngineService 暴露；当前 dashboard Connect 合约未提供独立 Memory RPC。使用 Search 进入真实检索入口。</p><button onClick={() => setView("search")}>打开 Search</button></div>}
           </div>
           <div className={`terminal-notice ${notice.tone}`}><span>❯</span>{notice.text}</div>
         </section>
@@ -406,7 +432,7 @@ export function TerminalDashboard({
       </div>
 
       <footer className="terminal-command-bar"><span>uc ❯</span><input ref={commandRef} value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runCommand(); } }} placeholder='submit "fix flaky heartbeat test"' aria-label="uc 命令行" /><button onClick={() => void runCommand()} disabled={!command.trim() || busy}>运行</button><kbd>↵</kbd><small>运行 · / 聚焦</small><span className="terminal-footer-status">{connected ? "后端在线" : "后端离线"} · engine {health.version ?? "—"} · {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : "waiting"}</span></footer>
-      <div className="terminal-keybar"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>6</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · uc-tui · MIT</span></div>
+      <div className="terminal-keybar"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>6</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
       <nav className="terminal-mobile-nav" aria-label="移动端视图导航">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav>
       {fileBrowserNav && <div className="terminal-file-browser-fallback"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} /></div>}
       <div className="terminal-connection-diagnostics" aria-label="Connection diagnostics"><ConnectionPill label="Task" state={grpcState} /><ConnectionPill label="Dashboard" state={dashGrpcState} />{grpcExhausted && <button onClick={onReconnectGrpc}>↻ retry gRPC</button>}<button onClick={onReconnectDashGrpc}>↻ retry dashboard</button></div>

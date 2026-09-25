@@ -72,6 +72,7 @@ def _run(root, *argv, context_key=MY_KEY):
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
 
 

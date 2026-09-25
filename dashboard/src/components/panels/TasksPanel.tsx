@@ -75,13 +75,15 @@ interface TasksPanelProps {
   onOptimisticAdd?: (taskId: string, description: string, projectId: string, subtaskCount: number, subtasks?: SubtaskSummary[]) => void;
   onSelectTask?: (taskId: string) => void;
   selectedTaskId?: string | null;
+  showInlineDetail?: boolean;
 }
 
-export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, onCancelTask, stale, highlightTaskId, onHighlightShown, onNavigateFile, grpcSubmitTask, onTaskCreated, onOptimisticAdd, onSelectTask, selectedTaskId }: TasksPanelProps) {
+export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, onCancelTask, stale, highlightTaskId, onHighlightShown, onNavigateFile, grpcSubmitTask, onTaskCreated, onOptimisticAdd, onSelectTask, selectedTaskId, showInlineDetail = true }: TasksPanelProps) {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("time");
+  const [search, setSearch] = useState("");
   const [submitDesc, setSubmitDesc] = useState("");
   const [submitProj, setSubmitProj] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -92,6 +94,16 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
     () => [...new Set(data.tasks.map((t) => t.project_id).filter(Boolean))],
     [data.tasks],
   );
+  const visibleTasks = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return sortTasks(
+      data.tasks
+        .filter((task) => !statusFilter || task.status === statusFilter)
+        .filter((task) => !projectFilter || task.project_id === projectFilter)
+        .filter((task) => !query || task.id.toLowerCase().includes(query) || task.description.toLowerCase().includes(query)),
+      sortKey,
+    );
+  }, [data.tasks, projectFilter, search, sortKey, statusFilter]);
 
   // ponytail: auto-expand and scroll to highlighted task after submit
   useEffect(() => {
@@ -120,7 +132,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
   const handleInlineSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const desc = submitDesc.trim();
-    if (!desc || !grpcSubmitTask) return;
+    if (!desc || !submitProj.trim() || !grpcSubmitTask) return;
     setSubmitting(true);
     try {
       const resp = await grpcSubmitTask(desc, submitProj.trim());
@@ -139,7 +151,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
         setSubmitProj("");
         onTaskCreated?.(resp.taskId);
       } else {
-        showToast(`Submit failed: ${resp.status}`, "error");
+        showToast(`Submit failed: ${resp.error || resp.status}`, "error");
       }
     } catch (err) {
       showToast(`Submit failed: ${String(err)}`, "error");
@@ -181,11 +193,12 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
             onChange={(e) => setSubmitProj(e.target.value)}
             placeholder="Project"
             aria-label="Project ID"
+            required
             className="w-24 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none"
           />
           <button
             type="submit"
-            disabled={submitting || !submitDesc.trim()}
+            disabled={submitting || !submitDesc.trim() || !submitProj.trim()}
             className="btn-action-info px-3 py-2 rounded-md text-xs font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
           >
             {submitting ? "..." : "Submit"}
@@ -246,19 +259,21 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
             </p>
           )}
 
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="搜索历史任务描述或 ID"
+            aria-label="Search task history"
+            className="w-full mb-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded px-2 py-1 text-xs text-[var(--text-primary)]"
+          />
+
           <ul className="space-y-1.5 max-h-[600px] overflow-y-auto" aria-label="Task list">
-            {sortTasks(
-              data.tasks
-                .filter((task) => !statusFilter || task.status === statusFilter)
-                .filter((task) => !projectFilter || task.project_id === projectFilter),
-              sortKey
-            )
-              .map((task) => (
+            {visibleTasks.map((task) => (
               <li key={task.id} ref={task.id === highlightTaskId ? highlightRef : undefined}>
                 <div
                   role="button"
                   tabIndex={0}
-                  aria-expanded={expandedTaskId === task.id}
+                  aria-expanded={(onSelectTask ? selectedTaskId : expandedTaskId) === task.id}
                   aria-label={`${task.description}, status ${task.status}`}
                   className={cn(
                     "border-l-2 pl-2 py-1 cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded-r transition-all duration-200",
@@ -315,8 +330,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   </div>
                 </div>
 
-                {/* Detail expansion — only when no sidebar onSelectTask */}
-                {!onSelectTask && expandedTaskId === task.id && (
+                {showInlineDetail && (onSelectTask ? selectedTaskId : expandedTaskId) === task.id && (
                   <TaskDetail
                     task={task}
                     interactionLog={interactionLog[task.id] ?? []}

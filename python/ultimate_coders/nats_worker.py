@@ -51,6 +51,10 @@ from ultimate_coders.agent.types import (
     _resolve_agent_config_field,
 )
 from ultimate_coders.agent.worker import Worker
+from ultimate_coders.dashboard.event_history import (
+    EventHistoryUnavailableError,
+    list_event_history,
+)
 from ultimate_coders.engine import Engine
 
 logger = logging.getLogger(__name__)
@@ -131,10 +135,19 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
 
     subtasks = []
     for st in task.subtasks:
+        # The gateway's NATS snapshot schema carries subtask description but
+        # has no original-request field. Preserve output and safety constraints
+        # in the description it later dispatches to the remote worker.
+        dispatched_description = st.description
+        if not partial and st.user_request and st.user_request != st.description:
+            dispatched_description = (
+                f"{st.description}\n\nOriginal user request and constraints: "
+                f"{st.user_request}"
+            )
         entry: dict[str, Any] = {
             "subtask_id": st.id,
             "status": _subtask_status_to_nats(st.status),
-            "description": st.description,
+            "description": dispatched_description,
             "depends_on": st.depends_on,
             # T4 #640: attempt identity of the reporting side — the gateway
             # fences partial (worker-sourced) updates whose attempt is older
@@ -549,6 +562,9 @@ class NatsWorker:
     _SUBTASK_STREAM_NAME: str = "UC_SUBTASKS"
     _SUBTASK_CONSUMER_DURABLE: str = "subtask-workers"
     _SUBTASK_MAX_DELIVER: int = 5
+    # JetStream's default ack_wait is 30s. Agent runs can take minutes, so
+    # renew the lease while waiting for capacity and during execution.
+    _SUBTASK_PROGRESS_INTERVAL_SECONDS: float = 10.0
     # T5 #641: how often the transport bind loop retries while JetStream is
     # unavailable (the worker refuses gateway registration in the meantime).
     _SUBTASK_TRANSPORT_RETRY_SECONDS: float = 5.0
@@ -1850,7 +1866,13 @@ class NatsWorker:
             # they'll be re-submitted on flush_pending_tasks() when the
             # window closes.
             if task.subtasks and task.status != TaskStatus.FAILED:
-                self._spawn_bg(self._execute_subtasks(task))
+                if os.environ.get("UC_GATEWAY_OWNS_DISPATCH", "").lower() in ("1", "true", "yes"):
+                    # The gRPC gateway dispatches ready subtasks after this
+                    # snapshot. A second local scheduler can race it at
+                    # startup before the remote worker's first heartbeat.
+                    logger.info("Gateway owns dispatch for task %s", task.id)
+                else:
+                    self._spawn_bg(self._execute_subtasks(task))
             else:
                 logger.info(
                     "Task %s has no subtasks (deferred or empty) — skipping execution dispatch",
@@ -2157,6 +2179,7 @@ class NatsWorker:
                 # T4 #640 (D3 lockstep): no legacy task_id/subtask_id — the
                 # envelope below is the single identity source on the wire.
                 "description": subtask.description,
+                "user_request": subtask.user_request,
                 "depends_on": subtask.depends_on,
                 "file_constraints": subtask.file_constraints,
                 "expected_output": subtask.expected_output,
@@ -2715,6 +2738,7 @@ class NatsWorker:
             id=subtask_id,
             parent_id=task_id,
             description=data.get("description", ""),
+            user_request=data.get("user_request", ""),
             status=SubtaskStatus.PENDING,
             assigned_worker=self._worker.worker_id,
             depends_on=data.get("depends_on", []),
@@ -2792,6 +2816,38 @@ class NatsWorker:
         (handled in _handle_subtask_execute_js) and capability miss use
         nak/term.
         """
+        progress_task = (
+            asyncio.create_task(self._js_progress_until_done(js_msg))
+            if js_msg is not None
+            else None
+        )
+        try:
+            await self._execute_and_report_body(
+                subtask, js_msg=js_msg, gateway_context_block=gateway_context_block,
+            )
+        finally:
+            if progress_task is not None:
+                progress_task.cancel()
+                try:
+                    await progress_task
+                except asyncio.CancelledError:
+                    pass
+
+    async def _js_progress_until_done(self, js_msg: Any) -> None:
+        """Keep a long-running JetStream delivery from being redelivered."""
+        while True:
+            await asyncio.sleep(self._SUBTASK_PROGRESS_INTERVAL_SECONDS)
+            try:
+                await js_msg.in_progress()
+            except Exception:
+                logger.warning("JetStream subtask progress renewal failed", exc_info=True)
+
+    async def _execute_and_report_body(
+        self,
+        subtask: Subtask,
+        js_msg: Any | None = None,
+        gateway_context_block: dict | None = None,
+    ) -> None:
         assert self._worker is not None  # callback guards this before spawning
         task_id = subtask.parent_id
         subtask_id = subtask.id
@@ -3713,6 +3769,16 @@ class NatsWorker:
 
     async def _dash_listevents(self, payload: dict) -> dict:
         """Return event log with pagination."""
+        if self._nc is not None:
+            try:
+                return await list_event_history(
+                    self._nc,
+                    task_id=payload.get("task_id") or "",
+                    limit=payload.get("limit", 100),
+                    offset=payload.get("offset", 0),
+                )
+            except EventHistoryUnavailableError:
+                pass
         orch = self._orchestrator
         if orch is None:
             return {"available": False, "events": [], "total": 0, "offset": 0, "limit": 0}

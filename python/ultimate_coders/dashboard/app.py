@@ -11,10 +11,10 @@ serving have been removed — the SPA is built and deployed independently.
 NATS integration (optional):
     When a NATS client is provided, the Dashboard:
     - Publishes task submit/pause/resume to NATS subjects so the
-      gRPC TaskStore stays in sync with TUI consumers.
+      gRPC TaskStore stays in sync with Dashboard consumers.
     - Subscribes to ``uc.task.event`` and merges those events into
       the SSE stream, giving visibility into tasks submitted via
-      gRPC/TUI that are processed by the independent NATS consumer.
+      gRPC clients that are processed by the independent NATS consumer.
     When NATS is unavailable, the Dashboard falls back to direct
     Orchestrator calls (legacy mode).
 """
@@ -26,10 +26,6 @@ import json
 import logging
 import os
 import pathlib
-import select
-import shlex
-import shutil
-import subprocess
 import threading
 from collections import deque
 from datetime import datetime, timezone
@@ -37,10 +33,14 @@ from typing import Any, Optional
 from uuid import uuid4
 
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
+from ultimate_coders.dashboard.event_history import (
+    EventHistoryUnavailableError,
+    list_event_history,
+)
 from ultimate_coders.dashboard.metrics import MetricsAggregator
 
 logger = logging.getLogger(__name__)
@@ -50,33 +50,6 @@ def _status_str(obj: Any) -> str:
     """Extract status string from an object with .status attribute."""
     s = obj.status
     return s.value if hasattr(s, "value") else str(s)
-
-
-class _WindowsPtyProcess:
-    """Small adapter that gives pywinpty the process shape used by TUI code."""
-
-    is_windows_pty = True
-
-    def __init__(self, process: Any) -> None:
-        self._process = process
-        self.stdin = self
-        self.stdout = self
-        self.pid = process.pid
-
-    def poll(self) -> int | None:
-        return None if self._process.isalive() else self._process.exitstatus
-
-    def read(self, size: int = 4096) -> str:
-        return self._process.read(size)
-
-    def write(self, data: bytes | str) -> None:
-        self._process.write(data.decode(errors="replace") if isinstance(data, bytes) else data)
-
-    def flush(self) -> None:
-        self._process.flush()
-
-    def close(self) -> None:
-        self._process.close()
 
 
 # ── NATS subject constants (must match nats_worker.py + Rust server.rs) ──
@@ -123,7 +96,7 @@ class DashboardApp:
             orchestrator: The Orchestrator instance to monitor.
             nats_publisher: Optional NatsPublisher instance. When set,
                 task submit/pause/resume are routed through NATS so that
-                the gRPC TaskStore stays in sync with TUI consumers.
+                the gRPC TaskStore stays in sync with Dashboard consumers.
                 When None, falls back to direct Orchestrator calls (legacy mode).
             nats_client: Optional ALREADY-CONNECTED nats-py Client (must be
                 bound to the loop it will run on — tests/embedded callers).
@@ -162,10 +135,6 @@ class DashboardApp:
         self._metrics = MetricsAggregator()
         # Auth configuration
         self._dashboard_password: str | None = os.environ.get("DASHBOARD_PASSWORD") or None
-        # TUI PTY state — single global session
-        self._tui_pty: Any | None = None
-        self._tui_lock = threading.Lock()
-        self._tui_ws: WebSocket | None = None  # current connected client
         # Connect to Orchestrator's event emitter if available
         self.event_emitter = getattr(orchestrator, "event_emitter", None) if orchestrator else None
         self._setup_routes()
@@ -228,10 +197,9 @@ class DashboardApp:
             allow_methods=["GET", "POST"],
             allow_headers=["*"],
         )
-        # ponytail: WebSocket upgrade needs ws scheme in allowed origins
 
         # Add X-Task-Version header to task mutation responses for conflict detection.
-        # Clients (TUI, Dashboard) should compare this with the version they last saw.
+        # Dashboard clients should compare this with the version they last saw.
         # If different, another client has mutated the task — refresh before acting.
         @app.middleware("http")
         async def task_version_middleware(request: Request, call_next):
@@ -286,7 +254,7 @@ class DashboardApp:
             buffer is only used for REST API queries, not for SSE.
 
             When NATS is available, events from the independent NATS consumer
-            (e.g., tasks submitted via gRPC/TUI) are streamed to the browser.
+            (e.g., tasks submitted via gRPC) are streamed to the browser.
 
             Auth: respects the same DASHBOARD_PASSWORD gate as other endpoints.
             Token can be passed as ``?token=<pwd>`` query parameter.
@@ -421,7 +389,7 @@ class DashboardApp:
 
             When NATS is configured, publishes the task to ``uc.task.submit``
             so it goes through the gRPC TaskStore → NATS → Python Orchestrator
-            pipeline (same path as TUI).  Otherwise falls back to direct
+            pipeline (same path as TaskService). Otherwise falls back to direct
             Orchestrator call (legacy mode, no TaskStore sync).
 
             Accepts a JSON body with:
@@ -724,6 +692,18 @@ class DashboardApp:
             """
             if (resp := self._check_auth(request)) is not None:
                 return resp
+            if self._nats_client is not None:
+                try:
+                    return JSONResponse(
+                        await list_event_history(
+                            self._nats_client,
+                            task_id=task_id or "",
+                            limit=limit,
+                            offset=offset,
+                        )
+                    )
+                except EventHistoryUnavailableError:
+                    pass
             # Combine local event log with emitter's recent events
             all_events = list(self._event_log)
             if self.event_emitter is not None:
@@ -842,343 +822,6 @@ class DashboardApp:
                 status_code = 404 if "not found" in result["error"].lower() else 400
                 return JSONResponse(result, status_code=status_code)
             return JSONResponse(result)
-
-        # ── TUI WebSocket endpoint ──────────────────────────────────
-
-        @app.websocket("/ws/tui")
-        async def tui_websocket(ws: WebSocket):
-            """WebSocket bridge to a global PTY running OMP.
-
-            Auth: token via query param ``?token=<pwd>`` (same as REST API).
-            Single session: only one client at a time; PTY persists after disconnect.
-            """
-            # Auth check — same logic as _check_auth: localhost bypass, token match
-            if self._dashboard_password:
-                client_host = ws.client.host if ws.client else ""
-                if client_host not in ("127.0.0.1", "::1", "localhost"):
-                    token = ws.query_params.get("token")
-                    if token != self._dashboard_password:
-                        await ws.close(code=4001, reason="Unauthorized")
-                        return
-
-            await ws.accept()
-            ws_id = id(ws)
-            logger.info("TUI WebSocket accepted: id=%s", ws_id)
-
-            # A browser can open more than one dashboard tab. Keep the default
-            # single-session guard, but allow an explicit takeover so the UI's
-            # "Take over" action can reclaim the same persistent PTY without
-            # requiring the user to find and close the old tab first.
-            takeover = ws.query_params.get("takeover") == "1"
-            active_ws = None
-            with self._tui_lock:
-                if self._tui_ws is not None:
-                    active_ws = self._tui_ws
-                if active_ws is None or takeover:
-                    self._tui_ws = ws
-            if active_ws is not None:
-                if not takeover:
-                    logger.info("TUI WebSocket rejected busy client: id=%s", ws_id)
-                    await ws.send_text("\r\n[OMP session already attached in another tab]\r\n")
-                    await ws.close(code=4003, reason="TUI session already attached")
-                    return
-                logger.info("TUI WebSocket takeover: old=%s new=%s", id(active_ws), ws_id)
-                try:
-                    await active_ws.send_text("\r\n[OMP session taken over by another tab]\r\n")
-                    await active_ws.close(code=4004, reason="TUI session taken over")
-                except Exception:
-                    logger.debug("Previous TUI WebSocket was already closed", exc_info=True)
-
-            pty = self._ensure_tui_pty()
-            if pty is None:
-                await ws.send_text("Error: could not start OMP PTY\r\n")
-                await ws.close(code=1011, reason="PTY start failed")
-                with self._tui_lock:
-                    if self._tui_ws is ws:
-                        self._tui_ws = None
-                return
-
-            # Drain any buffered PTY output from before this client connected
-            try:
-                ready, _, _ = select.select([pty.stdout], [], [], 0)
-                if ready:
-                    buf = os.read(pty.stdout.fileno(), 65536)
-                    if buf:
-                        await ws.send_bytes(buf)
-            except Exception:
-                pass
-
-            # Reader: PTY stdout → WebSocket
-            async def _pty_reader():
-                if getattr(pty, "is_windows_pty", False):
-                    while pty.poll() is None:
-                        try:
-                            data = await asyncio.to_thread(pty.read, 4096)
-                            if not data:
-                                logger.warning(
-                                    "TUI PTY reader returned empty output (alive=%s)",
-                                    pty.poll() is None,
-                                )
-                                break
-                            await ws.send_text(data)
-                        except (EOFError, OSError, ValueError):
-                            logger.warning("TUI PTY reader stopped: PTY closed")
-                            break
-                        except Exception as exc:
-                            logger.warning("TUI PTY reader stopped: %s", exc)
-                            break
-                    try:
-                        await ws.send_text("\r\n[OMP session ended]\r\n")
-                    except Exception:
-                        pass
-                    return
-
-                if os.name == "nt":
-                    # Windows pipes are not compatible with fcntl/select.
-                    stream = pty.stdout
-                    read_chunk = getattr(stream, "read1", stream.read)
-                    while pty.poll() is None:
-                        try:
-                            data = await asyncio.to_thread(read_chunk, 4096)
-                            if not data:
-                                break
-                            await ws.send_bytes(data)
-                        except (OSError, ValueError):
-                            break
-                        except Exception:
-                            break
-                    try:
-                        await ws.send_text("\r\n[OMP session ended]\r\n")
-                    except Exception:
-                        pass
-                    return
-
-                # ponytail: F66 — non-blocking fd + short sleep instead of
-                # run_in_executor(os.read): a thread parked inside os.read
-                # CANNOT be cancelled, so every disconnected client leaked one
-                # default-executor thread for the life of the process. With
-                # O_NONBLOCK the coroutine awaits at the sleep point, where
-                # task.cancel() actually lands.
-                import fcntl
-
-                fd = pty.stdout.fileno()
-                flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-                fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-                while pty.poll() is None:
-                    try:
-                        data = os.read(fd, 4096)
-                        if not data:
-                            # EOF — PTY closed
-                            break
-                        await ws.send_bytes(data)
-                    except BlockingIOError:
-                        # No data ready — yield briefly (the cancellable point)
-                        await asyncio.sleep(0.02)
-                    except (OSError, ValueError):
-                        break
-                    except Exception:
-                        break
-                # PTY exited
-                try:
-                    await ws.send_text("\r\n[OMP session ended]\r\n")
-                except Exception:
-                    pass
-
-            reader_task = asyncio.create_task(_pty_reader())
-
-            # Writer: WebSocket → PTY stdin
-            try:
-                while True:
-                    msg = await ws.receive()
-                    if msg["type"] == "websocket.disconnect":
-                        break
-                    try:
-                        if "text" in msg and msg["text"] is not None:
-                            pty.stdin.write(msg["text"].encode())
-                            pty.stdin.flush()
-                        elif "bytes" in msg and msg["bytes"] is not None:
-                            pty.stdin.write(msg["bytes"])
-                            pty.stdin.flush()
-                    except BrokenPipeError:
-                        logger.warning("TUI PTY stdin broken — process may have exited")
-                        break
-            except WebSocketDisconnect:
-                pass
-            except Exception:
-                pass
-            finally:
-                reader_task.cancel()
-                logger.info("TUI WebSocket closed: id=%s", ws_id)
-                with self._tui_lock:
-                    if self._tui_ws is ws:
-                        self._tui_ws = None
-                # ponytail: don't kill PTY on disconnect — single session persists
-
-    # ── TUI PTY Management ───────────────────────────────────────
-
-    def _ensure_tui_pty(self) -> Any | None:
-        """Return the global TUI PTY, starting it if needed.
-
-        Spawns OMP via ``run-omp.sh`` inside a PTY (script wrapper).
-        The PTY persists across WebSocket disconnects.
-        """
-        with self._tui_lock:
-            if self._tui_pty is not None and self._tui_pty.poll() is None:
-                return self._tui_pty
-            return self._start_tui_pty()
-
-    def _start_tui_pty(self) -> Any | None:
-        """Spawn OMP in a PTY, with a Windows Git Bash fallback.
-
-        Linux/Docker uses util-linux ``script`` for a real PTY. Windows does
-        not provide ``script`` or ``fcntl``; ``pywinpty`` supplies a ConPTY
-        session and Git Bash executes the repository's ``run-omp.sh``. If the
-        optional Windows PTY package is unavailable, a normal pipe keeps the
-        WebSocket usable for line-oriented OMP output.
-        """
-        omp_script = os.environ.get("UC_OMP_SCRIPT")
-        if not omp_script:
-            # Default: repo_root/run-omp.sh
-            repo_root = os.environ.get("UC_REPO_ROOT", os.getcwd())
-            omp_script = os.path.join(repo_root, "run-omp.sh")
-        if not os.path.isfile(omp_script):
-            logger.warning("TUI PTY: OMP script not found: %s", omp_script)
-            return None
-
-        env = {
-            **os.environ,
-            "TERM": "xterm-256color",
-            "COLUMNS": "120",
-            "LINES": "40",
-        }
-        if os.name == "nt":
-            # The Windows npm global bin directory is not guaranteed to be in
-            # the environment of a service-launched dashboard.  Keep the
-            # real OMP entrypoint usable when Bun was installed per-user.
-            bun_candidates = (
-                os.path.join(env.get("APPDATA", ""), "npm", "node_modules", "bun", "bin"),
-                os.path.join(env.get("USERPROFILE", ""), ".bun", "bin"),
-            )
-            for bun_dir in bun_candidates:
-                if os.path.isfile(os.path.join(bun_dir, "bun.exe")):
-                    env["PATH"] = bun_dir + os.pathsep + env.get("PATH", "")
-                    break
-        cwd = os.path.dirname(os.path.abspath(omp_script))
-        script_bin = shutil.which("script")
-        if script_bin and os.name != "nt":
-            # util-linux requires -c for the command (passing the command as
-            # a positional argument exits with "unexpected number of arguments").
-            command = [script_bin, "-q", "-c", omp_script, os.devnull]
-            try:
-                pty_proc = subprocess.Popen(
-                    command,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    env=env,
-                    cwd=cwd,
-                )
-                # The `script` wrapper is the complete Linux PTY path.  Do
-                # not fall through to the pipe-fallback launch below: doing
-                # so starts a second OMP process and leaves two sessions
-                # competing for the same dashboard TUI.
-                self._tui_pty = pty_proc
-                logger.info("TUI PTY started: PID=%d cmd=%s", pty_proc.pid, omp_script)
-                return pty_proc
-            except Exception as e:
-                logger.error("TUI PTY start failed: %s", e)
-                return None
-        else:
-            bash_bin = self._find_windows_tool("bash.exe", ("Git", "bin"), ("Git", "usr", "bin"))
-            if not bash_bin:
-                bash_bin = shutil.which("bash") or shutil.which("sh")
-            if not bash_bin:
-                logger.warning("TUI PTY: neither script nor bash is available")
-                return None
-
-            script_path = self._to_bash_path(omp_script) if os.name == "nt" else omp_script
-            # The dashboard and Gateway are already running as local services;
-            # do not let the nested launcher start a second copy (especially
-            # on Windows, where `lsof` may be unavailable).  Extra arguments
-            # remain configurable for custom OMP launchers.
-            omp_args = shlex.split(os.environ.get("UC_TUI_OMP_ARGS", "--no-server --no-dashboard"))
-            command_parts = [script_path, *omp_args]
-            bash_command = "exec " + " ".join(shlex.quote(part) for part in command_parts)
-            command = [bash_bin, "-lc", bash_command]
-
-            if os.name == "nt":
-                try:
-                    from winpty import PtyProcess
-                except ImportError:
-                    logger.warning("TUI PTY: pywinpty is not installed; using pipe fallback")
-                else:
-                    try:
-                        pty_proc = _WindowsPtyProcess(
-                            PtyProcess.spawn(
-                                command,
-                                cwd=cwd,
-                                env=env,
-                                dimensions=(40, 120),
-                            )
-                        )
-                        self._tui_pty = pty_proc
-                        logger.info(
-                            "TUI PTY started with Windows ConPTY: PID=%d cmd=%s",
-                            pty_proc.pid,
-                            omp_script,
-                        )
-                        return pty_proc
-                    except Exception as e:
-                        logger.error("TUI Windows ConPTY start failed: %s", e)
-
-            logger.info("TUI PTY: using pipe fallback for %s", omp_script)
-        try:
-            pty_proc = subprocess.Popen(
-                command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-                cwd=cwd,
-            )
-            self._tui_pty = pty_proc
-            logger.info("TUI PTY started: PID=%d cmd=%s", pty_proc.pid, omp_script)
-            return pty_proc
-        except Exception as e:
-            logger.error("TUI PTY start failed: %s", e)
-            return None
-
-    @staticmethod
-    def _find_windows_tool(name: str, *relative_dirs: tuple[str, ...]) -> str | None:
-        """Find a Git for Windows tool without requiring Git on PATH."""
-        if os.name != "nt":
-            return None
-        roots = [
-            os.environ.get("ProgramFiles"),
-            os.environ.get("ProgramFiles(x86)"),
-            os.environ.get("LOCALAPPDATA"),
-        ]
-        for root in filter(None, roots):
-            for relative_dir in relative_dirs:
-                candidate = os.path.join(root, *relative_dir, name)
-                if os.path.isfile(candidate):
-                    return candidate
-        # ``bash.exe`` on PATH may be the WSL launcher at
-        # ``C:\Windows\System32\bash.exe``.  Only fall back to PATH after
-        # checking the explicit Git for Windows locations above.
-        found = shutil.which(name)
-        if found:
-            return found
-        return None
-
-    @staticmethod
-    def _to_bash_path(path: str) -> str:
-        """Convert a Windows path to the /c/... form understood by Git Bash."""
-        drive, tail = os.path.splitdrive(path)
-        if drive:
-            normalized_tail = tail.replace(chr(92), "/")
-            return f"/{drive.rstrip(':').lower()}{normalized_tail}"
-        return path.replace(chr(92), "/")
 
     # ── Data Collection Methods ──────────────────────────────────
 

@@ -224,6 +224,33 @@ async def test_failed_subtask_result_publishes_failed_parent_task_snapshot():
     assert publisher.publish_update.call_args.args[0].status == TaskStatus.FAILED
 
 
+async def test_failed_prerequisite_does_not_strand_parent_in_progress():
+    publisher = MagicMock()
+    publisher.publish_update = AsyncMock()
+    orch = Orchestrator(nats_publisher=publisher)
+    task = _make_task("t-blocked", ["st-parent", "st-child"])
+    task.subtasks[1].depends_on = ["st-parent"]
+    orch.tasks[task.id] = task
+
+    await orch.handle_subtask_result(_result("st-parent", success=False))
+
+    assert task.status == TaskStatus.FAILED
+    assert task.subtasks[1].status == SubtaskStatus.PENDING
+    publisher.publish_update.assert_awaited_once_with(task)
+
+
+async def test_failed_subtask_allows_independent_ready_work_to_finish():
+    orch = Orchestrator()
+    task = _make_task("t-independent", ["st-failed", "st-independent"])
+    orch.tasks[task.id] = task
+
+    await orch.handle_subtask_result(_result("st-failed", success=False))
+    assert task.status == TaskStatus.IN_PROGRESS
+
+    await orch.handle_subtask_result(_result("st-independent"))
+    assert task.status == TaskStatus.FAILED
+
+
 async def test_parent_task_snapshot_retries_transient_publish_failure():
     """A transient NATS failure must not lose the terminal parent snapshot."""
     publisher = MagicMock()

@@ -1,0 +1,7 @@
+# Dashboard API shares the Python/Rust runtime built for the Worker. It needs
+# neither Bun nor the optional OMP extension used by the standalone CLI.
+FROM base_image
+
+# Refresh Python source independently of the expensive Worker build. The
+# compiled _uc_core extension and dashboard dependencies come from base_image.
+COPY python/ultimate_coders /app/python/ultimate_coders

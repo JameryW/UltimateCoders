@@ -97,7 +97,10 @@ ADAPTER_ENV_ALLOWLIST: dict[str, tuple[str, ...]] = {
     # loop registers api_key_env=None but reads OPENAI_* inside the child,
     # so only an explicit entry can cover it.
     "deepseek-harness": ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"),
-    "local-harness": ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_DEFAULT_MODEL"),
+    "local-harness": (
+        "OPENAI_API_KEY", "OPENAI_API_BASE", "OPENAI_BASE_URL",
+        "OPENAI_DEFAULT_MODEL",
+    ),
 }
 
 #: Escape hatch: comma-separated extra names/prefixes (`*` suffix allowed).
@@ -1797,6 +1800,7 @@ class CodexAdapter(AgentAdapter):
         # executable while the workspace-write sandbox still limits edits.
         args = [
             "exec",
+            "--json",
             "--sandbox", "workspace-write",
             "--skip-git-repo-check",
             prompt,
@@ -1880,6 +1884,64 @@ class CodexAdapter(AgentAdapter):
             )
 
         output = result.stdout.strip()
+        final_messages: list[str] = []
+        failures: list[str] = []
+        json_events = False
+        turn_failed = False
+        event_kinds: list[str] = []
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict) or "type" not in event:
+                continue
+            json_events = True
+            item = event.get("item")
+            item_kind = item.get("type") if isinstance(item, dict) else None
+            event_kinds.append(
+                f"{event['type']}:{item_kind}" if item_kind else str(event["type"])
+            )
+            if event.get("type") == "turn.failed":
+                turn_failed = True
+                error = event.get("error")
+                if isinstance(error, dict):
+                    error = error.get("message", "")
+                failures.append(str(error or "Codex turn failed"))
+            if event.get("type") == "error":
+                message = event.get("message")
+                if isinstance(message, str) and message.strip():
+                    failures.append(message.strip())
+            if event.get("type") == "item.completed":
+                item = event.get("item")
+                if isinstance(item, dict) and item.get("type") == "agent_message":
+                    message = item.get("text")
+                    if isinstance(message, str) and message.strip():
+                        final_messages.append(message.strip())
+                elif isinstance(item, dict) and item.get("type") == "error":
+                    message = item.get("message")
+                    if isinstance(message, str) and message.strip():
+                        failures.append(message.strip())
+
+        if json_events:
+            if turn_failed or not final_messages:
+                logger.warning(
+                    "Codex JSON stream had no successful final answer: events=%s reason=%s",
+                    event_kinds[-20:],
+                    (failures[-1] if failures else "unknown")[:200],
+                )
+                return AgentOutput(
+                    summary=(
+                        "Codex turn failed: " if turn_failed
+                        else "Codex produced no final answer: "
+                    ) + (failures[-1] if failures else "unknown reason")[:500],
+                    success=False,
+                )
+            return AgentOutput(
+                summary=final_messages[-1],
+                success=True,
+            )
+
         summary_lines = []
         file_changes = []
 

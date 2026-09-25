@@ -89,7 +89,10 @@ _MCP_CAP_ALIASES: dict[str, str] = {
 }
 
 _SUBTASK_USER_TEMPLATE = """\
-Subtask: {description}
+Original user request and constraints: {user_request}
+
+Current subtask: {description}
+Complete only the current subtask while honoring the original request.
 
 Expected output: {expected_output}
 
@@ -1291,6 +1294,7 @@ class Worker:
 
                 prompt = _SUBTASK_USER_TEMPLATE.format(
                     description=description,
+                    user_request=subtask.user_request or subtask.description,
                     expected_output=subtask.expected_output or "Complete the described task",
                     file_constraints=", ".join(subtask.file_constraints) or "none",
                 )

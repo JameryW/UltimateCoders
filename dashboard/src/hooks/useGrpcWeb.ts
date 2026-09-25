@@ -7,6 +7,7 @@ import type { TaskEvent as GrpcTaskEvent } from "@/grpc/engine_pb";
 import { create } from "@bufbuild/protobuf";
 import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema, ListTasksRequestSchema, PauseTaskRequestSchema, ResumeTaskRequestSchema, CancelTaskRequestSchema } from "@/grpc/engine_pb";
 import type { UcSubmitResult, UcTaskActionResult } from "@/lib/ucCommands";
+import { normalizeGrpcStatus } from "@/lib/grpcStatus";
 
 type GrpcSubmitResult = UcSubmitResult;
 type GrpcTaskActionResult = UcTaskActionResult;
@@ -152,7 +153,7 @@ function bigintToISO(ts: bigint): string {
   return new Date(seconds * 1000).toISOString();
 }
 
-/** Convert a gRPC TaskEvent to the event shape used by the TUI.
+/** Convert a gRPC TaskEvent to the event shape used by the Dashboard.
  *  gRPC proto data is map<string,string> -- values that look like JSON
  *  arrays/objects are parsed, numeric strings are converted, others kept as-is. */
 function grpcEventToTuiEvent(ev: GrpcTaskEvent): TuiTaskEvent {
@@ -313,7 +314,8 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
         return {
           success: resp.success,
           taskId: resp.taskId,
-          status: resp.status,
+          status: normalizeGrpcStatus(resp.status),
+          error: resp.error,
           subtaskCount: resp.subtaskCount,
           subtasks: resp.subtasks.map((s) => ({
             id: s.id,
@@ -358,29 +360,33 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     const client = createClient(TaskService, transport);
     const req = create(ListTasksRequestSchema, {});
     const resp = await unaryWithTimeout((signal) => client.listTasks(req, { signal }), "listTasks");
+    const statusCounts = Object.fromEntries(
+      Object.entries(resp.statusCounts).map(([status, count]) => [normalizeGrpcStatus(status), count]),
+    );
     return {
       available: resp.available,
       tasks: resp.tasks.map((t) => ({
         id: t.id,
         description: t.description,
-        status: t.status,
+        status: normalizeGrpcStatus(t.status),
         project_id: t.projectId,
         subtask_count: t.subtaskCount,
         subtasks: t.subtasks.map((s) => ({
           id: s.id,
           description: s.description,
-          status: s.status,
+          status: normalizeGrpcStatus(s.status),
           depends_on: [...s.dependsOn],
           assigned_worker: s.assignedWorker ?? undefined,
+          result: s.result ?? undefined,
         })),
         // #12: Safe bigint conversion using bigintToISO helper
         created_at: bigintToISO(t.createdAt),
         updated_at: bigintToISO(t.updatedAt),
       })),
       total: resp.total,
-      status_counts: resp.statusCounts as Record<string, number>,
+      status_counts: statusCounts,
       // ponytail: derive pending_task_count from status_counts instead of hardcoding 0
-      pending_task_count: (resp.statusCounts as Record<string, number>)["pending"] ?? (resp.statusCounts as Record<string, number>)["submitted"] ?? 0,
+      pending_task_count: statusCounts.pending ?? statusCounts.submitted ?? 0,
     };
   }, [getTransport]);
 

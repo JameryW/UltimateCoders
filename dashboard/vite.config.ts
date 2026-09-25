@@ -38,12 +38,6 @@ export default defineConfig({
         target: "http://localhost:50051",
         changeOrigin: true,
       },
-      // TUI WebSocket → FastAPI backend
-      "/ws/tui": {
-        target: "http://localhost:8080",
-        ws: true,
-        changeOrigin: true,
-      },
       // Dashboard REST/SSE API → FastAPI backend
       "/dashboard/api": {
         target: "http://localhost:8080",
