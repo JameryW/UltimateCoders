@@ -142,7 +142,8 @@ class TestRunnerTools:
             tmp_path, {"path": "readme.md", "offset": first["next_offset"]},
         ))
         assert second["truncated"] is False
-        assert first["content"] + second["content"] == (tmp_path / "readme.md").read_text(encoding="utf-8")
+        expected = (tmp_path / "readme.md").read_text(encoding="utf-8")
+        assert first["content"] + second["content"] == expected
 
 
 def _resp(tool_calls: list[tuple[str, dict]], text: str = "") -> SimpleNamespace:

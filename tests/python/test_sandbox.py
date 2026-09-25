@@ -352,9 +352,21 @@ class TestCodexAdapter:
             exit_code=0,
             stdout="\n".join([
                 json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
-                json.dumps({"type": "item.completed", "item": {"type": "error", "message": "metadata warning"}}),
-                json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "First draft"}}),
-                json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "Gateway and Worker communicate over NATS and gRPC."}}),
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {"type": "error", "message": "metadata warning"},
+                }),
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": "First draft"},
+                }),
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": "Gateway and Worker communicate over NATS and gRPC.",
+                    },
+                }),
                 json.dumps({"type": "turn.completed", "usage": {"input_tokens": 10}}),
             ]),
             stderr="Codex progress goes to stderr",
