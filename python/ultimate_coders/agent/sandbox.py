@@ -2625,11 +2625,9 @@ class OhMyPiAdapter(AgentAdapter):
             json.dump(overlay, target, ensure_ascii=False)
 
         mcp_selection_constraints: list[set[str]] = []
-        if has_tool_selection or selected_mcp_servers or unsupported_selected_mcp_servers:
+        if cfg.get("tools") is not None:
             mcp_selection_constraints.append(selected_mcp_servers)
-        if has_allowlist and (
-            not allow_default or allowed_mcp_servers or unsupported_allowed_mcp_servers
-        ):
+        if has_allowlist:
             mcp_selection_constraints.append(allowed_mcp_servers)
         selected_mcp_server_intersection = (
             set.intersection(*mcp_selection_constraints)
