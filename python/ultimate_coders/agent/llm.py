@@ -1,7 +1,7 @@
 """LLM client abstraction for agent interactions.
 
 Supports tool calling for Worker execution and structured output
-for Orchestrator decomposition. Defaults to the Anthropic API.
+for Orchestrator decomposition. Defaults to MiMo with DeepSeek failover.
 Multi-provider support via litellm delegation (Aider/OpenHands pattern).
 """
 
@@ -14,6 +14,8 @@ import random
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
+
+from ultimate_coders.config import LLM_PROVIDER_KEY_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -115,15 +117,6 @@ class LLMRetryExhaustedError(RuntimeError):
         self.classification = classification
         super().__init__(str(original))
 
-# Provider-specific API key env var mapping
-_PROVIDER_KEY_ENV: dict[str, str] = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "gemini": "GEMINI_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-    "mimo": "MIMO_API_KEY",
-}
-
 # ponytail: env vars for default model per provider (proxy deployments often use custom model names)
 _PROVIDER_MODEL_ENV: dict[str, str] = {
     "anthropic": "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -218,7 +211,7 @@ class LLMClient:
         # Resolve the provider's own key. Anthropic credentials are fallback
         # aliases only for the Anthropic provider; sending one to another API
         # would turn a missing provider key into a confusing auth failure.
-        env_key = _PROVIDER_KEY_ENV.get(provider, "ANTHROPIC_API_KEY")
+        env_key = LLM_PROVIDER_KEY_ENV.get(provider, "ANTHROPIC_API_KEY")
         self.api_key = api_key or os.environ.get(env_key)
         if provider == "anthropic":
             self.api_key = (
@@ -518,7 +511,9 @@ class LLMClient:
                         "input_tokens": getattr(chunk.usage, "prompt_tokens", 0),
                         "output_tokens": getattr(chunk.usage, "completion_tokens", 0),
                     }
-                stream_started = True
+                stream_started = (
+                    stream_started or bool(text_delta) or finish_reason is not None
+                )
                 yield GenericStreamingChunk(
                     text_delta=text_delta,
                     finish_reason=finish_reason,
@@ -536,6 +531,7 @@ class LLMClient:
                 self.model,
                 fallback.provider,
                 fallback.model,
+                exc_info=True,
             )
             fallback_kwargs = {
                 key: value
@@ -871,6 +867,7 @@ class LLMClient:
                 self.model,
                 fallback.provider,
                 fallback.model,
+                exc_info=True,
             )
             try:
                 return await fallback._call_litellm_with_retry(
