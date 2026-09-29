@@ -41,6 +41,7 @@ Allow UltimateCoders workers to select OpenCode, oh-my-pi, or MiMo Code as a cod
 - [x] MiMo v2.6 Flash is the new adapters' default model; DeepSeek Flash fallback is configured only for CLIs with a supported native failover mechanism, and limitations are documented.
 - [x] The Worker Docker image installs all three CLIs and its build/version checks identify the executables.
 - [x] OpenCode uses a worker-scoped global config and private server; it warns when project config files are present because V2 may merge and override matching worker settings.
+- [x] OMP fails closed for empty or unmappable explicit tool allowlists and skips MCP servers when it cannot enforce a restrictive allowlist.
 - [x] README and Docker env example document canonical names, aliases, and required auth/config.
 - [x] The UC LLM planning default and its DeepSeek fallback remain governed by `UC_LLM_*` settings.
 

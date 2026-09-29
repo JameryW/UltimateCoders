@@ -2513,9 +2513,15 @@ class OhMyPiAdapter(AgentAdapter):
                 mapped.append(name)
             return mapped
 
-        allowed = map_omp_policy(cfg.get("allowed_tools", []) or [], "allow")
+        allowed_values = _config_values(cfg.get("allowed_tools"))
+        has_allowlist = cfg.get("allowed_tools") is not None
+        allow_default = any(str(item).strip().lower() == "default" for item in allowed_values)
+        allowed = map_omp_policy(
+            [item for item in allowed_values if str(item).strip().lower() != "default"],
+            "allow",
+        )
         denied = map_omp_policy(cfg.get("disallowed_tools", []) or [], "deny")
-        if cfg.get("allowed_tools") and allowed:
+        if has_allowlist and not allow_default:
             for name in _OMP_BUILTIN_TOOLS:
                 tool_approval.setdefault(name, "deny")
             for name in allowed:
@@ -2534,35 +2540,41 @@ class OhMyPiAdapter(AgentAdapter):
             "--no-extensions",
             "-p",
         ]
-        tool_values = cfg.get("tools") or []
-        if tool_values:
-            tools = tool_values if isinstance(tool_values, list) else [tool_values]
-            valid: list[str] = []
-            for item in tools:
-                name = str(item).lower()
-                if name == "default":
-                    continue
-                if name in _OMP_BUILTIN_TOOLS:
-                    valid.append(name)
-                else:
-                    logger.warning("OMP does not recognize generic tool %r; it was not enabled", item)
-            if valid:
-                args += ["--tools", ",".join(valid)]
+        tool_values = _config_values(cfg.get("tools"))
+        has_default_tools = any(str(item).strip().lower() == "default" for item in tool_values)
+        has_tool_selection = cfg.get("tools") is not None and not has_default_tools
+        valid_tools: list[str] = []
+        for item in tool_values:
+            name = str(item).strip().lower()
+            if name == "default":
+                continue
+            if name in _OMP_BUILTIN_TOOLS:
+                valid_tools.append(name)
+            else:
+                logger.warning("OMP does not recognize generic tool %r; it was not enabled", item)
+        if valid_tools:
+            args += ["--tools", ",".join(valid_tools)]
+        elif has_tool_selection and not has_allowlist:
+            for name in _OMP_BUILTIN_TOOLS:
+                tool_approval.setdefault(name, "deny")
+            overlay["tools"] = {"approvalMode": "yolo", "approval": tool_approval}
         if cfg.get("append_system_prompt"):
             args += ["--append-system-prompt", str(cfg["append_system_prompt"])]
         with open(os.path.join(temp_dir, "settings.yml"), "w", encoding="utf-8") as target:
             json.dump(overlay, target, ensure_ascii=False)
 
-        if cfg.get("mcp_configs"):
+        restrictive_tool_config = (has_allowlist and not allow_default) or has_tool_selection
+        if cfg.get("mcp_configs") and restrictive_tool_config:
+            logger.warning(
+                "OMP cannot enforce generic tool allowlists against MCP tools; "
+                "configured MCP servers are skipped to fail closed"
+            )
+        elif cfg.get("mcp_configs"):
             servers = _mcp_server_entries(cfg["mcp_configs"], agent="OMP")
             if servers:
                 mcp_path = os.path.join(agent_dir, "mcp.json")
                 with open(mcp_path, "w", encoding="utf-8") as target:
                     json.dump({"mcpServers": servers}, target, ensure_ascii=False)
-                if cfg.get("tools") is not None or cfg.get("allowed_tools") is not None:
-                    logger.warning(
-                        "OMP cannot enforce generic tool allowlists against MCP tools; configured MCP tools may remain available under yolo approval"
-                    )
 
         env_vars = config._build_env_vars()
         if config.api_key:
