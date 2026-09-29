@@ -203,7 +203,10 @@ The worker invokes `grok -p ... --output-format streaming-json` by default. Set
 Flash; only oh-my-pi enables its native DeepSeek V4 Flash fallback chain.
 OpenCode and MiMo Code do not switch models on provider failures. These are
 Worker adapters and do not replace the optional local OMP extension launched
-by `run-omp.sh`.
+by `run-omp.sh`. OpenCode uses a task-scoped HOME/XDG config and private
+standalone server; V2 also merges project config found in the worktree or its
+ancestors, which may override matching provider or permission values. The
+worker logs a warning when it finds those config files.
 
 For a smaller local OpenAI-compatible model use `UC_CODING_AGENT=local-harness`,
 or select `claude-code` / `codex` when a deployment uses those CLIs. The

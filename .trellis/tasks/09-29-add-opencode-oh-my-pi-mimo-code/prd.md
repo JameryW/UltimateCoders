@@ -40,6 +40,7 @@ Allow UltimateCoders workers to select OpenCode, oh-my-pi, or MiMo Code as a cod
 - [x] Existing generic agent configuration is mapped when the CLI supports it; unsupported fields are surfaced clearly.
 - [x] MiMo v2.6 Flash is the new adapters' default model; DeepSeek Flash fallback is configured only for CLIs with a supported native failover mechanism, and limitations are documented.
 - [x] The Worker Docker image installs all three CLIs and its build/version checks identify the executables.
+- [x] OpenCode uses a worker-scoped global config and private server; it warns when project config files are present because V2 may merge and override matching worker settings.
 - [x] README and Docker env example document canonical names, aliases, and required auth/config.
 - [x] The UC LLM planning default and its DeepSeek fallback remain governed by `UC_LLM_*` settings.
 
@@ -63,7 +64,7 @@ Allow UltimateCoders workers to select OpenCode, oh-my-pi, or MiMo Code as a cod
 ## Implementation Shape
 
 - Add one adapter per CLI and register canonical `opencode`, `oh-my-pi`, and `mimo-code` names (aliases `omp` and `mimo`) through the existing plugin registry.
-- Keep each CLI's provider settings isolated to its subprocess. OpenCode receives a worker-scoped config for the direct MiMo endpoint and a private standalone server; OMP receives a private model catalog and a temporary settings overlay; MiMo Code receives a task-scoped `MIMOCODE_HOME`, direct MiMo API-key config, and explicit provider/model selection.
+- Keep each CLI's provider settings isolated to its subprocess. OpenCode receives a worker-scoped HOME/XDG config and private standalone server, but V2 also merges project config discovered from the assigned worktree and ancestors; matching provider or permission values may override worker settings, and the adapter warns when those files exist. OMP receives a private model catalog and a temporary settings overlay; MiMo Code receives a task-scoped `MIMOCODE_HOME`, direct MiMo API-key config, and explicit provider/model selection.
 - Pin and verify the CLI packages in the standard Worker image, using OpenCode's current V2 `@opencode/cli` package. Install Bun for the oh-my-pi runtime; do not upgrade the repository's vendored OMP submodule or alter `run-omp.sh`.
 - Extend each adapter's environment allowlist only for the MiMo and DeepSeek credentials it needs. Do not forward unrelated host credentials.
 - Update README and `docker/.env.example` with agent selection, per-CLI credentials, model defaults, and the OMP-only native DeepSeek fallback.

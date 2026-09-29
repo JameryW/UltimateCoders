@@ -2343,6 +2343,33 @@ class OpenCodeAdapter(AgentAdapter):
         else:
             document_tools = {}
 
+        # OpenCode V2 merges project configuration after its global config.
+        # Its pinned CLI does not provide a verified way to suppress that
+        # discovery, so make the override risk visible when a worktree or one
+        # of its ancestors contains project config.
+        project_configs: list[str] = []
+        directory = os.path.abspath(working_dir)
+        while True:
+            for relative_path in (
+                "opencode.json",
+                "opencode.jsonc",
+                os.path.join(".opencode", "opencode.json"),
+                os.path.join(".opencode", "opencode.jsonc"),
+            ):
+                config_path = os.path.join(directory, relative_path)
+                if os.path.isfile(config_path):
+                    project_configs.append(config_path)
+            parent = os.path.dirname(directory)
+            if parent == directory:
+                break
+            directory = parent
+        if project_configs:
+            logger.warning(
+                "OpenCode V2 merges project config after its worker-scoped config; "
+                "matching MiMo provider or permission values may be overridden: %s",
+                ", ".join(project_configs),
+            )
+
         temp_home = tempfile.mkdtemp(prefix="uc-opencode-")
         temp_files = [temp_home]
         config_dir = os.path.join(temp_home, ".config", "opencode")
