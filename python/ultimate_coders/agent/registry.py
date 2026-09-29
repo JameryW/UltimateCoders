@@ -207,6 +207,9 @@ def ensure_builtin_plugins() -> None:
             CodexAdapter,
             DecomposeAdapter,
             GrokBuildAdapter,
+            MiMoCodeAdapter,
+            OhMyPiAdapter,
+            OpenCodeAdapter,
         )
 
         registry.register(AgentPluginSpec(
@@ -238,6 +241,29 @@ def ensure_builtin_plugins() -> None:
             api_key_env="OPENAI_API_KEY",
             cli_probe="codex",
             description="OpenAI Codex CLI",
+        ))
+        registry.register(AgentPluginSpec(
+            name="opencode",
+            factory=OpenCodeAdapter,
+            api_key_env="MIMO_API_KEY",
+            cli_probe="opencode",
+            description="OpenCode V2 CLI with MiMo V2.6 Flash",
+        ))
+        registry.register(AgentPluginSpec(
+            name="oh-my-pi",
+            aliases=("omp",),
+            factory=OhMyPiAdapter,
+            api_key_env="XIAOMI_API_KEY",
+            cli_probe="omp",
+            description="oh-my-pi CLI with MiMo and DeepSeek Flash fallback",
+        ))
+        registry.register(AgentPluginSpec(
+            name="mimo-code",
+            aliases=("mimo",),
+            factory=MiMoCodeAdapter,
+            api_key_env="MIMO_API_KEY",
+            cli_probe="mimo",
+            description="Xiaomi MiMo Code CLI with MiMo V2.6 Flash",
         ))
         harness_deepseek.register(registry)
         harness_local_loop.register(registry)

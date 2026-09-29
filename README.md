@@ -8,7 +8,7 @@
 
 Distributed AI coding system with shared layered memory and multi-repository hybrid retrieval across text, semantic, and AST indexes.
 
-The default Docker app uses the Web Dashboard, Rust Gateway, NATS, and Python Workers. The optional oh-my-pi (OMP) extension remains available through `run-omp.sh` for native terminal workflows. The Python Worker/Sandbox defaults to the [xAI Grok Build](https://github.com/xai-org/grok-build) coding agent (`grok`); Claude Code, Codex, and the local harness are supported adapters. The Rust core handles indexing, search, memory, and scheduling, while a broadcast channel delivers live task events to Dashboard and API consumers.
+The default Docker app uses the Web Dashboard, Rust Gateway, NATS, and Python Workers. The optional oh-my-pi (OMP) extension remains available through `run-omp.sh` for native terminal workflows. The Python Worker/Sandbox defaults to the [xAI Grok Build](https://github.com/xai-org/grok-build) coding agent (`grok`); Claude Code, Codex, OpenCode, oh-my-pi, MiMo Code, and the local harness are supported adapters. The three MiMo-backed adapters select MiMo V2.6 Flash; OMP alone has native DeepSeek Flash fallback. The Rust core handles indexing, search, memory, and scheduling, while a broadcast channel delivers live task events to Dashboard and API consumers.
 
 ## Key Features
 
@@ -19,7 +19,7 @@ The default Docker app uses the Web Dashboard, Rust Gateway, NATS, and Python Wo
 - **Rust core**: Engine, Task, Dashboard, and Worker services expose unified gRPC/gRPC-Web interfaces with task recovery, event broadcast, and in-memory fallback.
 - **Cross-repository hybrid retrieval**: one query can combine text, semantic, and AST retrieval across indexed Git repositories.
 - **Layered memory**: short-term memory, long-term semantic memory, and structured metadata use TiKV, Qdrant, and PostgreSQL, with an in-memory fallback when dependencies are unavailable.
-- **Flexible deployment**: run local OMP, a Docker Gateway, Docker Compose, or a multi-worker cluster; workers can use Grok Build, Claude Code, or Codex.
+- **Flexible deployment**: run local OMP, a Docker Gateway, Docker Compose, or a multi-worker cluster; workers can use Grok Build, Claude Code, Codex, OpenCode, oh-my-pi, MiMo Code, or the local harness.
 
 ## Product Highlights
 
@@ -198,8 +198,17 @@ An independent process that bridges the gRPC TaskService with Python Worker/Sand
 5. Sends heartbeats to `uc.heartbeat` every 30 seconds
 
 The worker invokes `grok -p ... --output-format streaming-json` by default. Set
-`UC_CODING_AGENT=local-harness` for a smaller local OpenAI-compatible model,
-or `UC_CODING_AGENT=claude-code` / `codex` when a deployment uses those CLIs.
+`UC_CODING_AGENT` to `opencode`, `oh-my-pi` (`omp` alias), or `mimo-code`
+(`mimo` alias) to use one of the MiMo-backed CLIs. Each selects MiMo V2.6
+Flash; only oh-my-pi enables its native DeepSeek V4 Flash fallback chain.
+OpenCode and MiMo Code do not switch models on provider failures. These are
+Worker adapters and do not replace the optional local OMP extension launched
+by `run-omp.sh`.
+
+For a smaller local OpenAI-compatible model use `UC_CODING_AGENT=local-harness`,
+or select `claude-code` / `codex` when a deployment uses those CLIs. The
+orchestrator's task-planning model remains configured separately with
+`UC_LLM_PROVIDER`, `UC_LLM_MODEL`, and related `UC_LLM_*` variables.
 
 ### Multi-Worker Distributed Architecture
 
@@ -394,10 +403,13 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_POSTGRES_URL` | `postgresql://localhost:5432/ultimatecoders` | PostgreSQL connection URL |
 | `UC_NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL |
 | `UC_PROJECT_PATH` | - | Project path for sandbox execution |
-| `UC_CODING_AGENT` | `grok-build` | Worker coding agent (`grok-build`/`grok`, `local-harness`, `claude-code`, or `codex`) |
+| `UC_CODING_AGENT` | `grok-build` | Worker coding agent: `grok-build`/`grok`, `claude-code`, `codex`, `opencode`, `oh-my-pi`/`omp`, `mimo-code`/`mimo`, `deepseek-harness`, or `local-harness` |
 | `XAI_API_KEY` | - | xAI API key for the default Grok Build worker agent |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for Claude Code calls |
 | `OPENAI_API_KEY` | - | OpenAI API key for Codex calls |
+| `MIMO_API_KEY` | - | MiMo Platform key for OpenCode, MiMo Code, and optionally task planning via `UC_LLM_*` |
+| `XIAOMI_API_KEY` | - | MiMo key for OMP's Xiaomi provider; OMP can also use `MIMO_API_KEY` |
+| `DEEPSEEK_API_KEY` | - | DeepSeek V4 Flash fallback for OMP; the other two MiMo-backed CLIs have no native model failover |
 | `UC_CODEX_OPENROUTER` | `false` | Enable OpenRouter as the Codex CLI provider (requires `UC_CODING_AGENT=codex`) |
 | `UC_OPENROUTER_MODEL` | `stealth/ox-alpha` | OpenRouter model slug used by the opt-in Codex provider |
 | `UC_CODEX_WEB_SEARCH` | `disabled` | Codex native web-search mode; keep `disabled` for `stealth/ox-alpha`, which rejects that OpenAI-specific tool |
