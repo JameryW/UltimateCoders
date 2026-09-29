@@ -117,6 +117,24 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex \
     && claude --version \
     && codex --version
 
+# OpenCode V2, oh-my-pi, and MiMo Code are Worker subprocess adapters. Keep
+# their published package versions explicit and verify every executable at
+# image-build time so an incompatible package cannot silently reach runtime.
+ARG OPENCODE_CLI_VERSION=2.0.3
+ARG OH_MY_PI_CLI_VERSION=16.1.16
+ARG MIMOCODE_CLI_VERSION=0.1.15
+RUN curl -fsSL https://bun.sh/install | env BUN_INSTALL=/opt/bun bash \
+    && chmod -R a+rX /opt/bun \
+    && ln -sf /opt/bun/bin/bun /usr/local/bin/bun \
+    && ln -sf /opt/bun/bin/bunx /usr/local/bin/bunx \
+    && npm install -g \
+      "@opencode/cli@${OPENCODE_CLI_VERSION}" \
+      "@oh-my-pi/pi-coding-agent@${OH_MY_PI_CLI_VERSION}" \
+      "@mimo-ai/cli@${MIMOCODE_CLI_VERSION}" \
+    && opencode --version \
+    && omp --version \
+    && mimo --version
+
 # DeepSeek Harness (dsh) — official DeepSeek agent harness CLI; the
 # `deepseek-harness` coding agent (UC_CODING_AGENT) shells out to it via
 # `dsh --profile headless`. Auth is env-based (DEEPSEEK_API_KEY), so no
