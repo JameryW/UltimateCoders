@@ -93,6 +93,12 @@ ADAPTER_ENV_ALLOWLIST: dict[str, tuple[str, ...]] = {
         "ANTHROPIC_MODEL",
     ),
     "codex": ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_DEFAULT_MODEL"),
+    # Each CLI receives only the MiMo / DeepSeek credentials used by its
+    # configured provider. The OMP adapter maps MIMO_API_KEY to the provider's
+    # XIAOMI_API_KEY name before launching the child.
+    "opencode": ("MIMO_API_KEY",),
+    "oh-my-pi": ("XIAOMI_API_KEY", "DEEPSEEK_API_KEY"),
+    "mimo-code": ("MIMO_API_KEY",),
     # In-tree plugins: `dsh` reads its own key/base-url; the local litellm
     # loop registers api_key_env=None but reads OPENAI_* inside the child,
     # so only an explicit entry can cover it.
@@ -1974,6 +1980,883 @@ class CodexAdapter(AgentAdapter):
             file_changes=file_changes,
             success=True,
         )
+
+
+def _jsonl_events(output: str) -> list[dict[str, Any]]:
+    """Decode JSONL output without assuming a vendor-specific event schema."""
+    events: list[dict[str, Any]] = []
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            events.append(value)
+        elif isinstance(value, list):
+            events.extend(item for item in value if isinstance(item, dict))
+    if not events and output.strip():
+        try:
+            value = json.loads(output)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(value, dict):
+            events.append(value)
+        elif isinstance(value, list):
+            events.extend(item for item in value if isinstance(item, dict))
+    return events
+
+
+def _event_text(value: Any) -> list[str]:
+    """Extract visible assistant text from common JSONL envelope shapes."""
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            result.extend(_event_text(item))
+        return result
+    if not isinstance(value, dict):
+        return []
+
+    role = str(value.get("role", "")).lower()
+    kind = str(value.get("type", value.get("event", ""))).lower()
+    if role and role not in ("assistant", "model"):
+        return []
+    if any(marker in kind for marker in ("thinking", "reasoning", "tool", "error")):
+        return []
+
+    result: list[str] = []
+    # OMP and MiMo Code carry text in {part:{type:"text", text:"..."}};
+    # OpenCode V2 can use {type:"text", text:"..."} or message envelopes.
+    part = value.get("part")
+    if isinstance(part, dict) and str(part.get("type", "text")).lower() == "text":
+        result.extend(_event_text(part.get("text")))
+    if kind in ("text", "message", "agent_message", "assistant_message", "result", "final"):
+        result.extend(_event_text(value.get("text")))
+    content = value.get("content")
+    if isinstance(content, (str, list)):
+        result.extend(_event_text(content))
+    for key in ("message", "item", "properties", "parts"):
+        nested = value.get(key)
+        if isinstance(nested, (dict, list)):
+            result.extend(_event_text(nested))
+    return result
+
+
+def _output_from_jsonl(
+    result: ExecResult,
+    *,
+    agent_label: str,
+) -> AgentOutput:
+    """Apply process status first, then extract a readable JSONL summary."""
+    stderr_tail = "\n".join(result.stderr.rstrip().splitlines()[-10:])
+    if result.timed_out:
+        return AgentOutput(
+            summary=f"{agent_label} execution timed out after {result.duration_ms}ms",
+            success=False,
+            stderr_tail=stderr_tail,
+        )
+    if result.exit_code != 0:
+        detail = (result.stderr.strip() or result.stdout.strip())[-500:]
+        return AgentOutput(
+            summary=f"{agent_label} exited with code {result.exit_code}: {detail}",
+            success=False,
+            stderr_tail=stderr_tail,
+        )
+
+    events = _jsonl_events(result.stdout)
+    chunks: list[str] = []
+    for event in events:
+        chunks.extend(_event_text(event))
+    # Remove adjacent duplicate text snapshots emitted by streaming APIs.
+    unique_chunks: list[str] = []
+    for chunk in chunks:
+        normalized = chunk.strip()
+        if normalized and (not unique_chunks or unique_chunks[-1] != normalized):
+            unique_chunks.append(normalized)
+    summary = "\n".join(unique_chunks).strip()
+    if not summary:
+        summary = result.stdout.strip()[:1000] or f"{agent_label} completed"
+    return AgentOutput(summary=truncate_str(summary, 2000), success=True, stderr_tail=stderr_tail)
+
+
+def _warn_unsupported_config(
+    agent: str,
+    cfg: dict[str, Any],
+    supported: set[str],
+) -> None:
+    """Make generic config fields that cannot map to a CLI visible in logs."""
+    unsupported = sorted(key for key, value in cfg.items() if value and key not in supported)
+    if unsupported:
+        logger.warning(
+            "%s adapter does not support generic agent_config fields: %s",
+            agent,
+            ", ".join(unsupported),
+        )
+
+
+def _config_values(value: Any) -> list[Any]:
+    """Return a scalar-or-list config value as a list."""
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _mcp_server_entries(
+    mcp_configs: Any,
+    *,
+    agent: str,
+) -> dict[str, dict[str, Any]]:
+    """Load generic MCP config entries into one server-name mapping."""
+    entries: dict[str, dict[str, Any]] = {}
+    values = mcp_configs if isinstance(mcp_configs, list) else [mcp_configs]
+    for entry in values:
+        data: Any = entry
+        if isinstance(entry, str):
+            try:
+                with open(entry, encoding="utf-8") as source:
+                    data = json.load(source)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("%s adapter could not read MCP config %s: %s", agent, entry, exc)
+                continue
+        if not isinstance(data, dict):
+            logger.warning("%s adapter skipped unsupported MCP config value: %r", agent, entry)
+            continue
+        servers = data.get("mcpServers", data.get("servers", data))
+        if not isinstance(servers, dict):
+            logger.warning("%s adapter skipped MCP config without a server mapping", agent)
+            continue
+        for name, server in servers.items():
+            if isinstance(name, str) and isinstance(server, dict):
+                entries[name] = server
+            else:
+                logger.warning("%s adapter skipped malformed MCP server %r", agent, name)
+    return entries
+
+
+def _opencode_mcp_servers(mcp_configs: Any) -> dict[str, dict[str, Any]]:
+    """Translate common stdio/HTTP MCP entries to OpenCode V2 config."""
+    converted: dict[str, dict[str, Any]] = {}
+    for name, server in _mcp_server_entries(mcp_configs, agent="OpenCode").items():
+        result: dict[str, Any]
+        command = server.get("command")
+        url = server.get("url")
+        if command:
+            command_argv = command if isinstance(command, list) else [command]
+            extra_args = server.get("args") or []
+            if not isinstance(extra_args, list):
+                logger.warning("OpenCode MCP server %s has non-list args; they were ignored", name)
+                extra_args = []
+            command_argv = [*command_argv, *extra_args]
+            result = {"type": "local", "command": command_argv}
+            environment = server.get("environment", server.get("env"))
+            if isinstance(environment, dict):
+                result["environment"] = environment
+            elif environment:
+                logger.warning(
+                    "OpenCode MCP server %s has a non-mapping environment; it was ignored",
+                    name,
+                )
+            if server.get("cwd"):
+                result["cwd"] = server["cwd"]
+        elif isinstance(url, str) and url:
+            result = {"type": "remote", "url": url}
+            if isinstance(server.get("headers"), dict):
+                result["headers"] = server["headers"]
+            token_env = server.get("bearer_token_env_var")
+            if isinstance(token_env, str) and token_env:
+                result.setdefault("headers", {})["Authorization"] = f"Bearer {{env:{token_env}}}"
+        else:
+            logger.warning("OpenCode adapter skipped MCP server %s: expected command or url", name)
+            continue
+        if server.get("disabled") is not None:
+            result["disabled"] = bool(server["disabled"])
+        if server.get("timeout"):
+            timeout = server["timeout"]
+            try:
+                result["timeout"] = (
+                    timeout if isinstance(timeout, dict) else {"execution": int(timeout)}
+                )
+            except (TypeError, ValueError):
+                logger.warning(
+                    "OpenCode MCP server %s has an invalid timeout; it was ignored",
+                    name,
+                )
+        unsupported = sorted(
+            key for key in server
+            if key not in {"type", "command", "args", "env", "environment", "cwd", "url", "headers",
+                           "bearer_token_env_var", "disabled", "timeout"}
+        )
+        if unsupported:
+            logger.warning(
+                "OpenCode MCP server %s ignored fields: %s",
+                name,
+                ", ".join(unsupported),
+            )
+        converted[name] = result
+    return converted
+
+
+_OMP_BUILTIN_TOOLS = {
+    "read", "bash", "edit", "ast_grep", "ast_edit", "ask", "debug", "eval", "ssh",
+    "github", "find", "search", "lsp", "inspect_image", "browser", "checkpoint",
+    "rewind", "task", "job", "irc", "todo", "web_search", "search_tool_bm25", "write",
+    "memory_edit", "retain", "recall", "reflect", "learn", "manage_skill",
+}
+
+_MIMOCODE_TOOL_ALIASES = {
+    "read": "read", "edit": "edit", "write": "write", "notebookedit": "notebook_edit",
+    "bash": "bash", "glob": "glob", "grep": "grep", "list": "list", "patch": "patch",
+    "task": "task", "webfetch": "webfetch", "websearch": "websearch", "skill": "skill",
+    "question": "question", "lsp": "lsp", "todowrite": "todowrite",
+}
+_MIMOCODE_BUILTIN_TOOLS = set(_MIMOCODE_TOOL_ALIASES.values())
+
+
+def _mimocode_tool_rule(value: Any, *, agent: str) -> tuple[str | None, str | None]:
+    """Map a generic tool selector to a MiMo Code tool and optional resource."""
+    text = str(value).strip()
+    if text.startswith("mcp__"):
+        server, separator, tool = text[len("mcp__"):].partition("__")
+        if server and separator and tool:
+            normalized_server = "".join(
+                char if char.isalnum() or char in "_-" else "_" for char in server
+            )
+            normalized_tool = "".join(
+                char if char.isalnum() or char in "_-" else "_" for char in tool
+            )
+            action = (
+                f"{normalized_server}_*"
+                if normalized_tool == "*"
+                else f"{normalized_server}_{normalized_tool}"
+            )
+            return action, None
+        logger.warning("%s cannot map incomplete MCP tool rule %r; ignored", agent, value)
+        return None, None
+    resource: str | None = None
+    if "(" in text and text.endswith(")"):
+        text, resource = text.split("(", 1)
+        resource = resource[:-1]
+    tool = _MIMOCODE_TOOL_ALIASES.get(text.lower())
+    if tool is None:
+        logger.warning("%s cannot map generic tool rule %r; ignored", agent, value)
+    return tool, resource
+
+
+def _mimocode_mcp_tools(mcp_configs: Any) -> set[str]:
+    """Return MiMo Code tool wildcards for the configured MCP server names."""
+    names: set[str] = set()
+    for name in _mcp_server_entries(mcp_configs, agent="MiMo Code"):
+        normalized = "".join(char if char.isalnum() or char in "_-" else "_" for char in name)
+        names.add(f"{normalized}_*")
+    return names
+
+
+class OpenCodeAdapter(AgentAdapter):
+    """Headless OpenCode V2 adapter configured for direct MiMo API access."""
+
+    def name(self) -> str:
+        return "opencode"
+
+    def build_request(
+        self,
+        prompt: str,
+        working_dir: str,
+        config: SandboxConfig,
+        subtask_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        cfg = _merge_agent_config(config, subtask_config)
+        supported = {
+            "tools", "allowed_tools", "disallowed_tools", "mcp_configs",
+            "append_system_prompt", "agent_name",
+        }
+        _warn_unsupported_config(self.name(), cfg, supported)
+        # OpenCode's V2 run command is non-interactive: unmatched permissions
+        # resolve to ``ask`` and have no terminal client to answer them. Grant
+        # the ordinary worker actions and keep filesystem escape denied; the
+        # generic per-agent rules below are appended last and therefore win.
+        default_actions = (
+            "read", "edit", "shell", "glob", "grep", "subagent", "skill",
+            "execute", "question", "webfetch", "websearch",
+        )
+        default_permissions: list[dict[str, str]] = [
+            {"action": action, "resource": "*", "effect": "allow"}
+            for action in default_actions
+        ]
+        default_permissions.append(
+            {"action": "external_directory", "resource": "*", "effect": "deny"}
+        )
+        allowed_values = _config_values(cfg.get("allowed_tools"))
+        has_allowlist = cfg.get("allowed_tools") is not None
+        permissions = (
+            [{"action": "*", "resource": "*", "effect": "deny"}]
+            if has_allowlist else list(default_permissions)
+        )
+        action_aliases = {
+            "read": "read", "edit": "edit", "write": "edit", "notebookedit": "edit",
+            "bash": "shell", "glob": "glob", "grep": "grep", "task": "subagent",
+            "webfetch": "webfetch", "websearch": "websearch", "skill": "skill",
+        }
+
+        def add_permission(value: Any, effect: str) -> None:
+            text = str(value).strip()
+            if not text:
+                return
+            action: str | None = None
+            resource = "*"
+            if text.startswith("mcp__"):
+                server, separator, tool = text[len("mcp__"):].partition("__")
+                normalized_server = "".join(
+                    char if char.isalnum() or char in "_-" else "_" for char in server
+                )
+                normalized_tool = "".join(
+                    char if char.isalnum() or char in "_-" else "_" for char in tool
+                )
+                if normalized_server and separator and normalized_tool:
+                    action = (
+                        f"{normalized_server}_*"
+                        if normalized_tool == "*"
+                        else f"{normalized_server}_{normalized_tool}"
+                    )
+            elif "(" in text and text.endswith(")"):
+                tool_name, resource = text.split("(", 1)
+                action = action_aliases.get(tool_name.lower())
+                resource = resource[:-1]
+            else:
+                action = action_aliases.get(text.lower())
+            if action is None:
+                logger.warning("OpenCode cannot map generic tool rule %r; ignored", text)
+                return
+            permissions.append({"action": action, "resource": resource, "effect": effect})
+
+        if has_allowlist and any(str(item).strip().lower() == "default" for item in allowed_values):
+            for action in default_actions:
+                permissions.append({"action": action, "resource": "*", "effect": "allow"})
+        for item in allowed_values:
+            if str(item).strip().lower() != "default":
+                add_permission(item, "allow")
+        for item in _config_values(cfg.get("disallowed_tools")):
+            add_permission(item, "deny")
+
+        tool_aliases = {
+            "read": "read", "edit": "edit", "write": "write", "notebookedit": "notebookedit",
+            "bash": "bash", "glob": "glob", "grep": "grep", "task": "task",
+            "webfetch": "webfetch", "websearch": "websearch", "skill": "skill",
+        }
+        if cfg.get("tools") is not None:
+            tool_values = _config_values(cfg.get("tools"))
+            has_default_tools = any(str(item).strip().lower() == "default" for item in tool_values)
+            tool_flags: dict[str, bool] = {}
+            if not has_default_tools:
+                tool_flags.update({name: False for name in tool_aliases.values()})
+            mcp_names = _opencode_mcp_servers(cfg.get("mcp_configs", [])).keys()
+            if tool_values is not None:
+                tool_flags.update({f"{name}_*": False for name in mcp_names})
+            for item in tool_values:
+                text = str(item).strip()
+                if text.lower() == "default":
+                    continue
+                if text.startswith("mcp__"):
+                    name, _resource = _mimocode_tool_rule(text, agent="OpenCode")
+                    if name:
+                        tool_flags[name] = True
+                    continue
+                name = tool_aliases.get(text.lower())
+                if name is None:
+                    logger.warning("OpenCode cannot map generic tool selector %r; ignored", text)
+                    continue
+                tool_flags[name] = True
+            if tool_flags:
+                document_tools = tool_flags
+            else:
+                document_tools = {}
+        else:
+            document_tools = {}
+
+        # OpenCode V2 merges project configuration after its global config.
+        # Its pinned CLI does not provide a verified way to suppress that
+        # discovery, so make the override risk visible when a worktree or one
+        # of its ancestors contains project config.
+        project_configs: list[str] = []
+        directory = os.path.abspath(working_dir)
+        while True:
+            for relative_path in (
+                "opencode.json",
+                "opencode.jsonc",
+                os.path.join(".opencode", "opencode.json"),
+                os.path.join(".opencode", "opencode.jsonc"),
+            ):
+                config_path = os.path.join(directory, relative_path)
+                if os.path.isfile(config_path):
+                    project_configs.append(config_path)
+            parent = os.path.dirname(directory)
+            if parent == directory:
+                break
+            directory = parent
+        if project_configs:
+            logger.warning(
+                "OpenCode V2 merges project config after its worker-scoped config; "
+                "matching MiMo provider or permission values may be overridden: %s",
+                ", ".join(project_configs),
+            )
+
+        temp_home = tempfile.mkdtemp(prefix="uc-opencode-")
+        temp_files = [temp_home]
+        config_dir = os.path.join(temp_home, ".config", "opencode")
+        os.makedirs(config_dir, exist_ok=True)
+        provider: dict[str, Any] = {
+            "name": "Xiaomi MiMo direct",
+            "env": ["MIMO_API_KEY"],
+            "package": "@opencode/ai/providers/openai-compatible",
+            "settings": {"baseURL": "https://api.xiaomimimo.com/v1"},
+            "models": {
+                "mimo-v2.6-flash": {
+                    "modelID": "mimo-v2.6-flash",
+                    "name": "MiMo V2.6 Flash",
+                    "capabilities": {"tools": True, "input": ["text", "image"], "output": ["text"]},
+                    "limit": {"context": 1048576, "output": 131072},
+                },
+            },
+        }
+        document: dict[str, Any] = {
+            "$schema": "https://opencode.ai/config.json",
+            "providers": {"mimo-direct": provider},
+        }
+        if cfg.get("mcp_configs"):
+            servers = _opencode_mcp_servers(cfg["mcp_configs"])
+            if servers:
+                # V2 expects the server-name mapping directly under `mcp`.
+                document["mcp"] = servers
+                if not has_allowlist:
+                    for server_name in servers:
+                        normalized_name = "".join(
+                            char if char.isalnum() or char in "_-" else "_"
+                            for char in server_name
+                        )
+                        permissions.append({
+                            "action": f"{normalized_name}_*",
+                            "resource": "*",
+                            "effect": "allow",
+                        })
+        if document_tools:
+            document["tools"] = document_tools
+        document["permissions"] = permissions
+        agent_name = cfg.get("agent_name")
+        append_prompt = cfg.get("append_system_prompt")
+        if append_prompt:
+            profile_name = str(agent_name or "build")
+            document["agents"] = {profile_name: {"system": str(append_prompt)}}
+            agent_name = profile_name
+
+        config_path = os.path.join(config_dir, "opencode.json")
+        with open(config_path, "w", encoding="utf-8") as target:
+            json.dump(document, target, ensure_ascii=False)
+        args = ["run", "--standalone", "--model", "mimo-direct/mimo-v2.6-flash", "--format", "json"]
+        if agent_name:
+            args += ["--agent", str(agent_name)]
+        args.append(prompt)
+        env_vars = config._build_env_vars()
+        if config.api_key:
+            env_vars.setdefault("MIMO_API_KEY", config.api_key)
+        env_vars["HOME"] = temp_home
+        env_vars["XDG_CONFIG_HOME"] = os.path.join(temp_home, ".config")
+        return {
+            "command": "opencode",
+            "args": args,
+            "timeout_secs": config.max_cpu_seconds,
+            "working_dir": working_dir,
+            "env_vars": env_vars,
+            "_temp_files": temp_files,
+        }
+
+    def parse_output(self, result: ExecResult) -> AgentOutput:
+        return _output_from_jsonl(result, agent_label="OpenCode")
+
+
+class OhMyPiAdapter(AgentAdapter):
+    """Headless OMP CLI adapter with native MiMo → DeepSeek fallback."""
+
+    def name(self) -> str:
+        return "oh-my-pi"
+
+    def build_request(
+        self,
+        prompt: str,
+        working_dir: str,
+        config: SandboxConfig,
+        subtask_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        cfg = _merge_agent_config(config, subtask_config)
+        supported = {
+            "tools", "allowed_tools", "disallowed_tools", "mcp_configs", "append_system_prompt",
+        }
+        _warn_unsupported_config(self.name(), cfg, supported)
+        temp_dir = tempfile.mkdtemp(prefix="uc-omp-")
+        temp_files = [temp_dir]
+        agent_dir = os.path.join(temp_dir, "agent")
+        os.makedirs(agent_dir, exist_ok=True)
+        models = {
+            "providers": {
+                "xiaomi": {
+                    "baseUrl": "https://api.xiaomimimo.com/v1",
+                    "api": "openai-completions",
+                    "apiKey": "XIAOMI_API_KEY",
+                    "models": [{"id": "mimo-v2.6-flash", "name": "MiMo V2.6 Flash"}],
+                },
+            },
+        }
+        with open(os.path.join(agent_dir, "models.yml"), "w", encoding="utf-8") as target:
+            json.dump(models, target, ensure_ascii=False)
+        overlay: dict[str, Any] = {
+            "modelRoles": {"default": "xiaomi/mimo-v2.6-flash"},
+            "retry": {
+                "enabled": True,
+                "modelFallback": True,
+                "fallbackRevertPolicy": "never",
+                "fallbackChains": {"default": ["deepseek/deepseek-v4-flash"]},
+            },
+        }
+        tool_approval: dict[str, str] = {}
+        omp_tool_aliases = {
+            "read": "read", "edit": "edit", "write": "write", "bash": "bash",
+            "task": "task", "websearch": "web_search", "web_search": "web_search",
+            "find": "find", "search": "search", "ask": "ask", "browser": "browser",
+            "lsp": "lsp", "github": "github", "ssh": "ssh", "todo": "todo",
+        }
+        allowed_mcp_servers: set[str] = set()
+        selected_mcp_servers: set[str] = set()
+        denied_mcp_servers: set[str] = set()
+        unsupported_allowed_mcp_servers: set[str] = set()
+        unsupported_selected_mcp_servers: set[str] = set()
+
+        def parse_omp_mcp_selector(value: Any) -> tuple[str, str] | None:
+            text = str(value).strip()
+            if not text.startswith("mcp__"):
+                return None
+            server, separator, tool = text[len("mcp__"):].partition("__")
+            if not server or not separator or not tool:
+                logger.warning("OMP cannot map incomplete MCP tool rule %r", value)
+                return None
+            return server, tool
+
+        def map_omp_policy(
+            values: Any,
+            effect: str,
+            *,
+            mcp_allow_target: set[str] | None = None,
+            mcp_unsupported_target: set[str] | None = None,
+        ) -> list[str]:
+            mapped: list[str] = []
+            items = _config_values(values)
+            for item in items:
+                rule = str(item).strip()
+                mcp_selector = parse_omp_mcp_selector(rule)
+                if mcp_selector:
+                    server, mcp_tool = mcp_selector
+                    if effect == "allow" and mcp_tool == "*":
+                        # OMP can isolate MCP access by server, but cannot
+                        # restrict an individual server's tools.
+                        (
+                            mcp_allow_target
+                            if mcp_allow_target is not None
+                            else allowed_mcp_servers
+                        ).add(server)
+                    elif effect == "deny":
+                        # Fail closed for the whole MCP server when a generic
+                        # deny targets only one of its tools.
+                        denied_mcp_servers.add(server)
+                        if mcp_tool != "*":
+                            logger.warning(
+                                "OMP cannot deny one MCP tool; skipping MCP server %s",
+                                server,
+                            )
+                    else:
+                        (
+                            mcp_unsupported_target
+                            if mcp_unsupported_target is not None
+                            else unsupported_allowed_mcp_servers
+                        ).add(server)
+                        logger.warning(
+                            "OMP cannot enforce per-tool MCP allowlist %r; skipping MCP server %s",
+                            rule,
+                            server,
+                        )
+                    continue
+                if "(" in rule:
+                    logger.warning(
+                        "OMP cannot enforce argument-specific tool rule %r; "
+                        "only exact tool policies are supported",
+                        rule,
+                    )
+                    continue
+                name = omp_tool_aliases.get(rule.lower())
+                if name is None:
+                    logger.warning("OMP cannot map generic tool rule %r; ignored", rule)
+                    continue
+                tool_approval[name] = effect
+                mapped.append(name)
+            return mapped
+
+        allowed_values = _config_values(cfg.get("allowed_tools"))
+        has_allowlist = cfg.get("allowed_tools") is not None
+        allow_default = any(str(item).strip().lower() == "default" for item in allowed_values)
+        allowed = map_omp_policy(
+            [item for item in allowed_values if str(item).strip().lower() != "default"],
+            "allow",
+        )
+        denied = map_omp_policy(cfg.get("disallowed_tools", []) or [], "deny")
+        if has_allowlist and not allow_default:
+            for name in _OMP_BUILTIN_TOOLS:
+                tool_approval.setdefault(name, "deny")
+            for name in allowed:
+                tool_approval[name] = "allow"
+        for name in denied:
+            tool_approval[name] = "deny"
+        if tool_approval:
+            overlay["tools"] = {"approvalMode": "yolo", "approval": tool_approval}
+        args = [
+            "--cwd", working_dir,
+            "--config", os.path.join(temp_dir, "settings.yml"),
+            "--mode", "json",
+            "--max-time", str(max(config.max_cpu_seconds, 1)),
+            "--approval-mode", "yolo",
+            "--no-session",
+            "--no-extensions",
+            "-p",
+        ]
+        tool_values = _config_values(cfg.get("tools"))
+        has_default_tools = any(str(item).strip().lower() == "default" for item in tool_values)
+        has_tool_selection = cfg.get("tools") is not None and not has_default_tools
+        valid_tools: list[str] = []
+        for item in tool_values:
+            name = str(item).strip().lower()
+            if name == "default":
+                continue
+            if parse_omp_mcp_selector(item):
+                map_omp_policy(
+                    [item],
+                    "allow",
+                    mcp_allow_target=selected_mcp_servers,
+                    mcp_unsupported_target=unsupported_selected_mcp_servers,
+                )
+                continue
+            if name in _OMP_BUILTIN_TOOLS:
+                valid_tools.append(name)
+            else:
+                logger.warning("OMP does not recognize generic tool %r; it was not enabled", item)
+        if valid_tools:
+            args += ["--tools", ",".join(valid_tools)]
+        elif has_tool_selection and not has_allowlist:
+            for name in _OMP_BUILTIN_TOOLS:
+                tool_approval.setdefault(name, "deny")
+            overlay["tools"] = {"approvalMode": "yolo", "approval": tool_approval}
+        if cfg.get("append_system_prompt"):
+            args += ["--append-system-prompt", str(cfg["append_system_prompt"])]
+        with open(os.path.join(temp_dir, "settings.yml"), "w", encoding="utf-8") as target:
+            json.dump(overlay, target, ensure_ascii=False)
+
+        mcp_selection_constraints: list[set[str]] = []
+        if cfg.get("tools") is not None:
+            mcp_selection_constraints.append(selected_mcp_servers)
+        if has_allowlist:
+            mcp_selection_constraints.append(allowed_mcp_servers)
+        selected_mcp_server_intersection = (
+            set.intersection(*mcp_selection_constraints)
+            if mcp_selection_constraints
+            else None
+        )
+        if cfg.get("mcp_configs") and selected_mcp_server_intersection == set():
+            logger.warning(
+                "OMP cannot enforce generic tool allowlists against MCP tools; "
+                "configured MCP servers are skipped to fail closed"
+            )
+        if cfg.get("mcp_configs"):
+            servers = _mcp_server_entries(cfg["mcp_configs"], agent="OMP")
+            if selected_mcp_server_intersection is not None:
+                servers = {
+                    name: server for name, server in servers.items()
+                    if name in selected_mcp_server_intersection
+                }
+            servers = {
+                name: server for name, server in servers.items()
+                if name not in denied_mcp_servers
+                and name not in unsupported_allowed_mcp_servers
+                and name not in unsupported_selected_mcp_servers
+            }
+            if servers:
+                mcp_path = os.path.join(agent_dir, "mcp.json")
+                with open(mcp_path, "w", encoding="utf-8") as target:
+                    json.dump({"mcpServers": servers}, target, ensure_ascii=False)
+
+        env_vars = config._build_env_vars()
+        if config.api_key:
+            env_vars.setdefault("XIAOMI_API_KEY", config.api_key)
+        # UC and operator config commonly use MIMO_API_KEY; OMP's built-in
+        # Xiaomi provider reads XIAOMI_API_KEY. Keep only that provider name in
+        # the OMP child, alongside the explicitly configured fallback secret.
+        xiaomi_key = env_vars.get("XIAOMI_API_KEY") or os.environ.get("XIAOMI_API_KEY")
+        mimo_key = env_vars.get("MIMO_API_KEY") or os.environ.get("MIMO_API_KEY")
+        if xiaomi_key or mimo_key:
+            env_vars["XIAOMI_API_KEY"] = xiaomi_key or mimo_key or ""
+        env_vars.pop("MIMO_API_KEY", None)
+        env_vars["PI_CODING_AGENT_DIR"] = agent_dir
+        return {
+            "command": "omp",
+            "args": [*args, prompt],
+            "timeout_secs": config.max_cpu_seconds,
+            "working_dir": working_dir,
+            "env_vars": env_vars,
+            "_temp_files": temp_files,
+        }
+
+    def parse_output(self, result: ExecResult) -> AgentOutput:
+        return _output_from_jsonl(result, agent_label="oh-my-pi")
+
+
+class MiMoCodeAdapter(AgentAdapter):
+    """Headless MiMo Code adapter using an isolated direct-API profile."""
+
+    def name(self) -> str:
+        return "mimo-code"
+
+    def build_request(
+        self,
+        prompt: str,
+        working_dir: str,
+        config: SandboxConfig,
+        subtask_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        cfg = _merge_agent_config(config, subtask_config)
+        supported = {"tools", "allowed_tools", "disallowed_tools", "mcp_configs", "agent_name"}
+        _warn_unsupported_config(self.name(), cfg, supported)
+        temp_home = tempfile.mkdtemp(prefix="uc-mimocode-")
+        temp_files = [temp_home]
+        config_dir = os.path.join(temp_home, "config")
+        os.makedirs(config_dir, exist_ok=True)
+        document = {
+            "$schema": "https://mimo.xiaomi.com/mimocode/config.json",
+            "model": "mimo/mimo-v2.6-flash",
+            "provider": {
+                "mimo": {
+                    "name": "MiMo API",
+                    "npm": "@ai-sdk/openai-compatible",
+                    "options": {
+                        "baseURL": "https://api.xiaomimimo.com/v1",
+                        "headers": {"api-key": "{env:MIMO_API_KEY}"},
+                    },
+                    "models": {"mimo-v2.6-flash": {"name": "MiMo V2.6 Flash"}},
+                },
+            },
+        }
+        servers = _opencode_mcp_servers(cfg.get("mcp_configs", []))
+        if servers:
+            # MiMo Code (an OpenCode fork) loads MCP mappings directly under
+            # `mcp` from MIMOCODE_HOME/config/mimocode.jsonc.
+            document["mcp"] = servers
+
+        tool_values = cfg.get("tools")
+        allowed_values = cfg.get("allowed_tools")
+        tool_restrictions = tool_values is not None or allowed_values is not None
+        server_tools = _mimocode_mcp_tools(cfg.get("mcp_configs", []))
+        if tool_restrictions:
+
+            def expand_tool_set(values: Any) -> set[str]:
+                result: set[str] = set()
+                for item in _config_values(values):
+                    if str(item).strip().lower() == "default":
+                        result.update(_MIMOCODE_BUILTIN_TOOLS)
+                        continue
+                    name, _resource = _mimocode_tool_rule(item, agent="MiMo Code")
+                    if name:
+                        result.add(name)
+                return result
+
+            selected_sets = [
+                expand_tool_set(value)
+                for value in (tool_values, allowed_values)
+                if value is not None
+            ]
+            selected_tools = set.intersection(*selected_sets) if selected_sets else set()
+            # Include every configured server wildcard so an allowlist can
+            # hide servers that were configured but not selected.
+        else:
+            selected_tools = set()
+
+        tool_flags: dict[str, bool] = {}
+        if tool_restrictions:
+            tool_flags.update({name: name in selected_tools for name in _MIMOCODE_BUILTIN_TOOLS})
+            tool_flags.update({name: name in selected_tools for name in server_tools})
+            tool_flags.update({
+                name: True for name in selected_tools
+                if name not in _MIMOCODE_BUILTIN_TOOLS and name not in server_tools
+            })
+
+        permission: dict[str, Any] = {}
+        allowed_values = _config_values(allowed_values)
+        for item in allowed_values:
+            if str(item).strip().lower() == "default":
+                continue
+            name, resource = _mimocode_tool_rule(item, agent="MiMo Code")
+            if name and resource:
+                if name == "bash":
+                    permission[name] = {"*": "deny", resource: "allow"}
+                elif name in {"edit", "webfetch", "task"}:
+                    permission[name] = {"*": "deny", resource: "allow"}
+
+        for item in _config_values(cfg.get("disallowed_tools")):
+            name, resource = _mimocode_tool_rule(item, agent="MiMo Code")
+            if not name:
+                continue
+            if not resource:
+                tool_flags[name] = False
+            if resource:
+                rules = permission.setdefault(name, {})
+                if isinstance(rules, dict):
+                    rules[resource] = "deny"
+                else:
+                    logger.warning(
+                        "MiMo Code cannot combine argument rule %r with a global %s denial",
+                        item,
+                        name,
+                    )
+            elif name in {"edit", "bash", "webfetch", "task"}:
+                permission[name] = "deny"
+        if permission:
+            document["permission"] = permission
+        if tool_flags:
+            document["tools"] = tool_flags
+
+        with open(os.path.join(config_dir, "mimocode.jsonc"), "w", encoding="utf-8") as target:
+            json.dump(document, target, ensure_ascii=False)
+        args = [
+            "run", "--dir", working_dir, "--model", "mimo/mimo-v2.6-flash",
+            "--format", "json", "--dangerously-skip-permissions",
+        ]
+        if cfg.get("agent_name"):
+            args += ["--agent", str(cfg["agent_name"])]
+        args.append(prompt)
+        env_vars = config._build_env_vars()
+        if config.api_key:
+            env_vars.setdefault("MIMO_API_KEY", config.api_key)
+        env_vars.update({
+            "MIMOCODE_HOME": temp_home,
+            "MIMOCODE_DISABLE_PROJECT_CONFIG": "1",
+            "MIMOCODE_MIMO_ONLY": "0",
+        })
+        return {
+            "command": "mimo",
+            "args": args,
+            "timeout_secs": config.max_cpu_seconds,
+            "working_dir": working_dir,
+            "env_vars": env_vars,
+            "_temp_files": temp_files,
+        }
+
+    def parse_output(self, result: ExecResult) -> AgentOutput:
+        return _output_from_jsonl(result, agent_label="MiMo Code")
 
 
 def available_agents() -> list[str]:

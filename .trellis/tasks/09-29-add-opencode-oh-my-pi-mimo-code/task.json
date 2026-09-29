@@ -1,0 +1,32 @@
+{
+  "id": "add-opencode-oh-my-pi-mimo-code",
+  "name": "add-opencode-oh-my-pi-mimo-code",
+  "title": "Support OpenCode, oh-my-pi, and MiMo Code agents",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Jamery Wang",
+  "assignee": "Jamery Wang",
+  "createdAt": "2026-09-29",
+  "completedAt": null,
+  "branch": "codex/worker-coding-agents",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": "https://github.com/JameryW/UltimateCoders/pull/697",
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "python/ultimate_coders/agent/sandbox.py",
+    "python/ultimate_coders/agent/registry.py",
+    "docker/Dockerfile",
+    "docker/.env.example",
+    "README.md"
+  ],
+  "notes": "",
+  "meta": {}
+}

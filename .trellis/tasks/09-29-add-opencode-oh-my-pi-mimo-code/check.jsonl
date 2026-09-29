@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/agent-capability-spec.md","reason":"Check adapter selection, config mapping, and capability discovery against the Worker contract."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Review timeout, non-zero exit, malformed JSONL, and stderr reporting behavior."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Review Python conventions and quality requirements."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check credential and model configuration flow across all touched layers."}
+{"file":".trellis/spec/guides/cross-platform-deployment-thinking-guide.md","reason":"Review Docker and subprocess compatibility implications."}
+{"file":".trellis/tasks/09-29-add-opencode-oh-my-pi-mimo-code/research/opencode.md","reason":"Check OpenCode invocation and provider setup against verified research."}
+{"file":".trellis/tasks/09-29-add-opencode-oh-my-pi-mimo-code/research/oh-my-pi.md","reason":"Check OMP model and native fallback behavior against verified research."}
+{"file":".trellis/tasks/09-29-add-opencode-oh-my-pi-mimo-code/research/mimo-code.md","reason":"Check MiMo Code invocation and provider setup against verified research."}

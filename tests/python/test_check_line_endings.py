@@ -191,7 +191,12 @@ def test_real_repo_is_reconciled() -> None:
     # Dashboard cleanup deletes the browser TUI page and its test while adding
     # the Dashboard API image, local Compose override, replacement route test,
     # and two event-view files: ten additions minus two deletions.
-    assert (int(m.group(1)), int(m.group(2))) in {(1892, 1883), (1900, 1891)}, (
+    # Worker coding agent support adds seven text files to the guarded scan.
+    assert (int(m.group(1)), int(m.group(2))) in {
+        (1892, 1883),
+        (1900, 1891),
+        (1907, 1898),
+    }, (
         f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     )
     assert "line endings check passed." in out, out
