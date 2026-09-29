@@ -809,7 +809,7 @@ class LLMClient:
 
         return prepared
 
-    def _make_fallback_client(self) -> "LLMClient | None":
+    def _make_fallback_client(self) -> LLMClient | None:
         """Build the configured secondary model client, if failover is enabled."""
         provider = os.environ.get("UC_LLM_FALLBACK_PROVIDER") or "deepseek"
         if provider.strip().lower() in {"none", "off", "disabled"}:
