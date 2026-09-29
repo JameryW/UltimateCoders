@@ -282,8 +282,8 @@ pub struct ModelFallbackChain {
 impl Default for ModelFallbackChain {
     fn default() -> Self {
         Self {
-            primary: "claude-opus-4-8".to_string(),
-            secondary: "claude-sonnet-4-6".to_string(),
+            primary: "mimo-v2.6-flash".to_string(),
+            secondary: "deepseek-flash".to_string(),
             tertiary: "claude-haiku-4-5-20251001".to_string(),
         }
     }

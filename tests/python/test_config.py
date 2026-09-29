@@ -14,8 +14,8 @@ class TestLoadConfigDefaults:
     def test_default_config(self):
         config = load_config()
         assert config.engine.mode == "local"
-        assert config.llm.provider == "anthropic"
-        assert config.llm.model == "claude-sonnet-4-6"
+        assert config.llm.provider == "mimo"
+        assert config.llm.model == "mimo-v2.6-flash"
 
     def test_env_overrides(self):
         os.environ["UC_ENGINE_MODE"] = "grpc"

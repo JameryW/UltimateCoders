@@ -329,10 +329,17 @@ services:
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       # Optional DeepSeek endpoint override for proxy gateways (dsh var).
       DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-}"
+      MIMO_API_KEY: "${MIMO_API_KEY:-}"
+      MIMO_BASE_URL: "${MIMO_BASE_URL:-}"
+      MIMO_DEFAULT_MODEL: "${MIMO_DEFAULT_MODEL:-}"
       # ── Local LLM for decomposition/planning (litellm openai-compatible) ──
-      # UC_LLM_PROVIDER=openai + OPENAI_API_BASE=<local>/v1 routes the
-      # Orchestrator's task decomposition through a local server too.
-      UC_LLM_PROVIDER: "${UC_LLM_PROVIDER:-}"
+      # MiMo V2.6 Flash is the default; DeepSeek Flash handles API failures.
+      # UC_LLM_PROVIDER=openai + OPENAI_API_BASE=<local>/v1 can still route
+      # task decomposition through a local server.
+      UC_LLM_PROVIDER: "${UC_LLM_PROVIDER:-mimo}"
+      UC_LLM_MODEL: "${UC_LLM_MODEL:-}"
+      UC_LLM_FALLBACK_PROVIDER: "${UC_LLM_FALLBACK_PROVIDER:-deepseek}"
+      UC_LLM_FALLBACK_MODEL: "${UC_LLM_FALLBACK_MODEL:-deepseek-flash}"
       OPENAI_API_BASE: "${OPENAI_API_BASE:-}"
       OPENAI_DEFAULT_MODEL: "${OPENAI_DEFAULT_MODEL:-}"
       # Optional extra agent plugins (.py file / package dir, ':'-separated).
@@ -401,8 +408,14 @@ services:
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-}"
+      MIMO_API_KEY: "${MIMO_API_KEY:-}"
+      MIMO_BASE_URL: "${MIMO_BASE_URL:-}"
+      MIMO_DEFAULT_MODEL: "${MIMO_DEFAULT_MODEL:-}"
       # Local LLM for this service's task decomposition (litellm route).
-      UC_LLM_PROVIDER: "${UC_LLM_PROVIDER:-}"
+      UC_LLM_PROVIDER: "${UC_LLM_PROVIDER:-mimo}"
+      UC_LLM_MODEL: "${UC_LLM_MODEL:-}"
+      UC_LLM_FALLBACK_PROVIDER: "${UC_LLM_FALLBACK_PROVIDER:-deepseek}"
+      UC_LLM_FALLBACK_MODEL: "${UC_LLM_FALLBACK_MODEL:-deepseek-flash}"
       OPENAI_API_BASE: "${OPENAI_API_BASE:-}"
       OPENAI_DEFAULT_MODEL: "${OPENAI_DEFAULT_MODEL:-}"
       UC_AGENT_PLUGINS: "${UC_AGENT_PLUGINS:-}"
