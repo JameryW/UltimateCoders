@@ -2156,7 +2156,10 @@ def _opencode_mcp_servers(mcp_configs: Any) -> dict[str, dict[str, Any]]:
             if isinstance(environment, dict):
                 result["environment"] = environment
             elif environment:
-                logger.warning("OpenCode MCP server %s has a non-mapping environment; it was ignored", name)
+                logger.warning(
+                    "OpenCode MCP server %s has a non-mapping environment; it was ignored",
+                    name,
+                )
             if server.get("cwd"):
                 result["cwd"] = server["cwd"]
         elif isinstance(url, str) and url:
@@ -2174,16 +2177,25 @@ def _opencode_mcp_servers(mcp_configs: Any) -> dict[str, dict[str, Any]]:
         if server.get("timeout"):
             timeout = server["timeout"]
             try:
-                result["timeout"] = timeout if isinstance(timeout, dict) else {"execution": int(timeout)}
+                result["timeout"] = (
+                    timeout if isinstance(timeout, dict) else {"execution": int(timeout)}
+                )
             except (TypeError, ValueError):
-                logger.warning("OpenCode MCP server %s has an invalid timeout; it was ignored", name)
+                logger.warning(
+                    "OpenCode MCP server %s has an invalid timeout; it was ignored",
+                    name,
+                )
         unsupported = sorted(
             key for key in server
             if key not in {"type", "command", "args", "env", "environment", "cwd", "url", "headers",
                            "bearer_token_env_var", "disabled", "timeout"}
         )
         if unsupported:
-            logger.warning("OpenCode MCP server %s ignored fields: %s", name, ", ".join(unsupported))
+            logger.warning(
+                "OpenCode MCP server %s ignored fields: %s",
+                name,
+                ", ".join(unsupported),
+            )
         converted[name] = result
     return converted
 
@@ -2210,9 +2222,17 @@ def _mimocode_tool_rule(value: Any, *, agent: str) -> tuple[str | None, str | No
     if text.startswith("mcp__"):
         server, separator, tool = text[len("mcp__"):].partition("__")
         if server and separator and tool:
-            normalized_server = "".join(char if char.isalnum() or char in "_-" else "_" for char in server)
-            normalized_tool = "".join(char if char.isalnum() or char in "_-" else "_" for char in tool)
-            action = f"{normalized_server}_*" if normalized_tool == "*" else f"{normalized_server}_{normalized_tool}"
+            normalized_server = "".join(
+                char if char.isalnum() or char in "_-" else "_" for char in server
+            )
+            normalized_tool = "".join(
+                char if char.isalnum() or char in "_-" else "_" for char in tool
+            )
+            action = (
+                f"{normalized_server}_*"
+                if normalized_tool == "*"
+                else f"{normalized_server}_{normalized_tool}"
+            )
             return action, None
         logger.warning("%s cannot map incomplete MCP tool rule %r; ignored", agent, value)
         return None, None
@@ -2249,7 +2269,10 @@ class OpenCodeAdapter(AgentAdapter):
         subtask_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         cfg = _merge_agent_config(config, subtask_config)
-        supported = {"tools", "allowed_tools", "disallowed_tools", "mcp_configs", "append_system_prompt", "agent_name"}
+        supported = {
+            "tools", "allowed_tools", "disallowed_tools", "mcp_configs",
+            "append_system_prompt", "agent_name",
+        }
         _warn_unsupported_config(self.name(), cfg, supported)
         # OpenCode's V2 run command is non-interactive: unmatched permissions
         # resolve to ``ask`` and have no terminal client to answer them. Grant
@@ -2263,7 +2286,9 @@ class OpenCodeAdapter(AgentAdapter):
             {"action": action, "resource": "*", "effect": "allow"}
             for action in default_actions
         ]
-        default_permissions.append({"action": "external_directory", "resource": "*", "effect": "deny"})
+        default_permissions.append(
+            {"action": "external_directory", "resource": "*", "effect": "deny"}
+        )
         allowed_values = _config_values(cfg.get("allowed_tools"))
         has_allowlist = cfg.get("allowed_tools") is not None
         permissions = (
@@ -2284,10 +2309,18 @@ class OpenCodeAdapter(AgentAdapter):
             resource = "*"
             if text.startswith("mcp__"):
                 server, separator, tool = text[len("mcp__"):].partition("__")
-                normalized_server = "".join(char if char.isalnum() or char in "_-" else "_" for char in server)
-                normalized_tool = "".join(char if char.isalnum() or char in "_-" else "_" for char in tool)
+                normalized_server = "".join(
+                    char if char.isalnum() or char in "_-" else "_" for char in server
+                )
+                normalized_tool = "".join(
+                    char if char.isalnum() or char in "_-" else "_" for char in tool
+                )
                 if normalized_server and separator and normalized_tool:
-                    action = f"{normalized_server}_*" if normalized_tool == "*" else f"{normalized_server}_{normalized_tool}"
+                    action = (
+                        f"{normalized_server}_*"
+                        if normalized_tool == "*"
+                        else f"{normalized_server}_{normalized_tool}"
+                    )
             elif "(" in text and text.endswith(")"):
                 tool_name, resource = text.split("(", 1)
                 action = action_aliases.get(tool_name.lower())
@@ -2554,7 +2587,8 @@ class OhMyPiAdapter(AgentAdapter):
                     continue
                 if "(" in rule:
                     logger.warning(
-                        "OMP cannot enforce argument-specific tool rule %r; only exact tool policies are supported",
+                        "OMP cannot enforce argument-specific tool rule %r; "
+                        "only exact tool policies are supported",
                         rule,
                     )
                     continue
@@ -2740,7 +2774,11 @@ class MiMoCodeAdapter(AgentAdapter):
                         result.add(name)
                 return result
 
-            selected_sets = [expand_tool_set(value) for value in (tool_values, allowed_values) if value is not None]
+            selected_sets = [
+                expand_tool_set(value)
+                for value in (tool_values, allowed_values)
+                if value is not None
+            ]
             selected_tools = set.intersection(*selected_sets) if selected_sets else set()
             # Include every configured server wildcard so an allowlist can
             # hide servers that were configured but not selected.
@@ -2779,7 +2817,11 @@ class MiMoCodeAdapter(AgentAdapter):
                 if isinstance(rules, dict):
                     rules[resource] = "deny"
                 else:
-                    logger.warning("MiMo Code cannot combine argument rule %r with a global %s denial", item, name)
+                    logger.warning(
+                        "MiMo Code cannot combine argument rule %r with a global %s denial",
+                        item,
+                        name,
+                    )
             elif name in {"edit", "bash", "webfetch", "task"}:
                 permission[name] = "deny"
         if permission:
