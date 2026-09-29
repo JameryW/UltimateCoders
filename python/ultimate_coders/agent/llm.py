@@ -121,6 +121,7 @@ _PROVIDER_KEY_ENV: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
+    "mimo": "MIMO_API_KEY",
 }
 
 # ponytail: env vars for default model per provider (proxy deployments often use custom model names)
@@ -129,6 +130,15 @@ _PROVIDER_MODEL_ENV: dict[str, str] = {
     "openai": "OPENAI_DEFAULT_MODEL",
     "gemini": "GEMINI_DEFAULT_MODEL",
     "deepseek": "DEEPSEEK_DEFAULT_MODEL",
+    "mimo": "MIMO_DEFAULT_MODEL",
+}
+
+_PROVIDER_DEFAULT_MODEL: dict[str, str] = {
+    "anthropic": "claude-sonnet-4-6",
+    "openai": "gpt-4o",
+    "gemini": "gemini-2.5-pro",
+    "deepseek": "deepseek-flash",
+    "mimo": "mimo-v2.6-flash",
 }
 
 
@@ -187,7 +197,7 @@ class LLMClient:
     for Orchestrator decomposition.
 
     Usage:
-        client = LLMClient(api_key="...", model="claude-sonnet-4-6")
+        client = LLMClient()  # MiMo V2.6 Flash, with DeepSeek Flash failover
         response = await client.complete(messages=[...])
         response = await client.complete_with_tools(messages, tools)
     """
@@ -201,31 +211,30 @@ class LLMClient:
         rpm_limit: int = 60,
         tpm_limit: int = 100000,
     ):
-        # ponytail: UC_LLM_PROVIDER selects the provider from the environment
-        # so deployments can point decomposition/planning at a local
-        # OpenAI-compatible server (Ollama/vLLM/LM Studio) without code
-        # changes: UC_LLM_PROVIDER=openai + OPENAI_API_BASE=http://...:11434/v1
-        # + OPENAI_DEFAULT_MODEL=openai/<model> (litellm custom-openai format).
-        self.provider = provider or os.environ.get("UC_LLM_PROVIDER", "anthropic")
+        # UC_LLM_PROVIDER can still select alternate providers (including local
+        # OpenAI-compatible servers); MiMo is the default planning model.
+        self.provider = provider or os.environ.get("UC_LLM_PROVIDER") or "mimo"
         provider = self.provider
-        # Resolve API key: explicit > provider env > ANTHROPIC_API_KEY > ANTHROPIC_AUTH_TOKEN
+        # Resolve the provider's own key. Anthropic credentials are fallback
+        # aliases only for the Anthropic provider; sending one to another API
+        # would turn a missing provider key into a confusing auth failure.
         env_key = _PROVIDER_KEY_ENV.get(provider, "ANTHROPIC_API_KEY")
-        self.api_key = (
-            api_key
-            or os.environ.get(env_key)
-            or os.environ.get("ANTHROPIC_API_KEY")
-            or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-        )
+        self.api_key = api_key or os.environ.get(env_key)
+        if provider == "anthropic":
+            self.api_key = (
+                self.api_key
+                or os.environ.get("ANTHROPIC_API_KEY")
+                or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+            )
         # ponytail: model defaults per provider, env override takes precedence
         env_model_key = _PROVIDER_MODEL_ENV.get(provider)
-        default_models: dict[str, str] = {
-            "anthropic": "claude-sonnet-4-6",
-            "openai": "gpt-4o",
-            "gemini": "gemini-2.5-pro",
-            "deepseek": "deepseek/deepseek-chat",
-        }
         env_model = os.environ.get(env_model_key) if env_model_key else None
-        self.model = model or env_model or default_models.get(provider, "claude-sonnet-4-6")
+        self.model = (
+            model
+            or os.environ.get("UC_LLM_MODEL")
+            or env_model
+            or _PROVIDER_DEFAULT_MODEL.get(provider, "claude-sonnet-4-6")
+        )
         self.max_retries = max_retries
         self.rpm_limit = rpm_limit
         self.tpm_limit = tpm_limit
@@ -470,6 +479,7 @@ class LLMClient:
         messages: list[dict[str, Any]],
         system: str | None = None,
         max_tokens: int = 4096,
+        _allow_fallback: bool = True,
         **kwargs: Any,
     ) -> AsyncIterator[GenericStreamingChunk]:
         """litellm streaming path — OpenAI-format SSE."""
@@ -488,28 +498,61 @@ class LLMClient:
         if self.api_key:
             request_params["api_key"] = self.api_key
         request_params.update(kwargs)
+        request_params = self._prepare_litellm_params(request_params)
 
-        response = await client.acompletion(**request_params)
-        async for chunk in response:
-            choice = chunk.choices[0] if chunk.choices else None
-            if choice is None:
-                continue
-            delta = choice.delta
-            text_delta = ""
-            if hasattr(delta, "content") and delta.content:
-                text_delta = delta.content
-            finish_reason = getattr(choice, "finish_reason", None)
-            usage = {}
-            if hasattr(chunk, "usage") and chunk.usage:
-                usage = {
-                    "input_tokens": getattr(chunk.usage, "prompt_tokens", 0),
-                    "output_tokens": getattr(chunk.usage, "completion_tokens", 0),
-                }
-            yield GenericStreamingChunk(
-                text_delta=text_delta,
-                finish_reason=finish_reason,
-                usage=usage,
+        stream_started = False
+        try:
+            response = await client.acompletion(**request_params)
+            async for chunk in response:
+                choice = chunk.choices[0] if chunk.choices else None
+                if choice is None:
+                    continue
+                delta = choice.delta
+                text_delta = ""
+                if hasattr(delta, "content") and delta.content:
+                    text_delta = delta.content
+                finish_reason = getattr(choice, "finish_reason", None)
+                usage = {}
+                if hasattr(chunk, "usage") and chunk.usage:
+                    usage = {
+                        "input_tokens": getattr(chunk.usage, "prompt_tokens", 0),
+                        "output_tokens": getattr(chunk.usage, "completion_tokens", 0),
+                    }
+                stream_started = True
+                yield GenericStreamingChunk(
+                    text_delta=text_delta,
+                    finish_reason=finish_reason,
+                    usage=usage,
+                )
+        except Exception as primary_error:
+            if stream_started or not _allow_fallback:
+                raise
+            fallback = self._make_fallback_client()
+            if fallback is None:
+                raise
+            logger.warning(
+                "LLM stream failed on %s/%s; retrying with fallback %s/%s",
+                self.provider,
+                self.model,
+                fallback.provider,
+                fallback.model,
             )
+            fallback_kwargs = {
+                key: value
+                for key, value in kwargs.items()
+                if key not in {"api_key", "api_base", "model"}
+            }
+            try:
+                async for chunk in fallback._stream_litellm(
+                    messages,
+                    system=system,
+                    max_tokens=max_tokens,
+                    _allow_fallback=False,
+                    **fallback_kwargs,
+                ):
+                    yield chunk
+            except Exception as fallback_error:
+                raise fallback_error from primary_error
 
     async def _complete_with_tools_anthropic(
         self,
@@ -742,7 +785,103 @@ class LLMClient:
 
         raise RuntimeError("Unreachable: max retries exceeded")
 
-    async def _call_litellm_with_retry(self, litellm_mod: Any, params: dict[str, Any]) -> Any:
+    def _prepare_litellm_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Add LiteLLM routing details for provider-compatible APIs."""
+        prepared = dict(params)
+        model = str(prepared.get("model", self.model))
+
+        if self.provider == "mimo":
+            if model.startswith("openai/"):
+                model = model.removeprefix("openai/")
+            elif model.startswith("mimo/"):
+                model = model.removeprefix("mimo/")
+            prepared["model"] = f"openai/{model}"
+            prepared.setdefault(
+                "api_base",
+                os.environ.get("MIMO_BASE_URL") or "https://api.xiaomimimo.com/v1",
+            )
+        elif self.provider == "deepseek":
+            if model.startswith("openai/"):
+                model = model.removeprefix("openai/")
+            elif model.startswith("deepseek/"):
+                model = model.removeprefix("deepseek/")
+            prepared["model"] = f"openai/{model}"
+            prepared.setdefault(
+                "api_base",
+                os.environ.get("DEEPSEEK_BASE_URL") or "https://api.deepseek.com",
+            )
+
+        return prepared
+
+    def _make_fallback_client(self) -> "LLMClient | None":
+        """Build the configured secondary model client, if failover is enabled."""
+        provider = os.environ.get("UC_LLM_FALLBACK_PROVIDER") or "deepseek"
+        if provider.strip().lower() in {"none", "off", "disabled"}:
+            return None
+
+        model_env_key = _PROVIDER_MODEL_ENV.get(provider)
+        model = (
+            os.environ.get("UC_LLM_FALLBACK_MODEL")
+            or (os.environ.get(model_env_key) if model_env_key else None)
+            or _PROVIDER_DEFAULT_MODEL.get(provider)
+        )
+        fallback = LLMClient(
+            provider=provider,
+            model=model,
+            max_retries=self.max_retries,
+            rpm_limit=self.rpm_limit,
+            tpm_limit=self.tpm_limit,
+        )
+        if fallback.provider == self.provider and fallback.model == self.model:
+            return None
+        return fallback
+
+    async def _call_litellm_with_retry(
+        self,
+        litellm_mod: Any,
+        params: dict[str, Any],
+        *,
+        allow_fallback: bool = True,
+    ) -> Any:
+        """Retry the primary API, then use the configured model on failure."""
+        primary_params = self._prepare_litellm_params(params)
+        try:
+            return await self._retry_litellm(litellm_mod, primary_params)
+        except Exception as primary_error:
+            if not allow_fallback:
+                raise
+            fallback = self._make_fallback_client()
+            if fallback is None:
+                raise
+
+            # Keep request content/options, but replace all provider-specific
+            # routing and credentials with the secondary client's settings.
+            fallback_params = {
+                key: value
+                for key, value in params.items()
+                if key not in {"api_key", "api_base", "model"}
+            }
+            fallback_params["model"] = fallback.model
+            if fallback.api_key:
+                fallback_params["api_key"] = fallback.api_key
+            fallback_params = fallback._prepare_litellm_params(fallback_params)
+            logger.warning(
+                "LLM request failed on %s/%s; retrying with fallback %s/%s",
+                self.provider,
+                self.model,
+                fallback.provider,
+                fallback.model,
+            )
+            try:
+                return await fallback._call_litellm_with_retry(
+                    litellm_mod,
+                    fallback_params,
+                    allow_fallback=False,
+                )
+            except Exception as fallback_error:
+                raise fallback_error from primary_error
+
+    async def _retry_litellm(self, litellm_mod: Any, params: dict[str, Any]) -> Any:
         """Call litellm.acompletion() with exponential backoff and jitter retry."""
         import asyncio
 

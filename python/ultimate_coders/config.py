@@ -38,10 +38,11 @@ class NatsConfig:
 @dataclass
 class LlmConfig:
     """LLM API configuration."""
-    provider: str = "anthropic"
+    provider: str = "mimo"
     api_key: str | None = None
-    model: str = "claude-sonnet-4-6"
-    fallback_model: str = "claude-haiku-4-5-20251001"
+    model: str = "mimo-v2.6-flash"
+    fallback_provider: str = "deepseek"
+    fallback_model: str = "deepseek-flash"
     max_retries: int = 5
     rpm_limit: int = 60
     tpm_limit: int = 100000
@@ -122,11 +123,17 @@ def load_config(path: str | None = None) -> Config:
         "openai": "OPENAI_API_KEY",
         "gemini": "GEMINI_API_KEY",
         "deepseek": "DEEPSEEK_API_KEY",
+        "mimo": "MIMO_API_KEY",
     }
     env_key = provider_key_env.get(config.llm.provider, "ANTHROPIC_API_KEY")
+    anthropic_key_fallback = (
+        os.environ.get("ANTHROPIC_API_KEY")
+        if config.llm.provider == "anthropic"
+        else None
+    )
     config.llm.api_key = (
         os.environ.get(env_key)
-        or os.environ.get("ANTHROPIC_API_KEY")
+        or anthropic_key_fallback
         or config.llm.api_key
     )
     config.engine.mode = os.environ.get("UC_ENGINE_MODE", config.engine.mode)
@@ -143,6 +150,9 @@ def load_config(path: str | None = None) -> Config:
 
     # Additional LLM env var overrides
     config.llm.model = os.environ.get("UC_LLM_MODEL", config.llm.model)
+    config.llm.fallback_provider = os.environ.get(
+        "UC_LLM_FALLBACK_PROVIDER", config.llm.fallback_provider
+    )
     config.llm.fallback_model = os.environ.get("UC_LLM_FALLBACK_MODEL", config.llm.fallback_model)
     if "UC_LLM_RPM_LIMIT" in os.environ:
         config.llm.rpm_limit = int(os.environ["UC_LLM_RPM_LIMIT"])
