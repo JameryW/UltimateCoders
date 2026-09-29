@@ -2493,12 +2493,49 @@ class OhMyPiAdapter(AgentAdapter):
             "find": "find", "search": "search", "ask": "ask", "browser": "browser",
             "lsp": "lsp", "github": "github", "ssh": "ssh", "todo": "todo",
         }
+        allowed_mcp_servers: set[str] = set()
+        denied_mcp_servers: set[str] = set()
+        unsupported_mcp_servers: set[str] = set()
+
+        def parse_omp_mcp_selector(value: Any) -> tuple[str, str] | None:
+            text = str(value).strip()
+            if not text.startswith("mcp__"):
+                return None
+            server, separator, tool = text[len("mcp__"):].partition("__")
+            if not server or not separator or not tool:
+                logger.warning("OMP cannot map incomplete MCP tool rule %r", value)
+                return None
+            return server, tool
 
         def map_omp_policy(values: Any, effect: str) -> list[str]:
             mapped: list[str] = []
             items = _config_values(values)
             for item in items:
                 rule = str(item).strip()
+                mcp_selector = parse_omp_mcp_selector(rule)
+                if mcp_selector:
+                    server, mcp_tool = mcp_selector
+                    if effect == "allow" and mcp_tool == "*":
+                        # OMP can isolate MCP access by server, but cannot
+                        # restrict an individual server's tools.
+                        allowed_mcp_servers.add(server)
+                    elif effect == "deny":
+                        # Fail closed for the whole MCP server when a generic
+                        # deny targets only one of its tools.
+                        denied_mcp_servers.add(server)
+                        if mcp_tool != "*":
+                            logger.warning(
+                                "OMP cannot deny one MCP tool; skipping MCP server %s",
+                                server,
+                            )
+                    else:
+                        unsupported_mcp_servers.add(server)
+                        logger.warning(
+                            "OMP cannot enforce per-tool MCP allowlist %r; skipping MCP server %s",
+                            rule,
+                            server,
+                        )
+                    continue
                 if "(" in rule:
                     logger.warning(
                         "OMP cannot enforce argument-specific tool rule %r; only exact tool policies are supported",
@@ -2548,6 +2585,9 @@ class OhMyPiAdapter(AgentAdapter):
             name = str(item).strip().lower()
             if name == "default":
                 continue
+            if parse_omp_mcp_selector(item):
+                map_omp_policy([item], "allow")
+                continue
             if name in _OMP_BUILTIN_TOOLS:
                 valid_tools.append(name)
             else:
@@ -2563,14 +2603,30 @@ class OhMyPiAdapter(AgentAdapter):
         with open(os.path.join(temp_dir, "settings.yml"), "w", encoding="utf-8") as target:
             json.dump(overlay, target, ensure_ascii=False)
 
-        restrictive_tool_config = (has_allowlist and not allow_default) or has_tool_selection
+        restrictive_tool_config = (
+            (has_allowlist and not allow_default)
+            or has_tool_selection
+            or bool(allowed_mcp_servers or unsupported_mcp_servers)
+        )
         if cfg.get("mcp_configs") and restrictive_tool_config:
-            logger.warning(
-                "OMP cannot enforce generic tool allowlists against MCP tools; "
-                "configured MCP servers are skipped to fail closed"
-            )
-        elif cfg.get("mcp_configs"):
+            if not allowed_mcp_servers:
+                logger.warning(
+                    "OMP cannot enforce generic tool allowlists against MCP tools; "
+                    "configured MCP servers are skipped to fail closed"
+                )
+        if cfg.get("mcp_configs"):
             servers = _mcp_server_entries(cfg["mcp_configs"], agent="OMP")
+            if allowed_mcp_servers:
+                servers = {
+                    name: server for name, server in servers.items()
+                    if name in allowed_mcp_servers
+                }
+            elif restrictive_tool_config:
+                servers = {}
+            servers = {
+                name: server for name, server in servers.items()
+                if name not in denied_mcp_servers and name not in unsupported_mcp_servers
+            }
             if servers:
                 mcp_path = os.path.join(agent_dir, "mcp.json")
                 with open(mcp_path, "w", encoding="utf-8") as target:

@@ -207,8 +207,9 @@ by `run-omp.sh`. OpenCode uses a task-scoped HOME/XDG config and private
 standalone server; V2 also merges project config found in the worktree or its
 ancestors, which may override matching provider or permission values. The
 worker logs a warning when it finds those config files. OMP fails closed for
-empty or unrecognized explicit tool allowlists and skips configured MCP
-servers when it cannot enforce a restrictive allowlist against their tools.
+empty or unrecognized explicit tool allowlists, limits MCP access to selected
+servers when configured with `mcp__server__*`, and skips a server when it
+cannot enforce an individual MCP-tool rule.
 
 For a smaller local OpenAI-compatible model use `UC_CODING_AGENT=local-harness`,
 or select `claude-code` / `codex` when a deployment uses those CLIs. The
