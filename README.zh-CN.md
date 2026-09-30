@@ -12,7 +12,7 @@ UltimateCoders 是一个分布式 AI 编程系统，提供共享分层记忆，�
 
 ## 核心特性
 
-- **DAG 任务编排**：将自然语言任务拆解为可观测子任务，按依赖关系分波次调度，并持续推送 submitted、running、completed、failed 状态。
+- **DAG 任务编排**：将自然语言任务拆解为可观测节点，依赖完成后即可派发，并持续推送生命周期事件。
 - **产品首页和运营 Dashboard**：`/` 展示产品能力和执行链；`#/dashboard` 提供任务、Worker、事件和调度视图。
 - **可选 OMP 扩展**：`run-omp.sh` 在 Docker 应用之外提供本机 `/uc` 命令和 LLM 工具。
 - **分布式 Worker**：Worker 通过 `WorkerService` 注册，发布心跳和能力声明，由 Gateway 按能力和负载调度；NATS 负责跨进程子任务分发。
@@ -31,7 +31,7 @@ UltimateCoders 将终端里的 AI 编程变成可观测、可调度的执行平�
 | 产品首页 | Runtime Surface、执行链和典型场景 | 从一个入口理解产品并进入真实执行路径 |
 | 产品分层图 | Command、Control、Execution、Knowledge、Event 五层 | 看清入口、编排、Worker、上下文和结果回流如何连接 |
 | Dashboard 交互 | 提交任务、查看状态和实时事件 | 在浏览器中操作并观察执行 |
-| DAG 编排 | `run/submit` 创建子任务并按依赖分波次执行 | 复杂任务可拆解、追踪和恢复 |
+| DAG 编排 | 规划器构建 DAG，Rust Gateway 派发就绪节点 | 复杂任务可拆解、追踪和恢复 |
 | 统一任务状态 | Dashboard 和 gRPC TaskService 使用同一份任务数据 | 状态与执行结果保持一致 |
 | 分布式 Worker | 注册、能力声明、心跳和负载感知调度 | 围绕模型和工具能力扩展执行容量 |
 | 检索与记忆 | Text + Semantic + AST 检索，以及 TiKV/Qdrant/PostgreSQL 记忆 | 为 Coding Agent 提供跨仓库可复用上下文 |
@@ -97,17 +97,73 @@ Compose 启动 Gateway、Dashboard API 和 UI、NATS、存储及 Worker。需要
 
 ## 技术架构图
 
-![UltimateCoders 技术架构图](docs/screenshots/execution-architecture.png)
+系统将任务规划、执行控制、编程执行和推理验收分开。默认 Compose 应用运行 Dashboard UI/API、Rust Gateway、Python 规划协调器、NATS 和可扩展 Worker Pool；本机 OMP 扩展是可选入口。
 
-这张图展示一次任务的完整执行路径：Dashboard 负责交互，Rust Gateway 负责 TaskService、DAG 调度和 Worker 注册，Worker Pool 负责执行，Search + Memory 提供仓库上下文，Task Events 将状态回流到 Dashboard 和 API。
+```mermaid
+flowchart TB
+    subgraph Entry["交互入口"]
+        UI["Web Dashboard"]
+        API["Dashboard API · REST / SSE"]
+        OMP["本机 OMP 扩展 · 可选"]
+    end
+    subgraph Control["规划与控制"]
+        GW["Rust Gateway<br/>Task / Engine / Dashboard / Worker 服务<br/>就绪节点派发 · 控制 · 恢复"]
+        PLAN["Python 规划协调器<br/>Orchestrator · 领域路由 · DAG/配置快照"]
+        BUS["NATS<br/>Core：提交 / 控制 / 事件<br/>JetStream：子任务分发 / 持久事件历史"]
+    end
+    subgraph Execution["Worker 执行"]
+        WORKER["Python Worker Pool<br/>注册 · 能力声明 · Sandbox / Git worktree"]
+        CODE["编程适配器<br/>Grok / Claude Code / Codex / OpenCode<br/>oh-my-pi / MiMo Code / local harness / 插件"]
+        INFRA["InferenceInfraAgent / metainfer 适配器<br/>OptimizationWorkflow"]
+        ORACLE["固定 BenchmarkRunner + Oracle<br/>基线 → 候选 → 验收 / 回滚"]
+        EVIDENCE["Artifacts<br/>报告 · 已接受补丁 · 执行适配图"]
+    end
+    subgraph Backends["知识与执行后端"]
+        KNOW["Rust 检索 + 分层 Memory<br/>Text / Semantic / AST"]
+        STORE["TiKV · Qdrant · PostgreSQL<br/>记忆 / 索引 / 任务元数据"]
+        MODEL["模型提供商 API<br/>兼容适配器连接本地 Ollama · 可选"]
+        META["外部 MetaInfer 服务 · 可选<br/>模型移植 · Kernel/Runtime 工具 · Trace 分析"]
+    end
+    UI -->|"gRPC-Web：任务 / 检索 / 控制"| GW
+    UI <-->|"HTTP / SSE"| API
+    OMP <-->|"gRPC：提交 / claim / 上报"| GW
+    GW -->|"任务提交 / 就绪节点派发"| BUS
+    API -->|"REST 任务提交"| BUS
+    BUS -->|"uc.task.submit"| PLAN
+    PLAN -->|"完整 DAG + 执行配置"| BUS
+    BUS -->|"快照 / 结果 / 事件"| GW
+    BUS -->|"JetStream 子任务投递"| WORKER
+    WORKER -->|"结果 / 事件"| BUS
+    WORKER <-->|"WorkerService / EngineService"| GW
+    GW -->|"WatchTask"| UI
+    BUS -->|"事件 / 指标"| API
+    WORKER --> CODE
+    WORKER --> INFRA
+    CODE --> MODEL
+    PLAN -->|"规划模型"| MODEL
+    INFRA <-->|"HTTP · 共享已分配 worktree"| META
+    INFRA --> ORACLE
+    ORACLE --> EVIDENCE
+    EVIDENCE -->|"经 Worker 写入已验收证据"| KNOW
+    GW --> KNOW
+    KNOW --> STORE
+```
+
+默认任务链为 **提交 → 规划 DAG → 派发就绪节点 → 执行 → 上报 → 释放后继节点**。Python 负责规划和领域路由，Rust Gateway 负责任务控制与派发（Compose 设置 `UC_GATEWAY_OWNS_DISPATCH=true`）。节点完成后可以立即释放其后继，无需等待整个 wave。
 
 | 层 | 组件 | 作用 |
 | --- | --- | --- |
-| Interaction | Web Dashboard；可选本机 OMP | 通过 gRPC-Web 或 `/uc` 接收自然语言任务 |
-| Control plane | Rust Gateway | 负责任务持久化、DAG 调度、TaskService、EngineService 和 WorkerService |
-| Execution | Worker Pool | 按能力、心跳和负载分发到编程适配器或可选推理领域 Agent |
+| Interaction | Web Dashboard、Dashboard API；可选本机 OMP | 提供浏览器 gRPC-Web、REST/SSE 和终端 `/uc` 入口 |
+| Planning | Python 协调器；可选 OMP 规划器 | 拆解任务、校验依赖、路由推理任务并保留执行配置 |
+| Control plane | Rust Gateway、TaskStore、WorkerRegistry | 管理任务状态、就绪节点派发、能力/项目/版本门禁、放置、控制与恢复 |
+| Execution | NATS JetStream、Python Worker、Sandbox/worktree | 投递执行信封，运行编程适配器或推理工作流 |
 | Knowledge | Search + Memory | 组合 Text、Semantic、AST 检索，以及 TiKV、Qdrant、PostgreSQL 分层记忆 |
-| Observability | Task Events | 向 Dashboard 和 API 广播 submitted、running、completed、failed 状态 |
+| Acceptance | BenchmarkRunner、Oracle、优化工作流 | 测量固定工作负载，拒绝并回滚候选，保留已验收证据 |
+| Observability | 任务事件、WatchTask、Dashboard API/SSE | 提供实时进度、有序持久历史、checkpoint/replay 和指标 |
+
+Durable Runtime 设计以 Graph → Node → Attempt 标识、租约/fencing 和 commit-once 结果为基础。当前 Gateway 仍通过 TaskStore 投影提供任务视图；PostgreSQL Graph 写入及图上的 Attempt 操作需要配置 `UC_DATABASE_URL` 并启用 `UC_GRAPH_SHADOW=on`。默认 Compose 已配置 PostgreSQL 任务持久化和 NATS 事件历史，但未启用 Graph shadow。推理领域的**执行适配图**记录实验来源和证据，与用于调度的执行图是不同对象。
+
+MetaInfer 是外部执行后端：UC 负责已分配 worktree、基准保护、Oracle 策略、取消和验收；GPU 分配及专业生成由服务负责。本地 Ollama 通过兼容的规划/编程适配器提供模型推理，MetaInfer 则提供专业工程工具。组件边界与部署模式见[架构说明](docs/architecture.md)。
 
 ## 推理基础设施（MetaInfer）
 
@@ -168,43 +224,41 @@ UltimateCoders 面向大型仓库改造、并行交付、线上问题诊断和�
 
 ## 运行时与架构细节
 
-产品 Dashboard（Vite + React）在 Docker 应用中的默认地址是 `http://localhost:8081/`。根路由是产品首页，`#/dashboard` 提供运营与任务界面。
+产品 Dashboard（Vite + React）在 Docker 应用中的默认地址是 `http://localhost:8081/`，开发模式为 `http://localhost:5173/`。根路由是产品首页，`/dashboard` 或 `#/dashboard` 提供运营与任务界面。
 
 完整架构说明见 [docs/architecture.md](docs/architecture.md)。运行时可以分为五层：
 
 | 层 | 职责 | 主要接口 |
 | --- | --- | --- |
-| Command | Dashboard 和可选本机 OMP | gRPC-Web、`/uc` |
-| Control | 任务生命周期、DAG 调度和持久化 | TaskService、TaskStore、控制信号 |
-| Execution | 本地 fallback 和能力感知 Worker | WorkerService、NATS、sandbox |
+| Command | Dashboard UI/API 和可选本机 OMP | gRPC-Web、REST/SSE、`/uc` |
+| Control | 规划协调器与 Rust 任务生命周期、就绪节点调度和持久化 | Orchestrator、TaskService、TaskStore、执行信封 |
+| Execution | 能力感知 Worker、编程适配器和可选推理工作流 | WorkerService、NATS JetStream、Sandbox/worktree、MetaInfer HTTP |
 | Knowledge | 仓库索引、混合检索和分层记忆 | Text、Semantic、AST、TiKV、Qdrant、PostgreSQL |
-| Events | 实时进度、恢复和监控更新 | TaskEvent、广播通道、SSE、WatchTask |
+| Events | 实时进度、恢复和监控更新 | TaskEvent、有序 EventStore、checkpoint/replay、SSE、WatchTask |
 
 ### 实时事件流
 
-所有任务事件都通过 gRPC server 中统一的 **broadcast channel**（容量 256）流转：
-
-1. **本地拆解**：TaskStore 记录事件并广播。
-2. **本地 fallback**：进程内按换行拆解任务并通过同一通道广播，不依赖外部 Worker。
-3. **NATS subscriber**：接收 Python NATS Worker 发布的 `uc.task.update` 和 `uc.task.event`，应用更新并广播。
-4. **WatchTask stream**：订阅广播通道并即时发送，替代轮询。
+1. 规划协调器发布完整 DAG/配置快照，Worker 通过 NATS 发布部分结果和进度；部分上报不能覆盖父任务控制状态或执行配置。
+2. Gateway 在同一 TaskStore 锁内应用状态变更并记录事件，通过广播通道提供 `WatchTask`；Dashboard API 独立消费 NATS，提供 SSE 和指标。
+3. EventStore 按记录顺序持久化事件。checkpoint/recovery 等待此前写入完成，再回放完整历史；写入失败会成为恢复错误。
+4. Compose 使用 `UC_EVENT_BACKEND=nats` 提供持久 JetStream 历史。内存事件后端与 checkpoint 快照缓存是临时数据；持久事件历史支持重启后回放。
 
 ### OMP 扩展内部结构
 
-UC Orchestrator 扩展（`packages/uc-orchestrator`）是可选的本机终端界面：
+UC Orchestrator 扩展（`packages/uc-orchestrator`）是可选的本机终端界面。它负责规划，也可 claim 未分配节点并在本机执行；任务控制和执行顺序通过 Rust Gateway 管理：
 
 | 组件 | 文件 | 作用 |
 | --- | --- | --- |
 | **Extension entry** | `extension.ts` | 注册 `/uc` 命令、快捷键和消息渲染器，并连接事件与 UI |
-| **Orchestrator** | `orchestrator.ts` | 任务生命周期：提交、拆解、DAG waves、审查、完成 |
-| **Scheduler** | `scheduler.ts` | DAG 构建、文件重叠分波次和 CircuitBreaker |
+| **Orchestrator** | `orchestrator.ts` | 规划/校验 DAG → 上报 Gateway → claim/执行/上报 → 观察完成 |
+| **Scheduler** | `scheduler.ts` | DAG 校验、文件冲突辅助和 CircuitBreaker |
 | **GrpcBridge** | `grpc-bridge.ts` | TaskService gRPC 客户端，负责提交、监听和控制信号 |
 | **MemoryBridge** | `memory-bridge.ts` | LLM 工具 `uc_memory`，负责记忆读写、搜索和删除 |
 | **TaskBridge** | `task-bridge.ts` | LLM 工具 `uc_task`，负责任务提交、取消、暂停、恢复和状态查询 |
 | **IndexBridge** | `index-bridge.ts` | LLM 工具 `uc_index`，负责仓库索引管理 |
 | **FileBridge** | `file-bridge.ts` | LLM 工具 `uc_file`，负责目录和文件读取 |
 | **WorkerBridge** | `worker-bridge.ts` | LLM 工具 `uc_worker`，负责 Worker 查询、扩缩容和注销 |
-| **TaskStore** | `task-store.ts` | SQLite 任务持久化和启动恢复 |
+| **TaskStore** | `task-store.ts` | 本地 JSON UI 投影缓存，从 Rust 任务状态刷新 |
 | **ControlSignals** | `control-signal-subscriber.ts` | 接收外部暂停、恢复和取消信号的 gRPC 流 |
 | **Events** | `events.ts` | 解耦编排逻辑与 UI 的类型化事件发射器 |
 
@@ -212,31 +266,30 @@ Agent 定义提示词（`agents/decomposer.md`、`supervisor.md`、`worker.md`�
 
 ### 本地 fallback（无 NATS）
 
-NATS 不可用时，gRPC server 通过进程内按换行拆解任务的方式执行，不再使用旧的 `python -m ultimate_coders.local_worker` JSON-RPC 子进程路径。服务会拆解任务、更新 TaskStore、广播事件，并在不依赖外部 Worker 的情况下降级运行。
+存储 fallback 与执行 fallback 有不同契约。Gateway 可以使用内存存储提供 API，但这并不提供编程执行器。Executor selector 仅允许配置了本地 handler 的 `read_only`/`local_safe` 节点本地执行；编程节点需要具备相应能力的执行器，传输或容量不可用时保持排队。可选 OMP claim loop 可以在本机执行已认领节点并向 Gateway 上报。没有规划器或执行器的独立 Gateway 不会自动拆解并完成编程任务。
 
 ### NATS Worker
 
-独立的 NATS Worker 将 gRPC TaskService 与 Python Worker/Sandbox 连接起来：
+同一个 Python 模块提供两种部署角色：
 
-1. 订阅 gRPC server 发布的 `uc.task.submit`。
-2. 调用 `Worker.execute_subtask()` 执行 Sandbox 任务。
-3. 发布 `uc.task.update` 状态更新。
-4. 发布 `uc.task.event` 实时事件。
-5. 每 30 秒向 `uc.heartbeat` 发送心跳。
+| Compose 服务 | 模式 | 职责 |
+| --- | --- | --- |
+| `nats-worker` | 默认协调器模式 | 订阅 `uc.task.submit`，调用 Orchestrator 规划/领域路由并发布完整任务快照；Compose 将派发交给 Rust |
+| `worker` | `--mode worker` | 通过 WorkerService 注册/心跳，消费 JetStream 执行信封，运行 Worker/Sandbox 适配器并发布部分结果/事件 |
+
+Worker 仅声明可用能力，并携带与 Gateway 对齐的契约版本。版本不匹配会被拒绝；能力、项目范围或当前版本的可用容量不足时，节点保持 Pending。规划模型配置与编程适配器选择相互独立。
 
 Worker 默认执行 `grok -p ... --output-format streaming-json`。如果部署需要兼容适配器，可设置 `UC_CODING_AGENT=claude-code` 或 `UC_CODING_AGENT=codex`。
 
 ### 多 Worker 分布式执行
 
-多个 NATS Worker 可以协作完成一个任务：
+多个 Worker 进程执行同一 DAG 中相互独立的就绪节点：
 
-- **NATS queue group**：每个子任务只投递给一个 Worker。
-- **Affinity placement（亲和放置）**：Worker 绑定自身的 per-worker subject（`uc.subtask.execute.w.<worker_id>`）并在网关心跳里上报最近改动的文件后，子任务的 `file_constraints` 与其近期工作重叠时会被优先定向投递。共享 subject 始终保留为 overflow，因此放置永远不会把节点搁死。
-- **Worker discovery**：默认模式的 NatsWorker 通过 `uc.heartbeat` 发现远端 Worker。
-- **条件分发**：有远端 Worker 时发送到 NATS，没有时使用本地执行，保持零配置兼容。
-- **文件冲突检测**：`ConflictDetector` 阻止文件约束重叠的子任务同时执行。
-- **Worker failover**：Worker 超过 90 秒没有心跳时触发重新分配，最多重试 3 次。
-- **事件驱动调度**：子任务完成或失败时通过 `asyncio.Event` 立即唤醒调度循环。
+- **持久投递**：Gateway 创建 `UC_SUBTASKS` JetStream 流，消费者确认 Attempt 并支持重投递。投递本身不保证 exactly-once；执行信封包含 Graph/Node/Attempt ID、幂等键、Worker epoch 和契约版本。
+- **放置策略**：能力、项目范围和契约版本是硬门禁。默认 affinity 优先考虑近期文件重叠；可选 `UC_PLACEMENT_POLICY=capacity` 按负载/容量排序合格的专属 Worker，共享投递保留为 overflow。
+- **Attempt 安全**：启用的 PostgreSQL Graph 路径认领/续租、fence 过期 Attempt，并只提交一次终态结果；迟到结果不能覆盖已提交的完成事实。
+- **冲突处理**：文件重叠提示减少碰撞；可选外部 Git 模式使用隔离 worktree 和合并时仲裁，图上的 merge barrier 由 Rust 签发 fenced 授权。
+- **事件驱动调度**：已接受结果经 Gateway 释放后继节点；暂停/恢复/取消遵循同一控制权威。显式 review 需要启用 `review` 能力的 Worker 和结构化裁决；共享 overflow 不保证严格独立投递。
 
 ### 仓库结构
 
