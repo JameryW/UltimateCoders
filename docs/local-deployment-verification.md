@@ -48,8 +48,9 @@ The independent original unittest SHA-256 was
 ## Real inference measurement
 
 A real streaming Ollama chat benchmark ran through the public inference runner
-and passed the immutable output Oracle. The report was
-`target/deployment-inference-artifacts/experiment-vu7ld87y/report.json`.
+and passed the immutable output Oracle. The experiment identifier was
+`experiment-vu7ld87y`; its generated report is retained on the verification host.
+The measured evidence below is available in a clean checkout.
 
 | Measurement | Value |
 | --- | --- |
