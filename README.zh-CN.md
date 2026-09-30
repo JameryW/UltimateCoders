@@ -135,7 +135,7 @@ UC_METAINFER_URL=http://metainfer-host:8765
 
 UC 和 MetaInfer 必须以相同绝对路径访问已分配的工作区；优化任务需要独占、初始干净的 Git worktree，跨主机时需共享对应文件系统。Compose 使用 `worker_inference_artifacts` 卷将报告、基准历史、执行适配图和已接受补丁持久化到 `/artifacts/inference`；通过验收的结构化证据也会写入项目 Memory。
 
-验证快照（2026-09-30）：50 项推理领域测试通过，完整 CPU Python 回归有 1335 项通过、1 项跳过、8 项外部基础设施测试未运行。已检查 HTTP 契约、真实 UC Sandbox 取消路径及 Windows/WSL 进程清理。生产镜像执行和真实 GPU 正确性/性能尚未验证，需要可用的 Docker 引擎、外部服务和实验配置。
+验证快照（2026-09-30）：生产 Docker 应用已在本地运行，并验证了真实 Ollama 分布式编码、通过固定 Oracle 的 GPU 对话基准、存储、任务控制和恢复。外部 MetaInfer 优化服务尚未配置。实际证据、复现命令和限制见[本地部署验证报告](docs/local-deployment-verification.md)。
 
 完整任务示例、实时 schema 要求、基准输出、Oracle 策略及部署/取消边界见[推理基础设施指南](docs/inference-infra.md)。
 

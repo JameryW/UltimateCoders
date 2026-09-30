@@ -506,3 +506,54 @@ Dashboard (FastAPI)
     ↓ uc.task.submit (NATS)
     → Python nats_worker (same as above)
 ```
+
+
+## Scenario: Complete snapshot owns execution configuration
+
+### 1. Scope / Trigger
+
+Python coordinator snapshots rehydrate/upsert Gateway nodes before capability-aware dispatch.
+
+### 2. Signatures
+
+`_make_task_update_payload(task, partial=False)` emits full configuration.
+Rust `NatsSubtaskUpdate.execution: NatsSubtaskExecution` is serde-flattened into sibling wire keys.
+
+### 3. Contracts
+
+Full subtask entries carry `agent_config_json` (JSON string), `required_capabilities`
+(string array), `file_constraints` (string array), `expected_output` (string), and
+`workflow_steps` (WorkflowStep array with per-step `agent_config_json`). These fields
+are additive/optional for legacy producers; absent means preserve existing values.
+`steps` remains per-step **usage** on updates; execution steps require `workflow_steps`.
+Dispatch maps execution steps to its existing `steps`, retaining all other configuration.
+Partial worker reports cannot replace parent status or execution configuration.
+Gateway snapshots broadcast lifecycle events only when the stored state actually changes.
+State mutation and recording its events happen under the same TaskStore lock.
+A complete snapshot reopening Failed to InProgress records TaskUpdated, so live
+state and durable checkpoint/recovery state agree after explicit retries.
+
+### 4. Validation & Error Matrix
+
+Missing capability -> node remains Pending. Partial report removing capabilities ->
+ignored configuration. Older compatible snapshot -> existing configuration preserved.
+Repeated current state -> no duplicate Started/Completed lifecycle event.
+
+### 5. Good/Base/Bad Cases
+
+Good: `max_turns:12` reaches local-harness as 12; inference config and capability survive.
+Base: absent optional fields retain legacy defaults. Bad: empty configuration silently
+routes an inference node to an incapable worker or falls back to default 30 turns.
+
+### 6. Tests Required
+
+Python payload helper regression and actual isolated NATS Gateway tests
+`task_snapshot_lifecycle`: incapable worker receives nothing, matching worker gets
+configuration/constraints/workflow, partial reports preserve gating, and repeated
+snapshots/late reports produce one parent terminal event and one Started event.
+
+### 7. Wrong vs Correct
+
+Wrong: restoring every node with empty `agent_config_json` and capabilities.
+Correct: apply complete-snapshot execution metadata in both rehydration and upsert;
+worker partial updates only change execution results/state.

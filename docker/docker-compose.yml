@@ -85,7 +85,7 @@ services:
   postgres:
     image: postgres:16
     ports:
-      - "5432:5432"
+      - "${UC_POSTGRES_HOST_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ultimate_coders
       POSTGRES_PASSWORD: ultimate_coders
@@ -233,9 +233,9 @@ services:
       UC_QDRANT_URL: "http://qdrant:6334"
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
       UC_NATS_URL: "nats://nats:4222"
-      # Run the dashboard from the bind-mounted checkout so a local
-      # deployment uses the same Python source that was just verified.
-      PYTHONPATH: "/workspace/UltimateCoders/python"
+      # Use the source refreshed by Dockerfile.dashboard-api together with
+      # the image's matching Linux native extension. A Windows source bind
+      # mount has no Linux .so and would hide that required extension.
       # File-browser repo mapping: the dashboard process runs without an
       # Orchestrator (NATS-driven), so it cannot derive a project path —
       # without this the /dashboard/api/repos file browser lists nothing

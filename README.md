@@ -136,7 +136,7 @@ The optimization workflow measures a baseline, requests a candidate, compiles/be
 
 UC and MetaInfer must see the assigned worktree at the same absolute path. Optimization requires an exclusively owned, initially clean git worktree. Share the required filesystem mounts across hosts. Compose persists reports, benchmark history, adaptation graphs and accepted patches in `worker_inference_artifacts` at `/artifacts/inference`; accepted structured evidence also enters project Memory.
 
-Validation snapshot (2026-09-30): 50 inference-domain tests passed, with 1,335 passes in the full CPU Python suite (1 skipped, 8 external-infrastructure tests deselected). HTTP contracts, real UC sandbox cancellation and Windows/WSL process cleanup were checked. Production image execution and real GPU correctness/performance remain unverified and require a working Docker engine, an external service and experiment configuration.
+Validation snapshot (2026-09-30): the production Docker app now runs locally. Real Ollama distributed coding, GPU chat benchmarking with an immutable Oracle, storage, task controls and recovery were exercised. External MetaInfer optimization remains unconfigured. See the [local deployment verification report](docs/local-deployment-verification.md) for evidence, reproducible commands and limitations.
 
 See [the inference infrastructure guide](docs/inference-infra.md) for a complete task example, live-schema requirements, benchmark output, Oracle policy and deployment/cancellation limits.
 

@@ -340,8 +340,12 @@ impl EventStore for NatsEventStore {
         let consumer = stream
             .create_consumer(async_nats::jetstream::consumer::pull::Config {
                 filter_subject: subject.to_string(),
-                deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::ByStartSequence {
-                    start_sequence: offset,
+                deliver_policy: if offset == 0 {
+                    async_nats::jetstream::consumer::DeliverPolicy::All
+                } else {
+                    async_nats::jetstream::consumer::DeliverPolicy::ByStartSequence {
+                        start_sequence: offset,
+                    }
                 },
                 // Keep consumer state in memory, not on disk — this is a
                 // one-shot replay consumer, not a durable subscription.
@@ -359,48 +363,43 @@ impl EventStore for NatsEventStore {
         // server — unbounded growth over a long-running gateway.
         let consumer_name = consumer.cached_info().name.clone();
 
-        let mut results = Vec::new();
-        let mut messages = consumer.messages().await.map_err(|e| {
-            EngineError::ConnectionError(format!("NATS message stream failed: {}", e))
-        })?;
-
-        // Read up to 1000 messages or until no more are available
-        use futures::StreamExt;
-        for _ in 0..1000 {
-            match tokio::time::timeout(std::time::Duration::from_millis(100), messages.next()).await
-            {
-                Ok(Some(Ok(message))) => {
-                    let sequence = message.info().map(|i| i.stream_sequence).unwrap_or(0);
-                    // Skip a message that fails to deserialize instead of
-                    // fabricating a synthetic TaskCreated{random id} — the old
-                    // fallback corrupted checkpoint recovery: a malformed/legacy
-                    // event became a phantom task creation, and
-                    // apply_event_to_snapshot reset snapshot.status = "created",
-                    // clobbering real recovered state. Best-effort replay: one
-                    // bad message is warned + skipped, not synthesized.
-                    let event = match serde_json::from_slice::<AgentEventType>(&message.payload) {
-                        Ok(e) => e,
-                        Err(e) => {
-                            tracing::warn!(
-                                sequence,
-                                error = %e,
-                                "Skipping malformed AGENT_EVENTS message during replay"
-                            );
-                            continue;
-                        }
-                    };
-
-                    results.push(RecordedEvent {
-                        offset: sequence,
-                        timestamp: chrono::Utc::now().timestamp_millis(),
-                        event,
-                        subject: subject.to_string(),
-                    });
-                }
-                Ok(Some(Err(_))) | Ok(None) => break,
-                Err(_) => break, // Timeout, no more messages available right now
+        // Capture the complete initial backlog instead of silently truncating
+        // long tasks. New messages are left for the next replay/checkpoint.
+        let pending = consumer.cached_info().num_pending;
+        let result = async {
+            let mut results = Vec::new();
+            let mut messages = consumer.messages().await.map_err(|e| {
+                EngineError::ConnectionError(format!("NATS message stream failed: {e}"))
+            })?;
+            use futures::StreamExt;
+            for _ in 0..pending {
+                let message = tokio::time::timeout(std::time::Duration::from_secs(5), messages.next())
+                    .await
+                    .map_err(|_| EngineError::ConnectionError("Timed out replaying known NATS history".into()))?
+                    .ok_or_else(|| EngineError::ConnectionError("NATS replay ended before its history boundary".into()))?
+                    .map_err(|e| EngineError::ConnectionError(format!("NATS replay failed: {e}")))?;
+                let sequence = message.info().map_err(|e|
+                    EngineError::ConnectionError(format!("NATS replay sequence unavailable: {e}")))?.stream_sequence;
+                // Pull consumers require explicit acknowledgements; otherwise
+                // max_ack_pending stalls a long replay after the first batch.
+                message.ack().await.map_err(|e|
+                    EngineError::ConnectionError(format!("NATS replay acknowledgement failed: {e}")))?;
+                let event = match serde_json::from_slice::<AgentEventType>(&message.payload) {
+                    Ok(event) => event,
+                    Err(error) => {
+                        tracing::warn!(sequence, %error, "Skipping malformed AGENT_EVENTS message during replay");
+                        continue;
+                    }
+                };
+                results.push(RecordedEvent {
+                    offset: sequence,
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    event,
+                    subject: subject.to_string(),
+                });
             }
-        }
+            Ok(results)
+        }.await;
 
         // Clean up the one-shot consumer. Best-effort: a failure to delete
         // must not lose the events we already read.
@@ -412,7 +411,7 @@ impl EventStore for NatsEventStore {
             );
         }
 
-        Ok(results)
+        result
     }
 
     /// Get the latest offset for a subject.

@@ -154,6 +154,21 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
             # than the subtask's current one (fenced/re-dispatched attempt).
             "attempt_id": st.dispatch_retry_count,
         }
+        if not partial:
+            # Complete snapshots own execution configuration. Worker reports
+            # carry results only and cannot replace scheduling constraints.
+            entry.update(
+                agent_config_json=json.dumps(st.agent_config),
+                required_capabilities=st.required_capabilities,
+                file_constraints=st.file_constraints,
+                expected_output=st.expected_output,
+                workflow_steps=[
+                    {**{key: value for key, value in step.to_dict().items()
+                        if key != "agent_config"},
+                     "agent_config_json": json.dumps(step.agent_config)}
+                    for step in st.steps
+                ],
+            )
         if st.assigned_worker is not None:
             entry["assigned_worker"] = st.assigned_worker
         if st.result is not None:

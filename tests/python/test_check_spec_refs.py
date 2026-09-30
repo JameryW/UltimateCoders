@@ -599,7 +599,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # runtime-policy links are plain markdown (not backticked), so the guard
     # never sees them -- net 0 there. All four are MENTION_RESOLVED, so the
     # unclassified count is untouched.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 275
+    assert sum(1 for r in rows if r["kind"] == "mention") == 276
 
 
 def test_real_corpus_has_no_false_content_mismatch():

@@ -111,18 +111,20 @@ impl CheckpointManager {
             self.config.snapshot_prefix, task_id, latest_offset
         );
 
-        // Collect subtask states by replaying events
-        let subtasks = self.collect_subtask_states(task_id).await?;
-
-        let timestamp = chrono::Utc::now().timestamp_millis();
-
-        let snapshot = TaskSnapshot {
+        // Replay both parent controls and subtask lifecycle through the same
+        // reducer used during recovery. Deriving only from children loses
+        // Paused/Cancelled and terminal parent events at the checkpoint.
+        let events = self.event_store.read_from(&subject, 0).await?;
+        let mut snapshot = TaskSnapshot {
             task_id: task_id.to_string(),
-            status: self.determine_task_status(&subtasks),
-            subtasks,
+            status: "created".to_string(),
+            subtasks: Vec::new(),
             last_event_offset: latest_offset,
-            timestamp,
+            timestamp: chrono::Utc::now().timestamp_millis(),
         };
+        for recorded in events.iter().filter(|event| event.offset <= latest_offset) {
+            apply_event_to_snapshot(&mut snapshot, &recorded.event);
+        }
 
         // Store snapshot in the DashMap (in production, this would go to TiKV)
         self.snapshot_store
@@ -222,95 +224,6 @@ impl CheckpointManager {
         self.event_store.read_from(&subject, from_offset).await
     }
 
-    /// Collect subtask states by replaying events for a task.
-    async fn collect_subtask_states(
-        &self,
-        task_id: &str,
-    ) -> Result<Vec<SubtaskSnapshot>, EngineError> {
-        let subject = self.subject_for(task_id);
-        let events = self.event_store.read_from(&subject, 0).await?;
-
-        let mut subtasks: Vec<SubtaskSnapshot> = Vec::new();
-        for event in &events {
-            match &event.event {
-                AgentEventType::SubtaskAssigned {
-                    task_id: _,
-                    subtask_id,
-                    worker_id,
-                } => {
-                    let sid = subtask_id.0.clone();
-                    // Dedup: a re-assigned subtask (recoverable failure →
-                    // re-dispatch) emits a second SubtaskAssigned for the same
-                    // subtask_id. Unconditionally pushing would create a
-                    // duplicate entry — the original (e.g. "completed") plus a
-                    // stale "assigned" — which then skews determine_task_status.
-                    // Mirrors the guard in apply_event_to_snapshot.
-                    if let Some(st) = subtasks.iter_mut().find(|s| s.subtask_id == sid) {
-                        st.status = "assigned".to_string();
-                        st.assigned_worker = Some(worker_id.0.clone());
-                        st.result_summary = None;
-                    } else {
-                        subtasks.push(SubtaskSnapshot {
-                            subtask_id: sid,
-                            status: "assigned".to_string(),
-                            assigned_worker: Some(worker_id.0.clone()),
-                            result_summary: None,
-                        });
-                    }
-                }
-                AgentEventType::SubtaskStarted {
-                    task_id: _,
-                    subtask_id,
-                    ..
-                } => {
-                    if let Some(st) = subtasks.iter_mut().find(|s| s.subtask_id == subtask_id.0) {
-                        st.status = "in_progress".to_string();
-                    }
-                }
-                AgentEventType::SubtaskCompleted {
-                    task_id: _,
-                    subtask_id,
-                    summary,
-                    success,
-                    modified_files: _,
-                    output: _,
-                    simulated: _,
-                } => {
-                    if let Some(st) = subtasks.iter_mut().find(|s| s.subtask_id == subtask_id.0) {
-                        st.status = if *success { "completed" } else { "failed" }.to_string();
-                        st.result_summary = Some(summary.clone());
-                    }
-                }
-                AgentEventType::SubtaskFailed {
-                    task_id: _,
-                    subtask_id,
-                    error,
-                    recoverable,
-                    stderr_tail: _,
-                    recent_tools: _,
-                } => {
-                    if let Some(st) = subtasks.iter_mut().find(|s| s.subtask_id == subtask_id.0) {
-                        st.status = if *recoverable {
-                            "recoverable_failed"
-                        } else {
-                            "failed"
-                        }
-                        .to_string();
-                        st.result_summary = Some(error.clone());
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        Ok(subtasks)
-    }
-
-    /// Determine overall task status from subtask states.
-    fn determine_task_status(&self, subtasks: &[SubtaskSnapshot]) -> String {
-        derive_task_status(subtasks)
-    }
-
     /// Find the latest snapshot for a task from the in-memory store.
     async fn find_latest_snapshot(
         &self,
@@ -363,6 +276,13 @@ fn derive_task_status(subtasks: &[SubtaskSnapshot]) -> String {
     }
 }
 
+/// Child progress cannot undo a parent pause or terminal lifecycle event.
+fn refresh_parent_status(snapshot: &mut TaskSnapshot) {
+    if !matches!(snapshot.status.as_str(), "paused" | "completed" | "failed") {
+        snapshot.status = derive_task_status(&snapshot.subtasks);
+    }
+}
+
 /// Extract task_id from an event for auto-snapshotting.
 fn extract_task_id(event: &AgentEventType) -> Option<String> {
     match event {
@@ -401,7 +321,7 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
             // re-dispatch) emits a second SubtaskAssigned for the same
             // subtask_id. Update the existing entry back to "assigned"
             // rather than leaving stale "completed"/"failed" status or
-            // pushing a duplicate. Mirrors collect_subtask_states.
+            // pushing a duplicate during snapshot creation or recovery.
             let sid = subtask_id.0.clone();
             if let Some(st) = snapshot.subtasks.iter_mut().find(|s| s.subtask_id == sid) {
                 st.status = "assigned".to_string();
@@ -415,7 +335,7 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
                     result_summary: None,
                 });
             }
-            snapshot.status = "in_progress".to_string();
+            refresh_parent_status(snapshot);
         }
         AgentEventType::SubtaskStarted {
             task_id: _,
@@ -449,7 +369,7 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
             }
             // Re-derive task status so a recovered snapshot matches one
             // written by create_snapshot (e.g. all subtasks done → "completed").
-            snapshot.status = derive_task_status(&snapshot.subtasks);
+            refresh_parent_status(snapshot);
         }
         AgentEventType::SubtaskFailed {
             task_id: _,
@@ -472,7 +392,7 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
                 .to_string();
                 st.result_summary = Some(error.clone());
             }
-            snapshot.status = derive_task_status(&snapshot.subtasks);
+            refresh_parent_status(snapshot);
         }
         AgentEventType::TaskPaused { .. } => {
             snapshot.status = "paused".to_string();
@@ -484,16 +404,26 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
             snapshot.status = "failed".to_string();
         }
         AgentEventType::TaskUpdated { status, .. } => {
-            snapshot.status = status.to_lowercase();
+            match status.to_lowercase().as_str() {
+                "inprogress" | "in_progress" => snapshot.status = "in_progress".to_string(),
+                "created" | "planning" | "paused" | "completed" | "failed" => {
+                    snapshot.status = status.to_lowercase();
+                }
+                _ => {} // TaskUpdated also carries advisory telemetry.
+            }
+        }
+        AgentEventType::TaskCompleted { .. } => {
+            snapshot.status = "completed".to_string();
+        }
+        AgentEventType::TaskFailed { .. } => {
+            snapshot.status = "failed".to_string();
         }
         AgentEventType::ToolInvoked { .. }
         | AgentEventType::ToolResult { .. }
         | AgentEventType::FileModified { .. }
         | AgentEventType::EditIntent { .. }
         | AgentEventType::CheckpointCreated { .. }
-        | AgentEventType::SubtaskProgress { .. }
-        | AgentEventType::TaskCompleted { .. }
-        | AgentEventType::TaskFailed { .. } => {}
+        | AgentEventType::SubtaskProgress { .. } => {}
     }
 }
 
@@ -749,7 +679,7 @@ mod tests {
 
     /// A recoverable failure followed by re-dispatch emits a second
     /// SubtaskAssigned for the same subtask_id. Both the fresh-snapshot path
-    /// (collect_subtask_states) and the replay path (apply_event_to_snapshot)
+    /// (create_snapshot) and the replay path (apply_event_to_snapshot)
     /// must reset the subtask back to "assigned" with a single entry — not
     /// duplicate it and not leave stale "recoverable_failed" status.
     #[tokio::test]
@@ -805,7 +735,7 @@ mod tests {
         );
         assert_eq!(state.subtasks[0].result_summary, None);
 
-        // Fresh-snapshot path (collect_subtask_states via create_snapshot)
+        // Fresh-snapshot path (create_snapshot)
         let snap = manager.create_snapshot(task_id).await.unwrap();
         let _ = snap;
         let fresh = manager.recover(task_id).await.unwrap();

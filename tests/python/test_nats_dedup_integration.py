@@ -78,7 +78,7 @@ async def test_uc_subtasks_stream_carries_the_dedup_window_dispatchers_rely_on()
         assert info.config.duplicate_window is not None, (
             "UC_SUBTASKS has no duplicate_window — Nats-Msg-Id dedup would be a no-op"
         )
-        assert info.config.duplicate_window.total_seconds() >= 1, (
+        assert info.config.duplicate_window >= 1, (
             f"duplicate_window too small to dedup a redelivery: {info.config.duplicate_window}"
         )
         assert str(info.config.retention).endswith(("workqueue", "WorkQueue")), (

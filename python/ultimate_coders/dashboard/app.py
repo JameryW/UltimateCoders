@@ -406,7 +406,16 @@ class DashboardApp:
                     status_code=400,
                 )
 
-            description = body.get("description", "").strip()
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"success": False, "error": "body must be an object"}, status_code=400,
+                )
+            description = body.get("description", "")
+            if not isinstance(description, str):
+                return JSONResponse(
+                    {"success": False, "error": "description must be a string"}, status_code=400,
+                )
+            description = description.strip()
             if not description:
                 return JSONResponse(
                     {"success": False, "error": "description is required"},
@@ -414,6 +423,10 @@ class DashboardApp:
                 )
 
             project_id = body.get("project_id", "")
+            if not isinstance(project_id, str):
+                return JSONResponse(
+                    {"success": False, "error": "project_id must be a string"}, status_code=400,
+                )
             agent_config = body.get("agent_config")
             if agent_config is not None and not isinstance(agent_config, dict):
                 return JSONResponse(

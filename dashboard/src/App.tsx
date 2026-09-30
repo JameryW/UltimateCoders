@@ -373,10 +373,8 @@ function App() {
     try {
       const r = await grpcCancelTask(taskId);
       if (r.success) {
-        // The task model represents cancellation as a terminal Failed state.
-        // Reconcile the optimistic UI value with the authoritative response
-        // because task_cancelled is an event, not a distinct task status.
-        dashboard.optimisticStatusUpdate(taskId, r.status.toLowerCase());
+        // Gateway uses legacy Failed; the successful action establishes cancellation.
+        dashboard.optimisticStatusUpdate(taskId, "cancelled");
         showToast("Task cancelled", "success");
       }
       // Revert optimistic cancel on server rejection — back to in_progress.

@@ -1,7 +1,10 @@
 # ── Stage 1: Build the Rust gRPC server ────────────────────────────
 FROM rust:1.88-slim AS builder
 
-RUN apt-get update && apt-get install -y \
+ARG CARGO_HTTP_PROXY
+ARG DEBIAN_MIRROR=http://deb.debian.org
+RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y \
     protobuf-compiler libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,17 +29,22 @@ RUN set -e; \
         *) echo '' > crates/$d/src/lib.rs ;; \
       esac; \
     done && \
-    cargo build --release -p uc-grpc-server
+    cargo build --locked --release -p uc-grpc-server
 
 # Now overlay the real source and build for real. Dependency artifacts are
 # already cached from the stub build above.
 COPY crates/ ./crates/
-RUN touch crates/*/src/*.rs && cargo build --release -p uc-grpc-server
+RUN touch crates/*/src/*.rs && cargo build --locked --release -p uc-grpc-server
 
 # ── Stage 2: Runtime image ────────────────────────────────────────
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y \
+# Debian slim has no CA bundle before its first apt install. Bootstrap it
+# from the trusted toolchain stage so an HTTPS mirror works on a cold build.
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ARG DEBIAN_MIRROR=http://deb.debian.org
+RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y \
     libssl3 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
