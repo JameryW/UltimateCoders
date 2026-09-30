@@ -1262,3 +1262,57 @@ Usage and deployment configuration: `docs/inference-infra.md`.
 
 - Validate the production image after Docker's engine API is available.
 - Validate GPU correctness and performance using a supplied external MetaInfer service and experiment configuration.
+
+
+## Session 58: Local Ollama deployment and comprehensive functional verification
+
+**Date**: 2026-09-30
+**Task**: Local Ollama deployment and comprehensive functional verification
+**Branch**: `codex/local-deployment-verification`
+
+### Summary
+
+Deployed the production WSL Docker stack with real Ollama coding; repaired configuration, Dashboard lifecycle and durable event recovery; full regressions passed.
+
+### Main Changes
+
+## Delivered result
+
+The local production app runs at http://127.0.0.1:8081/dashboard through native WSL Docker on Windows, with Ollama and two distributed Python Workers. All production images were built from the final source. The real coding task fixed an isolated calculator fixture; its original unittest independently passed and its SHA-256 remained unchanged. Final rebuilt containers completed an additional read-only Ollama task.
+
+## Fixes and verification
+
+Pinned Rust/Bun toolchains and locked Cargo builds; configurable PostgreSQL host port; preserved packaged API native imports; invalid task inputs return HTTP 400. Dashboard stream connection state, bounded retries, task timestamps/status aliases, cancellation actions/history restoration and light-theme readability were repaired. Complete execution configuration survives Python snapshots and Gateway upsert. Ordered durable event appends, checkpoint barriers and complete acknowledged JetStream replay preserve parent controls and explicit retries.
+
+- Python: 1343 passed, 1 skipped, 8 integration cases deselected; separate integration run: 8 passed.
+- Rust engine/types/gRPC with messaging: 778 passed; real isolated NATS lifecycle/replay: 5 passed; deployed controls/scheduler RPC: 2 passed.
+- Live PostgreSQL graph/merge grants: 25 passed; live storage checks: 14 passed; Gateway TiKV/Qdrant CRUD and restart persistence verified separately.
+- Dashboard production build/lint and 12 tests passed; real browser checked offline behavior, completion, cancellation after reload, search and both themes.
+- Ruff, formatting, two review axes, task/spec/line-ending guards and issue-flow checks passed.
+
+## Runtime and boundaries
+
+Formal app/Ollama/proxy services remain running; three temporary validation containers were removed. Docker Desktop's protected host socket error remains; its data was preserved and native WSL Docker supplies the working deployment. Meaningful semantic embeddings, cross-host scaling, external Git push/merge and real external MetaInfer optimization were not exercised. A real fixed-prompt Ollama inference Oracle passed; this is not a claim of optimization speedup.
+
+README and README.zh-CN were updated. Full evidence and reproduction are in docs/local-deployment-verification.md. Implementation commit: 484134c5. The local deployment task was archived as completed. No remote push or PR was performed.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `484134c5` | (see git log) |
+
+### Testing
+
+- [OK] Python 1343 + integration 8; Rust 778 + real NATS 5 + deployed RPC 2.
+- [OK] Dashboard build/lint/12 tests; live Ollama coding and original unittest checksum.
+- [OK] Repository guards, lint, formatting and both review axes.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
