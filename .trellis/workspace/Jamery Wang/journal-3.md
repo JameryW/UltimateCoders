@@ -1208,3 +1208,54 @@ Same-push fallout fixed: journal dedup, recon pointer, guard pins with per-row a
 
 - Watch the repair push's CI: Journal + Scripts + Python must go green
 - Durable lesson: never pass full session entries as `--content-file`
+
+
+## Session 57: Integrate MetaInfer inference infrastructure domain
+
+**Date**: 2026-09-30
+**Task**: Integrate MetaInfer inference infrastructure domain
+**Branch**: `codex/worker-coding-agents`
+
+### Summary
+
+Delivered external inference backend, benchmark acceptance, iterative rollback and evidence propagation; completed review, validation and task archive.
+
+### Main Changes
+
+## Delivered behavior
+
+MetaInfer remains an external execution service. UC owns routing, assigned worktrees, fixed benchmark acceptance, rollback and evidence publication. Added typed service tools, InferenceInfraAgent, BenchmarkRunner/Oracle, OptimizationWorkflow and versioned execution/adaptation graphs. Dashboard/NATS agent configuration reaches the subprocess adapter; accepted workflow evidence reaches project Memory.
+
+## Validation
+
+- Full Python regression: 1335 passed, 1 skipped, 8 external-infrastructure tests deselected.
+- Domain tests: 50 passed, including real sandbox HTTP cancellation, rollback and descendant termination.
+- Python lint, both code-review axes, repository guards and Compose rendering passed.
+- WSL Ubuntu 24.04 smoke checks passed for POSIX nested sessions and pre-release registration failure.
+
+## Completion and operational limits
+
+Feature commit: a0d7fe8e. Task archived with completed status and feature commit provenance at `.trellis/tasks/archive/2026-09/09-30-metainfer-infra`.
+
+Docker Desktop launch was attempted for production verification, but its engine/backend API pipes remained unavailable. No image build or project services were started. UC_METAINFER_URL and experiment defaults are unset; no external service, weights, shared worktree or benchmark configuration was supplied for actual GPU validation. These are deployment validation prerequisites rather than claimed performance results.
+
+Usage and deployment configuration: `docs/inference-infra.md`.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a0d7fe8e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
