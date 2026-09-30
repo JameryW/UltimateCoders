@@ -1,12 +1,10 @@
 # UltimateCoders
 
-Optional inference infrastructure integration: [MetaInfer tools, Benchmark/Oracle, InfraAgent and execution/adaptation graphs](docs/inference-infra.md).
-
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![Rust CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-rust.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-rust.yml)
 [![Python CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-python.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-python.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
 
 Distributed AI coding system with shared layered memory and multi-repository hybrid retrieval across text, semantic, and AST indexes.
 
@@ -21,6 +19,7 @@ The default Docker app uses the Web Dashboard, Rust Gateway, NATS, and Python Wo
 - **Rust core**: Engine, Task, Dashboard, and Worker services expose unified gRPC/gRPC-Web interfaces with task recovery, event broadcast, and in-memory fallback.
 - **Cross-repository hybrid retrieval**: one query can combine text, semantic, and AST retrieval across indexed Git repositories.
 - **Layered memory**: short-term memory, long-term semantic memory, and structured metadata use TiKV, Qdrant, and PostgreSQL, with an in-memory fallback when dependencies are unavailable.
+- **Inference infrastructure**: an optional MetaInfer backend provides model porting, kernel/runtime tools and trace analysis; fixed benchmarks, Oracle acceptance, iterative rollback and execution/adaptation graphs connect results to shared memory.
 - **Flexible deployment**: run local OMP, a Docker Gateway, Docker Compose, or a multi-worker cluster; workers can use Grok Build, Claude Code, Codex, OpenCode, oh-my-pi, MiMo Code, or the local harness.
 
 ## Product Highlights
@@ -35,6 +34,7 @@ UltimateCoders turns terminal-based AI coding into an observable, schedulable ex
 | Unified control plane | Dashboard and gRPC TaskService share task state | Keep task state consistent across entry points |
 | Distributed workers | Registration, capabilities, heartbeats, and load-aware scheduling | Scale execution capacity around model and tool capabilities |
 | Search and memory | Text + Semantic + AST retrieval with TiKV/Qdrant/PostgreSQL memory | Give coding agents reusable context across repositories |
+| Inference infrastructure | InfraAgent, MetaInfer tools, Benchmark/Oracle and adaptation graphs | Accept measured improvements and retain reusable engineering evidence |
 | Reliable deployment | Rust Gateway, NATS, Docker, in-memory fallback, and task events | Move from a local workflow to a worker cluster without changing the product surface |
 
 ## Quick Start
@@ -106,9 +106,39 @@ The diagram follows one task through the system: the Dashboard accepts requests,
 | --- | --- | --- |
 | Interaction | Web Dashboard; optional native OMP | Accept natural-language tasks through gRPC-Web or `/uc` |
 | Control plane | Rust Gateway | Task persistence, DAG scheduling, TaskService, EngineService, and WorkerService |
-| Execution | Worker Pool | Dispatch by capability, heartbeat, and load to Grok Build, Claude Code, or Codex |
+| Execution | Worker Pool | Dispatch by capability, heartbeat, and load to coding adapters or the optional inference domain |
 | Knowledge | Search + Memory | Combine Text, Semantic, and AST retrieval with TiKV, Qdrant, and PostgreSQL memory |
 | Observability | Task Events | Broadcast submitted, running, completed, and failed states to Dashboard and API |
+
+## Inference Infrastructure (MetaInfer)
+
+UltimateCoders keeps global planning, dispatch, worktree ownership and acceptance. The optional `InferenceInfraAgent` delegates specialized execution to an external MetaInfer service. Its tools live in `ultimate_coders.inference`; no MetaInfer source or GPU library is required in the UC Worker image.
+
+| Operation | Execution backend | Purpose |
+| --- | --- | --- |
+| `port_model` | MetaInfer `port-model` | Port a model into the assigned framework worktree |
+| `optimize_kernel` | MetaInfer `evolve-kernel` | Generate and evaluate kernel candidates |
+| `optimize_runtime` | MetaInfer `gen-infer-framework` by default | Generate a purpose-built runtime; existing-framework optimization requires a suitable `upstream_type` plugin |
+| `analyze_trace` | MetaInfer `sglang-trace-analyze` | Collect runtime analysis and evidence |
+| `benchmark` | UC `BenchmarkRunner` | Measure a fixed workload locally without a MetaInfer service |
+
+Set the service URL on the planner and eligible workers, or in `docker/.env` for Compose:
+
+```dotenv
+UC_METAINFER_URL=http://metainfer-host:8765
+```
+
+An enabled worker advertises `inference_infra` and its domain capabilities. Automatic routing requires both inference context and engineering intent; explicit agent choices take priority. Leave the URL empty to disable automatic inference routing and capability advertising.
+
+Submit `agent_config.inference_task` through the Dashboard submit API or Python Orchestrator, or select the `metainfer` adapter in a workflow step. Service tasks need actual plugin parameters; optimization and local measurement also require benchmark configuration. Prose does not supply model paths or GPU availability. Optional `UC_INFERENCE_TASK_JSON` provides defaults for natural-language routing.
+
+The optimization workflow measures a baseline, requests a candidate, compiles/benchmarks/profiles it, and uses the shared Oracle to check correctness, performance and memory/error limits. It keeps improvements and restores rejected candidates before the next iteration. Protect the benchmark harness with `protected_paths`; use an explicit argv `apply_command` when generated output must be imported from the service workspace.
+
+UC and MetaInfer must see the assigned worktree at the same absolute path. Optimization requires an exclusively owned, initially clean git worktree. Share the required filesystem mounts across hosts. Compose persists reports, benchmark history, adaptation graphs and accepted patches in `worker_inference_artifacts` at `/artifacts/inference`; accepted structured evidence also enters project Memory.
+
+Validation snapshot (2026-09-30): 50 inference-domain tests passed, with 1,335 passes in the full CPU Python suite (1 skipped, 8 external-infrastructure tests deselected). HTTP contracts, real UC sandbox cancellation and Windows/WSL process cleanup were checked. Production image execution and real GPU correctness/performance remain unverified and require a working Docker engine, an external service and experiment configuration.
+
+See [the inference infrastructure guide](docs/inference-infra.md) for a complete task example, live-schema requirements, benchmark output, Oracle policy and deployment/cancellation limits.
 
 ## Product Preview
 
@@ -237,6 +267,7 @@ Multiple NATS Worker processes can collaborate on a single task:
 | `crates/` | Rust core, Engine API, gRPC services and PyO3 binding |
 | `packages/uc-orchestrator/` | OMP extension, DAG orchestration, UC tools and terminal UI |
 | `python/ultimate_coders/` | Python Engine facade, Worker/Sandbox, search, memory and FastAPI dashboard |
+| `python/ultimate_coders/inference/` | MetaInfer adapter, InfraAgent routing, benchmarks, Oracle, optimization workflow and adaptation graphs |
 | `dashboard/` | Vite + React product homepage and operations dashboard |
 | `docker/` | Gateway, Worker, storage and compose configuration |
 | `tests/python/` | Python unit tests |
@@ -412,6 +443,9 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL |
 | `UC_PROJECT_PATH` | - | Project path for sandbox execution |
 | `UC_CODING_AGENT` | `grok-build` | Worker coding agent: `grok-build`/`grok`, `claude-code`, `codex`, `opencode`, `oh-my-pi`/`omp`, `mimo-code`/`mimo`, `deepseek-harness`, or `local-harness` |
+| `UC_METAINFER_URL` | _(empty)_ | Optional external MetaInfer service; enables inference capabilities and automatic domain routing |
+| `UC_INFERENCE_TASK_JSON` | _(empty)_ | JSON `agent_config` defaults for inference experiments and natural-language routing |
+| `UC_INFERENCE_ARTIFACT_DIR` | `.uc-inference-artifacts` beside the assigned repository | Native experiment artifact root; Compose sets `/artifacts/inference` on a persistent volume |
 | `XAI_API_KEY` | - | xAI API key for the default Grok Build worker agent |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for Claude Code calls |
 | `OPENAI_API_KEY` | - | OpenAI API key for Codex calls |

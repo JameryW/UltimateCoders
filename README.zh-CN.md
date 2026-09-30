@@ -4,11 +4,11 @@
 
 [![Rust CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-rust.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-rust.yml)
 [![Python CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-python.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-python.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
 
 UltimateCoders 是一个分布式 AI 编程系统，提供共享分层记忆，以及跨多个仓库的 Text、Semantic、AST 混合检索。
 
-默认 Docker 应用由 Web Dashboard、Rust Gateway、NATS 和 Python Worker 组成。oh-my-pi（OMP）扩展作为可选的本机终端入口，通过 `run-omp.sh` 单独使用。Python Worker/Sandbox 默认使用 [xAI Grok Build](https://github.com/xai-org/grok-build) 编程 Agent（`grok`）执行子任务，也支持 Claude Code、Codex 和本地 harness。Rust 核心负责索引、检索、记忆和调度，并向 Dashboard 和 API 消费者推送实时任务事件。
+默认 Docker 应用由 Web Dashboard、Rust Gateway、NATS 和 Python Worker 组成。oh-my-pi（OMP）扩展作为可选的本机终端入口，通过 `run-omp.sh` 单独使用。Python Worker/Sandbox 默认使用 [xAI Grok Build](https://github.com/xai-org/grok-build) 编程 Agent（`grok`）执行子任务，也支持 Claude Code、Codex、OpenCode、oh-my-pi、MiMo Code 和本地 harness。Rust 核心负责索引、检索、记忆和调度，并向 Dashboard 和 API 消费者推送实时任务事件。
 
 ## 核心特性
 
@@ -19,7 +19,8 @@ UltimateCoders 是一个分布式 AI 编程系统，提供共享分层记忆，�
 - **Rust 核心**：Engine、Task、Dashboard、Worker 服务统一提供 gRPC/gRPC-Web 接口，支持任务恢复、事件广播和内存 fallback。
 - **跨仓库混合检索**：一次查询可以组合 Text、Semantic 和 AST 检索，覆盖多个已索引 Git 仓库。
 - **分层记忆**：短期记忆、长期语义记忆和结构化元数据分别使用 TiKV、Qdrant 和 PostgreSQL；依赖不可用时退回内存模式。
-- **灵活部署**：支持本机 OMP、Docker Gateway、Docker Compose 和多 Worker 集群；Worker 可使用 Grok Build、Claude Code 或 Codex。
+- **推理基础设施**：可选 MetaInfer 后端提供模型移植、Kernel/Runtime 工具和 Trace 分析；固定基准、Oracle 验收、迭代回滚和执行适配图将结果接入共享记忆。
+- **灵活部署**：支持本机 OMP、Docker Gateway、Docker Compose 和多 Worker 集群；Worker 可使用 Grok Build、Claude Code、Codex、OpenCode、oh-my-pi、MiMo Code 或本地 harness。
 
 ## 产品特性
 
@@ -34,6 +35,7 @@ UltimateCoders 将终端里的 AI 编程变成可观测、可调度的执行平�
 | 统一任务状态 | Dashboard 和 gRPC TaskService 使用同一份任务数据 | 状态与执行结果保持一致 |
 | 分布式 Worker | 注册、能力声明、心跳和负载感知调度 | 围绕模型和工具能力扩展执行容量 |
 | 检索与记忆 | Text + Semantic + AST 检索，以及 TiKV/Qdrant/PostgreSQL 记忆 | 为 Coding Agent 提供跨仓库可复用上下文 |
+| 推理基础设施 | InfraAgent、MetaInfer 工具、Benchmark/Oracle 和执行适配图 | 依据测量结果验收优化，并保留可复用的工程证据 |
 | 可靠部署 | Rust Gateway、NATS、Docker、内存 fallback 和任务事件 | 从本机工作流平滑扩展到 Worker 集群 |
 
 ## 快速开始
@@ -103,9 +105,39 @@ Compose 启动 Gateway、Dashboard API 和 UI、NATS、存储及 Worker。需要
 | --- | --- | --- |
 | Interaction | Web Dashboard；可选本机 OMP | 通过 gRPC-Web 或 `/uc` 接收自然语言任务 |
 | Control plane | Rust Gateway | 负责任务持久化、DAG 调度、TaskService、EngineService 和 WorkerService |
-| Execution | Worker Pool | 按能力、心跳和负载分发到 Grok Build、Claude Code 或 Codex |
+| Execution | Worker Pool | 按能力、心跳和负载分发到编程适配器或可选推理领域 Agent |
 | Knowledge | Search + Memory | 组合 Text、Semantic、AST 检索，以及 TiKV、Qdrant、PostgreSQL 分层记忆 |
 | Observability | Task Events | 向 Dashboard 和 API 广播 submitted、running、completed、failed 状态 |
+
+## 推理基础设施（MetaInfer）
+
+UltimateCoders 负责全局规划、调度、工作区归属和结果验收。可选的 `InferenceInfraAgent` 将专业执行交给外部 MetaInfer 服务。工具位于 `ultimate_coders.inference`，UC Worker 镜像不需要安装 MetaInfer 源码或 GPU 库。
+
+| 操作 | 执行后端 | 用途 |
+| --- | --- | --- |
+| `port_model` | MetaInfer `port-model` | 将模型移植到已分配的框架工作区 |
+| `optimize_kernel` | MetaInfer `evolve-kernel` | 生成并评估 Kernel 候选实现 |
+| `optimize_runtime` | 默认 MetaInfer `gen-infer-framework` | 生成专用 Runtime；优化现有框架需要通过 `upstream_type` 选择合适的服务插件 |
+| `analyze_trace` | MetaInfer `sglang-trace-analyze` | 收集运行时分析和证据 |
+| `benchmark` | UC `BenchmarkRunner` | 在本机测量固定工作负载，无需 MetaInfer 服务 |
+
+在规划器和参与执行的 Worker 上设置服务地址；使用 Compose 时可写入 `docker/.env`：
+
+```dotenv
+UC_METAINFER_URL=http://metainfer-host:8765
+```
+
+启用后，Worker 声明 `inference_infra` 及领域能力。自动路由同时要求推理上下文和工程任务意图，显式 Agent 选择优先。地址留空时不启用自动推理路由或相应能力声明。
+
+通过 Dashboard 提交 API 或 Python Orchestrator 传入 `agent_config.inference_task`，也可在工作流步骤中选择 `metainfer` 适配器。服务任务需要实际插件参数；优化或本机测量任务还需要 benchmark 配置。自然语言不会自动补出模型路径或 GPU 可用性。可选的 `UC_INFERENCE_TASK_JSON` 为自然语言路由提供默认实验配置。
+
+优化流程先测量基线，再请求候选实现，执行编译、基准和 profiling，通过公共 Oracle 检查正确性、性能及显存/数值误差上限。更好的实现保留，未通过的候选回滚后进入下一轮。使用 `protected_paths` 保护基准脚本；服务在独立工作区生成产物时，通过显式 argv `apply_command` 导入选中的实现。
+
+UC 和 MetaInfer 必须以相同绝对路径访问已分配的工作区；优化任务需要独占、初始干净的 Git worktree，跨主机时需共享对应文件系统。Compose 使用 `worker_inference_artifacts` 卷将报告、基准历史、执行适配图和已接受补丁持久化到 `/artifacts/inference`；通过验收的结构化证据也会写入项目 Memory。
+
+验证快照（2026-09-30）：50 项推理领域测试通过，完整 CPU Python 回归有 1335 项通过、1 项跳过、8 项外部基础设施测试未运行。已检查 HTTP 契约、真实 UC Sandbox 取消路径及 Windows/WSL 进程清理。生产镜像执行和真实 GPU 正确性/性能尚未验证，需要可用的 Docker 引擎、外部服务和实验配置。
+
+完整任务示例、实时 schema 要求、基准输出、Oracle 策略及部署/取消边界见[推理基础设施指南](docs/inference-infra.md)。
 
 ## 产品预览
 
@@ -213,6 +245,7 @@ Worker 默认执行 `grok -p ... --output-format streaming-json`。如果部署�
 | `crates/` | Rust 核心、Engine API、gRPC 服务和 PyO3 绑定 |
 | `packages/uc-orchestrator/` | OMP 扩展、DAG 编排、UC 工具和终端 UI |
 | `python/ultimate_coders/` | Python Engine facade、Worker/Sandbox、检索、记忆和 FastAPI Dashboard |
+| `python/ultimate_coders/inference/` | MetaInfer 适配器、InfraAgent 路由、基准、Oracle、优化工作流及执行适配图 |
 | `dashboard/` | Vite + React 产品首页和运营 Dashboard |
 | `docker/` | Gateway、Worker、存储和 compose 配置 |
 | `tests/python/` | Python 单元测试 |
@@ -348,7 +381,10 @@ Worker 可以在容器中运行，并从外部 Git remote（GitHub/GitLab）同�
 | `UC_POSTGRES_URL` | `postgresql://localhost:5432/ultimatecoders` | PostgreSQL 连接 URL |
 | `UC_NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL |
 | `UC_PROJECT_PATH` | - | Sandbox 执行时的项目路径 |
-| `UC_CODING_AGENT` | `grok-build` | Worker coding agent：`grok-build`/`grok`、`claude-code` 或 `codex` |
+| `UC_CODING_AGENT` | `grok-build` | Worker coding agent：`grok-build`/`grok`、`claude-code`、`codex`、`opencode`、`oh-my-pi`/`omp`、`mimo-code`/`mimo`、`deepseek-harness` 或 `local-harness` |
+| `UC_METAINFER_URL` | 空 | 可选外部 MetaInfer 服务，启用推理能力声明和自动领域路由 |
+| `UC_INFERENCE_TASK_JSON` | 空 | JSON `agent_config`，为推理实验和自然语言路由提供默认配置 |
+| `UC_INFERENCE_ARTIFACT_DIR` | 已分配仓库旁的 `.uc-inference-artifacts` | 本机实验产物根目录；Compose 使用持久卷中的 `/artifacts/inference` |
 | `XAI_API_KEY` | - | 默认 Grok Build Worker 使用的 xAI API key |
 | `ANTHROPIC_API_KEY` | - | Claude Code 使用的 Anthropic API key |
 | `OPENAI_API_KEY` | - | Codex 使用的 OpenAI API key |
