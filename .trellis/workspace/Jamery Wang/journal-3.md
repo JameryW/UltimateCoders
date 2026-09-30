@@ -1214,7 +1214,7 @@ Same-push fallout fixed: journal dedup, recon pointer, guard pins with per-row a
 
 **Date**: 2026-09-30
 **Task**: Integrate MetaInfer inference infrastructure domain
-**Branch**: `codex/worker-coding-agents`
+**Branch**: `codex/metainfer-infra`
 
 ### Summary
 
@@ -1246,11 +1246,13 @@ Usage and deployment configuration: `docs/inference-infra.md`.
 
 | Hash | Message |
 |------|---------|
-| `a0d7fe8e` | (see git log) |
+| `a0d7fe8e` | feat(inference): integrate MetaInfer domain backend |
 
 ### Testing
 
-- [OK] (Add test results)
+- Full Python suite: 1335 passed, 1 skipped, 8 external-infrastructure tests deselected.
+- Domain suite: 50 passed; lint, review, repository guards and Compose rendering passed.
+- WSL POSIX process-group termination and pre-release registration checks passed.
 
 ### Status
 
@@ -1258,4 +1260,5 @@ Usage and deployment configuration: `docs/inference-infra.md`.
 
 ### Next Steps
 
-- None - task complete
+- Validate the production image after Docker's engine API is available.
+- Validate GPU correctness and performance using a supplied external MetaInfer service and experiment configuration.

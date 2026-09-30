@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~1261 | Active |
+| `journal-3.md` | ~1264 | Active |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,7 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
-| 57 | 2026-09-30 | Integrate MetaInfer inference infrastructure domain | `a0d7fe8e` | `codex/worker-coding-agents` |
+| 57 | 2026-09-30 | Integrate MetaInfer inference infrastructure domain | `a0d7fe8e` | `codex/metainfer-infra` |
 | 56 | 2026-09-23 | Repair red main after push | `5ffe0190`, `4a70a747` | `main` |
 | 55 | 2026-09-23 | CI clippy covers all targets | `cd6d74a7`, `0ecad204` | `main` |
 | 54 | 2026-09-23 | Clear uc-grpc clippy baseline warnings | `ab505c59`, `f8c16d0d` | `main` |
