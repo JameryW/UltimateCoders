@@ -1276,11 +1276,11 @@ Deployed the production WSL Docker stack with real Ollama coding; repaired confi
 
 ### Main Changes
 
-## Delivered result
+#### Delivered result
 
 The local production app runs at http://127.0.0.1:8081/dashboard through native WSL Docker on Windows, with Ollama and two distributed Python Workers. All production images were built from the final source. The real coding task fixed an isolated calculator fixture; its original unittest independently passed and its SHA-256 remained unchanged. Final rebuilt containers completed an additional read-only Ollama task.
 
-## Fixes and verification
+#### Fixes and verification
 
 Pinned Rust/Bun toolchains and locked Cargo builds; configurable PostgreSQL host port; preserved packaged API native imports; invalid task inputs return HTTP 400. Dashboard stream connection state, bounded retries, task timestamps/status aliases, cancellation actions/history restoration and light-theme readability were repaired. Complete execution configuration survives Python snapshots and Gateway upsert. Ordered durable event appends, checkpoint barriers and complete acknowledged JetStream replay preserve parent controls and explicit retries.
 
@@ -1290,7 +1290,7 @@ Pinned Rust/Bun toolchains and locked Cargo builds; configurable PostgreSQL host
 - Dashboard production build/lint and 12 tests passed; real browser checked offline behavior, completion, cancellation after reload, search and both themes.
 - Ruff, formatting, two review axes, task/spec/line-ending guards and issue-flow checks passed.
 
-## Runtime and boundaries
+#### Runtime and boundaries
 
 Formal app/Ollama/proxy services remain running; three temporary validation containers were removed. Docker Desktop's protected host socket error remains; its data was preserved and native WSL Docker supplies the working deployment. Meaningful semantic embeddings, cross-host scaling, external Git push/merge and real external MetaInfer optimization were not exercised. A real fixed-prompt Ollama inference Oracle passed; this is not a claim of optimization speedup.
 
@@ -1301,7 +1301,7 @@ README and README.zh-CN were updated. Full evidence and reproduction are in docs
 
 | Hash | Message |
 |------|---------|
-| `484134c5` | (see git log) |
+| `484134c5` | fix(deployment): validate local Ollama stack and repair lifecycle recovery |
 
 ### Testing
 
@@ -1315,4 +1315,5 @@ README and README.zh-CN were updated. Full evidence and reproduction are in docs
 
 ### Next Steps
 
-- None - task complete
+- Restart the documented WSL Docker/Ollama forwarding services after a host reboot.
+- Configure an external MetaInfer service before exercising real optimizer runs.
