@@ -60,7 +60,7 @@ async def run_command(
         await asyncio.gather(readers, return_exceptions=True)
         try:
             await asyncio.wait_for(proc.wait(), 2)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             pass
         raise
     finally:

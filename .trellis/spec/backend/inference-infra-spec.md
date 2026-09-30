@@ -29,6 +29,7 @@ The sandbox adapter launches `python -m ultimate_coders.inference.runner --reque
 - Graph version 1 validates unique node IDs and edge endpoints. Declared task nodes carry provenance; measured evidence is attached per iteration. Accepted graph/measurements enter shared project Memory; all verdicts persist in local history.
 - Candidate rollback manages tracked/nonignored files in an exclusively owned, initially clean code worktree. It never resets HEAD. Backend commits/submodules are unsupported; ignored caches and external files are excluded. Include untracked source in accepted patches.
 - UC cancellation uses a control file and eight-second cleanup grace before local termination. Use Python-controlled execution for this adapter even with an Engine attached. POSIX nested command groups register under the runner owner; Windows commands start through a gated Job Object wrapper. Force-stop covers local descendants. Hard OS termination cannot guarantee remote cleanup or rollback.
+- Python 3.9 remains supported: bound async waits with `asyncio.wait_for` and catch `asyncio.TimeoutError`, which differs from built-in `TimeoutError` before Python 3.11. Cancellation and forced-termination tests must run on both CI Python versions.
 - The final adapter envelope carries structured file path/change-type records. Successful workflow steps retain their domain evidence with step index and agent through Worker Memory publication, including when a later ordinary coding step has no domain result.
 
 ## 4. Validation & Error Matrix

@@ -537,7 +537,7 @@ class SandboxManager:
                     try:
                         await asyncio.wait_for(proc.wait(), INFERENCE_CANCEL_GRACE_SECONDS)
                         return
-                    except TimeoutError:
+                    except asyncio.TimeoutError:
                         logger.error("Inference cancellation grace expired; forcing termination")
                 if tree is not None:
                     tree.close()
@@ -545,7 +545,7 @@ class SandboxManager:
                     _kill_process_tree(proc)
                 try:
                     await asyncio.wait_for(proc.wait(), 2)
-                except TimeoutError:
+                except asyncio.TimeoutError:
                     logger.error("Subprocess did not settle after forced termination")
             finally:
                 self._stopping.pop(proc.pid, None)

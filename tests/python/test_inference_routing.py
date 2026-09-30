@@ -332,12 +332,15 @@ async def test_sandbox_cancellation_stops_remote_job_and_rolls_back(tmp_path, ca
             },
         )
     )
+
+    async def wait_until_started():
+        while not started.is_set():
+            if running.done():
+                pytest.fail((await running).summary)
+            await asyncio.sleep(0.05)
+
     try:
-        async with asyncio.timeout(8):
-            while not started.is_set():
-                if running.done():
-                    pytest.fail((await running).summary)
-                await asyncio.sleep(0.05)
+        await asyncio.wait_for(wait_until_started(), 8)
         if cancel_via == "coroutine":
             running.cancel()
             with pytest.raises(asyncio.CancelledError):

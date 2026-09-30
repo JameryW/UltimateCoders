@@ -209,7 +209,7 @@ async def test_command_timeout_terminates_descendants_before_return(tmp_path):
         "import subprocess,sys,time; "
         "subprocess.Popen([sys.executable,'-c',sys.argv[1]]); time.sleep(30)"
     )
-    with pytest.raises(TimeoutError):
+    with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(
             run_command([sys.executable, "-c", parent, child], str(tmp_path), 0.4), 3
         )
@@ -248,10 +248,13 @@ async def test_forced_sandbox_stop_terminates_nested_command_sessions(tmp_path, 
         stderr=asyncio.subprocess.PIPE,
     )
     manager = SandboxManager(SandboxConfig(project_path=str(tmp_path)))
+
+    async def wait_until_started():
+        while not (tmp_path / "started").exists():
+            await asyncio.sleep(0.05)
+
     try:
-        async with asyncio.timeout(5):
-            while not (tmp_path / "started").exists():
-                await asyncio.sleep(0.05)
+        await asyncio.wait_for(wait_until_started(), 5)
         await manager._start_stopping(proc, str(registry / "cancel"), tree)
         await asyncio.sleep(1.6)
         assert not (tmp_path / "leaked").exists()

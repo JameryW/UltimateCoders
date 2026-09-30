@@ -161,7 +161,7 @@ async def spawn_command(command: list[str], **kwargs: Any) -> tuple[Any, Process
                 pass
             try:
                 await asyncio.wait_for(proc.wait(), 2)
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 pass
         raise
 
