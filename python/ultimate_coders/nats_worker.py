@@ -393,6 +393,7 @@ class NatsPublisher:
         task_id: str,
         description: str,
         project_id: str = "",
+        agent_config: dict[str, Any] | None = None,
     ) -> bool:
         """Publish a task submission to ``uc.task.submit``.
 
@@ -410,6 +411,8 @@ class NatsPublisher:
             "description": description,
             "project_id": project_id,
         }
+        if agent_config is not None:
+            payload["agent_config"] = agent_config
         return await self._publish(NATS_SUBJECT_TASK_SUBMIT, payload)
 
     async def publish_memory_changed(

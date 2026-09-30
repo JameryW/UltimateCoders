@@ -16,6 +16,7 @@ dependencies = [
     "jinja2>=3.1.0",
     "sse-starlette>=1.6.0",
     "nats-py>=2.7.0",
+    "httpx>=0.24.0",
 ]
 
 [project.optional-dependencies]

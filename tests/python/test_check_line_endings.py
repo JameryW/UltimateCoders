@@ -192,10 +192,13 @@ def test_real_repo_is_reconciled() -> None:
     # the Dashboard API image, local Compose override, replacement route test,
     # and two event-view files: ten additions minus two deletions.
     # Worker coding agent support adds seven text files to the guarded scan.
+    # MetaInfer adds 27 text files: inference package (10), adapter (1), tests (4),
+    # domain docs/spec (2), task artifacts (8), and local tracker artifacts (2).
     assert (int(m.group(1)), int(m.group(2))) in {
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
+        (1934, 1925),
     }, (
         f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     )

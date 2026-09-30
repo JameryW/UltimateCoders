@@ -1,5 +1,7 @@
 # UltimateCoders
 
+Optional inference infrastructure integration: [MetaInfer tools, Benchmark/Oracle, InfraAgent and execution/adaptation graphs](docs/inference-infra.md).
+
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![Rust CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-rust.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-rust.yml)

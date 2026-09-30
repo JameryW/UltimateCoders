@@ -36,6 +36,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs`) is the unified contract.
 | [Runtime Policy Spec](./runtime-policy-spec.md) | Read-only runtime report, explicit review verdict, opt-in capacity placement | Filled |
 | [OMP RPC Server Spec](./omp-rpc-server-spec.md) | JSONL stdio bridge, Python↔TypeScript UCOrchestrator, createTask/runTask split | Filled |
 | [Agent Capability Spec](./agent-capability-spec.md) | Capability derivation and advertising; the `review` opt-in; pointer to dispatch-side routing | Filled |
+| [Inference Infrastructure](./inference-infra-spec.md) | MetaInfer domain, immutable benchmarks, Oracle, adaptation graph and rollback | Filled |
 | [Event Pipeline Spec](./event-pipeline-spec.md) | Unified NATS event pipeline, sandbox-only Worker, dedup/idempotency, decomposition simplification | Filled |
 | [OMP Tools Spec](./omp-tools-spec.md) | LLM-callable tool schemas, GrpcBridge contracts, registration conventions | Filled |
 | [Cross-Repo Search & Memory Spec](./cross-repo-search-spec.md) | Worker gRPC Engine routing, search context injection, project-scoped memory sharing, NATS dispatch project_id | Filled |

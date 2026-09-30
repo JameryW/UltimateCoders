@@ -526,6 +526,10 @@ class Worker:
 
         ensure_builtin_plugins()
         caps.extend(agent_registry.registry.capability_names(shutil.which))
+        from ultimate_coders.inference.agent import InferenceInfraAgent
+
+        if InferenceInfraAgent.configured():
+            caps.extend(InferenceInfraAgent.capabilities)
         # Deduplicate while preserving order
         seen: set[str] = set()
         unique: list[str] = []
@@ -1299,11 +1303,19 @@ class Worker:
                     file_constraints=", ".join(subtask.file_constraints) or "none",
                 )
 
+                from ultimate_coders.inference.agent import InferenceInfraAgent
+
+                agent_config = self._resolve_agent_config(subtask) or {}
+                routed = InferenceInfraAgent.route(subtask.description, agent_config)
+                if routed:
+                    agent_config = routed
+
                 output: AgentOutput = await self._sandbox_manager.execute(
                     prompt,
                     working_dir=working_dir,
                     on_stdout_line=_on_stdout_line,
-                    subtask_config=self._resolve_agent_config(subtask) or None,
+                    subtask_config=agent_config or None,
+                    agent=agent_config.get("agent"),
                     cancel_key=cancel_key,
                 )
             # T18 #668: the workflow path collected one record per executed step
@@ -1353,6 +1365,13 @@ class Worker:
                     success, error = False, "Review returned no valid JSON verdict"
                 elif not review.approved:
                     success, error = False, "Review rejected: " + "; ".join(review.issues)
+            if success and output.domain_result is not None:
+                await self.write_shared_memory(
+                    key=f"inference:{subtask.parent_id}:{subtask.id}",
+                    content=json.dumps(output.domain_result, ensure_ascii=False),
+                    project_id=subtask.project_id, content_type="structured",
+                    tags=["inference_infra", "benchmark", "adaptation_graph"],
+                )
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
@@ -1430,6 +1449,7 @@ class Worker:
         """
         step_outputs: list[AgentOutput] = []
         all_file_changes: list[FileChange] = []
+        domain_steps: list[dict[str, Any]] = []
         failed_file_changes: list[FileChange] = []
         had_failed_step = False
         # T18 #668: one record per *executed* unit, in execution order. A step
@@ -1475,6 +1495,10 @@ class Worker:
                 )
                 if output.success:
                     all_file_changes.extend(output.file_changes)
+                    if output.domain_result is not None:
+                        domain_steps.append(
+                            {"index": idx, "agent": step.agent, "result": output.domain_result}
+                        )
                 else:
                     had_failed_step = True
                     failed_file_changes.extend(output.file_changes)
@@ -1589,6 +1613,10 @@ class Worker:
                 step_usages.append(_step_usage(si, group, gs.agent, output))
                 if output.success:
                     all_file_changes.extend(output.file_changes)
+                    if output.domain_result is not None:
+                        domain_steps.append(
+                            {"index": si, "agent": gs.agent, "result": output.domain_result}
+                        )
                 else:
                     had_failed_step = True
                     failed_file_changes.extend(output.file_changes)
@@ -1659,6 +1687,7 @@ class Worker:
         # makes the shortfall readable instead.
         return AgentOutput(
             summary=last_output.summary,
+            domain_result={"steps": domain_steps} if domain_steps else None,
             file_changes=all_file_changes,
             token_usage=last_output.token_usage,
             # Ordinary chains keep last-step success, including a non-aborting

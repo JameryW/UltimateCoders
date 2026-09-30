@@ -175,10 +175,12 @@ COPY --from=builder /usr/local/bin/rust-analyzer /usr/local/bin/rust-analyzer
 # volume, then drop the actual Python worker process to an unprivileged user.
 RUN useradd --create-home --uid 1000 --shell /bin/sh ucworker \
     && install -d -o ucworker -g ucworker /home/ucworker/.codex \
+    && install -d -o ucworker -g ucworker /artifacts/inference \
     && printf '%s\n' \
       '#!/bin/sh' \
       'set -eu' \
       'if [ "$(id -u)" -eq 0 ] && [ -d /workspace ]; then' \
+      '  if [ -d /artifacts/inference ]; then chown ucworker:ucworker /artifacts/inference; fi' \
       '  # Docker Desktop bind mounts are usually already writable by ucworker.' \
       '  # Avoid a full recursive chown on every restart: it delays the Dashboard' \
       '  # and TUI by minutes in large workspaces. Native Linux mounts that need' \

@@ -414,6 +414,11 @@ class DashboardApp:
                 )
 
             project_id = body.get("project_id", "")
+            agent_config = body.get("agent_config")
+            if agent_config is not None and not isinstance(agent_config, dict):
+                return JSONResponse(
+                    {"success": False, "error": "agent_config must be an object"}, status_code=400,
+                )
 
             # ── NATS path ───────────────────────────────────────────
             if self._nats_publisher is not None:
@@ -423,6 +428,7 @@ class DashboardApp:
                         task_id=task_id,
                         description=description,
                         project_id=project_id,
+                        **({"agent_config": agent_config} if agent_config is not None else {}),
                     )
                     # Poll orchestrator for the task to appear (up to 3s).
                     # Replaces the previous sleep(0.5) — avoids both
@@ -473,7 +479,10 @@ class DashboardApp:
                 )
 
             try:
-                task = await orch.submit_task(description, project_id=project_id)
+                task = await orch.submit_task(
+                    description, project_id=project_id,
+                    **({"agent_config": agent_config} if agent_config is not None else {}),
+                )
             except Exception as e:
                 logger.error("Failed to submit task: %s", e, exc_info=True)
                 return JSONResponse(
