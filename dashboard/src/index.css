@@ -1257,6 +1257,22 @@ body:has(.terminal-app) {
 
 [data-theme="light"] .terminal-app { --terminal-bg: #eef3f3; --terminal-surface: #f8fbfb; --terminal-surface-2: #e4eeee; --terminal-border: #b5c8cd; --terminal-text: #1c3036; --terminal-muted: #4e6870; --terminal-dim: #708990; background: #eef3f3; color: #1c3036; }.terminal-app[data-theme="light"] .terminal-topbar, [data-theme="light"] .terminal-app .terminal-command-bar, [data-theme="light"] .terminal-app .terminal-keybar { background: rgba(238, 245, 245, .96); }.terminal-app[data-theme="light"] .terminal-main-panel { background: linear-gradient(rgba(41, 67, 78, .04) 1px, transparent 1px), linear-gradient(90deg, rgba(41, 67, 78, .04) 1px, transparent 1px), #f1f6f6; background-size: 38px 38px, 38px 38px, auto; }.terminal-app[data-theme="light"] .terminal-runtime-banner, .terminal-app[data-theme="light"] .terminal-topology, .terminal-app[data-theme="light"] .terminal-stat-grid > div, .terminal-app[data-theme="light"] .terminal-service-lane > div, .terminal-app[data-theme="light"] .terminal-worker-node { background: rgba(255, 255, 255, .72); }.terminal-app[data-theme="light"] .terminal-topology-node { background: #e5eeee; }.terminal-app[data-theme="light"] .terminal-command-rail, .terminal-app[data-theme="light"] .terminal-cluster-rail { background: #e8f0f0; }
 
+/* Data panels share the selected theme instead of forcing dark backgrounds. */
+.terminal-app[data-theme="light"] {
+  --terminal-surface-3: #dbe8eb;
+  --terminal-blue: #12637b;
+  --terminal-amber: #85540b;
+  --terminal-red: #9c3932;
+}
+.terminal-app[data-theme="light"] .terminal-data-view > * {
+  background: var(--terminal-surface) !important;
+}
+.terminal-app[data-theme="light"] .terminal-panel-head,
+.terminal-app[data-theme="light"] .terminal-notice {
+  background: var(--terminal-surface);
+}
+
+
 @media (min-width: 1101px) and (max-width: 1450px) {
   .terminal-topbar { gap: 8px; padding: 0 10px; }
   .terminal-brand-tag { display: none; }

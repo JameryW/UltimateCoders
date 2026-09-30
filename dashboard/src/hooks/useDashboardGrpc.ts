@@ -42,7 +42,9 @@ import type {
   AlertEvent,
   MetricsSnapshot as MetricsSnapshotType,
 } from "@/types/dashboard";
-import { getSharedTransport } from "@/hooks/useGrpcWeb";
+import { getSharedTransport, grpcTasksToDashboard } from "@/hooks/useGrpcWeb";
+import { normalizeTaskSnapshot } from "@/lib/taskSnapshots";
+import { eventTimestampToISO } from "@/lib/grpcTimestamp";
 import { getStoredToken } from "@/hooks/useAuth";
 
 // ── gRPC-Web -> Dashboard type converters ────────────────────
@@ -137,7 +139,7 @@ function grpcEventProtoToDashboardEvent(ev: DashboardEventProto): DashboardEvent
   }
   if (ev.taskId) details.task_id = ev.taskId;
   return {
-    timestamp: ev.timestamp,
+    timestamp: eventTimestampToISO(ev.timestamp),
     type: ev.type,
     details,
   };
@@ -157,7 +159,7 @@ function grpcEventProtoToTaskEvent(ev: DashboardEventProto): TaskEvent {
     }
   }
   return {
-    timestamp: ev.timestamp,
+    timestamp: eventTimestampToISO(ev.timestamp),
     type: ev.type,
     task_id: ev.taskId,
     data,
@@ -179,7 +181,7 @@ function grpcTaskEventToTaskEvent(ev: GrpcTaskEvent): TaskEvent {
     }
   }
   return {
-    timestamp: ev.timestamp,
+    timestamp: eventTimestampToISO(ev.timestamp),
     type: ev.type,
     task_id: ev.taskId,
     subtask_id: ev.subtaskId ?? undefined,
@@ -298,7 +300,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   const optsRef = useRef(opts);
   // eslint-disable-next-line react-hooks/refs -- stable-callback ref-mirror: synchronous to avoid one-frame race in reconnect timers
   optsRef.current = opts;
-  const connectRef = useRef<() => void>(() => {});
+  const connectRef = useRef<(resetRetries?: boolean) => void>(() => {});
   const sseRef = useRef<EventSource | null>(null);
   const usingSseRef = useRef(false);
   const connectSseRef = useRef<() => void>(() => {});
@@ -335,7 +337,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
 
     retryTimerRef.current = setTimeout(() => {
       if (optsRef.current.enabled) {
-        connectRef.current();
+        connectRef.current(false);
       }
     }, delay);
   }, []);
@@ -354,13 +356,18 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
       `/dashboard/api/stream${sseToken ? `?token=${encodeURIComponent(sseToken)}` : ""}`,
     );
     sseRef.current = sse;
-    setConnectionState("connected");
+    setConnectionState("connecting");
+    sse.onopen = () => {
+      if (sseRef.current !== sse) return;
+      setConnectionState("connected");
+    };
 
     sse.addEventListener("task_event", (e) => {
       try {
         const data = JSON.parse(e.data);
+        retryCountRef.current = 0;
         const taskEvent: TaskEvent = {
-          timestamp: data.timestamp ?? new Date().toISOString(),
+          timestamp: eventTimestampToISO(data.timestamp ?? new Date().toISOString()),
           type: data.type ?? "",
           task_id: data.task_id ?? "",
           subtask_id: data.subtask_id ?? undefined,
@@ -374,6 +381,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     sse.addEventListener("update", (e) => {
       try {
         const snapshot = JSON.parse(e.data);
+        retryCountRef.current = 0;
         const converted: {
           health?: HealthData;
           workers?: WorkersData;
@@ -396,7 +404,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
         if (snapshot.tasks) {
           // Merge task list from SSE snapshot
           if (optsRef.current.mergeGrpcTasks) {
-            optsRef.current.mergeGrpcTasks(snapshot.tasks as TasksData);
+            optsRef.current.mergeGrpcTasks(normalizeTaskSnapshot(snapshot.tasks));
           }
         }
         optsRef.current.onSnapshot?.(converted);
@@ -427,10 +435,10 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   // the hook's lifetime (bounded, insertion-ordered eviction).
   const replaySeenRef = useRef<Map<string, true>>(new Map());
 
-  const connect = useCallback(() => {
+  const connect = useCallback((resetRetries = true) => {
     abortRef.current?.abort();
     clearRetryTimer();
-    retryCountRef.current = 0;
+    if (resetRetries) retryCountRef.current = 0;
     sseRef.current?.close();
     sseRef.current = null;
     usingSseRef.current = false;
@@ -451,12 +459,17 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
 
     (async () => {
       try {
-        const stream = client.watchDashboard(req, { signal: ac.signal });
-        setConnectionState("connected");
-        retryCountRef.current = 0;
+        const stream = client.watchDashboard(req, {
+          signal: ac.signal,
+          onHeader: () => {
+            if (ac.signal.aborted) return;
+            setConnectionState("connected");
+          },
+        });
 
         for await (const snapshot of stream) {
           if (ac.signal.aborted) break;
+          retryCountRef.current = 0;
 
           const converted: {
             health?: HealthData;
@@ -480,6 +493,9 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
           }
           if (snapshot.metrics) {
             converted.metrics = grpcMetricsToDashboard(snapshot.metrics);
+          }
+          if (snapshot.tasks) {
+            optsRef.current.mergeGrpcTasks?.(grpcTasksToDashboard(snapshot.tasks));
           }
 
           optsRef.current.onSnapshot?.(converted);

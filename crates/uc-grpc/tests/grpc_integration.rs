@@ -8,6 +8,105 @@ use uc_types::EngineApi;
 
 use tonic::transport::Server;
 
+/// A transport failure must prevent a checkpoint from certifying missing history.
+struct FirstAppendFails(std::sync::atomic::AtomicUsize);
+
+#[async_trait::async_trait]
+impl uc_engine::EventStore for FirstAppendFails {
+    async fn append(
+        &self,
+        _: &str,
+        _: &uc_engine::AgentEventType,
+    ) -> Result<u64, uc_types::EngineError> {
+        let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if n == 0 {
+            Err(uc_types::EngineError::ConnectionError(
+                "lost-first-event".into(),
+            ))
+        } else {
+            Ok(n as u64)
+        }
+    }
+    async fn read_from(
+        &self,
+        _: &str,
+        _: u64,
+    ) -> Result<Vec<uc_engine::RecordedEvent>, uc_types::EngineError> {
+        Err(uc_types::EngineError::InternalError(
+            "unexpected replay after failed write".into(),
+        ))
+    }
+    async fn latest_offset(&self, _: &str) -> Result<u64, uc_types::EngineError> {
+        Err(uc_types::EngineError::InternalError(
+            "unexpected offset after failed write".into(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn failed_event_append_is_reported_by_checkpoint_and_recovery() {
+    use uc_grpc::ultimate_coders::task_service_server::TaskService;
+    use uc_grpc::ultimate_coders::*;
+    let events = std::sync::Arc::new(FirstAppendFails(std::sync::atomic::AtomicUsize::new(0)));
+    let server = GrpcServer::with_backends(
+        LocalEngine::new_fallback(),
+        std::sync::Arc::new(uc_engine::InMemoryTaskBackend::new()),
+        events.clone(),
+    );
+    let id = "failed-history-fixture";
+    let updated = server
+        .update_task(tonic::Request::new(UpdateTaskRequest {
+            task_id: id.into(),
+            description: "fixture".into(),
+            project_id: "verification".into(),
+            status: "InProgress".into(),
+            subtasks: vec![SubtaskProto {
+                id: "failed-history-node".into(),
+                status: "Pending".into(),
+                ..Default::default()
+            }],
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(updated.success, "{updated:?}");
+    let paused = server
+        .pause_task(tonic::Request::new(PauseTaskRequest { task_id: id.into() }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(paused.success, "{paused:?}");
+    server
+        .cancel_task(tonic::Request::new(CancelTaskRequest {
+            task_id: id.into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+    let checkpoint = server
+        .create_checkpoint(tonic::Request::new(CreateCheckpointRequest {
+            task_id: id.into(),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!checkpoint.success);
+    assert!(checkpoint.error.unwrap().contains("lost-first-event"));
+    let recovery = server
+        .recover_task(tonic::Request::new(RecoverTaskRequest {
+            task_id: id.into(),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!recovery.success);
+    assert!(recovery.error.unwrap().contains("lost-first-event"));
+    assert!(
+        events.0.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+        "subsequent appends must still be attempted"
+    );
+}
+
 /// Helper: start a gRPC server on a random port and return the address.
 async fn start_server() -> String {
     let engine = LocalEngine::new_fallback();

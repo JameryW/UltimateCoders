@@ -1,4 +1,6 @@
 # ── Stage 1: Build the Rust extension via maturin ──────────────────
+FROM rust:1.88-slim AS rust-toolchain
+
 FROM python:3.11-slim AS builder
 
 # Use the same reachable Debian mirror as the runtime stage. Otherwise the
@@ -12,9 +14,16 @@ RUN apt-get update && apt-get install -y \
     curl build-essential pkg-config libssl-dev protobuf-compiler git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
+# Share the pinned toolchain with the Gateway build instead of downloading
+# an unpinned rustup installer during every clean Worker build.
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup
+ENV PATH="/usr/local/cargo/bin:${PATH}"
+ARG CARGO_HTTP_PROXY
 
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 RUN pip install maturin
 
 WORKDIR /app
@@ -65,11 +74,12 @@ COPY python/ ./python/
 # must be pointed at the actual Python extension crate. Newer maturin also
 # requires a virtualenv for `develop`; point VIRTUAL_ENV at the system prefix
 # so it installs into /usr/local/lib/python3.11/site-packages (copied in Stage 2).
-RUN VIRTUAL_ENV=/usr/local maturin develop --release --manifest-path crates/uc-python/Cargo.toml
+RUN VIRTUAL_ENV=/usr/local maturin develop --locked --release --manifest-path crates/uc-python/Cargo.toml
 
 # Use the current Node.js LTS line required by the Claude Code CLI. The
 # Debian package in the Python image can lag behind the CLI's engine floor.
 FROM node:22-bookworm-slim AS node-runtime
+FROM oven/bun:1.4.2 AS bun-runtime
 
 # ── Stage 2: Runtime image ─────────────────────────────────────────
 FROM python:3.11-slim
@@ -105,6 +115,11 @@ WORKDIR /app
 
 # Copy Node.js 22 + npm from the dedicated official Node runtime stage.
 COPY --from=node-runtime /usr/local/ /usr/local/
+COPY --from=bun-runtime /usr/local/bin/bun /usr/local/bin/bun
+RUN ln -sf /usr/local/bin/bun /usr/local/bin/bunx && bun --version
+
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org
+ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
 
 # TypeScript LSP: install globally so multilspy (which needs node/npm in
 # PATH) can bootstrap typescript-language-server.
@@ -123,11 +138,7 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex \
 ARG OPENCODE_CLI_VERSION=2.0.3
 ARG OH_MY_PI_CLI_VERSION=16.1.16
 ARG MIMOCODE_CLI_VERSION=0.1.15
-RUN curl -fsSL https://bun.sh/install | env BUN_INSTALL=/opt/bun bash \
-    && chmod -R a+rX /opt/bun \
-    && ln -sf /opt/bun/bin/bun /usr/local/bin/bun \
-    && ln -sf /opt/bun/bin/bunx /usr/local/bin/bunx \
-    && npm install -g \
+RUN npm install -g \
       "@opencode/cli@${OPENCODE_CLI_VERSION}" \
       "@oh-my-pi/pi-coding-agent@${OH_MY_PI_CLI_VERSION}" \
       "@mimo-ai/cli@${MIMOCODE_CLI_VERSION}" \
@@ -175,10 +186,12 @@ COPY --from=builder /usr/local/bin/rust-analyzer /usr/local/bin/rust-analyzer
 # volume, then drop the actual Python worker process to an unprivileged user.
 RUN useradd --create-home --uid 1000 --shell /bin/sh ucworker \
     && install -d -o ucworker -g ucworker /home/ucworker/.codex \
+    && install -d -o ucworker -g ucworker /artifacts/inference \
     && printf '%s\n' \
       '#!/bin/sh' \
       'set -eu' \
       'if [ "$(id -u)" -eq 0 ] && [ -d /workspace ]; then' \
+      '  if [ -d /artifacts/inference ]; then chown ucworker:ucworker /artifacts/inference; fi' \
       '  # Docker Desktop bind mounts are usually already writable by ucworker.' \
       '  # Avoid a full recursive chown on every restart: it delays the Dashboard' \
       '  # and TUI by minutes in large workspaces. Native Linux mounts that need' \

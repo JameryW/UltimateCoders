@@ -107,6 +107,26 @@ def test_complete_snapshot_preserves_original_request_for_gateway_dispatch():
     assert partial["subtasks"][0]["description"] == "Read README.md"
 
 
+def test_snapshot_carries_execution_configuration_but_partial_cannot_replace_it():
+    config = {"agent": "local-harness", "max_turns": 12,
+              "inference_task": {"workload_id": "ollama-chat"}}
+    task = Task(id="t-config", description="verify", subtasks=[Subtask(
+        id="t-config-node", parent_id="t-config", description="execute",
+        agent_config=config, required_capabilities=["inference_infra"],
+        file_constraints=["calculator.py"], expected_output="passing tests",
+        steps=[WorkflowStep(agent="local-harness", prompt="verify", agent_config={"max_turns": 4})],
+    )])
+    full = _make_task_update_payload(task)["subtasks"][0]
+    assert json.loads(full["agent_config_json"]) == config
+    assert full["required_capabilities"] == ["inference_infra"]
+    assert full["file_constraints"] == ["calculator.py"]
+    assert full["expected_output"] == "passing tests"
+    assert json.loads(full["workflow_steps"][0]["agent_config_json"]) == {"max_turns": 4}
+    partial = _make_task_update_payload(task, partial=True)["subtasks"][0]
+    assert not ({"agent_config_json", "required_capabilities", "file_constraints",
+                 "expected_output", "workflow_steps"} & partial.keys())
+
+
 @pytest.mark.asyncio
 async def test_task_snapshot_request_replies_with_complete_snapshots():
     """Gateway recovery receives complete snapshots owned by the Orchestrator."""

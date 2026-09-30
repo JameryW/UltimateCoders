@@ -1,7 +1,7 @@
 # Rust
 /target/
 **/*.rs.bk
-Cargo.lock
+# Workspace binaries and Docker builds share a committed dependency lock.
 
 # Python
 __pycache__/
@@ -98,6 +98,7 @@ opencode.jsonc
 
 # Root-level Node artifacts (dashboard has its own package.json)
 node_modules/
+.pnpm-store/
 package.json
 pnpm-lock.yaml
 bun.lock

@@ -233,20 +233,42 @@ class Orchestrator:
 
         tid = task_id or f"t-{uuid.uuid4().hex[:8]}"
 
+        from ultimate_coders.inference.agent import InferenceInfraAgent
+
+        explicit_route = InferenceInfraAgent.route("", agent_config)
+
         # Try LLM decomposition first; fall back to newline-split on any
         # failure (llm_client None, complete() raises, parse fails, empty).
         subtasks: list[Subtask] | None = None
-        try:
-            subtasks = await self._decompose_task(description, tid, project_id, agent_config)
-        except Exception:
-            logger.exception(
-                "LLM decomposition failed for task %s, falling back to newline-split",
-                tid,
-            )
-            subtasks = None
+        if not (explicit_route and (agent_config or {}).get("inference_task")):
+            try:
+                subtasks = await self._decompose_task(description, tid, project_id, agent_config)
+            except Exception:
+                logger.exception(
+                    "LLM decomposition failed for task %s, falling back to newline-split",
+                    tid,
+                )
+                subtasks = None
 
         if not subtasks:
             subtasks = self._newline_split_subtasks(description, tid, project_id, agent_config)
+
+        # An explicit domain task is one execution unit, even if its prose
+        # contains multiple lines. UC's existing planner owns generic work.
+        if explicit_route and (agent_config or {}).get("inference_task"):
+            subtasks = [Subtask(
+                id=f"{tid}-s0", parent_id=tid, description=description,
+                user_request=description, project_id=project_id, agent_config=explicit_route,
+                required_capabilities=["inference_infra"],
+            )]
+        else:
+            for subtask in subtasks:
+                routed = InferenceInfraAgent.route(subtask.description, subtask.agent_config)
+                if routed:
+                    subtask.agent_config = routed
+                    subtask.required_capabilities = list(dict.fromkeys(
+                        [*subtask.required_capabilities, "inference_infra"],
+                    ))
 
         task = Task(
             id=tid,

@@ -140,6 +140,8 @@ class Scheduler:
 #### Task Submit Contract
 
 - **Request**: `{ "description": str (required), "project_id": str (optional) }`
+- The JSON body must be an object; description and project_id must be strings.
+  Invalid types return 400 before publishing to NATS or invoking the Orchestrator.
 - **Response (success)**: `{ "success": true, "task_id": str, "status": str, "subtask_count": int, "subtasks": [{ "id": str, "description": str, "status": str, "depends_on": list[str] }] }`
 - **Response (error)**: `{ "success": false, "error": str }`
 - **Behavior**: Calls `orchestrator.submit_task(description, project_id=...)`, which decomposes the task into subtasks and emits a `task_submitted` event via the emitter. The dashboard endpoint does NOT duplicate the emit — the Orchestrator is the single source of truth for task_submitted events.
@@ -477,3 +479,68 @@ Event flow:
 - Output files: shown in task detail from `subtask_completed` events with `modified_files` data
 - Mermaid DAG: auto-generated from subtask `depends_on` relationships, rendered via `mermaid.render()`
 - SSE event handling: `task_event` SSE type → `handleTaskEvent()` → append to `_interactionLog` + event log panel + live detail update
+
+
+## Scenario: Deployed stream and native-extension consistency
+
+### 1. Scope / Trigger
+
+Gateway snapshots and SSE must converge on the same task state in an open browser.
+Container startup must import the Linux PyO3 extension shipped in its image.
+
+### 2. Signatures
+
+- `grpcTasksToDashboard(ListTasksResponse) -> TasksData` converts both list RPCs and stream snapshots.
+- `normalizeTaskSnapshot(data) -> TasksData` normalizes SSE dates/status counts.
+- `snapshotParentState(existing, incoming)` preserves terminal state against late active snapshots.
+- `ignoresLateStart(status, eventType)` protects terminal parents/nodes from Assigned/Started.
+
+### 3. Contracts
+
+- TaskProto `created_at` / `updated_at` and REST numeric dates are Unix **seconds**;
+  convert to ISO using seconds × 1000. Event timestamps are already ISO.
+- Merge `DashboardSnapshot.tasks`; do not discard tasks while merging health/workers.
+  Initial loads and manual refreshes use the same merge path, so a slower list response
+  cannot replace state established by an earlier live event. After both initial tasks
+  and events arrive, restore cancellation causes from `task_cancelled` history;
+  TaskProto Failed alone cannot distinguish cancellation from actual failure.
+- REST may already lowercase `InProgress` to `inprogress`; normalize parent and child
+  states to `in_progress`. Event timestamps accept ISO or numeric epoch seconds,
+  milliseconds and microseconds on both gRPC and SSE.
+- Successful cancel actions establish UI `cancelled` even when the legacy RPC
+  response says Failed. Late parent/child failures and retries preserve cancellation;
+  an explicit fresh retry can reopen failed tasks while pause stays authoritative.
+- A constructed stream or EventSource is connecting. Valid headers/open mark connected;
+  reset automatic retry budgets only after a valid message, not each connection opening.
+  Manual reconnect starts a new budget; exhausted gRPC falls back to SSE.
+- Data-panel backgrounds follow the selected theme; do not force dark surfaces
+  behind light-theme text. Verify readable state labels and task history in both themes.
+- The Dashboard API image owns `PYTHONPATH`. A host checkout must not shadow its
+  packaged Linux extension with an incompatible Windows build or missing `.so`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+| --- | --- |
+| Closed/missing backend | bounded retries; offline or SSE fallback, never false connected |
+| Later active snapshot/start after completion | parent and completed node remain terminal |
+| Explicit node retry | retry transition remains allowed |
+| Gateway healthy HTTP envelope with `available=false` | deployment probe fails |
+| Numeric Unix task timestamp | current calendar date, normal duration |
+
+### 5. Good/Base/Bad Cases
+
+Good: completed task renders 36s and stays completed after a worker report.
+Base: empty task list with healthy services. Bad: Unix seconds displayed in 1970,
+completed parents reverting to running, or host Python source hiding native imports.
+
+### 6. Tests Required
+
+Run Dashboard build/lint/Node tests; exercise offline UI and an actual Gateway stream.
+Assert real task dates, terminal guards, completed parent and node states; import
+`PyEngine` inside the API container and check public health/worker availability.
+
+### 7. Wrong vs Correct
+
+Wrong: `new Date(Number(proto.createdAt))`, or marking connected when constructing a stream.
+Correct: `taskTimestampToISO(proto.createdAt)` and observing real stream headers/messages.

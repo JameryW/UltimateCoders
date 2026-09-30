@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from "react";
+import { ignoresLateStart, normalizeTaskSnapshot, restoreCancelledTasks, retryParentState, snapshotParentState, terminalEventStatus } from "@/lib/taskSnapshots";
 import type {
   TaskEvent,
   HealthData,
@@ -194,10 +195,11 @@ export function useDashboard() {
         });
         break;
       }
-      case "task_failed": {
+      case "task_failed":
+      case "task_cancelled": {
         setTasks((prev) => {
           const tasks = prev.tasks.map((t) =>
-            t.id === tid ? { ...t, status: "failed" as const, updated_at: ev.timestamp } : t
+            t.id === tid ? { ...t, status: terminalEventStatus(ev.type, t.status), updated_at: ev.timestamp } : t
           );
           return { ...prev, tasks, status_counts: recountStatus(tasks) };
         });
@@ -228,7 +230,7 @@ export function useDashboard() {
         setTasks((prev) => ({
           ...prev,
           tasks: prev.tasks.map((t) => {
-            if (t.id !== tid) return t;
+            if (t.id !== tid || ignoresLateStart(t.status, ev.type)) return t;
             const subtasks = mergeSubtaskEvent(t.subtasks ?? [], ev);
             return { ...t, status: "in_progress" as const, subtasks, subtask_count: subtasks.length, updated_at: ev.timestamp };
           }),
@@ -254,7 +256,7 @@ export function useDashboard() {
             const subtasks = mergeSubtaskEvent(t.subtasks ?? [], ev);
             // If unrecoverable, mark parent task failed too
             const taskFailed = ev.data.recoverable === "false" || ev.data.recoverable === false;
-            return { ...t, status: taskFailed ? "failed" as const : t.status, subtasks, subtask_count: subtasks.length, updated_at: ev.timestamp };
+            return { ...t, status: taskFailed ? terminalEventStatus(ev.type, t.status) : t.status, subtasks, subtask_count: subtasks.length, updated_at: ev.timestamp };
           }),
         }));
         break;
@@ -265,7 +267,7 @@ export function useDashboard() {
           tasks: prev.tasks.map((t) => {
             if (t.id !== tid) return t;
             const subtasks = mergeSubtaskEvent(t.subtasks ?? [], ev);
-            return { ...t, subtasks, subtask_count: subtasks.length, updated_at: ev.timestamp };
+            return { ...t, ...retryParentState(t, ev.timestamp), subtasks, subtask_count: subtasks.length };
           }),
         }));
         break;
@@ -286,37 +288,12 @@ export function useDashboard() {
     }
   }, []);
 
-  // Fetch initial data via gRPC-Web; optionally skip tasks (WatchTask stream will provide them)
-  // #6: Track errors instead of silently swallowing them; expose via fetchErrors state.
-  // All requests run in parallel for faster initial load.
-  const fetchInitial = useCallback(async (opts?: {
-    skipTasks?: boolean;
-    fetchWorkers?: () => Promise<WorkersData>;
-    fetchScheduler?: () => Promise<SchedulerData>;
-    fetchEvents?: (taskId?: string, limit?: number) => Promise<{ available: boolean; events: DashboardEvent[]; total: number }>;
-    fetchTasks?: () => Promise<TasksData>;
-  }): Promise<Record<string, string>> => {
-    const errors: Record<string, string> = {};
-    const results = await Promise.allSettled([
-      opts?.fetchWorkers?.().then((w) => { setWorkers(w); }).catch((e) => { errors["workers"] = String(e); }) ?? Promise.resolve(),
-      opts?.skipTasks
-        ? Promise.resolve()
-        : opts?.fetchTasks?.().then((t) => { setTasks(t); }).catch((e) => { errors["tasks"] = String(e); }) ?? Promise.resolve(),
-      opts?.fetchScheduler?.().then((s) => { setScheduler(s); }).catch((e) => { errors["scheduler"] = String(e); }) ?? Promise.resolve(),
-      opts?.fetchEvents?.().then((e) => { setEventLog(e.events); }).catch((e) => { errors["events"] = String(e); }) ?? Promise.resolve(),
-    ]);
-    // results are handled via .then/.catch above; Promise.allSettled just waits for all
-    void results;
-    setFetchErrors(errors);
-    return errors;
-  }, []);
-
   /** Merge task list from gRPC-Web into state -- field-level merge preserving incremental subtask updates. */
   const mergeGrpcTasks = useCallback((data: TasksData) => {
     setTasks((prev) => {
       if (!data.available) return prev;
       const merged = [...prev.tasks];
-      for (const t of data.tasks) {
+      for (const t of normalizeTaskSnapshot(data).tasks) {
         const idx = merged.findIndex((m) => m.id === t.id);
         if (idx >= 0) {
           const existing = merged[idx]!;
@@ -336,7 +313,7 @@ export function useDashboard() {
             // gRPC response has no subtasks -- keep existing
             subtasks = existing.subtasks;
           }
-          merged[idx] = { ...existing, ...t, subtasks };
+          merged[idx] = { ...existing, ...t, ...snapshotParentState(existing, t), subtasks };
         } else {
           merged.push(t);
         }
@@ -349,6 +326,36 @@ export function useDashboard() {
       return { ...prev, tasks: merged, total: totalFromStatusCounts(status_counts), status_counts, available: true };
     });
   }, []);
+
+  // Fetch initial data via gRPC-Web; optionally skip tasks (WatchTask stream will provide them)
+  // #6: Track errors instead of silently swallowing them; expose via fetchErrors state.
+  // All requests run in parallel for faster initial load.
+  const fetchInitial = useCallback(async (opts?: {
+    skipTasks?: boolean;
+    fetchWorkers?: () => Promise<WorkersData>;
+    fetchScheduler?: () => Promise<SchedulerData>;
+    fetchEvents?: (taskId?: string, limit?: number) => Promise<{ available: boolean; events: DashboardEvent[]; total: number }>;
+    fetchTasks?: () => Promise<TasksData>;
+  }): Promise<Record<string, string>> => {
+    const errors: Record<string, string> = {};
+    let initialTasks: TasksData | undefined;
+    let initialEvents: DashboardEvent[] = [];
+    const results = await Promise.allSettled([
+      opts?.fetchWorkers?.().then((w) => { setWorkers(w); }).catch((e) => { errors["workers"] = String(e); }) ?? Promise.resolve(),
+      opts?.skipTasks
+        ? Promise.resolve()
+        : opts?.fetchTasks?.().then((t) => { initialTasks = t; mergeGrpcTasks(t); }).catch((e) => { errors["tasks"] = String(e); }) ?? Promise.resolve(),
+      opts?.fetchScheduler?.().then((s) => { setScheduler(s); }).catch((e) => { errors["scheduler"] = String(e); }) ?? Promise.resolve(),
+      opts?.fetchEvents?.().then((e) => { initialEvents = e.events; setEventLog(e.events); }).catch((e) => { errors["events"] = String(e); }) ?? Promise.resolve(),
+    ]);
+    // results are handled via .then/.catch above; Promise.allSettled just waits for all
+    void results;
+    if (initialTasks && initialEvents.some((event) => event.type === "task_cancelled")) {
+      mergeGrpcTasks(restoreCancelledTasks(normalizeTaskSnapshot(initialTasks), initialEvents));
+    }
+    setFetchErrors(errors);
+    return errors;
+  }, [mergeGrpcTasks]);
 
   /** Optimistic insert: add a task before SSE/gRPC event arrives. */
   const optimisticAddTask = useCallback((taskId: string, description: string, projectId: string, subtaskCount: number, subtasks?: SubtaskSummary[]) => {
@@ -448,6 +455,7 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
   if (!newStatus) return subtasks;
 
   const existing = subtasks.find((s) => s.id === sid);
+  if (existing && ignoresLateStart(existing.status, ev.type)) return subtasks;
   // ponytail: carry assigned_worker from event data (set by subtask_assigned/subtask_started)
   const evWorker = ev.data.assigned_worker ? String(ev.data.assigned_worker) : undefined;
   // Carry result from completed events: prefer full result text, fallback to summary
@@ -530,4 +538,3 @@ function mergeProgressEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskS
     } : s,
   );
 }
-

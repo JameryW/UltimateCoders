@@ -85,7 +85,7 @@ services:
   postgres:
     image: postgres:16
     ports:
-      - "5432:5432"
+      - "${UC_POSTGRES_HOST_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ultimate_coders
       POSTGRES_PASSWORD: ultimate_coders
@@ -233,9 +233,9 @@ services:
       UC_QDRANT_URL: "http://qdrant:6334"
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
       UC_NATS_URL: "nats://nats:4222"
-      # Run the dashboard from the bind-mounted checkout so a local
-      # deployment uses the same Python source that was just verified.
-      PYTHONPATH: "/workspace/UltimateCoders/python"
+      # Use the source refreshed by Dockerfile.dashboard-api together with
+      # the image's matching Linux native extension. A Windows source bind
+      # mount has no Linux .so and would hide that required extension.
       # File-browser repo mapping: the dashboard process runs without an
       # Orchestrator (NATS-driven), so it cannot derive a project path —
       # without this the /dashboard/api/repos file browser lists nothing
@@ -344,6 +344,10 @@ services:
       OPENAI_DEFAULT_MODEL: "${OPENAI_DEFAULT_MODEL:-}"
       # Optional extra agent plugins (.py file / package dir, ':'-separated).
       UC_AGENT_PLUGINS: "${UC_AGENT_PLUGINS:-}"
+      # Optional external inference execution service; paths must be shared.
+      UC_METAINFER_URL: "${UC_METAINFER_URL:-}"
+      UC_INFERENCE_TASK_JSON: "${UC_INFERENCE_TASK_JSON:-}"
+      UC_INFERENCE_ARTIFACT_DIR: /artifacts/inference
       # ── External git sync (Phase 1) ───────────────────────────────
       # Leave UC_REPO_URL empty to keep the legacy local-only behaviour.
       UC_REPO_URL: "${UC_REPO_URL:-}"
@@ -359,6 +363,7 @@ services:
       # Persist the clone across container restarts. Shared by all
       # same-host replicas (see note above) — cross-host gets its own.
       - worker_workspace:/workspace
+      - worker_inference_artifacts:/artifacts/inference
     restart: unless-stopped
     command: ["python", "-m", "ultimate_coders.nats_worker", "--mode", "worker"]
 
@@ -419,6 +424,9 @@ services:
       OPENAI_API_BASE: "${OPENAI_API_BASE:-}"
       OPENAI_DEFAULT_MODEL: "${OPENAI_DEFAULT_MODEL:-}"
       UC_AGENT_PLUGINS: "${UC_AGENT_PLUGINS:-}"
+      UC_METAINFER_URL: "${UC_METAINFER_URL:-}"
+      UC_INFERENCE_TASK_JSON: "${UC_INFERENCE_TASK_JSON:-}"
+      UC_INFERENCE_ARTIFACT_DIR: /artifacts/inference
       # ── External git sync (Phase 1) ───────────────────────────────
       # Same env as the worker service; empty UC_REPO_URL = local mode.
       UC_REPO_URL: "${UC_REPO_URL:-}"
@@ -431,6 +439,7 @@ services:
       GIT_ASKPASS: "/usr/local/bin/git-askpass"
     volumes:
       - worker_workspace:/workspace
+      - worker_inference_artifacts:/artifacts/inference
     restart: unless-stopped
     command: ["python", "-m", "ultimate_coders.nats_worker"]
 
@@ -442,3 +451,4 @@ volumes:
   nats_data:
   # Persist worker git clones across container restarts.
   worker_workspace:
+  worker_inference_artifacts:

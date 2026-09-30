@@ -8,6 +8,9 @@ import { create } from "@bufbuild/protobuf";
 import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema, ListTasksRequestSchema, PauseTaskRequestSchema, ResumeTaskRequestSchema, CancelTaskRequestSchema } from "@/grpc/engine_pb";
 import type { UcSubmitResult, UcTaskActionResult } from "@/lib/ucCommands";
 import { normalizeGrpcStatus } from "@/lib/grpcStatus";
+import { eventTimestampToISO, taskTimestampToISO } from "@/lib/grpcTimestamp";
+import type { ListTasksResponse } from "@/grpc/engine_pb";
+import type { TasksData } from "@/types/dashboard";
 
 type GrpcSubmitResult = UcSubmitResult;
 type GrpcTaskActionResult = UcTaskActionResult;
@@ -93,64 +96,39 @@ export type GrpcConnectionState =
   | "error"
   | "reconnecting";
 
-/** #2: Normalize a gRPC timestamp to ISO string.
- *  Handles: bigint microseconds (>1e15), bigint milliseconds, ISO strings, numeric strings. */
+/** Normalize event timestamps from every transport. */
 function normalizeTimestamp(ts: string | bigint | number): string {
-  // Already an ISO-like string
-  if (typeof ts === "string") {
-    // If it looks like a numeric string (microseconds or milliseconds)
-    const asNum = Number(ts);
-    if (!isNaN(asNum) && asNum > 1e15) {
-      // Microseconds -> milliseconds -> ISO
-      return new Date(asNum / 1000).toISOString();
-    }
-    if (!isNaN(asNum) && asNum > 1e12) {
-      // Milliseconds -> ISO
-      return new Date(asNum).toISOString();
-    }
-    // Already ISO/RFC3339
-    return ts;
-  }
-  // BigInt -- could be microseconds or milliseconds
-  if (typeof ts === "bigint") {
-    // > 1e15 -> microseconds; divide to milliseconds
-    if (ts > 1_000_000_000_000_000n) {
-      return new Date(Number(ts / 1000n)).toISOString();
-    }
-    // Otherwise assume milliseconds
-    return new Date(Number(ts)).toISOString();
-  }
-  // Number -- could be microseconds or milliseconds
-  if (typeof ts === "number") {
-    if (ts > 1e15) return new Date(ts / 1000).toISOString();
-    return new Date(ts).toISOString();
-  }
-  return String(ts);
+  return eventTimestampToISO(ts);
 }
 
-/** #12: Safe bigint-to-ISO conversion for gRPC timestamps.
- *  gRPC timestamps may be microseconds or milliseconds. This function
- *  handles both cases and checks against MAX_SAFE_INTEGER. */
-function bigintToISO(ts: bigint): string {
-  // If > 1e15, treat as microseconds -> divide by 1000 to get milliseconds
-  if (ts > 1_000_000_000_000_000n) {
-    const ms = ts / 1000n;
-    // Check if result fits safely in Number
-    if (ms <= Number.MAX_SAFE_INTEGER) {
-      return new Date(Number(ms)).toISOString();
-    }
-    // For extremely large values, use remaining microseconds calculation
-    const seconds = Number(ts / 1_000_000n);
-    const micros = Number(ts % 1_000_000n);
-    return new Date(seconds * 1000 + Math.floor(micros / 1000)).toISOString();
-  }
-  // Milliseconds range
-  if (ts <= Number.MAX_SAFE_INTEGER) {
-    return new Date(Number(ts)).toISOString();
-  }
-  // Fallback: divide to seconds
-  const seconds = Number(ts / 1000n);
-  return new Date(seconds * 1000).toISOString();
+export function grpcTasksToDashboard(resp: ListTasksResponse): TasksData {
+  const statusCounts = Object.fromEntries(
+    Object.entries(resp.statusCounts).map(([status, count]) => [normalizeGrpcStatus(status), count]),
+  );
+  return {
+    available: resp.available,
+    tasks: resp.tasks.map((t) => ({
+      id: t.id,
+      description: t.description,
+      status: normalizeGrpcStatus(t.status),
+      project_id: t.projectId,
+      subtask_count: t.subtaskCount,
+      subtasks: t.subtasks.map((s) => ({
+        id: s.id,
+        description: s.description,
+        status: normalizeGrpcStatus(s.status),
+        depends_on: [...s.dependsOn],
+        assigned_worker: s.assignedWorker ?? undefined,
+        result: s.result ?? undefined,
+      })),
+      created_at: taskTimestampToISO(t.createdAt),
+      updated_at: taskTimestampToISO(t.updatedAt),
+    })),
+    total: resp.total,
+    status_counts: statusCounts,
+    // ponytail: derive pending_task_count from status_counts instead of hardcoding 0
+    pending_task_count: statusCounts.pending ?? statusCounts.submitted ?? 0,
+  };
 }
 
 /** Convert a gRPC TaskEvent to the event shape used by the Dashboard.
@@ -196,7 +174,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   // eslint-disable-next-line react-hooks/refs -- stable-callback ref-mirror: synchronous to avoid one-frame race in reconnect timers
   optsRef.current = opts;
   // Ref breaks connect<->scheduleReconnect cycle
-  const connectRef = useRef<() => void>(() => {});
+  const connectRef = useRef<(resetRetries?: boolean) => void>(() => {});
 
   // ponytail: use shared transport (single HTTP/2 connection for all gRPC-Web)
   const getTransport = useCallback(() => getSharedTransport(), []);
@@ -219,18 +197,20 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     setConnectionState("reconnecting");
     retryTimerRef.current = setTimeout(() => {
       if (optsRef.current.enabled) {
-        connectRef.current();
+        connectRef.current(false);
       }
     }, delay);
   }, []);
 
-  const connect = useCallback(() => {
+  const connect = useCallback((resetRetries = true) => {
     // Tear down any existing stream
     abortRef.current?.abort();
     clearRetryTimer();
     // ponytail: reset retry count so manual reconnect always works even after exhaustion
-    retryCountRef.current = 0;
-    setGrpcExhausted(false);
+    if (resetRetries) {
+      retryCountRef.current = 0;
+      setGrpcExhausted(false);
+    }
     const ac = new AbortController();
     abortRef.current = ac;
 
@@ -247,13 +227,18 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
 
     (async () => {
       try {
-        const stream = client.watchTask(req, { signal: ac.signal });
-        setConnectionState("connected");
-        retryCountRef.current = 0; // reset on successful connect
-        setGrpcExhausted(false);
+        const stream = client.watchTask(req, {
+          signal: ac.signal,
+          onHeader: () => {
+            if (ac.signal.aborted) return;
+            setConnectionState("connected");
+            setGrpcExhausted(false);
+          },
+        });
 
         for await (const event of stream) {
           if (ac.signal.aborted) break;
+          retryCountRef.current = 0;
 
           // Handle sync_required: server tells us we missed events
           if (event.type === "sync_required") {
@@ -360,34 +345,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     const client = createClient(TaskService, transport);
     const req = create(ListTasksRequestSchema, {});
     const resp = await unaryWithTimeout((signal) => client.listTasks(req, { signal }), "listTasks");
-    const statusCounts = Object.fromEntries(
-      Object.entries(resp.statusCounts).map(([status, count]) => [normalizeGrpcStatus(status), count]),
-    );
-    return {
-      available: resp.available,
-      tasks: resp.tasks.map((t) => ({
-        id: t.id,
-        description: t.description,
-        status: normalizeGrpcStatus(t.status),
-        project_id: t.projectId,
-        subtask_count: t.subtaskCount,
-        subtasks: t.subtasks.map((s) => ({
-          id: s.id,
-          description: s.description,
-          status: normalizeGrpcStatus(s.status),
-          depends_on: [...s.dependsOn],
-          assigned_worker: s.assignedWorker ?? undefined,
-          result: s.result ?? undefined,
-        })),
-        // #12: Safe bigint conversion using bigintToISO helper
-        created_at: bigintToISO(t.createdAt),
-        updated_at: bigintToISO(t.updatedAt),
-      })),
-      total: resp.total,
-      status_counts: statusCounts,
-      // ponytail: derive pending_task_count from status_counts instead of hardcoding 0
-      pending_task_count: statusCounts.pending ?? statusCounts.submitted ?? 0,
-    };
+    return grpcTasksToDashboard(resp);
   }, [getTransport]);
 
   /** Pause a running task via gRPC-Web. */

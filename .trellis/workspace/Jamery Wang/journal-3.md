@@ -1208,3 +1208,112 @@ Same-push fallout fixed: journal dedup, recon pointer, guard pins with per-row a
 
 - Watch the repair push's CI: Journal + Scripts + Python must go green
 - Durable lesson: never pass full session entries as `--content-file`
+
+
+## Session 57: Integrate MetaInfer inference infrastructure domain
+
+**Date**: 2026-09-30
+**Task**: Integrate MetaInfer inference infrastructure domain
+**Branch**: `codex/metainfer-infra`
+
+### Summary
+
+Delivered external inference backend, benchmark acceptance, iterative rollback and evidence propagation; completed review, validation and task archive.
+
+### Main Changes
+
+## Delivered behavior
+
+MetaInfer remains an external execution service. UC owns routing, assigned worktrees, fixed benchmark acceptance, rollback and evidence publication. Added typed service tools, InferenceInfraAgent, BenchmarkRunner/Oracle, OptimizationWorkflow and versioned execution/adaptation graphs. Dashboard/NATS agent configuration reaches the subprocess adapter; accepted workflow evidence reaches project Memory.
+
+## Validation
+
+- Full Python regression: 1335 passed, 1 skipped, 8 external-infrastructure tests deselected.
+- Domain tests: 50 passed, including real sandbox HTTP cancellation, rollback and descendant termination.
+- Python lint, both code-review axes, repository guards and Compose rendering passed.
+- WSL Ubuntu 24.04 smoke checks passed for POSIX nested sessions and pre-release registration failure.
+
+## Completion and operational limits
+
+Feature commit: a0d7fe8e. Task archived with completed status and feature commit provenance at `.trellis/tasks/archive/2026-09/09-30-metainfer-infra`.
+
+Docker Desktop launch was attempted for production verification, but its engine/backend API pipes remained unavailable. No image build or project services were started. UC_METAINFER_URL and experiment defaults are unset; no external service, weights, shared worktree or benchmark configuration was supplied for actual GPU validation. These are deployment validation prerequisites rather than claimed performance results.
+
+Usage and deployment configuration: `docs/inference-infra.md`.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a0d7fe8e` | feat(inference): integrate MetaInfer domain backend |
+
+### Testing
+
+- Full Python suite: 1335 passed, 1 skipped, 8 external-infrastructure tests deselected.
+- Domain suite: 50 passed; lint, review, repository guards and Compose rendering passed.
+- WSL POSIX process-group termination and pre-release registration checks passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Validate the production image after Docker's engine API is available.
+- Validate GPU correctness and performance using a supplied external MetaInfer service and experiment configuration.
+
+
+## Session 58: Local Ollama deployment and comprehensive functional verification
+
+**Date**: 2026-09-30
+**Task**: Local Ollama deployment and comprehensive functional verification
+**Branch**: `codex/local-deployment-verification`
+
+### Summary
+
+Deployed the production WSL Docker stack with real Ollama coding; repaired configuration, Dashboard lifecycle and durable event recovery; full regressions passed.
+
+### Main Changes
+
+#### Delivered result
+
+The local production app runs at http://127.0.0.1:8081/dashboard through native WSL Docker on Windows, with Ollama and two distributed Python Workers. All production images were built from the final source. The real coding task fixed an isolated calculator fixture; its original unittest independently passed and its SHA-256 remained unchanged. Final rebuilt containers completed an additional read-only Ollama task.
+
+#### Fixes and verification
+
+Pinned Rust/Bun toolchains and locked Cargo builds; configurable PostgreSQL host port; preserved packaged API native imports; invalid task inputs return HTTP 400. Dashboard stream connection state, bounded retries, task timestamps/status aliases, cancellation actions/history restoration and light-theme readability were repaired. Complete execution configuration survives Python snapshots and Gateway upsert. Ordered durable event appends, checkpoint barriers and complete acknowledged JetStream replay preserve parent controls and explicit retries.
+
+- Python: 1343 passed, 1 skipped, 8 integration cases deselected; separate integration run: 8 passed.
+- Rust engine/types/gRPC with messaging: 778 passed; real isolated NATS lifecycle/replay: 5 passed; deployed controls/scheduler RPC: 2 passed.
+- Live PostgreSQL graph/merge grants: 25 passed; live storage checks: 14 passed; Gateway TiKV/Qdrant CRUD and restart persistence verified separately.
+- Dashboard production build/lint and 12 tests passed; real browser checked offline behavior, completion, cancellation after reload, search and both themes.
+- Ruff, formatting, two review axes, task/spec/line-ending guards and issue-flow checks passed.
+
+#### Runtime and boundaries
+
+Formal app/Ollama/proxy services remain running; three temporary validation containers were removed. Docker Desktop's protected host socket error remains; its data was preserved and native WSL Docker supplies the working deployment. Meaningful semantic embeddings, cross-host scaling, external Git push/merge and real external MetaInfer optimization were not exercised. A real fixed-prompt Ollama inference Oracle passed; this is not a claim of optimization speedup.
+
+README and README.zh-CN were updated. Full evidence and reproduction are in docs/local-deployment-verification.md. Implementation commit: 484134c5. The local deployment task was archived as completed. No remote push or PR was performed.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `484134c5` | fix(deployment): validate local Ollama stack and repair lifecycle recovery |
+
+### Testing
+
+- [OK] Python 1343 + integration 8; Rust 778 + real NATS 5 + deployed RPC 2.
+- [OK] Dashboard build/lint/12 tests; live Ollama coding and original unittest checksum.
+- [OK] Repository guards, lint, formatting and both review axes.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Restart the documented WSL Docker/Ollama forwarding services after a host reboot.
+- Configure an external MetaInfer service before exercising real optimizer runs.

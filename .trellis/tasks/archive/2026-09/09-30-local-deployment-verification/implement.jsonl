@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "quality gates"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "stream and native import contracts"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "cross-language snapshot configuration"}
+{"file": ".trellis/spec/backend/checkpoint-spec.md", "reason": "durable ordered event recovery"}
+{"file": ".trellis/spec/backend/worker-service-spec.md", "reason": "capability routing"}
+{"file": ".trellis/spec/backend/inference-infra-spec.md", "reason": "Oracle and optional external service"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Python regressions"}

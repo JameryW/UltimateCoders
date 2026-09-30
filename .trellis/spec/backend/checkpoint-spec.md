@@ -148,3 +148,52 @@ resume_task
 - OMP UI for checkpoint inspection / manual recover trigger.
 - Snapshot compaction / GC (snapshots accumulate in the DashMap).
 - Full `Task` reconstruction from snapshot on TaskStore loss.
+
+
+## Scenario: Ordered durable history before checkpoint and recovery
+
+### 1. Scope / Trigger
+
+A user pauses/cancels a task and immediately requests its checkpoint or recovery.
+
+### 2. Signatures
+
+`EventStore.read_from(subject, offset)` uses an inclusive offset; zero means all history.
+Gateway `flush_task_events(&Arc<Mutex<TaskStore>>)` awaits the captured append barrier
+outside the TaskStore lock before CreateCheckpoint/RecoverTask.
+
+### 3. Contracts
+
+JetStream sequences begin at one: offset zero uses DeliverPolicy::All; positive
+values use ByStartSequence unchanged. Gateway appends follow recording order through
+one chained shared future. Append failures are logged and retained as a history error;
+subsequent writes are attempted, but checkpoint/recovery cannot certify missing history.
+CreateSnapshot and recovery replay the same complete event reducer, including
+TaskPaused/Resumed/Cancelled/Completed/Failed/Updated. `InProgress` normalizes to
+`in_progress`. Snapshot creation consumes events only through its captured latest offset.
+Replay consumes the complete initial pending backlog with explicit acknowledgements;
+there is no 1000-event cap or silent timeout truncation. Child completion cannot
+reopen a paused or terminal parent; advisory updates cannot overwrite parent status.
+
+### 4. Validation & Error Matrix
+
+Zero replay offset -> complete history, no JetStream 10094. Failed append -> checkpoint
+or recovery error. Parent pause -> paused snapshot, even without assigned children.
+Parent cancellation -> failed snapshot (legacy public TaskStatus contract).
+
+### 5. Good/Base/Bad Cases
+
+Good: Update -> Pause -> Checkpoint -> Recover without sleeps returns paused.
+Base: no events returns created. Bad: independently spawned appends reorder parent
+controls, or snapshots infer running from children after a parent pause.
+
+### 6. Tests Required
+
+Actual NATS `nats_event_replay` asserts zero/positive inclusive replay and pause/resume/
+cancel across checkpoints. `deployed_gateway` runs the public control/checkpoint RPC
+chain against a deployed Gateway with an undispatchable fixture node.
+
+### 7. Wrong vs Correct
+
+Wrong: ByStartSequence { start_sequence: 0 } or independent fire-and-forget appends.
+Correct: DeliverPolicy::All for zero; ordered durable writes plus a read barrier.

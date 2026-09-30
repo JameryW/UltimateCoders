@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CODING_AGENT = "grok-build"
 GROK_AGENT_ALIASES = ("grok-build", "grok")
+INFERENCE_CANCEL_GRACE_SECONDS = 8
 
 # ── T11 #653 (D11 #648) — deny-by-default environment allowlist ──────
 #
@@ -353,6 +354,8 @@ class AgentOutput:
     file_changes: list[FileChange] = field(default_factory=list)
     token_usage: TokenUsage | None = None
     success: bool = True
+    # Optional structured evidence from a domain execution backend.
+    domain_result: dict[str, Any] | None = None
     # Failure context
     stderr_tail: str = ""  # last ~10 lines of stderr (for diagnostics)
     # List of tool call names extracted from the agent output
@@ -491,6 +494,9 @@ class SandboxManager:
         # group. Registered by _execute_subprocess when the request carries
         # a cancel_key; popped when the process settles.
         self._active_procs: dict[tuple[str, str], Any] = {}
+        self._cancel_files: dict[tuple[str, str], str] = {}
+        self._stopping: dict[int, Any] = {}
+        self._process_trees: dict[int, Any] = {}
 
     def _create_adapter(self, agent: str) -> AgentAdapter:
         """Create an agent adapter via the plugin registry."""
@@ -508,8 +514,45 @@ class SandboxManager:
         if proc is None:
             return False
         killed = proc.returncode is None
-        _kill_process_tree(proc)
+        cancel_file = self._cancel_files.get(cancel_key)
+        if cancel_file:
+            self._start_stopping(proc, cancel_file, self._process_trees.get(proc.pid))
+        else:
+            _kill_process_tree(proc)
         return killed
+
+    def _start_stopping(self, proc: Any, cancel_file: str | None, tree: Any = None) -> Any:
+        """Give domain runners a bounded chance to stop remote work and roll back."""
+        import asyncio
+        from pathlib import Path
+
+        pending = self._stopping.get(proc.pid)
+        if pending is not None:
+            return pending
+
+        async def stop() -> None:
+            try:
+                if cancel_file and proc.returncode is None:
+                    Path(cancel_file).touch()
+                    try:
+                        await asyncio.wait_for(proc.wait(), INFERENCE_CANCEL_GRACE_SECONDS)
+                        return
+                    except asyncio.TimeoutError:
+                        logger.error("Inference cancellation grace expired; forcing termination")
+                if tree is not None:
+                    tree.close()
+                else:
+                    _kill_process_tree(proc)
+                try:
+                    await asyncio.wait_for(proc.wait(), 2)
+                except asyncio.TimeoutError:
+                    logger.error("Subprocess did not settle after forced termination")
+            finally:
+                self._stopping.pop(proc.pid, None)
+
+        pending = asyncio.create_task(stop())
+        self._stopping[proc.pid] = pending
+        return pending
 
     async def acquire(self) -> SandboxHandle:
         """Acquire a sandbox instance from the pool or create a new one.
@@ -593,8 +636,12 @@ class SandboxManager:
                 subtask_config=subtask_config,
             )
             temp_files = exec_request.pop("_temp_files", [])
+            cancel_file = exec_request.pop("_cancel_file", None)
 
-            if self.engine is not None and hasattr(self.engine, "execute_in_sandbox"):
+            if (
+                not cancel_file and self.engine is not None
+                and hasattr(self.engine, "execute_in_sandbox")
+            ):
                 result_dict = await self.engine.execute_in_sandbox(
                     handle_id=handle.id,
                     **exec_request,
@@ -611,6 +658,8 @@ class SandboxManager:
                 # T11 #653 — the adapter that built the request is the
                 # authoritative agent identity (covers per-call overrides and
                 # alias normalisation).
+                exec_request["cancel_key"] = cancel_key
+                exec_request["_cancel_file"] = cancel_file
                 result = await self._execute_subprocess(
                     exec_request,
                     on_stdout_line=on_stdout_line,
@@ -737,6 +786,7 @@ class SandboxManager:
         working_dir = request.get("working_dir", self.config.project_path)
         # T7 #643 — (task_id, node_id) identity for the cancel registry.
         cancel_key: tuple[str, str] | None = request.get("cancel_key")
+        cancel_file: str | None = request.get("_cancel_file")
         # T11 #653 — agent identity for the env allowlist.
         agent_name: str = agent or request.get("agent") or self.config.agent
 
@@ -760,24 +810,33 @@ class SandboxManager:
         env = self.config.build_child_env(os.environ, env_vars, agent=agent_name)
 
         proc = None
+        tree = None
+        stderr_task = None
         try:
             start = time.monotonic()
-            proc = await asyncio.create_subprocess_exec(
-                command,
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=working_dir,
-                env=env,
+            if cancel_file:
+                from ultimate_coders.inference.process import spawn_command
+
+                proc, tree = await spawn_command(
+                    [command, *args], stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE, cwd=working_dir, env=env,
+                )
+                self._process_trees[proc.pid] = tree
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    command, *args, stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE, cwd=working_dir, env=env,
                 # T7 #643 — own process group on POSIX so a cooperative
                 # cancel can kill the agent AND its children (the coding
                 # CLI spawns tool subprocesses) with one killpg. Windows
                 # has no process groups; the single-process kill in the
                 # cancel path is the documented fallback.
-                start_new_session=(os.name == "posix"),
-            )
+                    start_new_session=(os.name == "posix"),
+                )
             if cancel_key is not None:
                 self._active_procs[cancel_key] = proc
+                if cancel_file:
+                    self._cancel_files[cancel_key] = cancel_file
 
             try:
                 # Stream stdout line-by-line if callback provided
@@ -814,8 +873,7 @@ class SandboxManager:
                             except Exception:
                                 logger.debug("stdout_line callback error", exc_info=True)
                     except asyncio.TimeoutError:
-                        proc.kill()
-                        await proc.wait()
+                        await asyncio.shield(self._start_stopping(proc, cancel_file, tree))
                         stderr_task.cancel()
                         elapsed = time.monotonic() - start
                         logger.error("Sandbox subprocess timed out during streaming")
@@ -873,8 +931,7 @@ class SandboxManager:
 
             except asyncio.TimeoutError:
                 elapsed = time.monotonic() - start
-                proc.kill()
-                await proc.wait()
+                await asyncio.shield(self._start_stopping(proc, cancel_file, tree))
                 logger.error(
                     "Sandbox subprocess timed out after %.1fs (limit=%ds)",
                     elapsed, timeout_secs,
@@ -907,12 +964,18 @@ class SandboxManager:
                 registered = self._active_procs.get(cancel_key)
                 if registered is proc:
                     self._active_procs.pop(cancel_key, None)
+                if registered is proc or (
+                    registered is None and self._cancel_files.get(cancel_key) == cancel_file
+                ):
+                    self._cancel_files.pop(cancel_key, None)
             if proc is not None and proc.returncode is None:
-                _kill_process_tree(proc)
-                try:
-                    await proc.wait()
-                except Exception:
-                    pass
+                await asyncio.shield(self._start_stopping(proc, cancel_file, tree))
+            if tree is not None:
+                self._process_trees.pop(proc.pid, None)
+                tree.close()
+            if stderr_task is not None and not stderr_task.done():
+                stderr_task.cancel()
+                await asyncio.gather(stderr_task, return_exceptions=True)
 
 
 class AgentAdapter(ABC):

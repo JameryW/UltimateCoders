@@ -429,6 +429,14 @@ async def test_long_running_subtask_renews_jetstream_ack_wait():
     nw = _make_worker()
     nw._SUBTASK_PROGRESS_INTERVAL_SECONDS = 0.01
     finish = asyncio.Event()
+    renewed_twice = asyncio.Event()
+    renewal_count = 0
+
+    async def record_renewal():
+        nonlocal renewal_count
+        renewal_count += 1
+        if renewal_count >= 2:
+            renewed_twice.set()
 
     async def execute(subtask):
         await finish.wait()
@@ -448,12 +456,12 @@ async def test_long_running_subtask_renews_jetstream_ack_wait():
     nw._publisher = publisher
 
     js_msg = MagicMock()
-    js_msg.in_progress = AsyncMock()
+    js_msg.in_progress = AsyncMock(side_effect=record_renewal)
     js_msg.ack = AsyncMock()
     running = asyncio.create_task(
         nw._execute_and_report(Subtask(id="st-1", parent_id="t-1", description="d"), js_msg=js_msg)
     )
-    await asyncio.sleep(0.035)
+    await asyncio.wait_for(renewed_twice.wait(), timeout=2)
     assert js_msg.in_progress.await_count >= 2
     js_msg.ack.assert_not_awaited()
 
