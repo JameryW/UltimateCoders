@@ -1,0 +1,5 @@
+{"file":".scratch/metainfer-reliability/spec.md","reason":"Accepted architecture repair and runtime ticket"}
+{"file":".trellis/spec/backend/inference-infra-spec.md","reason":"Inference isolation, remote recovery and statistical acceptance"}
+{"file":".trellis/spec/backend/nats-bridge-spec.md","reason":"Execution envelope, outbox and coordinator/Gateway confirmation"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Shared transactional persistence and migration ownership"}
+{"file":".trellis/spec/backend/agent-capability-spec.md","reason":"Operation-specific live readiness"}

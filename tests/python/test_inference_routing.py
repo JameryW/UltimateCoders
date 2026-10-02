@@ -40,7 +40,8 @@ def test_routing_and_capabilities_are_optional_and_explicit_agent_wins(monkeypat
     assert InferenceInfraAgent.route("optimize SGLang") is None
     assert "inference_infra" not in Worker().capabilities
     monkeypatch.setenv("UC_METAINFER_URL", "http://service")
-    assert "inference_infra" in Worker().capabilities
+    assert "inference_infra" not in Worker().capabilities  # URL alone is not readiness.
+    assert "inference_benchmark" in Worker().capabilities
     assert InferenceInfraAgent.route("optimize SGLang", {"agent": "codex"}) is None
 
 
@@ -58,7 +59,7 @@ async def test_explicit_task_is_one_domain_node_and_skips_global_replanning():
     task = await orch.submit_task("Port the model\nMeasure results", agent_config=config)
     assert len(task.subtasks) == 1
     assert task.subtasks[0].agent_config["agent"] == "metainfer"
-    assert task.subtasks[0].required_capabilities == ["inference_infra"]
+    assert task.subtasks[0].required_capabilities == ["inference_infra", "model_porting"]
     llm.complete.assert_not_called()
 
 

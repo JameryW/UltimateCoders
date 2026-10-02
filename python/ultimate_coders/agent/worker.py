@@ -140,6 +140,12 @@ def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
         try:
             obj = json.loads(stripped)
             evt_type = obj.get("type", "")
+            if obj.get("event") == "inference_phase":
+                return "subtask_progress", {
+                    "phase": obj.get("phase"),
+                    "experiment_id": obj.get("experiment_id"),
+                    "cleanup_pending": obj.get("cleanup_pending", False),
+                }
             if evt_type == "tool_use":
                 return (
                     "tool_call",
@@ -526,10 +532,8 @@ class Worker:
 
         ensure_builtin_plugins()
         caps.extend(agent_registry.registry.capability_names(shutil.which))
-        from ultimate_coders.inference.agent import InferenceInfraAgent
 
-        if InferenceInfraAgent.configured():
-            caps.extend(InferenceInfraAgent.capabilities)
+        caps.append("inference_benchmark")
         # Deduplicate while preserving order
         seen: set[str] = set()
         unique: list[str] = []
@@ -538,6 +542,16 @@ class Worker:
                 seen.add(c)
                 unique.append(c)
         return unique
+
+    async def refresh_inference_capabilities(self) -> bool:
+        from ultimate_coders.inference.agent import InferenceInfraAgent
+
+        capabilities = await InferenceInfraAgent.probe()
+        remote = set(InferenceInfraAgent.capabilities) | {"inference_benchmark"}
+        updated = [cap for cap in self.capabilities if cap not in remote] + capabilities
+        changed = updated != self.capabilities
+        self.capabilities = updated
+        return changed
 
     # ── Agent Config Profiles & Templates ───────────────────────
 
@@ -797,7 +811,9 @@ class Worker:
             return False
 
     async def execute_subtask(
-        self, subtask: Subtask, gateway_context_block: dict | None = None,
+        self,
+        subtask: Subtask,
+        gateway_context_block: dict | None = None,
     ) -> SubtaskResult:
         """Execute a subtask via sandbox agent.
 
@@ -821,6 +837,8 @@ class Worker:
         self.current_task = subtask
         self._active_count += 1
         subtask.status = SubtaskStatus.IN_PROGRESS
+        workspace_handle = None
+        needs_worktree = False
 
         try:
             # Check for an existing result for THIS ATTEMPT — skip if already
@@ -833,14 +851,23 @@ class Worker:
             checkpoint_review = (
                 parse_review(json.dumps(checkpoint.get("review"))) if checkpoint else None
             )
-            if checkpoint and "review" in subtask.required_capabilities and (
-                checkpoint_review is None or not checkpoint_review.approved
-                or checkpoint.get("modified_files")
+            if (
+                checkpoint
+                and "review" in subtask.required_capabilities
+                and (
+                    checkpoint_review is None
+                    or not checkpoint_review.approved
+                    or checkpoint.get("modified_files")
+                )
             ):
                 # Old checkpoints without a verdict are not evidence of an
                 # approved review. Re-execute instead of replaying false success.
                 checkpoint = None
-            if checkpoint is not None and checkpoint.get("success"):
+            if (
+                checkpoint is not None
+                and checkpoint.get("delivery") != "pending"
+                and (checkpoint.get("success") or checkpoint.get("retryable") is False)
+            ):
                 logger.info(
                     "Subtask %s attempt %s already has a result, replaying it "
                     "instead of re-executing (duplicate delivery)",
@@ -861,7 +888,10 @@ class Worker:
                     subtask_id=subtask.id,
                     worker_id=checkpoint.get("worker_id", self.worker_id),
                     summary=checkpoint.get("summary", "Resumed from checkpoint"),
-                    success=True,
+                    success=checkpoint.get("success", True),
+                    retryable=checkpoint.get("retryable", True),
+                    cleanup_pending=checkpoint.get("cleanup_pending", False),
+                    domain_result=checkpoint.get("domain_result"),
                     modified_files=mod_files,
                     recent_tool_calls=checkpoint.get("tool_calls", []),
                     stderr_tail=checkpoint.get("stderr_tail", ""),
@@ -886,9 +916,38 @@ class Worker:
                     context_block = search_block
 
             # Acquire workspace if this subtask modifies files
+            from ultimate_coders.inference.agent import InferenceInfraAgent
+
+            routed = InferenceInfraAgent.route(
+                subtask.description, self._resolve_agent_config(subtask)
+            )
+            if routed:
+                subtask.agent_config = routed
+            needs_worktree = InferenceInfraAgent.requires_workspace(
+                subtask.agent_config,
+                subtask.steps,
+            )
+            if needs_worktree and self._workspace_manager is None:
+                from ultimate_coders.agent.workspace import WorkspaceManager
+
+                self._workspace_manager = WorkspaceManager(self._sandbox_config.project_path)
             workspace_handle = None
-            if self._workspace_manager and subtask.file_constraints:
-                workspace_handle = await self._workspace_manager.acquire(subtask.id)
+            if self._workspace_manager and (subtask.file_constraints or needs_worktree):
+                if needs_worktree:
+                    self._workspace_manager.bind_runtime_state(await self._domain_state())
+                workspace_handle = await self._workspace_manager.acquire(
+                    subtask.id,
+                    **({"require_worktree": True} if needs_worktree else {}),
+                )
+                if needs_worktree and workspace_handle is None:
+                    return SubtaskResult(
+                        subtask_id=subtask.id,
+                        worker_id=self.worker_id,
+                        success=False,
+                        retryable=False,
+                        summary="Exclusive inference worktree allocation failed",
+                        error="Exclusive inference worktree allocation failed",
+                    )
                 if workspace_handle:
                     logger.info(
                         "Subtask %s allocated workspace %s",
@@ -922,10 +981,20 @@ class Worker:
                 # worktree and double-releases. ponytail: per-attempt acquire
                 if (
                     self._workspace_manager
-                    and subtask.file_constraints
+                    and (subtask.file_constraints or needs_worktree)
                     and workspace_handle is None
                 ):
-                    workspace_handle = await self._workspace_manager.acquire(subtask.id)
+                    workspace_handle = await self._workspace_manager.acquire(
+                        subtask.id,
+                        **({"require_worktree": True} if needs_worktree else {}),
+                    )
+                    if needs_worktree and workspace_handle is None:
+                        return SubtaskResult(
+                            subtask_id=subtask.id,
+                            success=False,
+                            retryable=False,
+                            summary="Exclusive inference worktree allocation failed",
+                        )
                     if workspace_handle:
                         logger.info(
                             "Subtask %s re-acquired workspace %s (attempt %d)",
@@ -937,10 +1006,27 @@ class Worker:
                     timeout_secs = subtask.timeout_seconds or 600
                     try:
                         await _progress("executing", 50)
-                        result = await asyncio.wait_for(
-                            self._execute_in_sandbox(subtask, context_block, workspace_handle),
-                            timeout=timeout_secs,
-                        )
+                        if checkpoint and checkpoint.get("delivery") == "pending":
+                            from ultimate_coders.agent.types import ChangeType, FileChange
+
+                            result = SubtaskResult(
+                                subtask_id=subtask.id,
+                                success=True,
+                                summary=checkpoint["summary"],
+                                domain_result=checkpoint.get("domain_result"),
+                                modified_files=[
+                                    FileChange(
+                                        file_path=item["file_path"],
+                                        change_type=ChangeType(item["change_type"]),
+                                    )
+                                    for item in checkpoint["modified_files"]
+                                ],
+                            )
+                        else:
+                            result = await asyncio.wait_for(
+                                self._execute_in_sandbox(subtask, context_block, workspace_handle),
+                                timeout=timeout_secs,
+                            )
                         await _progress("validating", 80)
                     except asyncio.TimeoutError:
                         result = SubtaskResult(
@@ -948,26 +1034,20 @@ class Worker:
                             worker_id=self.worker_id,
                             summary=f"Subtask timed out after {timeout_secs}s",
                             success=False,
+                            retryable=not needs_worktree,
+                            cleanup_pending=needs_worktree,
                             error=f"Subtask timed out after {timeout_secs}s",
                         )
 
-                    # Save checkpoint for resume (attempt-scoped, T4 #640)
-                    await self._save_checkpoint(subtask, result)
-
-                    # Record result in context injector for dependent subtasks
-                    self._context_injector.add_result(
-                        subtask_id=subtask.id,
-                        summary=result.summary,
-                        modified_files=[f.file_path for f in (result.modified_files or [])],
-                        success=result.success,
-                    )
-
-                    # Broadcast file change events for distributed state sync
-                    if result.success and result.modified_files:
-                        await self._broadcast_file_changes(subtask, result, workspace_handle)
+                    if needs_worktree and result.success:
+                        await self._save_checkpoint(subtask, result, delivery="pending")
 
                     # Release workspace (merge if successful)
-                    if workspace_handle:
+                    if result.success and result.modified_files:
+                        await self._broadcast_file_changes(subtask, result, workspace_handle)
+                    if workspace_handle and result.cleanup_pending:
+                        await self._workspace_manager.quarantine(workspace_handle)
+                    if workspace_handle and not result.cleanup_pending:
                         merge_result = await self._workspace_manager.release(
                             workspace_handle,
                             merge=result.success,
@@ -978,7 +1058,36 @@ class Worker:
                                 subtask.id[:8],
                                 merge_result.get("branch_preserved", ""),
                             )
+                        if result.success and (
+                            merge_result.get("status") in ("conflict", "commit_failed")
+                            or merge_result.get("push_status") == "failed"
+                        ):
+                            result.success, result.retryable = False, False
+                            result.summary = "Accepted code delivery failed; workspace preserved"
+                            result.error = result.summary
+                        if result.domain_result:
+                            result.domain_result["delivery"] = merge_result
+                            await self._record_inference_delivery(
+                                result.domain_result, merge_result
+                            )
                         workspace_handle = None  # ponytail: freed; re-acquire next attempt
+
+                    # Success is replayable only after code delivery completed.
+                    await self._save_checkpoint(subtask, result)
+                    self._context_injector.add_result(
+                        subtask_id=subtask.id,
+                        summary=result.summary,
+                        modified_files=[f.file_path for f in result.modified_files],
+                        success=result.success,
+                    )
+                    if result.success and result.domain_result:
+                        await self.write_shared_memory(
+                            key=f"inference:{subtask.parent_id}:{subtask.id}",
+                            content=json.dumps(result.domain_result, ensure_ascii=False),
+                            project_id=subtask.project_id,
+                            content_type="structured",
+                            tags=["inference_infra", "benchmark", "adaptation_graph"],
+                        )
 
                     if result.success:
                         await _progress("finalizing", 95)
@@ -1018,6 +1127,8 @@ class Worker:
                         )
                         if (
                             attempt < self.MAX_RETRIES - 1
+                            and result.retryable
+                            and not result.cleanup_pending
                             and failure_class.kind != "permanent"
                         ):
                             subtask.retry_count += 1
@@ -1070,6 +1181,18 @@ class Worker:
 
                 except Exception as e:
                     logger.error("Subtask %s execution failed: %s", subtask.id, e, exc_info=True)
+                    if needs_worktree:
+                        if workspace_handle:
+                            await self._workspace_manager.quarantine(workspace_handle)
+                        return SubtaskResult(
+                            subtask_id=subtask.id,
+                            worker_id=self.worker_id,
+                            success=False,
+                            retryable=False,
+                            cleanup_pending=True,
+                            summary="Inference delivery interrupted; workspace preserved",
+                            error=str(e)[:2000],
+                        )
                     # Release workspace without merge on error
                     if workspace_handle:
                         await self._workspace_manager.release(workspace_handle, merge=False)
@@ -1081,10 +1204,7 @@ class Worker:
                         e,
                         retry_count=subtask.retry_count,
                     )
-                    if (
-                        attempt < self.MAX_RETRIES - 1
-                        and exception_class.kind != "permanent"
-                    ):
+                    if attempt < self.MAX_RETRIES - 1 and exception_class.kind != "permanent":
                         subtask.retry_count += 1
                         delay = (
                             self.RETRY_DELAYS[attempt]
@@ -1144,6 +1264,10 @@ class Worker:
                 retry_count=subtask.retry_count,
             )
 
+        except asyncio.CancelledError:
+            if needs_worktree and workspace_handle:
+                await self._workspace_manager.quarantine(workspace_handle)
+            raise
         finally:
             self.current_task = None
             self._active_count = max(0, self._active_count - 1)
@@ -1160,7 +1284,44 @@ class Worker:
         """
         return f"attempt:{subtask.parent_id}:{subtask.id}:{subtask.dispatch_retry_count}"
 
-    async def _save_checkpoint(self, subtask: Subtask, result: SubtaskResult) -> None:
+    async def _domain_state(self):
+        from pathlib import Path
+
+        from ultimate_coders.runtime_state import RuntimeState
+
+        path = Path(
+            self._sandbox_config.env_vars.get("UC_RUNTIME_STATE_DIR")
+            or os.environ.get("UC_RUNTIME_STATE_DIR")
+            or str(Path(self._sandbox_config.project_path or os.getcwd()) / ".uc/runtime")
+        )
+        return await asyncio.to_thread(
+            RuntimeState,
+            path / "state.sqlite3",
+            database_url=self._sandbox_config.env_vars.get("UC_DATABASE_URL"),
+        )
+
+    async def _record_inference_delivery(self, domain: dict, delivery: dict) -> None:
+        state = await self._domain_state()
+        results = [domain] + [item.get("result", {}) for item in domain.get("steps", [])]
+        for item in results:
+            if item.get("experiment_id"):
+                await asyncio.to_thread(
+                    state.mutate,
+                    "experiments",
+                    item["experiment_id"],
+                    lambda old: {**old, "delivery": delivery},
+                )
+
+    @staticmethod
+    def _is_inference(subtask: Subtask) -> bool:
+        return bool(
+            subtask.agent_config.get("inference_task")
+            or any(step.agent in ("metainfer", "inference-infra") for step in subtask.steps)
+        )
+
+    async def _save_checkpoint(
+        self, subtask: Subtask, result: SubtaskResult, *, delivery="complete"
+    ) -> None:
         """Persist this attempt's result to engine memory for resume.
 
         Stores full result including modified_files, tool_calls, and error
@@ -1169,27 +1330,41 @@ class Worker:
         ponytail: F59 — async (was sync): in gRPC mode write_memory blocked
         the event loop for up to 30s. Non-fatal on failure.
         """
+        data: dict[str, Any] = {
+            "subtask_id": subtask.id,
+            "attempt_id": subtask.dispatch_retry_count,
+            "worker_id": result.worker_id,
+            "summary": result.summary,
+            "success": result.success,
+            "retryable": result.retryable,
+            "cleanup_pending": result.cleanup_pending,
+            "domain_result": result.domain_result,
+            "delivery": delivery,
+            "modified_files": [
+                {"file_path": f.file_path, "change_type": f.change_type.value}
+                for f in (result.modified_files or [])
+            ],
+            "tool_calls": result.recent_tool_calls[-5:] if result.recent_tool_calls else [],
+            "error": result.summary if not result.success else None,
+            "stderr_tail": result.stderr_tail,
+        }
+        if self._is_inference(subtask):
+            state = await self._domain_state()
+            await asyncio.to_thread(
+                state.mutate,
+                "attempt_results",
+                self._attempt_checkpoint_key(subtask),
+                lambda _: data,
+            )
         if self.engine is None:
             return
         try:
-            data: dict[str, Any] = {
-                "subtask_id": subtask.id,
-                "attempt_id": subtask.dispatch_retry_count,
-                "worker_id": result.worker_id,
-                "summary": result.summary,
-                "success": result.success,
-                "modified_files": [
-                    {"file_path": f.file_path, "change_type": f.change_type.value}
-                    for f in (result.modified_files or [])
-                ],
-                "tool_calls": result.recent_tool_calls[-5:] if result.recent_tool_calls else [],
-                "error": result.summary if not result.success else None,
-                "stderr_tail": result.stderr_tail,
-            }
             if result.review is not None:
                 data["review"] = result.review.to_dict()
             await _engine_call(
-                self.engine, "write_memory", "write_memory_async",
+                self.engine,
+                "write_memory",
+                "write_memory_async",
                 key_scope="checkpoint",
                 key=self._attempt_checkpoint_key(subtask),
                 content=json.dumps(data),
@@ -1206,11 +1381,35 @@ class Worker:
         T4 fix: re-dispatch after a fence must execute, not replay the
         previous attempt's result.
         """
+        if self._is_inference(subtask):
+            state = await self._domain_state()
+            persisted = await asyncio.to_thread(
+                state.get, "attempt_results", self._attempt_checkpoint_key(subtask)
+            )
+            if persisted:
+                if persisted.get("delivery") == "pending":
+                    leases = await asyncio.to_thread(state.records, "workspace_leases")
+                    delivery = next((
+                        lease.get("delivery") for lease in leases
+                        if lease.get("handle", {}).get("subtask_id") == subtask.id
+                        and lease.get("status") in ("completed", "delivered")
+                    ), None)
+                    if delivery:
+                        persisted["delivery"] = "complete"
+                        if persisted.get("domain_result"):
+                            persisted["domain_result"]["delivery"] = delivery
+                        await asyncio.to_thread(
+                            state.mutate, "attempt_results", self._attempt_checkpoint_key(subtask),
+                            lambda _: persisted,
+                        )
+                return persisted
         if self.engine is None:
             return None
         try:
             raw = await _engine_call(
-                self.engine, "read_memory", "read_memory_async",
+                self.engine,
+                "read_memory",
+                "read_memory_async",
                 key_scope="checkpoint",
                 key=self._attempt_checkpoint_key(subtask),
             )
@@ -1287,7 +1486,10 @@ class Worker:
             cancel_key = (subtask.parent_id, subtask.id)
             if subtask.steps:
                 output = await self._execute_steps(
-                    subtask, working_dir, _on_stdout_line, context_block,
+                    subtask,
+                    working_dir,
+                    _on_stdout_line,
+                    context_block,
                     cancel_key=cancel_key,
                 )
             else:
@@ -1309,6 +1511,21 @@ class Worker:
                 routed = InferenceInfraAgent.route(subtask.description, agent_config)
                 if routed:
                     agent_config = routed
+                    agent_config = {
+                        **agent_config,
+                        "uc_execution": {
+                            "graph_id": subtask.parent_id,
+                            "node_id": subtask.id,
+                            "attempt_id": subtask.dispatch_retry_count,
+                            "step_index": 0,
+                        },
+                    }
+                    state = await self._domain_state()
+                    agent_config["_uc_runtime_state_dir"] = str(state.path.parent)
+                    if self._workspace_manager:
+                        agent_config["_uc_workspace_owner"] = await (
+                            self._workspace_manager.runner_owner(working_dir)
+                        )
 
                 output: AgentOutput = await self._sandbox_manager.execute(
                     prompt,
@@ -1334,11 +1551,7 @@ class Worker:
             # so `source` falls back to the stamp the adapter put on its own
             # usage block, and stays `null` when it reported nothing at all.
             # That is the honest answer — there is no declared step to name.
-            step_usages = (
-                output.step_usages
-                if subtask.steps
-                else [_step_usage(0, "", "", output)]
-            )
+            step_usages = output.step_usages if subtask.steps else [_step_usage(0, "", "", output)]
             # ponytail: extract stderr_tail and recent tool calls for failure context
             stderr_tail = output.stderr_tail
             if not stderr_tail and hasattr(output, "raw_stderr") and output.raw_stderr:
@@ -1348,8 +1561,7 @@ class Worker:
             # where this worker's expertise lies — the declared set is often
             # the only signal for a read-only node.
             self.record_recent_files(
-                list(subtask.file_constraints)
-                + [fc.file_path for fc in output.file_changes]
+                list(subtask.file_constraints) + [fc.file_path for fc in output.file_changes]
             )
             review = parse_review(output.summary) if is_review else None
             success = output.success
@@ -1369,7 +1581,8 @@ class Worker:
                 await self.write_shared_memory(
                     key=f"inference:{subtask.parent_id}:{subtask.id}",
                     content=json.dumps(output.domain_result, ensure_ascii=False),
-                    project_id=subtask.project_id, content_type="structured",
+                    project_id=subtask.project_id,
+                    content_type="structured",
                     tags=["inference_infra", "benchmark", "adaptation_graph"],
                 )
             return SubtaskResult(
@@ -1378,6 +1591,9 @@ class Worker:
                 modified_files=output.file_changes,
                 summary=output.summary,
                 success=success,
+                retryable=output.retryable,
+                cleanup_pending=output.cleanup_pending,
+                domain_result=output.domain_result,
                 error=error[:2000],
                 review=review,
                 stderr_tail=stderr_tail,
@@ -1475,9 +1691,16 @@ class Worker:
                 # Sequential step — run directly via the shared helper.
                 prev = step_outputs[-1] if step_outputs else None
                 output = await self._run_single_step(
-                    step, idx, total, step_outputs, prev,
-                    context_block, file_constraints_str,
-                    subtask, working_dir, on_stdout_line,
+                    step,
+                    idx,
+                    total,
+                    step_outputs,
+                    prev,
+                    context_block,
+                    file_constraints_str,
+                    subtask,
+                    working_dir,
+                    on_stdout_line,
                     cancel_key=cancel_key,
                     parallel_group=step.parallel_group or "",
                     parallel_step_count=1,
@@ -1490,9 +1713,7 @@ class Worker:
                 # T18 #668: collected here — *before* the abort check below —
                 # so a step that failed and aborted the chain is still
                 # attributed. It ran, so it spent.
-                step_usages.append(
-                    _step_usage(idx, step.parallel_group or "", step.agent, output)
-                )
+                step_usages.append(_step_usage(idx, step.parallel_group or "", step.agent, output))
                 if output.success:
                     all_file_changes.extend(output.file_changes)
                     if output.domain_result is not None:
@@ -1504,7 +1725,9 @@ class Worker:
                     failed_file_changes.extend(output.file_changes)
                 last_output = output
 
-                if not output.success and step.abort_on_failure:
+                if not output.success and (
+                    step.abort_on_failure or not output.retryable or output.cleanup_pending
+                ):
                     logger.warning(
                         "Workflow step %d failed (agent=%s), aborting chain for subtask %s",
                         idx + 1,
@@ -1516,6 +1739,8 @@ class Worker:
                         file_changes=all_file_changes,
                         token_usage=output.token_usage,
                         success=False,
+                        retryable=output.retryable,
+                        cleanup_pending=output.cleanup_pending,
                         stderr_tail=output.stderr_tail,
                         tool_calls=output.tool_calls,
                         # T18 #668: the chain stopped early, but the units that
@@ -1551,6 +1776,14 @@ class Worker:
             for step_idx, gs in group_steps:
                 base_cfg = self._resolve_agent_config(subtask) or {}
                 merged_cfg = {**base_cfg, **gs.agent_config}
+                from ultimate_coders.inference.agent import InferenceInfraAgent
+
+                if InferenceInfraAgent.requires_workspace(merged_cfg):
+                    return AgentOutput(
+                        success=False,
+                        retryable=False,
+                        summary="Mutating inference steps cannot share a parallel workspace",
+                    )
                 disallowed = set(merged_cfg.get("disallowed_tools", []) or [])
                 missing = required_disallowed - disallowed
                 if missing:
@@ -1582,17 +1815,26 @@ class Worker:
             # steps don't see each other's mid-flight mutations.
             prev_snapshot = list(step_outputs)
             group_size = len(group_steps)
-            results = await asyncio.gather(*[
-                self._run_single_step(
-                    gs, si, total, prev_snapshot, prev,
-                    context_block, file_constraints_str,
-                    subtask, working_dir, on_stdout_line,
-                    cancel_key=cancel_key,
-                    parallel_group=group,
-                    parallel_step_count=group_size,
-                )
-                for si, gs in group_steps
-            ])
+            results = await asyncio.gather(
+                *[
+                    self._run_single_step(
+                        gs,
+                        si,
+                        total,
+                        prev_snapshot,
+                        prev,
+                        context_block,
+                        file_constraints_str,
+                        subtask,
+                        working_dir,
+                        on_stdout_line,
+                        cancel_key=cancel_key,
+                        parallel_group=group,
+                        parallel_step_count=group_size,
+                    )
+                    for si, gs in group_steps
+                ]
+            )
 
             # Collect outputs in order. Skipped steps (condition false)
             # return None — they don't contribute to step_outputs. A
@@ -1621,7 +1863,9 @@ class Worker:
                     had_failed_step = True
                     failed_file_changes.extend(output.file_changes)
                 last_output = output
-                if not output.success and gs.abort_on_failure:
+                if not output.success and (
+                    gs.abort_on_failure or not output.retryable or output.cleanup_pending
+                ):
                     group_failed = True
                     failed_output = output
                     logger.warning(
@@ -1640,6 +1884,8 @@ class Worker:
                     file_changes=all_file_changes,
                     token_usage=failed_output.token_usage,
                     success=False,
+                    retryable=failed_output.retryable,
+                    cleanup_pending=failed_output.cleanup_pending,
                     stderr_tail=failed_output.stderr_tail,
                     tool_calls=failed_output.tool_calls,
                     # T18 #668: same as the sequential abort — the members that
@@ -1694,6 +1940,8 @@ class Worker:
             # earlier failure. Explicit review fail-closed uses had_failed_step
             # and failed_file_changes in _execute_in_sandbox.
             success=last_output.success,
+            retryable=last_output.retryable,
+            cleanup_pending=last_output.cleanup_pending,
             stderr_tail=last_output.stderr_tail,
             tool_calls=last_output.tool_calls,
             step_usages=step_usages,
@@ -1745,10 +1993,7 @@ class Worker:
         # explicit review still has to see the verdict contract when the
         # template omits that placeholder. Single-agent execution prepends
         # the same block unconditionally.
-        if (
-            "review" in subtask.required_capabilities
-            and REVIEW_INSTRUCTIONS not in rendered
-        ):
+        if "review" in subtask.required_capabilities and REVIEW_INSTRUCTIONS not in rendered:
             prefix = context_block.strip()
             if prefix:
                 rendered = f"{prefix}\n\n{rendered}"
@@ -1757,6 +2002,22 @@ class Worker:
         # the subtask-level resolved config (step wins on conflict).
         base_cfg = self._resolve_agent_config(subtask) or {}
         merged_cfg = {**base_cfg, **step.agent_config} or None
+        if step.agent in ("metainfer", "inference-infra"):
+            merged_cfg = {
+                **(merged_cfg or {}),
+                "uc_execution": {
+                    "graph_id": subtask.parent_id,
+                    "node_id": subtask.id,
+                    "attempt_id": subtask.dispatch_retry_count,
+                    "step_index": idx,
+                },
+            }
+            state = await self._domain_state()
+            merged_cfg["_uc_runtime_state_dir"] = str(state.path.parent)
+            if self._workspace_manager:
+                merged_cfg["_uc_workspace_owner"] = await (
+                    self._workspace_manager.runner_owner(working_dir)
+                )
 
         logger.info(
             "Workflow step %d/%d (subtask %s): agent=%s",
@@ -1792,7 +2053,8 @@ class Worker:
                     step.condition,
                 )
                 await self._emit_step_event(
-                    subtask, "subtask_progress",
+                    subtask,
+                    "subtask_progress",
                     phase=f"step {idx + 1}/{total}: {step.agent} (skipped)",
                     percent=percent,
                     step_index=idx,
@@ -1806,7 +2068,8 @@ class Worker:
                 return None
 
         await self._emit_step_event(
-            subtask, "subtask_progress",
+            subtask,
+            "subtask_progress",
             phase=f"step {idx + 1}/{total}: {step.agent}",
             percent=percent,
             step_index=idx,
@@ -1831,11 +2094,17 @@ class Worker:
                 agent=step.agent,
                 cancel_key=cancel_key,
             )
-            if output.success or attempt == max_attempts - 1:
+            if (
+                output.success
+                or not output.retryable
+                or output.cleanup_pending
+                or attempt == max_attempts - 1
+            ):
                 break
             # Failed and retries remain — emit retrying event + sleep.
             await self._emit_step_event(
-                subtask, "subtask_progress",
+                subtask,
+                "subtask_progress",
                 phase=f"step {idx + 1}/{total}: {step.agent}",
                 percent=percent,
                 step_index=idx,
@@ -1856,7 +2125,8 @@ class Worker:
         # reporting partial work as applied when a later step succeeds.
         # NOTE: file_changes accumulation is done by the CALLER, not here.
         await self._emit_step_event(
-            subtask, "subtask_progress",
+            subtask,
+            "subtask_progress",
             phase=f"step {idx + 1}/{total}: {step.agent}",
             percent=int(100 * (idx + 1) / total) if total else 0,
             step_index=idx,

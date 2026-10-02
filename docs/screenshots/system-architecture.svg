@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1140" viewBox="0 0 1440 1140" preserveAspectRatio="xMidYMid meet" xml:lang="en" role="img" aria-labelledby="title desc">
+  <title id="title">UltimateCoders · System architecture</title>
+  <desc id="desc">Service overview of UltimateCoders. Dashboard and optional OMP connect to the Rust Gateway; the Dashboard API and Python planner exchange messages through NATS. The Gateway dispatches ready nodes to Python Workers through JetStream; Workers register through gRPC. Shared services provide search, memory, persistence and model APIs. Optional MetaInfer produces inference candidates; UC benchmarks and accepts or rolls them back.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M1 1 L9 5 L1 9 Z" fill="#60758c"/>
+    </marker>
+    <style>
+      text { font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif; fill: #334155; }
+      .heading { font-weight: 600; fill: #0f172a; }
+      .section { font-weight: 600; letter-spacing: 1.5px; }
+      .muted { fill: #64748b; }
+      .connector { fill: none; stroke: #60758c; stroke-width: 2; stroke-linejoin: round; }
+    </style>
+  </defs>
+  <rect width="1440" height="1140" fill="#ffffff"/>
+  <text x="40" y="48" font-size="16" class="section muted" text-anchor="start">ULTIMATECODERS</text>
+  <text x="40" y="98" font-size="38" class="heading" text-anchor="start">System architecture</text>
+  <text x="40" y="136" font-size="21" class="muted" text-anchor="start">Python plans · Rust dispatches · Workers execute</text>
+  <path d="M1080 82 H1112" class="connector" marker-end="url(#arrow)"/>
+  <text x="1126" y="88" font-size="18" class="muted" text-anchor="start">Runtime messages</text>
+  <rect x="1080" y="109" width="32" height="22" rx="14" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="6 5"/>
+  <text x="1126" y="127" font-size="18" class="muted" text-anchor="start">Optional</text>
+  <rect x="40" y="202" width="264" height="408" rx="14" fill="#f1f5fb" stroke="#dbe5f1"/>
+  <rect x="370" y="202" width="682" height="408" rx="14" fill="#f0f8f6" stroke="#d8e9e4"/>
+  <rect x="1116" y="202" width="284" height="408" rx="14" fill="#f6f3fb" stroke="#e3dcf0"/>
+  <text x="60" y="234" font-size="16" class="section" text-anchor="start">INTERACTION</text>
+  <text x="396" y="234" font-size="16" class="section" text-anchor="start">PLANNING &amp; CONTROL</text>
+  <text x="1136" y="234" font-size="15" class="section" text-anchor="start">DISTRIBUTED EXECUTION</text>
+  <path d="M640 262 V174 H1090 V284 H1136" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <rect x="766" y="152" width="249" height="29" rx="14" fill="#ffffff" stroke="none"/>
+  <text x="890" y="173" font-size="17" class="muted" text-anchor="middle">gRPC: register / heartbeat</text>
+  <g data-card="dashboard">
+  <rect x="60" y="248" width="224" height="122" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="80" y="285" font-size="23" class="heading" text-anchor="start">Web Dashboard</text>
+  <text x="80" y="321" font-size="19" class="" text-anchor="start">React · gRPC-Web</text>
+  <text x="80" y="349" font-size="19" class="" text-anchor="start">HTTP / SSE via API</text>
+  </g>
+  <g data-card="api">
+  <rect x="60" y="492" width="224" height="94" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="80" y="529" font-size="23" class="heading" text-anchor="start">Dashboard API</text>
+  <text x="80" y="565" font-size="19" class="" text-anchor="start">FastAPI · REST / SSE</text>
+  </g>
+  <rect x="60" y="400" width="224" height="74" rx="14" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="6 5"/>
+  <text x="80" y="430" font-size="21" class="heading" text-anchor="start">OMP terminal</text>
+  <text x="80" y="458" font-size="18" class="muted" text-anchor="start">Optional · gRPC</text>
+  <g data-card="gateway">
+  <rect x="396" y="262" width="292" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="416" y="299" font-size="25" class="heading" text-anchor="start">Rust Gateway</text>
+  <text x="416" y="335" font-size="19" class="" text-anchor="start">Task state + ready dispatch</text>
+  <text x="416" y="363" font-size="19" class="" text-anchor="start">WorkerRegistry + controls</text>
+  <text x="416" y="391" font-size="19" class="" text-anchor="start">WatchTask + recovery</text>
+  </g>
+  <g data-card="planner">
+  <rect x="734" y="262" width="292" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="754" y="299" font-size="25" class="heading" text-anchor="start">Python Planner</text>
+  <text x="754" y="335" font-size="19" class="" text-anchor="start">DAG + domain routing</text>
+  <text x="754" y="363" font-size="19" class="" text-anchor="start">Execution config snapshots</text>
+  <text x="754" y="391" font-size="19" class="" text-anchor="start">Planning model selection</text>
+  </g>
+  <g data-card="nats">
+  <rect x="396" y="492" width="630" height="94" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="416" y="529" font-size="25" class="heading" text-anchor="start">NATS</text>
+  <text x="416" y="565" font-size="19" class="" text-anchor="start">Core: submit / events · JetStream: execute / history</text>
+  </g>
+  <g data-card="workers">
+  <rect x="1136" y="262" width="244" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="1156" y="299" font-size="23" class="heading" text-anchor="start">Python Workers</text>
+  <text x="1156" y="335" font-size="19" class="" text-anchor="start">Isolated Git worktrees</text>
+  <text x="1156" y="363" font-size="19" class="" text-anchor="start">Coding adapters</text>
+  <text x="1156" y="391" font-size="19" class="" text-anchor="start">InferenceInfraAgent</text>
+  </g>
+  <g data-card="consumers">
+  <rect x="1136" y="492" width="244" height="94" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="1156" y="529" font-size="22" class="heading" text-anchor="start">NATS consumers</text>
+  <text x="1156" y="565" font-size="19" class="" text-anchor="start">Execute + report</text>
+  </g>
+  <path d="M284 308 H396" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="340" y="295" font-size="16" class="muted" text-anchor="middle">gRPC-Web</text>
+  <path d="M284 539 H396" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="340" y="526" font-size="16" class="muted" text-anchor="middle">NATS</text>
+  <path d="M284 437 H354 V385 H396" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <path d="M542 422 V492" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="554" y="461" font-size="16" class="muted" text-anchor="start">dispatch / results</text>
+  <path d="M880 422 V492" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="892" y="461" font-size="16" class="muted" text-anchor="start">submit / DAG</text>
+  <path d="M1026 527 H1136" class="connector" marker-end="url(#arrow)"/>
+  <text x="1081" y="514" font-size="16" class="muted" text-anchor="middle">JetStream</text>
+  <path d="M1136 562 H1026" class="connector" marker-end="url(#arrow)"/>
+  <text x="1081" y="587" font-size="16" class="muted" text-anchor="middle">Core results</text>
+  <path d="M1258 422 V492" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="1270" y="461" font-size="16" class="muted" text-anchor="start">execution</text>
+  <rect x="40" y="630" width="1360" height="42" rx="14" fill="#f8fafc" stroke="none"/>
+  <text x="60" y="657" font-size="18" class="muted" text-anchor="start">Live updates: WatchTask / SSE → Dashboard · Recovery: ordered EventStore + checkpoint / replay</text>
+  <text x="40" y="709" font-size="16" class="section muted" text-anchor="start">SHARED SERVICES</text>
+  <g data-card="knowledge">
+  <rect x="40" y="728" width="436" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="60" y="765" font-size="25" class="heading" text-anchor="start">Knowledge &amp; persistence</text>
+  <text x="60" y="801" font-size="19" class="" text-anchor="start">Text / Semantic / AST</text>
+  <text x="60" y="829" font-size="19" class="" text-anchor="start">TiKV · Qdrant · PostgreSQL</text>
+  <text x="60" y="857" font-size="19" class="" text-anchor="start">Gateway search, memory + metadata</text>
+  </g>
+  <g data-card="models">
+  <rect x="498" y="728" width="432" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="518" y="765" font-size="25" class="heading" text-anchor="start">Model providers</text>
+  <text x="518" y="801" font-size="19" class="" text-anchor="start">Cloud APIs / local Ollama</text>
+  <text x="518" y="829" font-size="19" class="" text-anchor="start">Planner + compatible coding adapters</text>
+  <text x="518" y="857" font-size="19" class="" text-anchor="start">Independent provider configuration</text>
+  </g>
+  <g data-card="metainfer">
+  <rect x="952" y="728" width="448" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1" stroke-dasharray="6 5"/>
+  <text x="972" y="765" font-size="25" class="heading" text-anchor="start">External MetaInfer</text>
+  <text x="972" y="801" font-size="19" class="" text-anchor="start">Specialized generation + GPU tools</text>
+  <text x="972" y="829" font-size="19" class="" text-anchor="start">HTTP + shared assigned worktree</text>
+  <text x="972" y="857" font-size="19" class="" text-anchor="start">Invoked by the inference workflow</text>
+  </g>
+  <rect x="1300" y="743" width="78" height="25" rx="14" fill="#f8fafc" stroke="none"/>
+  <text x="1339" y="761" font-size="15" class="muted" text-anchor="middle">Optional</text>
+  <rect x="40" y="926" width="1360" height="150" rx="14" fill="#fcfaf5" stroke="#d6c8a9" stroke-dasharray="6 5"/>
+  <text x="64" y="954" font-size="16" class="section" text-anchor="start">OPTIONAL INFERENCE ACCEPTANCE · UC OWNS THE VERDICT</text>
+  <text x="64" y="993" font-size="24" class="heading" text-anchor="start">Baseline</text>
+  <text x="64" y="1022" font-size="18" class="muted" text-anchor="start">Fixed UC workload</text>
+  <text x="404" y="993" font-size="24" class="heading" text-anchor="start">Candidate</text>
+  <text x="404" y="1022" font-size="18" class="muted" text-anchor="start">External MetaInfer</text>
+  <text x="744" y="993" font-size="24" class="heading" text-anchor="start">Benchmark + Oracle</text>
+  <text x="744" y="1022" font-size="18" class="muted" text-anchor="start">Compile · benchmark · profile</text>
+  <text x="1112" y="993" font-size="24" class="heading" text-anchor="start">Accept / rollback</text>
+  <text x="1112" y="1022" font-size="18" class="muted" text-anchor="start">UC verdict + saved artifacts</text>
+  <path d="M310 987 H382" class="connector" marker-end="url(#arrow)"/>
+  <path d="M650 987 H722" class="connector" marker-end="url(#arrow)"/>
+  <path d="M1018 987 H1090" class="connector" marker-end="url(#arrow)"/>
+  <text x="64" y="1055" font-size="18" class="muted" text-anchor="start">Accepted evidence → project Memory · adaptation graph records experiment provenance</text>
+  <text x="40" y="1114" font-size="18" class="muted" text-anchor="start">Default: TaskStore + durable events · Graph attempts: UC_DATABASE_URL + UC_GRAPH_SHADOW=on.</text>
+</svg>

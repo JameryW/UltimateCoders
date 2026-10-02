@@ -41,6 +41,8 @@ class BenchmarkResult:
     numerical_error: float | None = None
     evidence: list[str] = field(default_factory=list)
     profile: str | None = None
+    statistics: dict[str, Any] = field(default_factory=dict)
+    environment_id: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.workload_id, str) or not self.workload_id.strip():
@@ -70,6 +72,8 @@ class BenchmarkResult:
             numerical_error=data.get("numerical_error"),
             evidence=data.get("evidence", []),
             profile=data.get("profile"),
+            statistics=data.get("statistics", {}),
+            environment_id=data.get("environment_id", ""),
         )
 
     def to_dict(self) -> dict[str, Any]:

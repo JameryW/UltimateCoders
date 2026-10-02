@@ -832,3 +832,7 @@ for step_idx, gs in group_steps:
             success=False,
         )
 ```
+
+## Inference operation readiness
+
+`inference_benchmark` is always available locally. Remote inference nodes require `inference_infra` plus model_porting/kernel_optimization/runtime_optimization/trace_analysis. Probe live plugin schemas asynchronously at startup and heartbeat; unregister unsupported operations through re-registration. A configured URL is insufficient evidence. Probes and execution use the same `UC_METAINFER_TASK_TYPES`/explicit upstream override. Log probe/configuration failures without secrets. A mutating inference step cannot bypass exclusive worktree allocation or parallel-writer refusal through generic tool-disallow flags.

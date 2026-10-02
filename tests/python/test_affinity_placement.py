@@ -272,6 +272,7 @@ def _heartbeat_worker(mode: str = "worker") -> _NatsWorker:
     nw = _make_worker(mode)
     nw._running = True
     worker = MagicMock()
+    worker.refresh_inference_capabilities = AsyncMock(return_value=False)
     worker.send_heartbeat = AsyncMock(return_value={})
     worker.worker_id = "w-hb"
     worker.get_info = MagicMock(

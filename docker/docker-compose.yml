@@ -170,7 +170,7 @@ services:
       UC_EVENT_BACKEND: "nats"
       UC_TASK_BACKEND: "postgres"
       UC_SCHEDULE_BACKEND: "postgres"
-      UC_DATABASE_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
+      UC_DATABASE_URL: "${UC_DATABASE_URL:-postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders}"
       # Optional Voyage AI key enables real semantic embeddings (without it
       # the BLAKE3 fallback only matches exact text). Set in docker/.env.
       UC_VOYAGE_API_KEY: "${UC_VOYAGE_API_KEY:-}"
@@ -229,6 +229,9 @@ services:
       nats:
         condition: service_healthy
     environment:
+      UC_INFERENCE_ARTIFACT_DIR: /artifacts/inference
+      UC_DATABASE_URL: "${UC_DATABASE_URL:-postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders}"
+      UC_RUNTIME_STATE_DIR: /artifacts/runtime
       UC_TIKV_PD_ENDPOINTS: "pd:2379"
       UC_QDRANT_URL: "http://qdrant:6334"
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
@@ -243,6 +246,7 @@ services:
       # volume above mounts the repo at this path.
       UC_REPOS: "UltimateCoders=/workspace/UltimateCoders"
     volumes:
+      - worker_inference_artifacts:/artifacts/inference:ro
       - ..:/workspace/UltimateCoders:rw
     # The host workspace is already writable by the image's unprivileged
     # runtime user. Starting as it bypasses the worker entrypoint's ownership
@@ -301,6 +305,8 @@ services:
         condition: service_healthy
         required: false
     environment:
+      UC_DATABASE_URL: "${UC_DATABASE_URL:-postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders}"
+      UC_RUNTIME_STATE_DIR: /artifacts/runtime
       # Remote workers start without a local Gateway; the process retries
       # NATS and Gateway connections after startup or later disruptions.
       UC_NATS_URL: "${UC_NATS_URL:-nats://nats:4222}"
@@ -346,6 +352,8 @@ services:
       UC_AGENT_PLUGINS: "${UC_AGENT_PLUGINS:-}"
       # Optional external inference execution service; paths must be shared.
       UC_METAINFER_URL: "${UC_METAINFER_URL:-}"
+      UC_METAINFER_TASK_TYPES: "${UC_METAINFER_TASK_TYPES:-}"
+      UC_METAINFER_MAX_CONCURRENCY: "${UC_METAINFER_MAX_CONCURRENCY:-1}"
       UC_INFERENCE_TASK_JSON: "${UC_INFERENCE_TASK_JSON:-}"
       UC_INFERENCE_ARTIFACT_DIR: /artifacts/inference
       # ── External git sync (Phase 1) ───────────────────────────────
@@ -390,6 +398,8 @@ services:
       gateway:
         condition: service_healthy
     environment:
+      UC_DATABASE_URL: "${UC_DATABASE_URL:-postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders}"
+      UC_RUNTIME_STATE_DIR: /artifacts/runtime
       # The gateway consumes task snapshots and dispatches ready subtasks.
       # Prevent this Python coordinator from scheduling the same node locally.
       UC_GATEWAY_OWNS_DISPATCH: "true"
@@ -425,6 +435,8 @@ services:
       OPENAI_DEFAULT_MODEL: "${OPENAI_DEFAULT_MODEL:-}"
       UC_AGENT_PLUGINS: "${UC_AGENT_PLUGINS:-}"
       UC_METAINFER_URL: "${UC_METAINFER_URL:-}"
+      UC_METAINFER_TASK_TYPES: "${UC_METAINFER_TASK_TYPES:-}"
+      UC_METAINFER_MAX_CONCURRENCY: "${UC_METAINFER_MAX_CONCURRENCY:-1}"
       UC_INFERENCE_TASK_JSON: "${UC_INFERENCE_TASK_JSON:-}"
       UC_INFERENCE_ARTIFACT_DIR: /artifacts/inference
       # ── External git sync (Phase 1) ───────────────────────────────

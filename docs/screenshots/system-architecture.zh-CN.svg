@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1140" viewBox="0 0 1440 1140" preserveAspectRatio="xMidYMid meet" xml:lang="zh-CN" role="img" aria-labelledby="title desc">
+  <title id="title">UltimateCoders · 系统架构</title>
+  <desc id="desc">UltimateCoders 服务架构：Dashboard 和可选 OMP 连接 Rust Gateway；Dashboard API、Python 规划器通过 NATS 交换消息。Gateway 经 JetStream 派发就绪节点，Worker 经 gRPC 注册。共享服务提供检索、记忆、持久化和模型 API。可选 MetaInfer 生成推理候选，UC 负责基准测试、验收和回滚。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M1 1 L9 5 L1 9 Z" fill="#60758c"/>
+    </marker>
+    <style>
+      text { font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif; fill: #334155; }
+      .heading { font-weight: 600; fill: #0f172a; }
+      .section { font-weight: 600; letter-spacing: 1.5px; }
+      .muted { fill: #64748b; }
+      .connector { fill: none; stroke: #60758c; stroke-width: 2; stroke-linejoin: round; }
+    </style>
+  </defs>
+  <rect width="1440" height="1140" fill="#ffffff"/>
+  <text x="40" y="48" font-size="16" class="section muted" text-anchor="start">ULTIMATECODERS</text>
+  <text x="40" y="98" font-size="38" class="heading" text-anchor="start">系统架构</text>
+  <text x="40" y="136" font-size="21" class="muted" text-anchor="start">Python 规划 · Rust 调度 · Worker 执行</text>
+  <path d="M1080 82 H1112" class="connector" marker-end="url(#arrow)"/>
+  <text x="1126" y="88" font-size="18" class="muted" text-anchor="start">运行时消息</text>
+  <rect x="1080" y="109" width="32" height="22" rx="14" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="6 5"/>
+  <text x="1126" y="127" font-size="18" class="muted" text-anchor="start">可选</text>
+  <rect x="40" y="202" width="264" height="408" rx="14" fill="#f1f5fb" stroke="#dbe5f1"/>
+  <rect x="370" y="202" width="682" height="408" rx="14" fill="#f0f8f6" stroke="#d8e9e4"/>
+  <rect x="1116" y="202" width="284" height="408" rx="14" fill="#f6f3fb" stroke="#e3dcf0"/>
+  <text x="60" y="234" font-size="16" class="section" text-anchor="start">交互入口</text>
+  <text x="396" y="234" font-size="16" class="section" text-anchor="start">规划与控制</text>
+  <text x="1136" y="234" font-size="15" class="section" text-anchor="start">分布式执行</text>
+  <path d="M640 262 V174 H1090 V284 H1136" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <rect x="766" y="152" width="249" height="29" rx="14" fill="#ffffff" stroke="none"/>
+  <text x="890" y="173" font-size="17" class="muted" text-anchor="middle">gRPC：注册 / 心跳</text>
+  <g data-card="dashboard">
+  <rect x="60" y="248" width="224" height="122" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="80" y="285" font-size="23" class="heading" text-anchor="start">Web Dashboard</text>
+  <text x="80" y="321" font-size="19" class="" text-anchor="start">React · gRPC-Web</text>
+  <text x="80" y="349" font-size="19" class="" text-anchor="start">经 API 使用 HTTP / SSE</text>
+  </g>
+  <g data-card="api">
+  <rect x="60" y="492" width="224" height="94" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="80" y="529" font-size="23" class="heading" text-anchor="start">Dashboard API</text>
+  <text x="80" y="565" font-size="19" class="" text-anchor="start">FastAPI · REST / SSE</text>
+  </g>
+  <rect x="60" y="400" width="224" height="74" rx="14" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="6 5"/>
+  <text x="80" y="430" font-size="21" class="heading" text-anchor="start">OMP 终端</text>
+  <text x="80" y="458" font-size="18" class="muted" text-anchor="start">可选 · gRPC</text>
+  <g data-card="gateway">
+  <rect x="396" y="262" width="292" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="416" y="299" font-size="25" class="heading" text-anchor="start">Rust Gateway</text>
+  <text x="416" y="335" font-size="19" class="" text-anchor="start">任务状态与就绪节点派发</text>
+  <text x="416" y="363" font-size="19" class="" text-anchor="start">Worker 注册与任务控制</text>
+  <text x="416" y="391" font-size="19" class="" text-anchor="start">WatchTask 与恢复</text>
+  </g>
+  <g data-card="planner">
+  <rect x="734" y="262" width="292" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="754" y="299" font-size="25" class="heading" text-anchor="start">Python 规划器</text>
+  <text x="754" y="335" font-size="19" class="" text-anchor="start">DAG 规划与领域路由</text>
+  <text x="754" y="363" font-size="19" class="" text-anchor="start">完整执行配置快照</text>
+  <text x="754" y="391" font-size="19" class="" text-anchor="start">规划模型选择</text>
+  </g>
+  <g data-card="nats">
+  <rect x="396" y="492" width="630" height="94" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="416" y="529" font-size="25" class="heading" text-anchor="start">NATS</text>
+  <text x="416" y="565" font-size="19" class="" text-anchor="start">Core：提交 / 事件 · JetStream：执行 / 历史</text>
+  </g>
+  <g data-card="workers">
+  <rect x="1136" y="262" width="244" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="1156" y="299" font-size="23" class="heading" text-anchor="start">Python Worker</text>
+  <text x="1156" y="335" font-size="19" class="" text-anchor="start">隔离 Git worktree</text>
+  <text x="1156" y="363" font-size="19" class="" text-anchor="start">编程适配器</text>
+  <text x="1156" y="391" font-size="19" class="" text-anchor="start">InferenceInfraAgent</text>
+  </g>
+  <g data-card="consumers">
+  <rect x="1136" y="492" width="244" height="94" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="1156" y="529" font-size="22" class="heading" text-anchor="start">NATS 消费者</text>
+  <text x="1156" y="565" font-size="19" class="" text-anchor="start">执行与结果上报</text>
+  </g>
+  <path d="M284 308 H396" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="340" y="295" font-size="16" class="muted" text-anchor="middle">gRPC-Web</text>
+  <path d="M284 539 H396" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="340" y="526" font-size="16" class="muted" text-anchor="middle">NATS</text>
+  <path d="M284 437 H354 V385 H396" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <path d="M542 422 V492" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="554" y="461" font-size="16" class="muted" text-anchor="start">派发 / 结果</text>
+  <path d="M880 422 V492" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="892" y="461" font-size="16" class="muted" text-anchor="start">提交 / DAG</text>
+  <path d="M1026 527 H1136" class="connector" marker-end="url(#arrow)"/>
+  <text x="1081" y="514" font-size="16" class="muted" text-anchor="middle">JetStream</text>
+  <path d="M1136 562 H1026" class="connector" marker-end="url(#arrow)"/>
+  <text x="1081" y="587" font-size="16" class="muted" text-anchor="middle">Core 结果</text>
+  <path d="M1258 422 V492" class="connector" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="1270" y="461" font-size="16" class="muted" text-anchor="start">执行</text>
+  <rect x="40" y="630" width="1360" height="42" rx="14" fill="#f8fafc" stroke="none"/>
+  <text x="60" y="657" font-size="18" class="muted" text-anchor="start">实时更新：WatchTask / SSE → Dashboard · 恢复：有序 EventStore + checkpoint / replay</text>
+  <text x="40" y="709" font-size="16" class="section muted" text-anchor="start">共享服务</text>
+  <g data-card="knowledge">
+  <rect x="40" y="728" width="436" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="60" y="765" font-size="25" class="heading" text-anchor="start">知识与持久化</text>
+  <text x="60" y="801" font-size="19" class="" text-anchor="start">文本 / 语义 / AST 检索</text>
+  <text x="60" y="829" font-size="19" class="" text-anchor="start">TiKV · Qdrant · PostgreSQL</text>
+  <text x="60" y="857" font-size="19" class="" text-anchor="start">Gateway 检索、记忆与元数据</text>
+  </g>
+  <g data-card="models">
+  <rect x="498" y="728" width="432" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="518" y="765" font-size="25" class="heading" text-anchor="start">模型服务</text>
+  <text x="518" y="801" font-size="19" class="" text-anchor="start">云端 API / 本地 Ollama</text>
+  <text x="518" y="829" font-size="19" class="" text-anchor="start">规划器与兼容的编程适配器</text>
+  <text x="518" y="857" font-size="19" class="" text-anchor="start">规划和编程模型分别配置</text>
+  </g>
+  <g data-card="metainfer">
+  <rect x="952" y="728" width="448" height="160" rx="14" fill="#ffffff" stroke="#cbd5e1" stroke-dasharray="6 5"/>
+  <text x="972" y="765" font-size="25" class="heading" text-anchor="start">外部 MetaInfer</text>
+  <text x="972" y="801" font-size="19" class="" text-anchor="start">专业生成与 GPU 工具</text>
+  <text x="972" y="829" font-size="19" class="" text-anchor="start">HTTP + 共享已分配 worktree</text>
+  <text x="972" y="857" font-size="19" class="" text-anchor="start">由推理工作流调用</text>
+  </g>
+  <rect x="1300" y="743" width="78" height="25" rx="14" fill="#f8fafc" stroke="none"/>
+  <text x="1339" y="761" font-size="15" class="muted" text-anchor="middle">可选</text>
+  <rect x="40" y="926" width="1360" height="150" rx="14" fill="#fcfaf5" stroke="#d6c8a9" stroke-dasharray="6 5"/>
+  <text x="64" y="954" font-size="16" class="section" text-anchor="start">可选推理验收流程 · UC 负责最终验收</text>
+  <text x="64" y="993" font-size="24" class="heading" text-anchor="start">固定基线</text>
+  <text x="64" y="1022" font-size="18" class="muted" text-anchor="start">UC 保护的固定工作负载</text>
+  <text x="404" y="993" font-size="24" class="heading" text-anchor="start">生成候选</text>
+  <text x="404" y="1022" font-size="18" class="muted" text-anchor="start">外部 MetaInfer</text>
+  <text x="744" y="993" font-size="24" class="heading" text-anchor="start">Benchmark + Oracle</text>
+  <text x="744" y="1022" font-size="18" class="muted" text-anchor="start">编译 · 基准测试 · 性能分析</text>
+  <text x="1112" y="993" font-size="24" class="heading" text-anchor="start">接受 / 回滚</text>
+  <text x="1112" y="1022" font-size="18" class="muted" text-anchor="start">UC 验收与持久化产物</text>
+  <path d="M310 987 H382" class="connector" marker-end="url(#arrow)"/>
+  <path d="M650 987 H722" class="connector" marker-end="url(#arrow)"/>
+  <path d="M1018 987 H1090" class="connector" marker-end="url(#arrow)"/>
+  <text x="64" y="1055" font-size="18" class="muted" text-anchor="start">已验收证据 → 项目 Memory · 执行适配图记录实验来源</text>
+  <text x="40" y="1114" font-size="18" class="muted" text-anchor="start">默认：TaskStore + 持久事件 · Graph Attempt：UC_DATABASE_URL + UC_GRAPH_SHADOW=on。</text>
+</svg>

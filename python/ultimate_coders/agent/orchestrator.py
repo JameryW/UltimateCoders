@@ -256,19 +256,30 @@ class Orchestrator:
         # An explicit domain task is one execution unit, even if its prose
         # contains multiple lines. UC's existing planner owns generic work.
         if explicit_route and (agent_config or {}).get("inference_task"):
-            subtasks = [Subtask(
-                id=f"{tid}-s0", parent_id=tid, description=description,
-                user_request=description, project_id=project_id, agent_config=explicit_route,
-                required_capabilities=["inference_infra"],
-            )]
+            subtasks = [
+                Subtask(
+                    id=f"{tid}-s0",
+                    parent_id=tid,
+                    description=description,
+                    user_request=description,
+                    project_id=project_id,
+                    agent_config=explicit_route,
+                    required_capabilities=InferenceInfraAgent.required_capabilities(explicit_route),
+                )
+            ]
         else:
             for subtask in subtasks:
                 routed = InferenceInfraAgent.route(subtask.description, subtask.agent_config)
                 if routed:
                     subtask.agent_config = routed
-                    subtask.required_capabilities = list(dict.fromkeys(
-                        [*subtask.required_capabilities, "inference_infra"],
-                    ))
+                    subtask.required_capabilities = list(
+                        dict.fromkeys(
+                            [
+                                *subtask.required_capabilities,
+                                *InferenceInfraAgent.required_capabilities(routed),
+                            ],
+                        )
+                    )
 
         task = Task(
             id=tid,
@@ -300,7 +311,7 @@ class Orchestrator:
         "may read or modify (empty array if unknown)\n"
         '  "expected_output": string — what a successful result looks like\n'
         "\nExample:\n"
-        '[\n'
+        "[\n"
         '  {"description": "Add foo() to bar.py", "depends_on": [], '
         '"file_constraints": ["bar.py"], "expected_output": "foo() defined"},\n'
         '  {"description": "Call foo() from main", "depends_on": [1], '
@@ -740,18 +751,17 @@ class Orchestrator:
         ref) so CPython's event loop cannot garbage-collect it before it
         completes. The coroutine removes itself from the set on exit.
         """
-        branches = [
-            f"uc/subtask/{st.id[:12]}" for st in task.subtasks
-        ]
+        from ultimate_coders.agent.workspace import subtask_branch
+        from ultimate_coders.inference.agent import InferenceInfraAgent
+        branches = [subtask_branch(st.id, inference=InferenceInfraAgent.requires_workspace(
+            st.agent_config, st.steps)) for st in task.subtasks]
         try:
-            arb_task = asyncio.create_task(
-                self._arbitrate_task(task.id, branches)
-            )
+            arb_task = asyncio.create_task(self._arbitrate_task(task.id, branches))
         except RuntimeError:
             # No running event loop — cannot schedule. Log and skip.
             logger.warning(
-                "Cannot schedule merge arbitration for task %s "
-                "(no running event loop)", task.id,
+                "Cannot schedule merge arbitration for task %s (no running event loop)",
+                task.id,
             )
             return
         # Hold a strong reference so the task is not GC'd mid-flight.

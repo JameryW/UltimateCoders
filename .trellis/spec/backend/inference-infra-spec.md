@@ -19,9 +19,9 @@ The sandbox adapter launches `python -m ultimate_coders.inference.runner --reque
 
 ## 3. Contracts
 
-- Environment: optional `UC_METAINFER_URL` enables inference capabilities/routing; `UC_INFERENCE_TASK_JSON` supplies experiment defaults; `UC_INFERENCE_ARTIFACT_DIR` selects durable artifact storage.
+- Environment: `UC_METAINFER_URL` enables routing; live probes determine remote operation readiness. `inference_benchmark` is local. `UC_DATABASE_URL` is shared by Gateway/coordinator/Worker/API; no configured-DB failure fallback. `UC_RUNTIME_STATE_DIR` supplies local-only SQLite. `UC_METAINFER_TASK_TYPES` and `UC_METAINFER_MAX_CONCURRENCY` are shared backend policy.
 - Domain config: `inference_task` contains operation/repository/objective/framework/model/hardware/constraints/parameters and optional `upstream_type`; `benchmark` contains immutable argv/workload/protected paths; `oracle`, `apply_command`, `max_iterations` are optional policy/execution settings.
-- Explicit agent selection overrides heuristics. Explicit domain tasks remain one node requiring `inference_infra` and bypass global re-decomposition. Default generic routing requires both framework/GPU-inference context and engineering intent.
+- Explicit agent selection overrides heuristics. Explicit domain tasks remain one node. Remote nodes require `inference_infra` and the matching operation capability; benchmarks require only `inference_benchmark`. Default routing requires framework/inference context and engineering intent.
 - Actual upstream: discover `/api/sys-shell/task-types/{type}/schema`, POST `/api/sys-shell/tasks` with type/answers/raw_request, poll `/api/sys-shell/{id}`, stop via `/{id}/control` with action kill and force true. Never retry POST without upstream idempotency support.
 - Defaults: port-model, evolve-kernel, gen-infer-framework (runtime **generation**), sglang-trace-analyze. Existing-runtime optimization selects a real service plugin explicitly. Required form fields come from the live schema, never guessed prose.
 - UC's assigned repository path overrides submitted paths. Kernel files stay within it; model-porting target_framework_dir is redirected there. Service and worker must share these absolute paths.
@@ -57,3 +57,13 @@ Exercise Oracle metric direction, missing/nonfinite values, correctness/compile/
 ## 7. Wrong vs Correct
 
 Wrong: accept a backend's success string or apply a returned shell command automatically. Correct: use explicit argv import hooks, fixed immutable benchmarks and the shared Oracle. Wrong: describe gen-infer-framework as existing SGLang runtime optimization. Correct: document its generation semantics and configure a genuine optimization plugin when needed. Forced OS termination cannot guarantee remote HTTP cleanup; preserve that limitation in operational docs.
+
+## 8. Durable inference recovery
+
+- Strict real-worktree allocation applies to mutating tasks and steps, independent of file constraints; never execute a mutating domain parallel group. Preserve noncompleted leases during cleanup, including after manager restart.
+- Runner startup validates the original lease claim and live Worker process birth, then registers its own process birth inside the same lease mutation used for takeover. A delayed child cannot execute after owner death/adoption; an already registered live runner prevents takeover. Transient owner tokens never enter stable experiment identity.
+- Persist intent before POST, then remote ID before polling. UC graph/node/attempt/step and iteration identify stable experiments/operations. Configuration/backend/task digest mismatch, ambiguous submit, or unconfirmed stop is nonretryable and cleanup_pending. Preserve rollback snapshots and code; do not release a live remote writer's lease/budget.
+- Accepted edits are committed by UC before merge. Failed commit/merge/push retains branch/worktree. Persist delivery before cleanup so recovery cannot reexecute after merge. Memory acceptance must be distinguishable from committed/merged delivery.
+- Repeated samples (>=3), warmup, per-metric dispersion and environment identity are required. Timing uses medians; peak memory/error use maxima. A missing numerical-error sample cannot be hidden by other repetitions. Noise/dispersion, workload, immutable harness, correctness and hard limits all gate acceptance.
+- Atomic checkpoints retain the original baseline and transaction. Artifact manifests record identity, policy, code SHA, checksums and size. Authorized API downloads whitelist report/benchmark/graph/patch, never internal rollback snapshots; missing remote files are explicit.
+- Required fault tests: simultaneous duplicate dispatch, crash between remote completion and slot release, crash after merge before final checkpoint, coordinator restart/future/obsolete attempts, uncertain writer, lost publish/replay, authenticated artifact integrity and per-sample hard-limit violations.

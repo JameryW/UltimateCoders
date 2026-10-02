@@ -401,6 +401,7 @@ async def test_heartbeat_loop_refreshes_worker_liveness():
     nw = _make_worker()
     nw._running = True
     worker = MagicMock()
+    worker.refresh_inference_capabilities = AsyncMock(return_value=False)
     worker.send_heartbeat = AsyncMock(return_value={})
     nw._worker = worker
     nw._publisher = None  # skip the NATS block
@@ -450,6 +451,7 @@ def _make_heartbeat_worker(hb_ok: bool) -> _NatsWorker:
     nw = _make_worker()
     nw._running = True
     worker = MagicMock()
+    worker.refresh_inference_capabilities = AsyncMock(return_value=False)
     worker.send_heartbeat = AsyncMock(return_value={})
     worker.worker_id = "w-1"
     worker.get_info.return_value = MagicMock(current_load=0)
@@ -510,7 +512,7 @@ async def test_handle_subtask_execute_js_dispatches_to_background():
     async def slow_execute(subtask, gateway_context_block=None):
         started.set()
         await release.wait()
-        result = MagicMock()
+        result = SubtaskResult()
         result.success = True
         result.summary = "done"
         result.modified_files = []
@@ -524,6 +526,11 @@ async def test_handle_subtask_execute_js_dispatches_to_background():
     nw._publisher = MagicMock()
     nw._publisher.publish_event = AsyncMock()
     nw._publisher.publish_update = AsyncMock()
+    async def send_terminal(event, update):
+        await nw._publisher.publish_event(event["type"], task_id=event["task_id"],
+                                         subtask_id=event["subtask_id"], data=event["data"])
+        return True
+    nw._publisher.publish_terminal = AsyncMock(side_effect=send_terminal)
 
     msg = MagicMock()
     msg.data = json.dumps(
@@ -1298,6 +1305,7 @@ async def test_heartbeat_w_info_and_grpc_hb_carry_contract_version():
     nw = _make_worker()
     nw._running = True
     worker = MagicMock()
+    worker.refresh_inference_capabilities = AsyncMock(return_value=False)
     worker.send_heartbeat = AsyncMock(return_value={})
     worker.worker_id = "w-hb"
     worker.get_info = MagicMock(

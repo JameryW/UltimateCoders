@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -12,9 +13,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
+from ultimate_coders.runtime_state import atomic_json, atomic_write
+
 from .benchmark import BenchmarkRunner
 from .graph import ExecutionAdaptationGraph
-from .models import MetaInferResult, MetaInferTask
+from .models import BenchmarkResult, MetaInferResult, MetaInferTask
 from .oracle import Oracle
 
 Candidate = Callable[[MetaInferTask], Awaitable[MetaInferResult]]
@@ -51,6 +54,36 @@ class WorkspaceTransaction:
             if size > 100 * 1024 * 1024:
                 raise ValueError("Rollback snapshot exceeds 100 MiB; use a smaller code workspace")
             self.files[name] = (content, mode)
+
+    def to_dict(self) -> dict:
+        return {
+            "root": str(self.root),
+            "head": self.head.decode().strip(),
+            "files": {
+                name: {
+                    "content": base64.b64encode(
+                        content.encode() if isinstance(content, str) else content
+                    ).decode(),
+                    "mode": mode,
+                }
+                for name, (content, mode) in self.files.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, root: Path, data: dict):
+        if str(root.resolve()) != data["root"]:
+            raise ValueError("Checkpoint belongs to a different workspace")
+        transaction = cls.__new__(cls)
+        transaction.root, transaction.head = root, (data["head"] + "\n").encode()
+        transaction.files = {}
+        for name, item in data["files"].items():
+            transaction._path(name)
+            content = base64.b64decode(item["content"], validate=True)
+            mode = item["mode"]
+            transaction.files[name] = (content.decode() if stat.S_ISLNK(mode) else content, mode)
+        transaction.verify_head()
+        return transaction
 
     def _names(self) -> set[str]:
         raw = _git(self.root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
@@ -114,51 +147,85 @@ class OptimizationWorkflow:
         artifact_dir: str,
         *,
         max_iterations: int = 1,
+        on_phase=None,
     ) -> dict:
         if type(max_iterations) is not int or not 1 <= max_iterations <= 50:
             raise ValueError("max_iterations must be between 1 and 50")
         root = Path(task.repository).resolve()
         git_root = Path(os.fsdecode(_git(root, "rev-parse", "--show-toplevel")).strip()).resolve()
-        if root != git_root or _git(root, "status", "--porcelain"):
-            raise ValueError("Optimization requires an exclusively owned clean git worktree")
         artifacts = Path(artifact_dir).resolve()
         if artifacts == root or root in artifacts.parents:
             raise ValueError("Experiment artifacts must be outside the candidate workspace")
         artifacts.mkdir(parents=True, exist_ok=True)
-        benchmark.protect(str(root))
-        initial = await benchmark.measure(str(root), baseline=True)
+        checkpoint_path = artifacts / "checkpoint.json"
+
+        async def phase(name, **data):
+            if on_phase:
+                await on_phase(name, **data)
+
+        checkpoint = (
+            json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            if checkpoint_path.exists()
+            else None
+        )
+        if root != git_root or (not checkpoint and _git(root, "status", "--porcelain")):
+            raise ValueError("Optimization requires an exclusively owned clean git worktree")
+        if checkpoint:
+            if checkpoint["workspace"] != str(root):
+                raise ValueError("Experiment workspace identity changed")
+            benchmark.restore_checkpoint(str(root), checkpoint["harness"])
+            initial = BenchmarkResult.from_dict(checkpoint["baseline"])
+        else:
+            benchmark.protect(str(root))
+            await phase("baseline")
+            initial = await benchmark.measure(str(root), baseline=True)
         invalid = self.oracle.validate(initial)
         if invalid:
             raise ValueError("Invalid baseline: " + "; ".join(invalid))
-        best, accepted = initial, False
-        history = []
-        graph = ExecutionAdaptationGraph.for_task(task)
+        best = BenchmarkResult.from_dict(checkpoint["best"]) if checkpoint else initial
+        accepted = checkpoint["accepted"] if checkpoint else False
+        history = checkpoint["iterations"] if checkpoint else []
+        graph = (
+            ExecutionAdaptationGraph.from_dict(checkpoint["graph"])
+            if checkpoint
+            else ExecutionAdaptationGraph.for_task(task)
+        )
         last_backend: MetaInferResult | None = None
+        transaction = None
 
         def save() -> None:
-            (artifacts / "graph.json").write_text(
-                json.dumps(graph.to_dict(), indent=2, ensure_ascii=False),
-                encoding="utf-8",
+            atomic_json(
+                checkpoint_path,
+                {
+                    "workspace": str(root),
+                    "baseline": initial.to_dict(),
+                    "best": best.to_dict(),
+                    "accepted": accepted,
+                    "iterations": history,
+                    "graph": graph.to_dict(),
+                    "transaction": transaction.to_dict() if transaction else None,
+                    "harness": benchmark.checkpoint(),
+                },
             )
-            (artifacts / "benchmarks.json").write_text(
-                json.dumps(
-                    {
-                        "baseline": initial.to_dict(),
-                        "optimized": best.to_dict(),
-                        "iterations": history,
-                    },
-                    indent=2,
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
+            atomic_json(artifacts / "graph.json", graph.to_dict())
+            atomic_json(
+                artifacts / "benchmarks.json",
+                {"baseline": initial.to_dict(), "optimized": best.to_dict(), "iterations": history},
             )
 
-        for index in range(1, max_iterations + 1):
-            transaction = WorkspaceTransaction(root)
+        for index in range(len(history) + 1, max_iterations + 1):
+            transaction = (
+                WorkspaceTransaction.from_dict(root, checkpoint["transaction"])
+                if checkpoint and checkpoint.get("transaction")
+                else WorkspaceTransaction(root)
+            )
+            checkpoint = None
+            save()
             request = replace(
                 task,
                 constraints={
                     **task.constraints,
+                    "uc_iteration": index,
                     "oracle_feedback": {
                         "best": best.to_dict(),
                         "previous_verdict": history[-1].get("verdict") if history else None,
@@ -168,14 +235,18 @@ class OptimizationWorkflow:
                 },
             )
             keep = False
+            cleanup_pending = False
             try:
+                await phase("candidate", iteration=index)
                 last_backend = await candidate(request)
                 if last_backend.status != "completed":
                     raise RuntimeError("Candidate backend did not complete")
                 transaction.verify_head()
                 benchmark.verify_harness()
+                await phase("validation", iteration=index)
                 measured = await benchmark.measure(str(root))
                 verdict = self.oracle.evaluate(best, measured)
+                await phase("accepted" if verdict.accepted else "rejected", iteration=index)
                 record = {
                     "index": index,
                     "backend": last_backend.to_dict(),
@@ -197,11 +268,16 @@ class OptimizationWorkflow:
                     _git(root, "restore", "--staged", "--source=HEAD", "--", ".")
                     best, accepted = measured, True
             except BaseException as exc:
-                history.append({"index": index, "error": type(exc).__name__, "accepted": False})
+                cleanup_pending = getattr(exc, "cleanup_pending", False)
                 raise
             finally:
-                if not keep:
+                if not keep and not cleanup_pending:
+                    await phase("rollback", iteration=index)
                     transaction.restore()
+                elif cleanup_pending:
+                    await phase("cleanup_pending", cleanup_pending=True)
+                if keep or (history and history[-1].get("index") == index):
+                    transaction = None
                 save()
         patch = os.fsdecode(_git(root, "diff", "--binary", "HEAD"))
         # git diff omits untracked files. Model porting commonly creates them.
@@ -218,7 +294,7 @@ class OptimizationWorkflow:
             if diff.returncode not in (0, 1):
                 raise RuntimeError("Could not capture newly created candidate file")
             patch += os.fsdecode(diff.stdout)
-        (artifacts / "accepted.patch").write_text(patch, encoding="utf-8")
+        atomic_write(artifacts / "accepted.patch", patch.encode("utf-8"))
         changes = []
         names = _git(root, "diff", "--name-status", "--no-renames", "-z", "HEAD").split(b"\0")
         for i in range(0, len(names) - 1, 2):

@@ -524,7 +524,8 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     # 814 depending on whether the preceding task is tracked, giving 830 or 832
     # with this task committed. Pin only those reachable states.
     # Local deployment adds seven spec references in each of two task carriers.
-    assert len(refs) in (812, 814, 830, 832, 846), f"reference count drifted: {len(refs)}"
+    # Runtime repair adds four implementation and three check spec references.
+    assert len(refs) in (812, 814, 830, 832, 846, 853), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 

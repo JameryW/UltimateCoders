@@ -5,6 +5,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import platform
+import statistics
+import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -76,6 +80,9 @@ class BenchmarkSpec:
     profile_command: list[str] | None = None
     protected_paths: list[str] = field(default_factory=list)
     baseline_command: list[str] | None = None
+    warmup_runs: int = 1
+    repetitions: int = 3
+    environment: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.workload_id, str) or not self.workload_id:
@@ -94,6 +101,12 @@ class BenchmarkSpec:
                 raise ValueError("Benchmark commands must be nonempty argv lists")
         if nonnegative_number(self.timeout_seconds, "timeout_seconds") == 0:
             raise ValueError("timeout_seconds must be positive")
+        for name, value, lower in (
+            ("warmup_runs", self.warmup_runs, 0),
+            ("repetitions", self.repetitions, 3),
+        ):
+            if type(value) is not int or not lower <= value <= 100:
+                raise ValueError(f"{name} must be an integer between {lower} and 100")
 
 
 class BenchmarkRunner:
@@ -114,6 +127,17 @@ class BenchmarkRunner:
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
                 raise RuntimeError(f"Benchmark harness changed: {path.name}")
 
+    def checkpoint(self) -> dict[str, str]:
+        return {str(path): digest for path, digest in (self._fingerprints or {}).items()}
+
+    def restore_checkpoint(self, root: str, data: dict[str, str]) -> None:
+        expected = {str((Path(root) / path).resolve()) for path in self.spec.protected_paths}
+        actual = {str(Path(path).resolve()) for path in data}
+        if actual != expected:
+            raise ValueError("Checkpoint harness identity differs from configured protected paths")
+        self._fingerprints = {Path(path): digest for path, digest in data.items()}
+        self.verify_harness()
+
     async def measure(self, root: str, *, baseline: bool = False) -> BenchmarkResult:
         self.verify_harness()
         if self.spec.compile_command:
@@ -123,13 +147,60 @@ class BenchmarkRunner:
             if baseline and self.spec.baseline_command
             else self.spec.command
         )
-        stdout = await run_command(command, root, self.spec.timeout_seconds)
-        try:
-            result = BenchmarkResult.from_dict(json.loads(stdout.strip().splitlines()[-1]))
-        except (ValueError, TypeError, KeyError, IndexError) as exc:
-            raise ValueError("Benchmark must emit a final JSON BenchmarkResult") from exc
-        if result.workload_id != self.spec.workload_id:
-            raise ValueError("Benchmark workload_id differs from the configured workload")
+        samples = []
+        for index in range(self.spec.warmup_runs + self.spec.repetitions):
+            stdout = await run_command(command, root, self.spec.timeout_seconds)
+            try:
+                result = BenchmarkResult.from_dict(json.loads(stdout.strip().splitlines()[-1]))
+            except (ValueError, TypeError, KeyError, IndexError) as exc:
+                raise ValueError("Benchmark must emit a final JSON BenchmarkResult") from exc
+            if result.workload_id != self.spec.workload_id:
+                raise ValueError("Benchmark workload_id differs from the configured workload")
+            self.verify_harness()
+            if not result.compile_success or not result.correctness:
+                return result
+            if index >= self.spec.warmup_runs:
+                samples.append(result)
+        if any(sample.metrics.keys() != samples[0].metrics.keys() for sample in samples):
+            raise ValueError("Benchmark samples report different metrics")
+        values = {key: [sample.metrics[key] for sample in samples] for key in samples[0].metrics}
+        medians = {key: statistics.median(series) for key, series in values.items()}
+        if "peak_memory_gb" in values:
+            medians["peak_memory_gb"] = max(values["peak_memory_gb"])
+        dispersion = {
+            key: (
+                100 * statistics.stdev(series) / statistics.mean(series)
+                if statistics.mean(series)
+                else 0
+            )
+            for key, series in values.items()
+        }
+        identity = {
+            "declared": self.spec.environment,
+            "platform": platform.platform(),
+            "python": sys.version,
+            "executable": sys.executable,
+            "devices": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+            "harness": sorted((path.name, digest) for path, digest in self._fingerprints.items()),
+        }
+        result = replace(
+            samples[0],
+            metrics=medians,
+            numerical_error=(
+                max(sample.numerical_error for sample in samples)
+                if all(sample.numerical_error is not None for sample in samples)
+                else None
+            ),
+            statistics={
+                "count": len(samples),
+                "warmup_runs": self.spec.warmup_runs,
+                "samples": values,
+                "dispersion_pct": dispersion,
+            },
+            environment_id=hashlib.sha256(
+                json.dumps(identity, sort_keys=True).encode()
+            ).hexdigest(),
+        )
         self.verify_harness()
         if self.spec.profile_command:
             profile = await run_command(self.spec.profile_command, root, self.spec.timeout_seconds)

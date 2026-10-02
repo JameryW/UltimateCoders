@@ -51,6 +51,8 @@ def _make_handle_submit_worker() -> MagicMock:
     """NatsWorker-like mock with just enough for _handle_submit (mirrors
     the pattern in test_night_window_exclusive.py)."""
     worker = MagicMock()
+    from ultimate_coders.runtime_state import RuntimeState
+    worker._state_store = AsyncMock(return_value=RuntimeState(database_url=""))
     worker._orchestrator = _make_orchestrator()
     worker._cancelled_task_ids = set()
 

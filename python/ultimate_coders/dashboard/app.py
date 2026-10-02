@@ -217,6 +217,73 @@ class DashboardApp:
 
         # API endpoints
 
+        async def experiment_state():
+            from ultimate_coders.runtime_state import RuntimeState
+
+            return await asyncio.to_thread(RuntimeState)
+
+        @app.get("/dashboard/api/experiments")
+        async def experiments_api(request: Request):
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            try:
+                state = await experiment_state()
+                records = await asyncio.to_thread(state.records, "experiments")
+            except Exception:
+                return JSONResponse({"error": "Experiment state unavailable"}, status_code=503)
+            task_id = request.query_params.get("task_id")
+            return JSONResponse(
+                {
+                    "experiments": [
+                        {
+                            key: value
+                            for key, value in record.items()
+                            if key
+                            in ("key", "identity", "state", "artifacts", "code_sha", "delivery")
+                        }
+                        for record in records
+                        if not task_id or record.get("identity", {}).get("graph_id") == task_id
+                    ]
+                }
+            )
+
+        @app.get("/dashboard/api/experiments/{experiment_id}/artifacts/{name}")
+        async def experiment_artifact_api(experiment_id: str, name: str, request: Request):
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            allowed = {"report.json", "benchmarks.json", "graph.json", "accepted.patch"}
+            if name not in allowed:
+                return JSONResponse({"error": "Unknown artifact"}, status_code=404)
+            try:
+                state = await experiment_state()
+                record = await asyncio.to_thread(state.get, "experiments", experiment_id)
+            except Exception:
+                return JSONResponse({"error": "Experiment state unavailable"}, status_code=503)
+            metadata = (record or {}).get("artifacts", {}).get(name)
+            if not metadata:
+                return JSONResponse({"error": "Unknown artifact"}, status_code=404)
+            from ultimate_coders.inference.artifacts import artifact_root
+            root = artifact_root()
+            path = (pathlib.Path(record["artifact_dir"]) / name).resolve()
+            try:
+                path.relative_to(root)
+                if path.stat().st_size > 16 * 1024 * 1024:
+                    return JSONResponse(
+                        {"error": "Artifact exceeds download limit"}, status_code=413
+                    )
+                import hashlib
+
+                data = await asyncio.to_thread(path.read_bytes)
+                if hashlib.sha256(data).hexdigest() != metadata["sha256"]:
+                    return JSONResponse({"error": "Artifact integrity mismatch"}, status_code=409)
+            except (ValueError, OSError):
+                return JSONResponse({"error": "Artifact unavailable on this host"}, status_code=404)
+            return Response(
+                data,
+                media_type="application/json" if name.endswith(".json") else "text/plain",
+                headers={"ETag": metadata["sha256"]},
+            )
+
         @app.get("/dashboard/api/health")
         async def health_api(request: Request):
             """Return engine health JSON."""
@@ -289,10 +356,7 @@ class DashboardApp:
                 # inside the running loop (Py3.9 binds Queues at construction);
                 # unregistered in finally even when sse-starlette cancels the
                 # generator on client disconnect — no subscriber leaks.
-                sse_queue = (
-                    self._subscribe_sse()
-                    if self._nats_client is not None else None
-                )
+                sse_queue = self._subscribe_sse() if self._nats_client is not None else None
                 try:
                     while True:
                         if await request.is_disconnected():
@@ -319,13 +383,13 @@ class DashboardApp:
                                     2.0,
                                     max(
                                         0.0,
-                                        snapshot_interval
-                                        - (loop.time() - last_snapshot),
+                                        snapshot_interval - (loop.time() - last_snapshot),
                                     ),
                                 )
                                 if snapshot_wait > 0:
                                     nats_event = await asyncio.wait_for(
-                                        sse_queue.get(), timeout=snapshot_wait,
+                                        sse_queue.get(),
+                                        timeout=snapshot_wait,
                                     )
                                 else:
                                     nats_event = sse_queue.get_nowait()
@@ -408,12 +472,14 @@ class DashboardApp:
 
             if not isinstance(body, dict):
                 return JSONResponse(
-                    {"success": False, "error": "body must be an object"}, status_code=400,
+                    {"success": False, "error": "body must be an object"},
+                    status_code=400,
                 )
             description = body.get("description", "")
             if not isinstance(description, str):
                 return JSONResponse(
-                    {"success": False, "error": "description must be a string"}, status_code=400,
+                    {"success": False, "error": "description must be a string"},
+                    status_code=400,
                 )
             description = description.strip()
             if not description:
@@ -425,12 +491,14 @@ class DashboardApp:
             project_id = body.get("project_id", "")
             if not isinstance(project_id, str):
                 return JSONResponse(
-                    {"success": False, "error": "project_id must be a string"}, status_code=400,
+                    {"success": False, "error": "project_id must be a string"},
+                    status_code=400,
                 )
             agent_config = body.get("agent_config")
             if agent_config is not None and not isinstance(agent_config, dict):
                 return JSONResponse(
-                    {"success": False, "error": "agent_config must be an object"}, status_code=400,
+                    {"success": False, "error": "agent_config must be an object"},
+                    status_code=400,
                 )
 
             # ── NATS path ───────────────────────────────────────────
@@ -455,31 +523,35 @@ class DashboardApp:
                                 break
                             await asyncio.sleep(0.1)
                     if task is not None:
-                        return JSONResponse({
-                            "success": True,
-                            "task_id": task.id,
-                            "status": _status_str(task),
-                            "subtask_count": len(task.subtasks),
-                            "subtasks": [
-                                {
-                                    "id": st.id,
-                                    "description": st.description,
-                                    "status": _status_str(st),
-                                    "depends_on": st.depends_on,
-                                }
-                                for st in task.subtasks
-                            ],
-                        })
+                        return JSONResponse(
+                            {
+                                "success": True,
+                                "task_id": task.id,
+                                "status": _status_str(task),
+                                "subtask_count": len(task.subtasks),
+                                "subtasks": [
+                                    {
+                                        "id": st.id,
+                                        "description": st.description,
+                                        "status": _status_str(st),
+                                        "depends_on": st.depends_on,
+                                    }
+                                    for st in task.subtasks
+                                ],
+                            }
+                        )
                     # Task not yet in Orchestrator state — return with pending flag.
                     # Status "submitted" matches the SSE task_submitted event type.
-                    return JSONResponse({
-                        "success": True,
-                        "task_id": task_id,
-                        "status": "submitted",
-                        "subtask_count": 0,
-                        "subtasks": [],
-                        "pending": True,
-                    })
+                    return JSONResponse(
+                        {
+                            "success": True,
+                            "task_id": task_id,
+                            "status": "submitted",
+                            "subtask_count": 0,
+                            "subtasks": [],
+                            "pending": True,
+                        }
+                    )
                 except Exception as e:
                     logger.warning("NATS publish failed: %s, falling back", e)
 
@@ -493,7 +565,8 @@ class DashboardApp:
 
             try:
                 task = await orch.submit_task(
-                    description, project_id=project_id,
+                    description,
+                    project_id=project_id,
                     **({"agent_config": agent_config} if agent_config is not None else {}),
                 )
             except Exception as e:
@@ -737,11 +810,7 @@ class DashboardApp:
                     + all_events
                 )
             if task_id:
-                all_events = [
-                    e
-                    for e in all_events
-                    if e.get("task_id") == task_id
-                ]
+                all_events = [e for e in all_events if e.get("task_id") == task_id]
             # Apply pagination
             limit = min(limit, 500)
             offset = max(offset, 0)
@@ -770,10 +839,12 @@ class DashboardApp:
             """Return alert history from SQLite store."""
             if (resp := self._check_auth(request)) is not None:
                 return resp
-            return JSONResponse({
-                "alerts": self._metrics.alert_store.get_recent(limit=limit),
-                "active": self._metrics.alert_store.get_active(),
-            })
+            return JSONResponse(
+                {
+                    "alerts": self._metrics.alert_store.get_recent(limit=limit),
+                    "active": self._metrics.alert_store.get_active(),
+                }
+            )
 
         @app.get("/metrics")
         async def prometheus_metrics(request: Request):
@@ -795,19 +866,21 @@ class DashboardApp:
                 return resp
             minutes = max(1, min(minutes, 1440))  # clamp 1-1440min (24h)
             samples = self._metrics.get_trend(minutes)
-            return JSONResponse({
-                "trend": [
-                    {
-                        "timestamp": s.timestamp,
-                        "events_per_minute": s.events_per_minute,
-                        "avg_duration_ms": s.avg_duration_ms,
-                        "error_rate": s.error_rate,
-                        "cluster_utilization": s.cluster_utilization,
-                    }
-                    for s in samples
-                ],
-                "minutes": minutes,
-            })
+            return JSONResponse(
+                {
+                    "trend": [
+                        {
+                            "timestamp": s.timestamp,
+                            "events_per_minute": s.events_per_minute,
+                            "avg_duration_ms": s.avg_duration_ms,
+                            "error_rate": s.error_rate,
+                            "cluster_utilization": s.cluster_utilization,
+                        }
+                        for s in samples
+                    ],
+                    "minutes": minutes,
+                }
+            )
 
         @app.get("/dashboard/api/repos/{repo_id}/tree")
         async def repo_tree_api(repo_id: str, request: Request, path: str = ""):

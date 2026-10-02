@@ -530,8 +530,8 @@ Dispatch maps execution steps to its existing `steps`, retaining all other confi
 Partial worker reports cannot replace parent status or execution configuration.
 Gateway snapshots broadcast lifecycle events only when the stored state actually changes.
 State mutation and recording its events happen under the same TaskStore lock.
-A complete snapshot reopening Failed to InProgress records TaskUpdated, so live
-state and durable checkpoint/recovery state agree after explicit retries.
+An explicit Gateway retry resets the stored control state before a coordinator
+snapshot can reopen it. Coordinator snapshots cannot undo cancellation or pause.
 
 ### 4. Validation & Error Matrix
 
@@ -557,3 +557,11 @@ snapshots/late reports produce one parent terminal event and one Started event.
 Wrong: restoring every node with empty `agent_config_json` and capabilities.
 Correct: apply complete-snapshot execution metadata in both rehydration and upsert;
 worker partial updates only change execution results/state.
+
+## Terminal outbox and coordinator recovery
+
+Persist immutable outcomes keyed by graph/node/attempt before dispatch ACK; publication must use the stored record. Active duplicate execution defers to its owner. Replay independently until coordinator and Gateway return the same message ID. Coordinator confirmation includes the Gateway's durable complete task/event write; memory fallback cannot confirm. Serialized create/update writes prevent a late initial write from overwriting terminal state.
+
+`uc.task.gateway-snapshot.request` is a trusted-cluster read-only request `{task_id}` → `{task: <serialized Rust Task>|null}`. Coordinator hydration preserves Python-only plan fields but takes node status, assignment and attempt from Gateway. Missing/unreachable Gateway leaves the outbox pending. Obsolete outcomes are acknowledged without application; future attempts are not confirmed. Full confirmed snapshots require current attempts and must be checked under the mutation lock before recording/applying. Persist coordinator receipts to handle lost responses and terminal-task eviction.
+
+Full snapshots preserve current terminal/paused control states even when cancellation did not advance the attempt. Partial reports cannot change an already terminal node's status on the same/older attempt. A completion racing pause remains unconfirmed until resume. Per-node cancellation owns a set of executions: a duplicate ending cannot remove the original queued coroutine. Hydration normalizes Chrono UTC Z/nanoseconds to Python 3.9-compatible timestamps and preserves verification commands, project scope, user constraints and capabilities.

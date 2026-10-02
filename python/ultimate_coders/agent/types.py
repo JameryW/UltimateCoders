@@ -301,6 +301,9 @@ class SubtaskResult:
     modified_files: list[FileChange] = field(default_factory=list)
     summary: str = ""
     success: bool = True
+    retryable: bool = True
+    cleanup_pending: bool = False
+    domain_result: dict[str, Any] | None = None
     completed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     adaptation_strategy: AdaptationStrategy = AdaptationStrategy.NONE
     # Failure context (populated on failure)
@@ -504,6 +507,9 @@ class Task:
                     "id": st.id,
                     "parent_id": st.parent_id,
                     "description": st.description,
+                    "project_id": st.project_id,
+                    "user_request": st.user_request,
+                    "required_capabilities": st.required_capabilities,
                     "status": st.status.value,
                     "assigned_worker": st.assigned_worker,
                     "depends_on": st.depends_on,
@@ -529,6 +535,9 @@ class Task:
                         ],
                         "summary": st.result.summary,
                         "success": st.result.success,
+                        "retryable": st.result.retryable,
+                        "cleanup_pending": st.result.cleanup_pending,
+                        "domain_result": st.result.domain_result,
                         "completed_at": st.result.completed_at.isoformat(),
                         "adaptation_strategy": st.result.adaptation_strategy.value,
                         "stderr_tail": st.result.stderr_tail,
@@ -589,6 +598,8 @@ class Task:
                 id=sd.get("id", ""),
                 parent_id=sd.get("parent_id", ""),
                 description=sd.get("description", ""),
+                project_id=sd.get("project_id", ""),
+                user_request=sd.get("user_request", ""),
                 status=SubtaskStatus(sd["status"]) if "status" in sd else SubtaskStatus.PENDING,
                 assigned_worker=sd.get("assigned_worker"),
                 depends_on=sd.get("depends_on", []),
@@ -614,6 +625,9 @@ class Task:
                     worker_id=rd.get("worker_id", ""),
                     summary=rd.get("summary", ""),
                     success=rd.get("success", True),
+                    retryable=rd.get("retryable", True),
+                    cleanup_pending=rd.get("cleanup_pending", False),
+                    domain_result=rd.get("domain_result"),
                     adaptation_strategy=AdaptationStrategy(rd.get("adaptation_strategy", "none")),
                     stderr_tail=rd.get("stderr_tail", ""),
                     recent_tool_calls=rd.get("recent_tool_calls", []),

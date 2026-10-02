@@ -1317,3 +1317,61 @@ README and README.zh-CN were updated. Full evidence and reproduction are in docs
 
 - Restart the documented WSL Docker/Ollama forwarding services after a host reboot.
 - Configure an external MetaInfer service before exercising real optimizer runs.
+
+
+## Session 59: MetaInfer reliability repair and local verification
+
+**Date**: 2026-10-02
+**Task**: MetaInfer reliability repair and local verification
+**Branch**: `codex/metainfer-reliability`
+
+### Summary
+
+Completed the accepted execution, recovery, delivery and evidence repair; verified full suites, real durable confirmation and local Ollama deployment; archived the completed task.
+
+### Main Changes
+
+- Added shared PostgreSQL runtime records with local SQLite fallback, strict worktree
+  leases, process-birth fencing and atomic runner registration before execution.
+- Persisted remote submission intent/IDs, uncertainty quarantine, iteration checkpoints,
+  accepted patch commits and recoverable delivery before worktree cleanup.
+- Added immutable terminal outbox replay and coordinator/Gateway durable confirmation;
+  preserved cancellation/pause authority, duplicate cancel handles, Python 3.9 dates
+  and current-dispatch verification commands without changing generic checkpoint rules.
+- Added live operation-specific capabilities, authenticated integrity-checked artifacts,
+  repeated measurements, dispersion/environment evidence and per-sample hard ceilings.
+- Updated README, architecture/domain documentation, deployment wiring and executable
+  specifications. Two independent final reviews reported no remaining evidenced findings.
+- Rebuilt/deployed the local WSL application, preserved its verification repository and
+  storage, and restored the existing Windows Ollama/WSL forwarding services.
+- Evidence: [verification report](../../../docs/metainfer-reliability-verification.md);
+  [archived task](../../tasks/archive/2026-10/10-02-metainfer-reliability/task.json).
+- Boundary: CPU HTTP fixtures establish integration mechanics; real external MetaInfer/GPU
+  optimization, cross-host artifact sharing and remote writer reconciliation remain deployment
+  configuration/operator responsibilities. No GPU speedup is inferred from these fixtures.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `459b62e4` | fix(inference): make MetaInfer execution and delivery restart-safe |
+| `22adb90c` | chore(task): archive 10-02-metainfer-reliability |
+
+### Testing
+
+- [OK] Python: 1365 passed, 11 skipped (two dependency deprecation warnings).
+- [OK] Rust Gateway: 257 passed; Engine: 456 unit plus 5 integration-style tests passed.
+- [OK] Dashboard lint/build and 12 frontend tests passed.
+- [OK] Real PostgreSQL: 2 integration tests; private NATS/Gateway/PostgreSQL: 1 integration test.
+- [OK] Final deployed Worker-to-Ollama fixed-output inference Oracle passed.
+- [OK] Ruff, line-ending, issue-flow and spec guards passed; archived task references: 853 valid,
+  zero dangling or malformed. Ten local application containers were running/healthy.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- No further action is required for this completed repair.

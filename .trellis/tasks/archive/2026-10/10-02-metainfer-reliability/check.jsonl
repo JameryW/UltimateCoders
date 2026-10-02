@@ -1,0 +1,4 @@
+{"file":".scratch/metainfer-reliability/issues/01-runtime-reliability.md","reason":"Acceptance criteria and verification boundary"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Python/Rust validation and test conventions"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Gateway, coordinator, Worker, runtime store and API flow"}
+{"file":".trellis/spec/guides/cross-platform-deployment-thinking-guide.md","reason":"Windows/POSIX process ownership and Docker deployment"}

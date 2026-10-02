@@ -248,6 +248,8 @@ class TestHandleSubmitScheduledFlag:
     def _make_worker(self) -> MagicMock:
         """Build a NatsWorker-like mock with just enough to test _handle_submit."""
         worker = MagicMock()
+        from ultimate_coders.runtime_state import RuntimeState
+        worker._state_store = AsyncMock(return_value=RuntimeState(database_url=""))
         worker._orchestrator = _make_orchestrator()
         # _spawn_bg receives a coroutine; close it to avoid "never awaited"
         # warnings while still tracking call counts via the mock.

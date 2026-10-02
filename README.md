@@ -12,7 +12,7 @@ The default Docker app uses the Web Dashboard, Rust Gateway, NATS, and Python Wo
 
 ## Key Features
 
-- **DAG orchestration**: decompose natural-language tasks into observable subtasks, schedule dependency waves, and stream submitted, running, completed, and failed states.
+- **DAG orchestration**: decompose natural-language tasks into observable nodes, dispatch each node when its dependencies complete, and stream lifecycle events.
 - **Product home and operations dashboard**: `/` explains capabilities and the execution path; `/dashboard` and `#/dashboard` provide live operations.
 - **Optional OMP extension**: `run-omp.sh` provides native `/uc` commands and LLM-callable tools outside the default Docker app.
 - **Distributed workers**: workers register through `WorkerService`, publish heartbeats and capabilities, and receive capability- and load-aware dispatch from the Gateway; NATS carries cross-process subtasks.
@@ -30,7 +30,7 @@ UltimateCoders turns terminal-based AI coding into an observable, schedulable ex
 | --- | --- | --- |
 | Product dashboard home | Runtime Surface, product map, workflow, and use cases | Understand the product and enter a real execution path from one place |
 | Product map | Command, Control, Execution, Knowledge, and Event layers | See how entry points, orchestration, workers, context, and results connect |
-| DAG orchestration | `run/submit` creates subtasks and schedules dependency waves | Break down, track, and recover complex work |
+| DAG orchestration | Planners build the DAG; the Rust Gateway dispatches ready nodes | Break down, track, and recover complex work |
 | Unified control plane | Dashboard and gRPC TaskService share task state | Keep task state consistent across entry points |
 | Distributed workers | Registration, capabilities, heartbeats, and load-aware scheduling | Scale execution capacity around model and tool capabilities |
 | Search and memory | Text + Semantic + AST retrieval with TiKV/Qdrant/PostgreSQL memory | Give coding agents reusable context across repositories |
@@ -98,17 +98,29 @@ For build, test, configuration, and external Git deployment details, see [Buildi
 
 ## Technical Architecture
 
-![UltimateCoders technical architecture](docs/screenshots/execution-architecture.png)
+The architecture separates task planning, execution authority, coding execution, and inference acceptance. The default Compose app runs the Dashboard UI/API, Rust Gateway, a Python planning coordinator, NATS, and a scalable Worker Pool. The native OMP extension is an optional entry point.
 
-The diagram follows one task through the system: the Dashboard accepts requests, the Rust Gateway owns TaskService, DAG scheduling, and worker registration, the Worker Pool executes subtasks, Search + Memory provide repository context, and Task Events return state to the Dashboard and API consumers.
+![UltimateCoders overview: Dashboard and optional OMP, Python planning and Rust control, distributed Workers, NATS and shared services](docs/screenshots/architecture-overview.svg)
+
+[Full-size overview](docs/screenshots/architecture-overview.svg) · [Mobile view](docs/screenshots/architecture-overview-mobile.svg) · [Protocols and acceptance workflow](docs/architecture.md#system-architecture)
+
+The three columns summarize entry points, planning/control, and distributed execution. Arrows summarize the task flow; dashed outlines mark optional integrations. The architecture reference shows the individual protocol routes and UC's inference acceptance workflow.
+
+The default task path is **submit → plan the DAG → dispatch ready nodes → execute → report → release dependent nodes**. Python plans and routes domains; the Rust Gateway owns task controls and dispatch (`UC_GATEWAY_OWNS_DISPATCH=true` in Compose). Completing a node can release its dependents immediately, without waiting for an entire wave.
 
 | Layer | Components | Responsibility |
 | --- | --- | --- |
-| Interaction | Web Dashboard; optional native OMP | Accept natural-language tasks through gRPC-Web or `/uc` |
-| Control plane | Rust Gateway | Task persistence, DAG scheduling, TaskService, EngineService, and WorkerService |
-| Execution | Worker Pool | Dispatch by capability, heartbeat, and load to coding adapters or the optional inference domain |
+| Interaction | Web Dashboard, Dashboard API; optional native OMP | Browser gRPC-Web, REST/SSE, and terminal `/uc` entry points |
+| Planning | Python coordinator; optional OMP planner | Decompose tasks, validate dependencies, route inference tasks, and preserve execution configuration |
+| Control plane | Rust Gateway, TaskStore, WorkerRegistry | Task state, ready-node dispatch, capability/project/version gates, placement, controls and recovery |
+| Execution | NATS JetStream, Python Workers, Sandbox/worktrees | Deliver execution envelopes and run coding adapters or inference workflows |
 | Knowledge | Search + Memory | Combine Text, Semantic, and AST retrieval with TiKV, Qdrant, and PostgreSQL memory |
-| Observability | Task Events | Broadcast submitted, running, completed, and failed states to Dashboard and API |
+| Acceptance | BenchmarkRunner, Oracle, optimization workflow | Measure fixed workloads, reject/roll back candidates, and retain accepted evidence |
+| Observability | Task events, WatchTask, Dashboard API/SSE | Live progress, ordered durable history, checkpoint/replay and metrics |
+
+The durable-runtime design uses Graph → Node → Attempt identities, leases/fencing and commit-once results. The current Gateway still serves its TaskStore projection; PostgreSQL graph writes and graph-backed attempt operations require `UC_DATABASE_URL` plus `UC_GRAPH_SHADOW=on`. Default Compose configures PostgreSQL task persistence and NATS event history, but leaves graph shadow mode off. The inference **adaptation graph** records experiment provenance and evidence; it is distinct from the execution graph used for scheduling.
+
+MetaInfer is an external execution backend. UC owns the assigned worktree, benchmark protection, Oracle policy, cancellation and acceptance; GPU allocation and specialized generation belong to the service. Local Ollama supplies model inference through compatible planning/coding adapters, while MetaInfer supplies specialized engineering tools. See [the architecture reference](docs/architecture.md) for boundaries and deployment modes.
 
 ## Inference Infrastructure (MetaInfer)
 
@@ -128,13 +140,13 @@ Set the service URL on the planner and eligible workers, or in `docker/.env` for
 UC_METAINFER_URL=http://metainfer-host:8765
 ```
 
-An enabled worker advertises `inference_infra` and its domain capabilities. Automatic routing requires both inference context and engineering intent; explicit agent choices take priority. Leave the URL empty to disable automatic inference routing and capability advertising.
+Workers advertise local `inference_benchmark` without MetaInfer. Remote tasks require `inference_infra` plus the operation capability confirmed by live plugin probes; heartbeat refresh withdraws unhealthy capabilities. Automatic routing requires inference context and engineering intent, and explicit agent choices take priority.
 
 Submit `agent_config.inference_task` through the Dashboard submit API or Python Orchestrator, or select the `metainfer` adapter in a workflow step. Service tasks need actual plugin parameters; optimization and local measurement also require benchmark configuration. Prose does not supply model paths or GPU availability. Optional `UC_INFERENCE_TASK_JSON` provides defaults for natural-language routing.
 
 The optimization workflow measures a baseline, requests a candidate, compiles/benchmarks/profiles it, and uses the shared Oracle to check correctness, performance and memory/error limits. It keeps improvements and restores rejected candidates before the next iteration. Protect the benchmark harness with `protected_paths`; use an explicit argv `apply_command` when generated output must be imported from the service workspace.
 
-UC and MetaInfer must see the assigned worktree at the same absolute path. Optimization requires an exclusively owned, initially clean git worktree. Share the required filesystem mounts across hosts. Compose persists reports, benchmark history, adaptation graphs and accepted patches in `worker_inference_artifacts` at `/artifacts/inference`; accepted structured evidence also enters project Memory.
+UC and MetaInfer must share the assigned worktree at the same absolute path. Mutating tasks require an exclusive real Git worktree. PostgreSQL runtime records preserve remote-job identity, checkpoints and terminal outbox; uncertain submission or termination quarantines the workspace. UC commits accepted edits before merge and retains failed delivery for recovery. Atomic manifests and integrity-checked artifacts are available through authenticated Dashboard API routes. See [reliability verification](docs/metainfer-reliability-verification.md).
 
 Validation snapshot (2026-09-30): the production Docker app now runs locally. Real Ollama distributed coding, GPU chat benchmarking with an immutable Oracle, storage, task controls and recovery were exercised. External MetaInfer optimization remains unconfigured. See the [local deployment verification report](docs/local-deployment-verification.md) for evidence, reproducible commands and limitations.
 
@@ -168,44 +180,42 @@ UltimateCoders targets large-repository changes, parallel delivery, incident dia
 
 ## Runtime and architecture
 
-The product dashboard (Vite + React) is available at `http://localhost:5173/` in development. Its root route is the product overview; the operations dashboard is at `#/dashboard`.
+The product dashboard (Vite + React) is available at `http://localhost:8081/` in Docker and `http://localhost:5173/` in development. Its root route is the product overview; the operations dashboard is at `/dashboard` or `#/dashboard`.
 
 See [docs/architecture.md](docs/architecture.md) for the detailed architecture reference. The runtime can be read in five layers:
 
 | Layer | Responsibility | Main interfaces |
 | --- | --- | --- |
-| Web | Dashboard task entry and monitoring | gRPC-Web, TaskService |
-| Control | Task lifecycle, DAG scheduling and persistence | TaskService, TaskStore, control signals |
-| Execution | Local fallback and capability-aware Workers | WorkerService, NATS, sandbox |
+| Command | Dashboard UI/API and optional native OMP | gRPC-Web, REST/SSE, `/uc` |
+| Control | Planning coordinator plus Rust task lifecycle, ready-node scheduling and persistence | Orchestrator, TaskService, TaskStore, execution envelopes |
+| Execution | Capability-aware Workers, coding adapters and optional inference workflows | WorkerService, NATS JetStream, Sandbox/worktrees, MetaInfer HTTP |
 | Knowledge | Repository indexing, hybrid search and layered memory | Text, Semantic, AST, TiKV, Qdrant, PostgreSQL |
-| Events | Live progress, recovery and monitoring updates | TaskEvent, broadcast channel, SSE, WatchTask |
+| Events | Live progress, recovery and monitoring updates | TaskEvent, ordered EventStore, checkpoint/replay, SSE, WatchTask |
 
 
 ### Real-Time Event Flow
 
-All task events flow through a unified **broadcast channel** (capacity 256) in the gRPC server:
-
-1. **Local decomposition** — TaskStore records events and broadcasts them
-2. **Local fallback** — in-process newline-split decomposition records events and broadcasts them (no external worker)
-3. **NATS subscriber** — Receives `uc.task.update` and `uc.task.event` from the Python NATS Worker; applies and broadcasts
-4. **WatchTask stream** — Subscribes to the broadcast channel for instant delivery (replaces polling)
+1. The planning coordinator publishes complete DAG/configuration snapshots; Workers publish partial results and progress over NATS. Partial reports cannot replace parent controls or execution configuration.
+2. The Gateway applies state changes and records their events under the same TaskStore lock. Its broadcast channel feeds `WatchTask`; the Dashboard API independently consumes NATS for SSE and metrics.
+3. The EventStore preserves recording order. Checkpoint/recovery waits for preceding writes, then replays the complete history; failed writes surface as recovery errors.
+4. Compose uses `UC_EVENT_BACKEND=nats` for durable JetStream history. The in-memory backend and checkpoint snapshot cache are transient; durable history supports replay after restart.
 
 ### OMP Extension Internals
 
-The UC Orchestrator extension (`packages/uc-orchestrator`) is the primary user interface. Key components:
+The UC Orchestrator extension (`packages/uc-orchestrator`) is an optional native terminal interface. It plans tasks and can claim unassigned nodes for local execution; task controls and execution ordering go through the Rust Gateway. Key components:
 
 | Component | File | Role |
 |-----------|------|------|
 | **Extension entry** | `extension.ts` | Registers `/uc` command, shortcuts, message renderer, wires events → UI |
-| **Orchestrator** | `orchestrator.ts` | Task lifecycle: submit → decompose → DAG waves → review → complete |
-| **Scheduler** | `scheduler.ts` | DAG builder, file-overlap wave splitter, CircuitBreaker |
+| **Orchestrator** | `orchestrator.ts` | Plan/validate DAG → upsert to Gateway → claim/execute/report → observe completion |
+| **Scheduler** | `scheduler.ts` | DAG validation, file-conflict helpers and CircuitBreaker |
 | **GrpcBridge** | `grpc-bridge.ts` | gRPC client for TaskService (submit, watch, control signals) |
 | **MemoryBridge** | `memory-bridge.ts` | LLM-callable tool: `uc_memory` (read/write/search/delete) |
 | **TaskBridge** | `task-bridge.ts` | LLM-callable tool: `uc_task` (submit/cancel/pause/resume/status) |
 | **IndexBridge** | `index-bridge.ts` | LLM-callable tool: `uc_index` (index_repo/list_repos/get_state/remove_index) |
 | **FileBridge** | `file-bridge.ts` | LLM-callable tool: `uc_file` (list_dir/get_file) |
 | **WorkerBridge** | `worker-bridge.ts` | LLM-callable tool: `uc_worker` (list/status/scale/deregister) |
-| **TaskStore** | `task-store.ts` | SQLite-backed task persistence + restore on startup |
+| **TaskStore** | `task-store.ts` | Local JSON UI projection cache; refreshed from Rust task state |
 | **ControlSignals** | `control-signal-subscriber.ts` | gRPC stream for pause/resume/cancel from external sources |
 | **Events** | `events.ts` | Typed event emitter decoupling orchestration ↔ UI |
 
@@ -213,21 +223,18 @@ Agent definition prompts (`agents/decomposer.md`, `supervisor.md`, `worker.md`) 
 
 ### Local Fallback (No NATS)
 
-When NATS is unavailable, the gRPC server executes tasks locally via in-process newline-split decomposition (the legacy `python -m ultimate_coders.local_worker` JSON-RPC subprocess path has been removed). The server:
-
-- Decomposes the task description into subtasks by newline-split heuristic
-- Applies updates to TaskStore and broadcasts events through the same channel
-- Degrades gracefully — no external worker process required
+Storage fallback and execution fallback have separate contracts. A Gateway can serve its APIs with in-memory storage; this does not provide a coding executor. The executor selector allows local execution only for `read_only`/`local_safe` nodes with a configured local handler. Coding nodes require a capable executor and remain queued when transport/capacity is unavailable. The optional OMP claim loop can execute claimed nodes locally and report through the Gateway. A standalone Gateway without a planner or executor does not automatically decompose and complete coding tasks.
 
 ### NATS Worker
 
-An independent process that bridges the gRPC TaskService with Python Worker/Sandbox:
+The same Python module has two deployment roles:
 
-1. Subscribes to `uc.task.submit` (from gRPC server)
-2. Calls `Worker.execute_subtask()` for sandbox decomposition
-3. Publishes status updates to `uc.task.update`
-4. Publishes real-time events to `uc.task.event`
-5. Sends heartbeats to `uc.heartbeat` every 30 seconds
+| Compose service | Mode | Responsibility |
+| --- | --- | --- |
+| `nats-worker` | Default coordinator mode | Subscribe to `uc.task.submit`, run Orchestrator planning/domain routing, and publish complete task snapshots; Compose delegates dispatch to Rust |
+| `worker` | `--mode worker` | Register/heartbeat through WorkerService, consume JetStream execution envelopes, run Worker/Sandbox adapters, and publish partial results/events |
+
+Workers advertise capabilities only when available and carry the Gateway's contract version. A mismatched worker is refused; missing capability, project scope or current-version capacity keeps the node pending. Planning-model configuration remains separate from coding-adapter selection.
 
 The worker invokes `grok -p ... --output-format streaming-json` by default. Set
 `UC_CODING_AGENT` to `opencode`, `oh-my-pi` (`omp` alias), or `mimo-code`
@@ -250,15 +257,13 @@ orchestrator's task-planning model remains configured separately with
 
 ### Multi-Worker Distributed Architecture
 
-Multiple NATS Worker processes can collaborate on a single task:
+Multiple worker processes execute independent ready nodes from one DAG:
 
-- **NATS queue group** — each subtask delivered to exactly one worker via `uc.subtask.execute`
-- **Affinity placement** — a worker that binds its own per-worker subject (`uc.subtask.execute.w.<worker_id>`) and reports its recently-touched files on the gateway heartbeat is targeted first when a subtask's `file_constraints` overlap that recent work. The shared subject stays bound as overflow, so placement can never strand a node
-- **Worker discovery** — default-mode NatsWorker monitors `uc.heartbeat` for remote workers
-- **Conditional dispatch** — remote workers available → dispatch to NATS; no remote workers → local execution (zero-config compat)
-- **File conflict detection** — `ConflictDetector` blocks subtasks with overlapping file constraints
-- **Worker failover** — stale worker detection (>90s no heartbeat) → subtask reassignment with retry limit (max 3)
-- **Event-driven scheduling** — `asyncio.Event` wakes dispatch loop immediately on subtask completion/failure
+- **Durable delivery**: Gateway-provisioned `UC_SUBTASKS` JetStream consumers acknowledge attempts and support redelivery. Delivery is not an exactly-once guarantee; execution envelopes carry graph/node/attempt IDs, idempotency keys, worker epochs and contract versions.
+- **Placement**: capability, project scope and contract version are hard gates. Default affinity prefers recent file overlap; opt-in `UC_PLACEMENT_POLICY=capacity` ranks eligible dedicated workers by load/capacity. Shared delivery remains overflow.
+- **Attempt safety**: the enabled PostgreSQL graph path claims/renews leases, fences expired attempts and commits a terminal result once; late results cannot replace a committed completion.
+- **Conflict resolution**: file-overlap hints reduce collisions; opt-in external Git delivery uses isolated worktrees and merge-time arbitration, with Rust fenced authorization for the graph-backed merge barrier.
+- **Event-driven scheduling**: accepted results release dependent nodes through the Gateway; pause/resume/cancel use the same control authority. Explicit review requires an opted-in `review` worker and a structured verdict; strict independent delivery is not guaranteed by shared overflow.
 
 ### Repository Structure
 
@@ -446,6 +451,10 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_METAINFER_URL` | _(empty)_ | Optional external MetaInfer service; enables inference capabilities and automatic domain routing |
 | `UC_INFERENCE_TASK_JSON` | _(empty)_ | JSON `agent_config` defaults for inference experiments and natural-language routing |
 | `UC_INFERENCE_ARTIFACT_DIR` | `.uc-inference-artifacts` beside the assigned repository | Native experiment artifact root; Compose sets `/artifacts/inference` on a persistent volume |
+| `UC_DATABASE_URL` | PostgreSQL in Compose | Shared Gateway/coordinator/Worker/API runtime database |
+| `UC_RUNTIME_STATE_DIR` | `.uc/runtime` | Local SQLite when no database URL is set; keep outside candidate worktrees |
+| `UC_METAINFER_MAX_CONCURRENCY` | `1` | Shared concurrent-job limit for one backend |
+| `UC_METAINFER_TASK_TYPES` | Default plugins | JSON operation-to-plugin map shared by probing and execution |
 | `XAI_API_KEY` | - | xAI API key for the default Grok Build worker agent |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for Claude Code calls |
 | `OPENAI_API_KEY` | - | OpenAI API key for Codex calls |

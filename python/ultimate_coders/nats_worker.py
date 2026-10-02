@@ -376,6 +376,38 @@ class NatsPublisher:
     def __init__(self, nc: NatsClient) -> None:
         self._nc = nc
 
+    async def publish_terminal(self, event: dict, update: dict) -> bool:
+        """Confirm both recipients applied the immutable outbox payload."""
+        try:
+            for subject, payload, recipient in (
+                (NATS_SUBJECT_TASK_EVENT, event, "coordinator"),
+                (NATS_SUBJECT_TASK_UPDATE, update, "gateway"),
+            ):
+                response = await self._nc.request(
+                    subject,
+                    json.dumps(payload).encode(),
+                    timeout=5,
+                    headers={"UC-Recipient": recipient},
+                )
+                if json.loads(response.data).get("message_id") != payload["message_id"]:
+                    return False
+            return True
+        except Exception:
+            logger.warning("Terminal outcome awaits recipient confirmation", exc_info=True)
+            return False
+
+    async def confirm_update(self, update: dict) -> bool:
+        """Wait for the Gateway's durable full-snapshot confirmation."""
+        try:
+            response = await self._nc.request(
+                NATS_SUBJECT_TASK_UPDATE, json.dumps(update).encode(), timeout=5,
+                headers={"UC-Recipient": "gateway"},
+            )
+            return json.loads(response.data).get("message_id") == update["message_id"]
+        except Exception:
+            logger.warning("Coordinator snapshot awaits Gateway confirmation", exc_info=True)
+            return False
+
     async def publish_update(self, task: Task, *, partial: bool = False) -> bool:
         """Publish a task status update, optionally marking it partial.
 
@@ -512,6 +544,8 @@ class NatsWorker:
         self._distributed_detector: Any | None = None  # set in _init_components
         self._subscriptions: list[Subscription] = []
         self._heartbeat_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._outbox_task: asyncio.Task | None = None
+        self._runtime_state = None
         self._snapshot_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._running = False
         # Event-driven dispatch: set when a subtask completes/fails, wakes _execute_subtasks.
@@ -542,7 +576,7 @@ class NatsWorker:
         # T7 #643 — active remote executions keyed by (task_id, node_id) for
         # attempt/node-level cooperative cancel (attempt_cancelled /
         # subtask_cancelled control events kill exactly the target node).
-        self._running_node_tasks: dict[tuple[str, str], asyncio.Task[Any]] = {}
+        self._running_node_tasks: dict[tuple[str, str], set[asyncio.Task[Any]]] = {}
         # Capacity semaphore — lazy-constructed in _init_components (Semaphore
         # binds a loop on Py3.9). Caps concurrent subtask executions.
         self._exec_semaphore: asyncio.Semaphore | None = None
@@ -657,6 +691,8 @@ class NatsWorker:
 
         # Initialize Engine, Orchestrator, Worker
         await self._init_components()
+        if self._worker is not None:
+            await self._worker.refresh_inference_capabilities()
 
         # T5 #641 / D4 #633 Q1: JetStream is a hard dependency for subtask
         # dispatch — the core-NATS queue-group fallback is gone. Bind the
@@ -664,9 +700,7 @@ class NatsWorker:
         # answers); gateway registration is refused until it is usable, so
         # the gateway never dispatches to a worker that cannot consume.
         if self._mode == "worker":
-            self._subtask_transport_task = asyncio.create_task(
-                self._ensure_subtask_transport()
-            )
+            self._subtask_transport_task = asyncio.create_task(self._ensure_subtask_transport())
 
         # Register with gateway via gRPC WorkerService (if endpoint configured)
         await self._register_with_gateway()
@@ -810,6 +844,7 @@ class NatsWorker:
 
         # Start heartbeat loop (both modes)
         self._running = True
+        self._outbox_task = asyncio.create_task(self._outbox_loop())
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
         logger.info("NatsWorker started and ready (mode=%s)", self._mode)
@@ -822,6 +857,10 @@ class NatsWorker:
         # subtask transport bind loop) exit even though start() may not
         # have reached the _running flip yet.
         self._stopping = True
+        if self._outbox_task is not None:
+            self._outbox_task.cancel()
+            await asyncio.gather(self._outbox_task, return_exceptions=True)
+            self._outbox_task = None
 
         # Deregister from gateway via gRPC WorkerService
         await self._deregister_from_gateway()
@@ -1697,7 +1736,7 @@ class NatsWorker:
             lambda done: self._remove_running_subtask(subtask.parent_id, done)
         )
         # T7 #643 — per-node registration for attempt/node-level cancel.
-        self._running_node_tasks[(subtask.parent_id, subtask.id)] = execution
+        self._running_node_tasks.setdefault((subtask.parent_id, subtask.id), set()).add(execution)
         execution.add_done_callback(
             lambda done: self._remove_node_task(subtask.parent_id, subtask.id, done)
         )
@@ -1724,8 +1763,11 @@ class NatsWorker:
     ) -> None:
         """Release a settled execution from the per-node cancel registry."""
         key = (task_id, node_id)
-        if self._running_node_tasks.get(key) is execution:
-            self._running_node_tasks.pop(key, None)
+        running = self._running_node_tasks.get(key)
+        if running:
+            running.discard(execution)
+            if not running:
+                self._running_node_tasks.pop(key, None)
 
     def _cancel_node_executions(self, task_id: str, node_ids: list[str]) -> int:
         """T7 #643 — cooperative cancel for attempt/node-level control events.
@@ -1745,17 +1787,18 @@ class NatsWorker:
             killed = False
             if self._worker is not None:
                 killed = self._worker.kill_node(task_id, node_id)
-            execution = self._running_node_tasks.pop(key, None)
-            if execution is not None and not execution.done():
-                execution.cancel()
-                cancelled += 1
-            if killed or execution is not None:
+            executions = self._running_node_tasks.pop(key, set())
+            for execution in executions:
+                if not execution.done():
+                    execution.cancel()
+                    cancelled += 1
+            if killed or executions:
                 logger.info(
                     "Cooperative cancel: task=%s node=%s (killed=%s, execution_cancelled=%s)",
                     task_id[:8],
                     node_id[:8],
                     killed,
-                    execution is not None,
+                    bool(executions),
                 )
         return cancelled
 
@@ -1930,6 +1973,9 @@ class NatsWorker:
         publisher. The fallback is kept for lightweight/test integrations that
         provide a worker publisher without the Orchestrator hook.
         """
+        state = await self._state_store()
+        await asyncio.to_thread(state.mutate, "coordinator_tasks", task.id,
+                                lambda _: NatsWorker._coordinator_plan(task))
         callback = getattr(self._orchestrator, "_publish_task_update", None)
         if callback is not None:
             try:
@@ -2260,6 +2306,9 @@ class NatsWorker:
                 # loop made progress" is the real liveness signal; a failed
                 # NATS publish must not count as the worker being dead.
                 if self._worker is not None:
+                    changed = await self._worker.refresh_inference_capabilities()
+                    if changed:
+                        await self._register_with_gateway()
                     await self._worker.send_heartbeat()
                 if self._publisher is not None:
                     w_info = None
@@ -2285,8 +2334,7 @@ class NatsWorker:
                         # therefore intentionally unregistered).
                         if self._mode == "worker":
                             w_info["subtask_transport"] = (
-                                "jetstream" if self._subtask_js_available
-                                else "unavailable"
+                                "jetstream" if self._subtask_js_available else "unavailable"
                             )
                             # T12 #654 / D12 #649: whether this worker bound
                             # its per-worker subject, i.e. whether affinity
@@ -2860,154 +2908,175 @@ class NatsWorker:
             except Exception:
                 logger.warning("JetStream subtask progress renewal failed", exc_info=True)
 
+    async def _state_store(self):
+        if self._runtime_state is None:
+            from ultimate_coders.runtime_state import RuntimeState
+
+            self._runtime_state = await asyncio.to_thread(RuntimeState)
+        return self._runtime_state
+
+    async def _deliver_outcome(self, key: str, record: dict) -> bool:
+        if self._publisher is None:
+            return False
+        delivered = await self._publisher.publish_terminal(record["event"], record["update"])
+        if delivered is True:
+            state = await self._state_store()
+            await asyncio.to_thread(
+                state.mutate, "result_outbox", key, lambda old: {**old, "delivered": True}
+            )
+            return True
+        return False
+
+    async def _outbox_loop(self) -> None:
+        while self._running:
+            try:
+                state = await self._state_store()
+                for record in await asyncio.to_thread(state.records, "result_outbox"):
+                    if not record.get("delivered"):
+                        await self._deliver_outcome(record["key"], record)
+            except Exception:
+                logger.warning("Result outbox replay deferred", exc_info=True)
+            await asyncio.sleep(5)
+
     async def _execute_and_report_body(
         self,
         subtask: Subtask,
         js_msg: Any | None = None,
         gateway_context_block: dict | None = None,
     ) -> None:
-        assert self._worker is not None  # callback guards this before spawning
-        task_id = subtask.parent_id
-        subtask_id = subtask.id
-        if task_id in self._cancelled_task_ids:
-            logger.info("Skipping cancelled subtask %s", subtask_id[:8])
-            if js_msg is not None:
-                await self._js_ack_safe(js_msg, ack=True)
-            return
+        assert self._worker is not None
+        task_id, subtask_id = subtask.parent_id, subtask.id
+        key = f"{task_id}:{subtask_id}:{subtask.dispatch_retry_count}"
+        claim = uuid.uuid4().hex
+        owned = False
         try:
-            # Bound concurrent executions to max_capacity so a flood of
-            # uc.subtask.execute messages doesn't spawn that many agent
-            # subprocesses at once (OOM/CPU starvation → worker death).
-            if self._exec_semaphore is not None:
-                async with self._exec_semaphore:
-                    if task_id in self._cancelled_task_ids:
-                        logger.info("Skipping cancelled subtask %s", subtask_id[:8])
-                        if js_msg is not None:
-                            await self._js_ack_safe(js_msg, ack=True)
-                        return
+            state = await self._state_store()
+            existing = await asyncio.to_thread(state.get, "result_outbox", key)
+            if existing:
+                if not existing.get("delivered"):
+                    await self._deliver_outcome(key, existing)
+                if js_msg is not None:
+                    await self._js_ack_safe(js_msg, ack=True)
+                return
+            if task_id in self._cancelled_task_ids:
+                if js_msg is not None:
+                    await self._js_ack_safe(js_msg, ack=True)
+                return
+            import socket
+
+            from ultimate_coders.runtime_state import process_identity, process_matches
+
+            def acquire(old):
+
+                domain = bool(subtask.agent_config.get("inference_task")) or any(
+                    step.agent_config.get("inference_task") for step in subtask.steps
+                )
+                if old and (
+                    (old.get("host") != socket.gethostname() and domain)
+                    or (old.get("host") == socket.gethostname()
+                        and process_matches(old.get("pid", os.getpid()),
+                                            old.get("process_identity")))
+                ):
+                    return old
+                return {"claim": claim, "host": socket.gethostname(), "pid": os.getpid(),
+                        "process_identity": process_identity(os.getpid())}
+
+            lease = await asyncio.to_thread(state.mutate, "execution_claims", key, acquire)
+            if lease.get("claim") != claim:
+                if js_msg is not None:
+                    await self._js_ack_safe(js_msg, nak=True)
+                return
+            owned = True
+            existing = await asyncio.to_thread(state.get, "result_outbox", key)
+            if existing:
+                if not existing.get("delivered"):
+                    await self._deliver_outcome(key, existing)
+                if js_msg is not None:
+                    await self._js_ack_safe(js_msg, ack=True)
+                return
+            try:
+                if self._exec_semaphore is not None:
+                    async with self._exec_semaphore:
+                        if task_id in self._cancelled_task_ids:
+                            if js_msg is not None:
+                                await self._js_ack_safe(js_msg, ack=True)
+                            return
+                        result = await self._execute_subtask_with_context(
+                            subtask, gateway_context_block
+                        )
+                else:
                     result = await self._execute_subtask_with_context(
                         subtask, gateway_context_block
                     )
-            else:
-                result = await self._execute_subtask_with_context(
-                    subtask, gateway_context_block
-                )
-        except asyncio.CancelledError:
-            logger.info("Cancelled running subtask %s", subtask_id[:8])
-            if js_msg is not None:
-                await self._js_ack_safe(js_msg, ack=True)
-            return
-        except Exception as e:
-            logger.error(
-                "Subtask %s execution failed: %s",
-                subtask_id,
-                e,
-                exc_info=True,
-            )
-            # Report failure via uc.task.event (consumed by default mode NatsWorker).
-            # Wrap in try/except so a publish failure doesn't skip the JS ack.
-            try:
-                if self._publisher is not None:
-                    await self._publisher.publish_event(
-                        "subtask_failed",
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        data={"error": str(e)[:200], "worker_id": self._worker.worker_id},
-                    )
-            except Exception:
-                logger.error(
-                    "Subtask %s publish failed in exception path (acking JS msg anyway)",
-                    subtask_id,
-                    exc_info=True,
-                )
-            finally:
-                # JetStream: ack the message (execution completed, just failed —
-                # redelivering would re-run the same failing subtask). The failure
-                # is reported via subtask_failed event above.
+            except asyncio.CancelledError:
                 if js_msg is not None:
                     await self._js_ack_safe(js_msg, ack=True)
-            return
-
-        # Publish result via uc.task.event (consumed by default mode NatsWorker)
-        # Also publish via uc.task.update for gRPC TaskStore sync.
-        #
-        # JetStream ACK-after-execution (ADR 1): the ack is in a FINALLY block
-        # so it fires on ALL exit paths after execution completes — success,
-        # execution exception (handled above), AND publish failure. If
-        # publish_event/publish_update raises, we still ack: the subtask DID
-        # execute (possibly successfully), and redelivering would re-run it.
-        # The ack timing is load-bearing — acking before execution would
-        # defeat crash recovery.
-        try:
-            if self._publisher is not None:
-                event_type = "subtask_completed" if result.success else "subtask_failed"
-                data: dict = {"worker_id": self._worker.worker_id}
-                if result.success:
-                    data["summary"] = result.summary[:300]
-                    data["success"] = True
-                    # Include modified_files so the receiver can reconstruct
-                    # them — without this, remote file changes are silently
-                    # lost for aggregation/merge arbitration.
-                    data["modified_files"] = [
-                        {
-                            "path": fc.file_path,
-                            "change_type": fc.change_type.value,
-                            "diff_stats": fc.diff[:200] if fc.diff else "",
-                        }
-                        for fc in (result.modified_files or [])
-                    ]
-                else:
-                    # Prefer structured error field; fall back to summary.
-                    # Both are friendly messages (summary = "LLM 瞬时错误...",
-                    # error = root cause).
-                    data["error"] = (result.error or result.summary)[:300]
-                await self._publisher.publish_event(
-                    event_type,
-                    task_id=task_id,
-                    subtask_id=subtask_id,
-                    data=data,
+                return
+            except Exception as exc:
+                result = SubtaskResult(
+                    subtask_id=subtask_id, success=False, summary=str(exc)[:2000]
                 )
-                # Also sync to gRPC TaskStore via uc.task.update
-                status = "Completed" if result.success else "Failed"
-                summary = result.summary[:200] if result.summary else ""
-                await self._publisher.publish_update(
-                    self._make_subtask_result_task(
-                        task_id,
-                        subtask_id,
-                        status,
-                        summary,
-                        dispatch_retry_count=subtask.dispatch_retry_count,
-                        # T15 #660: the executor's usage rides the same
-                        # uc.task.update as the status, so the gateway can bind
-                        # cost/tokens on the node_succeeded event it already
-                        # writes. `result.usage` is None when no adapter
-                        # reported one — never a zeroed block.
-                        usage=result.usage,
-                        review=result.review,
-                        # T18 #668: the per-step break-down of `usage`, which
-                        # would otherwise be lost at this hop — the same hop
-                        # T15 had to close for `usage`.
-                        step_usages=result.step_usages,
-                    ),
-                    partial=True,
-                )
-        except Exception:
-            logger.error(
-                "Subtask %s publish failed (acking JS msg anyway — subtask already executed)",
+            if task_id in self._cancelled_task_ids:
+                if js_msg is not None:
+                    await self._js_ack_safe(js_msg, ack=True)
+                return
+            event_type = "subtask_completed" if result.success else "subtask_failed"
+            data = {
+                "worker_id": self._worker.worker_id,
+                "summary": result.summary[:2000],
+                "success": result.success,
+                "error": (result.error or result.summary)[:2000],
+                "attempt_id": subtask.dispatch_retry_count,
+                "retryable": result.retryable,
+                "cleanup_pending": result.cleanup_pending,
+                "modified_files": [
+                    {
+                        "path": fc.file_path,
+                        "change_type": fc.change_type.value,
+                        "diff_stats": fc.diff[:200],
+                    }
+                    for fc in result.modified_files
+                ],
+            }
+            event = _make_task_event_payload(event_type, task_id, subtask_id, data)
+            event["message_id"] = "outcome:" + key
+            task = self._make_subtask_result_task(
+                task_id,
                 subtask_id,
-                exc_info=True,
+                "Completed" if result.success else "Failed",
+                result.summary[:2000],
+                dispatch_retry_count=subtask.dispatch_retry_count,
+                usage=result.usage,
+                review=result.review,
+                step_usages=result.step_usages,
             )
-        finally:
-            logger.info(
-                "Subtask %s %s",
-                subtask_id[:8],
-                "completed" if result.success else "failed",
+            update = _make_task_update_payload(task, partial=True)
+            update["message_id"] = "outcome-update:" + key
+            record = {"event": event, "update": update, "delivered": False}
+            record = await asyncio.to_thread(
+                state.mutate, "result_outbox", key, lambda old: old or record
             )
-            # JetStream: ack the message AFTER execution completes (success,
-            # failure, OR publish error). This is the load-bearing ACK-timing
-            # — acking on receipt would defeat crash recovery (ADR 1).
+            # Persisting the outcome makes dispatch ACK safe, even while offline.
+            # Independent replay delivers it; dispatch redelivery never reruns code.
             if js_msg is not None:
                 await self._js_ack_safe(js_msg, ack=True)
+            await self._deliver_outcome(key, record)
+        except asyncio.CancelledError:
+            # An uncertain remote writer must retain its lease and dispatch.
+            raise
+        except Exception:
+            logger.error(
+                "Outcome persistence failed; dispatch remains unacknowledged", exc_info=True
+            )
+        finally:
+            if owned:
+                try:
+                    await asyncio.to_thread(
+                        state.mutate, "execution_claims", key,
+                        lambda old: {} if old.get("claim") == claim else old,
+                    )
+                except Exception:
+                    logger.warning("Execution claim release deferred", exc_info=True)
 
     def _make_subtask_result_task(
         self,
@@ -3166,6 +3235,13 @@ class NatsWorker:
             # never assigned and stayed "" — silently dropping EVERY remote
             # subtask result, leaking edit intents, and stalling tasks.)
             subtask_id = data.get("subtask_id", "")
+            confirmation = (
+                self._mode == "default" and getattr(msg, "reply", "")
+                and (getattr(msg, "headers", None) or {}).get("UC-Recipient") == "coordinator"
+            )
+            if confirmation:
+                await self._confirm_coordinator_outcome(msg, data)
+                return
             if subtask_id:
                 # ponytail: F56 — result arrived: stop the remote-timeout clock.
                 self._remote_dispatched_at.pop(subtask_id, None)
@@ -3193,6 +3269,111 @@ class NatsWorker:
                 self._dispatch_event.set()
         else:
             logger.debug("Ignoring uc.task.event type=%s", event_type)
+        if (
+            getattr(msg, "reply", "")
+            and self._mode == "default"
+            and (getattr(msg, "headers", None) or {}).get("UC-Recipient") == "coordinator"
+        ):
+            await msg.respond(json.dumps({"message_id": data.get("message_id")}).encode())
+
+    async def _confirm_coordinator_outcome(self, msg, data: dict) -> None:
+        state = await self._state_store()
+        receipt = await asyncio.to_thread(state.get, "coordinator_receipts", data["message_id"])
+        if receipt and receipt.get("confirmed"):
+            await msg.respond(json.dumps({"message_id": data["message_id"]}).encode())
+            return
+        if self._nc is None or self._publisher is None:
+            return
+        try:
+            response = await self._nc.request(
+                "uc.task.gateway-snapshot.request",
+                json.dumps({"task_id": data["task_id"]}).encode(), timeout=5,
+            )
+            raw = json.loads(response.data).get("task")
+        except Exception:
+            logger.warning("Coordinator recovery awaits Gateway snapshot", exc_info=True)
+            return
+        if not raw:
+            return
+        saved_task = self._orchestrator.get_task_status(data["task_id"])
+        saved = NatsWorker._coordinator_plan(saved_task) if saved_task else await asyncio.to_thread(
+            state.get, "coordinator_tasks", data["task_id"]
+        )
+        task = self._coordinator_task_from_gateway(raw, saved or {})
+        node = next((st for st in task.subtasks if st.id == data["subtask_id"]), None)
+        if node is None:
+            return
+        incoming = data.get("data", {}).get("attempt_id")
+        if incoming is None or incoming > node.dispatch_retry_count:
+            return
+        if incoming < node.dispatch_retry_count:
+            await msg.respond(json.dumps({"message_id": data["message_id"]}).encode())
+            return
+        self._orchestrator.tasks[task.id] = task
+        await self._handle_remote_subtask_result(
+            data["type"], task.id, node.id, data,
+        )
+        # A previously applied partial report can already be terminal while
+        # the parent snapshot still awaits delivery. Derive it from all nodes.
+        if task.status not in (TaskStatus.PAUSED, TaskStatus.FAILED):
+            self._orchestrator._update_task_status(task)
+        await asyncio.to_thread(state.mutate, "coordinator_tasks", task.id,
+                                lambda _: NatsWorker._coordinator_plan(task))
+        await asyncio.to_thread(state.mutate, "coordinator_receipts", data["message_id"],
+                                lambda old: old or {"task_id": task.id, "confirmed": False})
+        if await self._publisher.confirm_update(_make_task_update_payload(task)) is not True:
+            return
+        await asyncio.to_thread(state.mutate, "coordinator_receipts", data["message_id"],
+                                lambda old: {**old, "confirmed": True})
+        await msg.respond(json.dumps({"message_id": data["message_id"]}).encode())
+
+    @staticmethod
+    def _coordinator_plan(task: Task) -> dict:
+        # This is the current execution plan, not a generic task checkpoint.
+        # Checkpoint restore deliberately drops runtime verification commands
+        # (#561); recipient recovery must retain the command for this dispatch.
+        return {**task.to_dict(), "verify_command": task.verify_command}
+
+    @staticmethod
+    def _coordinator_task_from_gateway(raw: dict, saved: dict) -> Task:
+        def status(value):
+            return value.replace("InProgress", "in_progress").lower()
+
+        def timestamp(value):
+            # Chrono emits UTC Z and nanoseconds; Python 3.9 accepts the
+            # datetime.isoformat form with at most microsecond precision.
+            value = re.sub(r"\.(\d+)", lambda match: "." + match[1][:6].ljust(6, "0"), value)
+            return value[:-1] + "+00:00" if value.endswith("Z") else value
+
+        previous = {node["id"]: node for node in saved.get("subtasks", [])}
+        nodes = []
+        for raw_node in raw["subtasks"]:
+            node = {**previous.get(raw_node["id"], {}), **raw_node}
+            node["status"] = status(raw_node["status"])
+            node["dispatch_mode"] = raw_node.get("dispatch_mode", "PreferRemote").replace(
+                "PreferRemote", "prefer_remote").lower()
+            node["agent_config"] = json.loads(raw_node.get("agent_config_json") or "{}")
+            result = raw_node.get("result")
+            if result:
+                node["result"] = {
+                    **result,
+                    "modified_files": [
+                        {"path": change["file_path"],
+                         "change_type": change["change_type"].lower(),
+                         "diff_stats": change.get("diff", "")}
+                        for change in result.get("modified_files", [])
+                    ],
+                }
+                if result.get("completed_at"):
+                    node["result"]["completed_at"] = timestamp(result["completed_at"])
+            nodes.append(node)
+        fields = {**saved, **raw, "status": status(raw["status"]), "subtasks": nodes}
+        for key in ("created_at", "updated_at"):
+            if fields.get(key):
+                fields[key] = timestamp(fields[key])
+        task = Task.from_dict(fields)
+        task.verify_command = saved.get("verify_command")
+        return task
 
     async def _handle_remote_subtask_result(
         self,
@@ -3258,6 +3439,8 @@ class NatsWorker:
                 worker_id="remote",
                 summary=inner.get("error", "Remote subtask failed"),
                 success=False,
+                retryable=inner.get("retryable", True),
+                cleanup_pending=inner.get("cleanup_pending", False),
             )
             await self._orchestrator.handle_subtask_result(result)
 

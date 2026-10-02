@@ -48,8 +48,11 @@ def test_invalid_metric_cannot_be_accepted(value):
 
 
 def test_throughput_objective_improves_in_the_opposite_direction():
-    baseline = BenchmarkResult("fixed", True, True, {"throughput_tokens_s": 100})
-    candidate = BenchmarkResult("fixed", True, True, {"throughput_tokens_s": 125})
+    statistics = {"count": 3, "dispersion_pct": {"throughput_tokens_s": 0}}
+    baseline = BenchmarkResult("fixed", True, True, {"throughput_tokens_s": 100},
+                               statistics=statistics, environment_id="fixture")
+    candidate = BenchmarkResult("fixed", True, True, {"throughput_tokens_s": 125},
+                                statistics=statistics, environment_id="fixture")
     verdict = Oracle(OraclePolicy("throughput_tokens_s", min_improvement_pct=20)).evaluate(
         baseline,
         candidate,

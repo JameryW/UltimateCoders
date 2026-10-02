@@ -354,6 +354,8 @@ class AgentOutput:
     file_changes: list[FileChange] = field(default_factory=list)
     token_usage: TokenUsage | None = None
     success: bool = True
+    retryable: bool = True
+    cleanup_pending: bool = False
     # Optional structured evidence from a domain execution backend.
     domain_result: dict[str, Any] | None = None
     # Failure context

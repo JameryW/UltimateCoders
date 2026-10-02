@@ -15,6 +15,8 @@ class OraclePolicy:
     max_regression_pct: float = 0.0
     max_memory_gb: float | None = None
     max_numerical_error: float | None = None
+    max_dispersion_pct: float = 5.0
+    noise_multiplier: float = 2.0
 
     @classmethod
     def for_task(cls, task: MetaInferTask, overrides: dict[str, Any] | None = None) -> OraclePolicy:
@@ -67,12 +69,23 @@ class Oracle:
         # Revalidate mutable metric maps at the trust boundary.
         BenchmarkResult.from_dict(result.to_dict())
         reasons = []
+        count = result.statistics.get("count", 0)
+        if type(count) is not int or count < 3:
+            reasons.append("At least three benchmark samples are required")
+        if not result.environment_id:
+            reasons.append("Benchmark environment identity is required")
+        if set(result.statistics.get("dispersion_pct", {})) != set(result.metrics):
+            reasons.append("Dispersion evidence is missing for measured metrics")
         if not result.compile_success:
             reasons.append("Compilation failed")
         if not result.correctness:
             reasons.append("Correctness failed")
         if self.policy.objective not in result.metrics:
             reasons.append(f"Missing objective measurement {self.policy.objective}")
+        for metric, dispersion in result.statistics.get("dispersion_pct", {}).items():
+            nonnegative_number(dispersion, "dispersion_pct")
+            if dispersion > self.policy.max_dispersion_pct:
+                reasons.append(f"Unstable benchmark measurement {metric}")
         if self.policy.max_memory_gb is not None:
             memory = result.metrics.get("peak_memory_gb")
             if memory is None or memory > self.policy.max_memory_gb:
@@ -90,6 +103,8 @@ class Oracle:
         reasons.extend(self.validate(candidate))
         if candidate.workload_id != baseline.workload_id:
             reasons.append("Workload identities differ")
+        if candidate.environment_id != baseline.environment_id:
+            reasons.append("Benchmark environments differ")
         improvement = None
         for metric, before in baseline.metrics.items():
             after = candidate.metrics.get(metric)
@@ -103,6 +118,12 @@ class Oracle:
                 reasons.append(f"Performance regression in {metric}: {before} -> {after}")
             if metric == self.policy.objective:
                 improvement = pct
+                noise = self.policy.noise_multiplier * sum(
+                    result.statistics.get("dispersion_pct", {}).get(metric, 0)
+                    for result in (baseline, candidate)
+                )
+                if pct is not None and pct <= noise:
+                    reasons.append("Improvement does not exceed measurement noise")
                 if delta <= 0 or (pct is not None and pct < self.policy.min_improvement_pct):
                     reasons.append(f"No sufficient improvement in {metric}")
         return OracleVerdict(not reasons, reasons, improvement)

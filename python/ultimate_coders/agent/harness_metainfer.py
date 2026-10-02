@@ -42,6 +42,9 @@ class MetaInferAgentAdapter(AgentAdapter):
         settings = InferenceInfraAgent.route(prompt, subtask_config)
         if not settings or not settings.get("inference_task"):
             raise ValueError("MetaInfer requires explicit inference_task configuration")
+        self._remote = settings["inference_task"]["task_type"] != "benchmark"
+        from ultimate_coders.inference.artifacts import artifact_root
+
         cancel_dir = tempfile.mkdtemp(prefix="uc-infra-cancel-")
         cancel_file = str(Path(cancel_dir) / "cancel")
         with tempfile.NamedTemporaryFile(
@@ -58,6 +61,7 @@ class MetaInferAgentAdapter(AgentAdapter):
                     "cwd": working_dir,
                     "timeout_seconds": max(1, config.max_cpu_seconds - 10),
                     "cancel_file": cancel_file,
+                    "workspace_owner": settings.get("_uc_workspace_owner"),
                 },
                 request,
             )
@@ -66,14 +70,31 @@ class MetaInferAgentAdapter(AgentAdapter):
             "args": ["-m", "ultimate_coders.inference.runner", "--request", request.name],
             "timeout_secs": config.max_cpu_seconds,
             "working_dir": working_dir,
-            "env_vars": {**config._build_env_vars(), "UC_INFERENCE_PROCESS_REGISTRY": cancel_dir},
+            "env_vars": {
+                **config._build_env_vars(),
+                "UC_INFERENCE_PROCESS_REGISTRY": cancel_dir,
+                "UC_INFERENCE_ARTIFACT_DIR": config._build_env_vars().get(
+                    "UC_INFERENCE_ARTIFACT_DIR"
+                )
+                or str(artifact_root(config.project_path or working_dir)),
+                **(
+                    {"UC_RUNTIME_STATE_DIR": settings["_uc_runtime_state_dir"]}
+                    if settings.get("_uc_runtime_state_dir")
+                    else {}
+                ),
+            },
             "_temp_files": [request.name, cancel_dir],
             "_cancel_file": cancel_file,
         }
 
     def parse_output(self, result: ExecResult) -> AgentOutput:
         if result.timed_out:
-            return AgentOutput(success=False, summary="Inference execution timed out")
+            return AgentOutput(
+                success=False,
+                retryable=False,
+                cleanup_pending=getattr(self, "_remote", True),
+                summary="Inference execution timed out; remote state requires reconciliation",
+            )
         for line in reversed(result.stdout.splitlines()):
             try:
                 payload = json.loads(line)
@@ -94,8 +115,16 @@ class MetaInferAgentAdapter(AgentAdapter):
                 )
                 return AgentOutput(
                     success=success,
+                    retryable=payload.get("retryable", True) is True,
+                    cleanup_pending=payload.get("cleanup_pending", False) is True,
                     summary=str(payload.get("summary", "")),
                     domain_result=domain if isinstance(domain, dict) else None,
                     file_changes=changes if success else [],
                 )
-        return AgentOutput(success=False, summary="Inference runner returned no valid final result")
+        return AgentOutput(
+            success=False,
+            retryable=False,
+            cleanup_pending=getattr(self, "_remote", True),
+            summary=("Inference runner returned no valid final result; "
+                     "remote state requires reconciliation"),
+        )
