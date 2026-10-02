@@ -27,7 +27,9 @@ use sqlx::postgres::PgPool;
 #[async_trait::async_trait]
 pub trait TaskStoreBackend: Send + Sync {
     /// Whether successful writes survive a process restart.
-    fn is_durable(&self) -> bool { false }
+    fn is_durable(&self) -> bool {
+        false
+    }
     /// Submit a new task (already constructed).
     async fn submit_task(&self, task: Task) -> Result<Task, EngineError>;
 
@@ -300,7 +302,9 @@ impl PostgresTaskBackend {
 #[cfg(feature = "storage")]
 #[async_trait::async_trait]
 impl TaskStoreBackend for PostgresTaskBackend {
-    fn is_durable(&self) -> bool { self.pool.is_some() }
+    fn is_durable(&self) -> bool {
+        self.pool.is_some()
+    }
     async fn submit_task(&self, task: Task) -> Result<Task, EngineError> {
         if let Some(pool) = &self.pool {
             let subtasks_json = serde_json::to_value(&task.subtasks)

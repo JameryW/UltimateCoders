@@ -863,28 +863,33 @@ impl TaskStore {
                         uc_types::TaskStatus::Paused
                             | uc_types::TaskStatus::Failed
                             | uc_types::TaskStatus::Completed
-                    ) && task_status_from_str(&update.status).as_ref() != Some(&task.status);
-                    protected_task || update.subtasks.iter().any(|incoming| {
-                        task.subtasks
-                            .iter()
-                            .find(|node| node.id.0 == incoming.subtask_id)
-                            .map(|node| {
-                                let protected_node = matches!(
-                                    node.status,
-                                    uc_types::SubtaskStatus::Failed
-                                        | uc_types::SubtaskStatus::Completed
-                                ) && subtask_status_from_str(&incoming.status).as_ref()
-                                    != Some(&node.status);
-                                protected_node || incoming
-                                    .attempt_id
-                                    .map(|attempt| {
-                                        let current = node.dispatch_retry_count as u64;
-                                        attempt < current || (confirmed && attempt > current)
-                                    })
-                                    .unwrap_or(false)
-                            })
-                            .unwrap_or(false)
-                    })
+                    ) && task_status_from_str(&update.status).as_ref()
+                        != Some(&task.status);
+                    protected_task
+                        || update.subtasks.iter().any(|incoming| {
+                            task.subtasks
+                                .iter()
+                                .find(|node| node.id.0 == incoming.subtask_id)
+                                .map(|node| {
+                                    let protected_node =
+                                        matches!(
+                                            node.status,
+                                            uc_types::SubtaskStatus::Failed
+                                                | uc_types::SubtaskStatus::Completed
+                                        ) && subtask_status_from_str(&incoming.status).as_ref()
+                                            != Some(&node.status);
+                                    protected_node
+                                        || incoming
+                                            .attempt_id
+                                            .map(|attempt| {
+                                                let current = node.dispatch_retry_count as u64;
+                                                attempt < current
+                                                    || (confirmed && attempt > current)
+                                            })
+                                            .unwrap_or(false)
+                                })
+                                .unwrap_or(false)
+                        })
                 })
                 .unwrap_or(false)
     }
@@ -1744,12 +1749,16 @@ impl TaskStore {
                     // A cancelled node can keep the same attempt counter.
                     // Coordinator confirmation of that cancellation must not
                     // let the original worker's replay resurrect the node.
-                    let terminal = matches!(subtask.status,
-                        uc_types::SubtaskStatus::Failed | uc_types::SubtaskStatus::Completed);
-                    let same_or_old_attempt = subtask_update.attempt_id
+                    let terminal = matches!(
+                        subtask.status,
+                        uc_types::SubtaskStatus::Failed | uc_types::SubtaskStatus::Completed
+                    );
+                    let same_or_old_attempt = subtask_update
+                        .attempt_id
                         .map(|attempt| attempt <= subtask.dispatch_retry_count as u64)
                         .unwrap_or(true);
-                    if terminal && same_or_old_attempt
+                    if terminal
+                        && same_or_old_attempt
                         && subtask_status_from_str(&subtask_update.status).as_ref()
                             != Some(&subtask.status)
                     {
@@ -5827,20 +5836,30 @@ mod tests {
             let mut update: super::NatsTaskUpdate = serde_json::from_value(serde_json::json!({
                 "task_id": id, "status": "Completed", "partial": false,
                 "subtasks": [{"subtask_id": node_id, "status": "Completed", "attempt_id": 0}]
-            })).unwrap();
+            }))
+            .unwrap();
             assert!(!store.full_snapshot_is_stale(&update, true));
             match action {
-                "cancel" => { store.cancel_task(&id).unwrap(); }
-                "pause" => { store.pause_task(&id).unwrap(); }
-                _ => { store.fail_subtasks(&id, &[node_id]); }
+                "cancel" => {
+                    store.cancel_task(&id).unwrap();
+                }
+                "pause" => {
+                    store.pause_task(&id).unwrap();
+                }
+                _ => {
+                    store.fail_subtasks(&id, &[node_id]);
+                }
             }
             assert!(store.full_snapshot_is_stale(&update, true), "{action}");
             assert!(store.full_snapshot_is_stale(&update, false), "{action}");
             if action != "pause" {
                 update.partial = true;
                 store.apply_update(&update);
-                assert_eq!(store.tasks[&id].subtasks[0].status,
-                           uc_types::SubtaskStatus::Failed, "{action}");
+                assert_eq!(
+                    store.tasks[&id].subtasks[0].status,
+                    uc_types::SubtaskStatus::Failed,
+                    "{action}"
+                );
                 update.partial = false;
             }
             // A paused parent may accept an in-flight outcome while remaining paused.
