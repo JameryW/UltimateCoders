@@ -8,8 +8,25 @@ use uc_grpc::server::GrpcServer;
 use uc_grpc::ultimate_coders::task_service_server::TaskService;
 use uc_grpc::ultimate_coders::worker_service_server::WorkerService;
 use uc_grpc::ultimate_coders::{
-    ListTasksRequest, RecoverTaskRequest, RegisterWorkerRequest, WatchTaskRequest,
+    ListTasksRequest, RecoverTaskRequest, RegisterWorkerRequest, SubtaskProto, UpdateTaskRequest,
+    WatchTaskRequest,
 };
+
+async fn make_task_dispatch(
+    dispatches: &mut async_nats::Subscriber,
+    task_id: &str,
+) -> serde_json::Value {
+    loop {
+        let message = dispatches
+            .next()
+            .await
+            .expect("dispatch subscription closed");
+        let payload: serde_json::Value = serde_json::from_slice(&message.payload).unwrap();
+        if payload["graph_id"] == task_id {
+            return payload;
+        }
+    }
+}
 
 #[tokio::test]
 #[ignore = "requires an isolated NATS broker via UC_NATS_TEST_URL"]
@@ -134,7 +151,7 @@ async fn snapshot_configuration_reaches_capability_matched_worker_dispatch() {
         max_capacity: 1,
         metadata: String::new(),
         contract_version: uc_types::CONTRACT_VERSION.into(),
-        projects: vec!["verification".into()],
+        projects: vec![id.clone()],
     };
     assert!(
         server
@@ -148,7 +165,7 @@ async fn snapshot_configuration_reaches_capability_matched_worker_dispatch() {
         "inference_task": {"workload_id": "ollama-chat"}});
     let snapshot = json!({
         "task_id": id, "description": "Wire configuration fixture",
-        "project_id": "verification", "status": "InProgress", "partial": false,
+        "project_id": id, "status": "InProgress", "partial": false,
         "subtasks": [{"subtask_id": format!("{id}-node"), "status": "Pending",
             "description": "verify", "agent_config_json": config.to_string(),
             "required_capabilities": ["inference_infra"],
@@ -178,9 +195,12 @@ async fn snapshot_configuration_reaches_capability_matched_worker_dispatch() {
         assert!(Instant::now() < deadline, "snapshot not accepted");
     }
     assert!(
-        tokio::time::timeout(Duration::from_millis(200), dispatches.next())
-            .await
-            .is_err(),
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            make_task_dispatch(&mut dispatches, &id)
+        )
+        .await
+        .is_err(),
         "worker without inference capability must not receive this task"
     );
     let mut worker_report = snapshot.clone();
@@ -193,9 +213,12 @@ async fn snapshot_configuration_reaches_capability_matched_worker_dispatch() {
         .unwrap();
     client.flush().await.unwrap();
     assert!(
-        tokio::time::timeout(Duration::from_millis(200), dispatches.next())
-            .await
-            .is_err(),
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            make_task_dispatch(&mut dispatches, &id)
+        )
+        .await
+        .is_err(),
         "partial worker report must not remove the capability gate"
     );
     assert!(
@@ -211,11 +234,12 @@ async fn snapshot_configuration_reaches_capability_matched_worker_dispatch() {
         .await
         .unwrap();
     client.flush().await.unwrap();
-    let message = tokio::time::timeout(Duration::from_secs(5), dispatches.next())
-        .await
-        .unwrap()
-        .unwrap();
-    let payload: serde_json::Value = serde_json::from_slice(&message.payload).unwrap();
+    let payload = tokio::time::timeout(
+        Duration::from_secs(5),
+        make_task_dispatch(&mut dispatches, &id),
+    )
+    .await
+    .unwrap();
     assert_eq!(payload["graph_id"], id);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(payload["agent_config_json"].as_str().unwrap())
@@ -238,12 +262,32 @@ async fn explicit_retry_snapshot_reopens_durable_parent_state() {
     let client = async_nats::connect(&url).await.unwrap();
     let server = GrpcServer::with_nats(uc_engine::LocalEngine::new_fallback(), &url).await;
     let id = format!("snapshot-retry-{}", uuid::Uuid::new_v4());
+    let node = format!("{id}-node");
     for (parent, child) in [("Failed", "Failed"), ("InProgress", "Assigned")] {
+        if parent == "InProgress" {
+            // Only an explicit Gateway command can reopen terminal control state.
+            // The following coordinator snapshot advances this reset node to Assigned.
+            let retry = server
+                .update_task(Request::new(UpdateTaskRequest {
+                    task_id: id.clone(),
+                    status: "InProgress".into(),
+                    subtasks: vec![SubtaskProto {
+                        id: node.clone(),
+                        status: "Pending".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(retry.success, "{retry:?}");
+        }
         let snapshot = json!({
             "task_id": id, "description": "Retry lifecycle fixture",
             "project_id": "verification", "status": parent, "partial": false,
             "message_id": format!("{id}-{parent}"),
-            "subtasks": [{"subtask_id": format!("{id}-node"), "status": child}]
+            "subtasks": [{"subtask_id": node, "status": child}]
         });
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -260,7 +304,14 @@ async fn explicit_retry_snapshot_reopens_durable_parent_state() {
                 .into_inner()
                 .tasks
                 .iter()
-                .any(|task| task.id == id && task.status == parent)
+                .any(|task| {
+                    task.id == id
+                        && task.status == parent
+                        && task
+                            .subtasks
+                            .iter()
+                            .any(|st| st.id == node && st.status == child)
+                })
             {
                 break;
             }
