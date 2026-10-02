@@ -291,6 +291,9 @@ Build the fixture with `cargo build -p uc-grpc-server`, then execute
 ### 3. Contracts
 
 - `UC_PG_URL` and `UC_PG_URL_TEST` point to the job's PostgreSQL fixture over IPv4.
+- Host-side Rust clients resolve PD/TiKV's advertised Docker names to the
+  job's live container IPs. The bootstrap PD port alone is insufficient:
+  discovery reconnects to `pd:2379` and the unpublished `tikv:20160` endpoint.
 - `UC_NATS_TEST_URL` selects the job's isolated JetStream broker for event replay
   and task snapshot tests. Starting a broker alone does not configure these tests.
 - `UC_GATEWAY_TEST_ADDR` selects a running fixture Gateway for deployed controls.

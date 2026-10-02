@@ -180,6 +180,16 @@ jobs:
             sleep 5
             docker compose -f docker/docker-compose.yml up -d --wait
           }
+      - name: Expose TiKV discovery to host tests
+        run: |
+          # PD and TiKV advertise Docker names, including TiKV's unpublished
+          # port. Host-side Rust clients must resolve the discovered addresses.
+          for service in pd tikv; do
+            container_id=$(docker compose -f docker/docker-compose.yml ps -q "$service")
+            address=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}' "$container_id" | head -n 1)
+            test -n "$address"
+            printf '%s %s\n' "$address" "$service" | sudo tee -a /etc/hosts
+          done
       - name: Wait for TiKV store readiness
         run: |
           # PD can be healthy while TiKV store is still initializing.
