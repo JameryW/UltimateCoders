@@ -19,7 +19,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from ultimate_coders.agent.harness_deepseek import DeepSeekHarnessAdapter
+from ultimate_coders.agent.harness_deepseek import (
+    CREDENTIALS_FORMAT_HINT,
+    DeepSeekHarnessAdapter,
+    credentials_format_hint,
+    preflight_check,
+)
 from ultimate_coders.agent.registry import (
     AgentAdapterRegistry,
     AgentPluginSpec,
@@ -261,6 +266,107 @@ class TestDeepSeekAdapterParse:
         assert out.success is True
         assert len(out.summary) <= 2001
         assert out.summary.endswith("…")
+
+    def test_parse_boot_failure_surfaces_credentials_hint(self) -> None:
+        stderr = (
+            "Error: dsh: plugin tree failed to load: "
+            'credentials-local: the value for "version" in '
+            "C:\\Users\\x\\.dsh\\.credentials.yaml must be a string"
+        )
+        out = DeepSeekHarnessAdapter().parse_output(
+            self._result("", stderr=stderr, exit_code=1)
+        )
+        assert out.success is False
+        assert ".credentials.yaml" in out.summary
+        assert "flatten" in out.summary
+
+    def test_parse_unrelated_failure_has_no_hint(self) -> None:
+        out = DeepSeekHarnessAdapter().parse_output(
+            self._result("", stderr="model error: 401 unauthorized", exit_code=1)
+        )
+        assert out.success is False
+        assert "flatten" not in out.summary
+
+
+class TestDeepSeekPreflight:
+    def test_missing_binary(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("ultimate_coders.agent.harness_deepseek.shutil.which", lambda _: None)
+        ok, message = preflight_check()
+        assert ok is False
+        assert "npm install -g @deepseek-ai/dsh" in message
+
+    def test_boot_ok(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import subprocess
+
+        monkeypatch.setattr(
+            "ultimate_coders.agent.harness_deepseek.shutil.which", lambda _: "/usr/bin/dsh"
+        )
+        monkeypatch.setattr(
+            "ultimate_coders.agent.harness_deepseek.subprocess.run",
+            lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="[]", stderr=""),
+        )
+        ok, message = preflight_check()
+        assert ok is True
+        assert "boots OK" in message
+
+    def test_boot_failure_credentials_format(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        import subprocess
+
+        (tmp_path / ".credentials.yaml").write_text(
+            "version: 1\nrefs:\n  DEEPSEEK_API_KEY: sk-x\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            "ultimate_coders.agent.harness_deepseek.shutil.which", lambda _: "/usr/bin/dsh"
+        )
+
+        def _fail(*a: object, **k: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                a,
+                1,
+                stdout="",
+                stderr='credentials-local: the value for "version" in '
+                "C:\\Users\\x\\.dsh\\.credentials.yaml must be a string",
+            )
+
+        monkeypatch.setattr(
+            "ultimate_coders.agent.harness_deepseek.subprocess.run", _fail
+        )
+        ok, message = preflight_check()
+        assert ok is False
+        assert message == CREDENTIALS_FORMAT_HINT
+        assert "0.2.0-rc.2" in message  # preferred fix is the upgrade
+
+    def test_boot_failure_generic(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import subprocess
+
+        monkeypatch.setattr(
+            "ultimate_coders.agent.harness_deepseek.shutil.which", lambda _: "/usr/bin/dsh"
+        )
+        monkeypatch.setattr(
+            "ultimate_coders.agent.harness_deepseek.subprocess.run",
+            lambda *a, **k: subprocess.CompletedProcess(a, 1, stdout="", stderr="boom"),
+        )
+        ok, message = preflight_check()
+        assert ok is False
+        assert "boom" in message
+
+    def test_credentials_format_hint_structured(self, tmp_path: Path) -> None:
+        (tmp_path / ".credentials.yaml").write_text(
+            "version: 1\nrefs:\n  DEEPSEEK_API_KEY: sk-x\nrecords:\n",
+            encoding="utf-8",
+        )
+        assert credentials_format_hint(tmp_path) == CREDENTIALS_FORMAT_HINT
+
+    def test_credentials_format_hint_flat(self, tmp_path: Path) -> None:
+        (tmp_path / ".credentials.yaml").write_text(
+            "DEEPSEEK_API_KEY: sk-x\n", encoding="utf-8"
+        )
+        assert credentials_format_hint(tmp_path) is None
+
+    def test_credentials_format_hint_absent(self, tmp_path: Path) -> None:
+        assert credentials_format_hint(tmp_path) is None
 
 
 # ── Capability advertising ──────────────────────────────────────
