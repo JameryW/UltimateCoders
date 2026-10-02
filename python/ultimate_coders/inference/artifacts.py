@@ -1,5 +1,7 @@
 """Artifact location shared by the runner, sandbox and Dashboard."""
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 
