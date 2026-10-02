@@ -4,55 +4,11 @@ UltimateCoders separates planning from execution authority. The Web Dashboard is
 
 ## System architecture
 
-```mermaid
-flowchart TB
-    subgraph Entry["Entry points"]
-        UI["Web Dashboard"]
-        API["Dashboard API · REST / SSE"]
-        OMP["Native OMP extension · optional"]
-    end
-    subgraph Control["Planning and control"]
-        GW["Rust Gateway<br/>Task / Engine / Dashboard / Worker services<br/>Ready-node dispatch · controls · recovery"]
-        PLAN["Python planning coordinator<br/>Orchestrator · domain routing · DAG/config snapshots"]
-        BUS["NATS<br/>Core: submissions / controls / events<br/>JetStream: subtask dispatch / durable history"]
-    end
-    subgraph Execution["Worker execution"]
-        WORKER["Python Worker Pool<br/>Registration · capabilities · Sandbox / Git worktrees"]
-        CODE["Coding adapters<br/>Grok / Claude Code / Codex / OpenCode<br/>oh-my-pi / MiMo Code / local harness / plugins"]
-        INFRA["InferenceInfraAgent / metainfer adapter<br/>OptimizationWorkflow"]
-        ORACLE["Fixed BenchmarkRunner + Oracle<br/>Baseline → candidate → accept / rollback"]
-        EVIDENCE["Artifacts<br/>Reports · accepted patches · adaptation graphs"]
-    end
-    subgraph Backends["Knowledge and execution backends"]
-        KNOW["Rust Search + layered Memory<br/>Text / Semantic / AST"]
-        STORE["TiKV · Qdrant · PostgreSQL<br/>Memory / indexes / task metadata"]
-        MODEL["Model provider APIs<br/>Local Ollama via compatible adapters · optional"]
-        META["External MetaInfer service · optional<br/>Model porting · kernel/runtime tools · trace analysis"]
-    end
-    UI -->|"gRPC-Web: tasks / search / controls"| GW
-    UI <-->|"HTTP / SSE"| API
-    OMP <-->|"gRPC: submit / claim / report"| GW
-    GW -->|"task submissions / ready-node dispatch"| BUS
-    API -->|"REST task submissions"| BUS
-    BUS -->|"uc.task.submit"| PLAN
-    PLAN -->|"complete DAG + execution configuration"| BUS
-    BUS -->|"snapshots / results / events"| GW
-    BUS -->|"JetStream subtask delivery"| WORKER
-    WORKER -->|"results / events"| BUS
-    WORKER <-->|"WorkerService / EngineService"| GW
-    GW -->|"WatchTask"| UI
-    BUS -->|"events / metrics"| API
-    WORKER --> CODE
-    WORKER --> INFRA
-    CODE --> MODEL
-    PLAN -->|"planning model"| MODEL
-    INFRA <-->|"HTTP · shared assigned worktree"| META
-    INFRA --> ORACLE
-    ORACLE --> EVIDENCE
-    EVIDENCE -->|"accepted evidence via Worker"| KNOW
-    GW --> KNOW
-    KNOW --> STORE
-```
+![UltimateCoders service architecture: entry points, planning and control, distributed execution, shared services, and optional inference acceptance](screenshots/system-architecture.svg)
+
+[Open the full-size diagram](screenshots/system-architecture.svg) or [the Chinese version](screenshots/system-architecture.zh-CN.svg). The three columns show entry points, planning/control, and distributed execution. Arrows represent runtime messages; dashed outlines mark optional integrations. Shared-service access is described within each card, while the lower workflow shows UC's inference acceptance boundary.
+
+Both language versions use one layout source, [the architecture generator](../scripts/generate-architecture.py). Run `python scripts/generate-architecture.py` to regenerate them, or add `--check` to verify the checked-in SVGs. The source SVGs contain selectable text and accessible descriptions; no browser scripts or remote assets are required.
 
 ## Component ownership
 

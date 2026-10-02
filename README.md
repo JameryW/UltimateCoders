@@ -100,55 +100,9 @@ For build, test, configuration, and external Git deployment details, see [Buildi
 
 The architecture separates task planning, execution authority, coding execution, and inference acceptance. The default Compose app runs the Dashboard UI/API, Rust Gateway, a Python planning coordinator, NATS, and a scalable Worker Pool. The native OMP extension is an optional entry point.
 
-```mermaid
-flowchart TB
-    subgraph Entry["Entry points"]
-        UI["Web Dashboard"]
-        API["Dashboard API · REST / SSE"]
-        OMP["Native OMP extension · optional"]
-    end
-    subgraph Control["Planning and control"]
-        GW["Rust Gateway<br/>Task / Engine / Dashboard / Worker services<br/>Ready-node dispatch · controls · recovery"]
-        PLAN["Python planning coordinator<br/>Orchestrator · domain routing · DAG/config snapshots"]
-        BUS["NATS<br/>Core: submissions / controls / events<br/>JetStream: subtask dispatch / durable history"]
-    end
-    subgraph Execution["Worker execution"]
-        WORKER["Python Worker Pool<br/>Registration · capabilities · Sandbox / Git worktrees"]
-        CODE["Coding adapters<br/>Grok / Claude Code / Codex / OpenCode<br/>oh-my-pi / MiMo Code / local harness / plugins"]
-        INFRA["InferenceInfraAgent / metainfer adapter<br/>OptimizationWorkflow"]
-        ORACLE["Fixed BenchmarkRunner + Oracle<br/>Baseline → candidate → accept / rollback"]
-        EVIDENCE["Artifacts<br/>Reports · accepted patches · adaptation graphs"]
-    end
-    subgraph Backends["Knowledge and execution backends"]
-        KNOW["Rust Search + layered Memory<br/>Text / Semantic / AST"]
-        STORE["TiKV · Qdrant · PostgreSQL<br/>Memory / indexes / task metadata"]
-        MODEL["Model provider APIs<br/>Local Ollama via compatible adapters · optional"]
-        META["External MetaInfer service · optional<br/>Model porting · kernel/runtime tools · trace analysis"]
-    end
-    UI -->|"gRPC-Web: tasks / search / controls"| GW
-    UI <-->|"HTTP / SSE"| API
-    OMP <-->|"gRPC: submit / claim / report"| GW
-    GW -->|"task submissions / ready-node dispatch"| BUS
-    API -->|"REST task submissions"| BUS
-    BUS -->|"uc.task.submit"| PLAN
-    PLAN -->|"complete DAG + execution configuration"| BUS
-    BUS -->|"snapshots / results / events"| GW
-    BUS -->|"JetStream subtask delivery"| WORKER
-    WORKER -->|"results / events"| BUS
-    WORKER <-->|"WorkerService / EngineService"| GW
-    GW -->|"WatchTask"| UI
-    BUS -->|"events / metrics"| API
-    WORKER --> CODE
-    WORKER --> INFRA
-    CODE --> MODEL
-    PLAN -->|"planning model"| MODEL
-    INFRA <-->|"HTTP · shared assigned worktree"| META
-    INFRA --> ORACLE
-    ORACLE --> EVIDENCE
-    EVIDENCE -->|"accepted evidence via Worker"| KNOW
-    GW --> KNOW
-    KNOW --> STORE
-```
+![UltimateCoders service architecture: Dashboard and OMP, Rust Gateway and Python Planner, NATS and distributed Workers, shared services, and optional inference acceptance](docs/screenshots/system-architecture.svg)
+
+[Open the full-size diagram](docs/screenshots/system-architecture.svg). The three columns show entry points, planning/control, and distributed execution. Arrows show runtime messages; dashed outlines mark optional components. Shared services and UC's inference acceptance workflow sit below the service map.
 
 The default task path is **submit → plan the DAG → dispatch ready nodes → execute → report → release dependent nodes**. Python plans and routes domains; the Rust Gateway owns task controls and dispatch (`UC_GATEWAY_OWNS_DISPATCH=true` in Compose). Completing a node can release its dependents immediately, without waiting for an entire wave.
 

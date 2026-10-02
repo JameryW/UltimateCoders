@@ -99,55 +99,9 @@ Compose 启动 Gateway、Dashboard API 和 UI、NATS、存储及 Worker。需要
 
 系统将任务规划、执行控制、编程执行和推理验收分开。默认 Compose 应用运行 Dashboard UI/API、Rust Gateway、Python 规划协调器、NATS 和可扩展 Worker Pool；本机 OMP 扩展是可选入口。
 
-```mermaid
-flowchart TB
-    subgraph Entry["交互入口"]
-        UI["Web Dashboard"]
-        API["Dashboard API · REST / SSE"]
-        OMP["本机 OMP 扩展 · 可选"]
-    end
-    subgraph Control["规划与控制"]
-        GW["Rust Gateway<br/>Task / Engine / Dashboard / Worker 服务<br/>就绪节点派发 · 控制 · 恢复"]
-        PLAN["Python 规划协调器<br/>Orchestrator · 领域路由 · DAG/配置快照"]
-        BUS["NATS<br/>Core：提交 / 控制 / 事件<br/>JetStream：子任务分发 / 持久事件历史"]
-    end
-    subgraph Execution["Worker 执行"]
-        WORKER["Python Worker Pool<br/>注册 · 能力声明 · Sandbox / Git worktree"]
-        CODE["编程适配器<br/>Grok / Claude Code / Codex / OpenCode<br/>oh-my-pi / MiMo Code / local harness / 插件"]
-        INFRA["InferenceInfraAgent / metainfer 适配器<br/>OptimizationWorkflow"]
-        ORACLE["固定 BenchmarkRunner + Oracle<br/>基线 → 候选 → 验收 / 回滚"]
-        EVIDENCE["Artifacts<br/>报告 · 已接受补丁 · 执行适配图"]
-    end
-    subgraph Backends["知识与执行后端"]
-        KNOW["Rust 检索 + 分层 Memory<br/>Text / Semantic / AST"]
-        STORE["TiKV · Qdrant · PostgreSQL<br/>记忆 / 索引 / 任务元数据"]
-        MODEL["模型提供商 API<br/>兼容适配器连接本地 Ollama · 可选"]
-        META["外部 MetaInfer 服务 · 可选<br/>模型移植 · Kernel/Runtime 工具 · Trace 分析"]
-    end
-    UI -->|"gRPC-Web：任务 / 检索 / 控制"| GW
-    UI <-->|"HTTP / SSE"| API
-    OMP <-->|"gRPC：提交 / claim / 上报"| GW
-    GW -->|"任务提交 / 就绪节点派发"| BUS
-    API -->|"REST 任务提交"| BUS
-    BUS -->|"uc.task.submit"| PLAN
-    PLAN -->|"完整 DAG + 执行配置"| BUS
-    BUS -->|"快照 / 结果 / 事件"| GW
-    BUS -->|"JetStream 子任务投递"| WORKER
-    WORKER -->|"结果 / 事件"| BUS
-    WORKER <-->|"WorkerService / EngineService"| GW
-    GW -->|"WatchTask"| UI
-    BUS -->|"事件 / 指标"| API
-    WORKER --> CODE
-    WORKER --> INFRA
-    CODE --> MODEL
-    PLAN -->|"规划模型"| MODEL
-    INFRA <-->|"HTTP · 共享已分配 worktree"| META
-    INFRA --> ORACLE
-    ORACLE --> EVIDENCE
-    EVIDENCE -->|"经 Worker 写入已验收证据"| KNOW
-    GW --> KNOW
-    KNOW --> STORE
-```
+![UltimateCoders 服务架构：Dashboard 与 OMP、Rust Gateway 与 Python 规划器、NATS 与分布式 Worker、共享服务及可选推理验收](docs/screenshots/system-architecture.zh-CN.svg)
+
+[查看完整架构图](docs/screenshots/system-architecture.zh-CN.svg)。三列分别展示交互入口、规划与控制、分布式执行；箭头表示运行时消息，虚线边框标明可选组件。下方单独展示共享服务和 UC 的推理验收流程。
 
 默认任务链为 **提交 → 规划 DAG → 派发就绪节点 → 执行 → 上报 → 释放后继节点**。Python 负责规划和领域路由，Rust Gateway 负责任务控制与派发（Compose 设置 `UC_GATEWAY_OWNS_DISPATCH=true`）。节点完成后可以立即释放其后继，无需等待整个 wave。
 
