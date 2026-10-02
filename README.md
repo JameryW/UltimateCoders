@@ -100,9 +100,11 @@ For build, test, configuration, and external Git deployment details, see [Buildi
 
 The architecture separates task planning, execution authority, coding execution, and inference acceptance. The default Compose app runs the Dashboard UI/API, Rust Gateway, a Python planning coordinator, NATS, and a scalable Worker Pool. The native OMP extension is an optional entry point.
 
-![UltimateCoders service architecture: Dashboard and OMP, Rust Gateway and Python Planner, NATS and distributed Workers, shared services, and optional inference acceptance](docs/screenshots/system-architecture.svg)
+![UltimateCoders overview: Dashboard and optional OMP, Python planning and Rust control, distributed Workers, NATS and shared services](docs/screenshots/architecture-overview.svg)
 
-[Open the full-size diagram](docs/screenshots/system-architecture.svg). The three columns show entry points, planning/control, and distributed execution. Arrows show runtime messages; dashed outlines mark optional components. Shared services and UC's inference acceptance workflow sit below the service map.
+[Full-size overview](docs/screenshots/architecture-overview.svg) · [Mobile view](docs/screenshots/architecture-overview-mobile.svg) · [Protocols and acceptance workflow](docs/architecture.md#system-architecture)
+
+The three columns summarize entry points, planning/control, and distributed execution. Arrows summarize the task flow; dashed outlines mark optional integrations. The architecture reference shows the individual protocol routes and UC's inference acceptance workflow.
 
 The default task path is **submit → plan the DAG → dispatch ready nodes → execute → report → release dependent nodes**. Python plans and routes domains; the Rust Gateway owns task controls and dispatch (`UC_GATEWAY_OWNS_DISPATCH=true` in Compose). Completing a node can release its dependents immediately, without waiting for an entire wave.
 

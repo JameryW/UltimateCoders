@@ -99,9 +99,11 @@ Compose 启动 Gateway、Dashboard API 和 UI、NATS、存储及 Worker。需要
 
 系统将任务规划、执行控制、编程执行和推理验收分开。默认 Compose 应用运行 Dashboard UI/API、Rust Gateway、Python 规划协调器、NATS 和可扩展 Worker Pool；本机 OMP 扩展是可选入口。
 
-![UltimateCoders 服务架构：Dashboard 与 OMP、Rust Gateway 与 Python 规划器、NATS 与分布式 Worker、共享服务及可选推理验收](docs/screenshots/system-architecture.zh-CN.svg)
+![UltimateCoders 架构概览：Dashboard 与可选 OMP、Python 规划与 Rust 控制、分布式 Worker、NATS 和共享服务](docs/screenshots/architecture-overview.zh-CN.svg)
 
-[查看完整架构图](docs/screenshots/system-architecture.zh-CN.svg)。三列分别展示交互入口、规划与控制、分布式执行；箭头表示运行时消息，虚线边框标明可选组件。下方单独展示共享服务和 UC 的推理验收流程。
+[完整概览图](docs/screenshots/architecture-overview.zh-CN.svg) · [手机竖版](docs/screenshots/architecture-overview-mobile.zh-CN.svg) · [通信协议与验收流程](docs/architecture.md#system-architecture)
+
+三列概括交互入口、规划与控制、分布式执行；箭头概括任务流向，虚线边框标明可选集成。架构文档中的详细图展示各组件的通信协议和 UC 的推理验收流程。
 
 默认任务链为 **提交 → 规划 DAG → 派发就绪节点 → 执行 → 上报 → 释放后继节点**。Python 负责规划和领域路由，Rust Gateway 负责任务控制与派发（Compose 设置 `UC_GATEWAY_OWNS_DISPATCH=true`）。节点完成后可以立即释放其后继，无需等待整个 wave。
 

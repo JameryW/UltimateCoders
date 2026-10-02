@@ -8,7 +8,9 @@ UltimateCoders separates planning from execution authority. The Web Dashboard is
 
 [Open the full-size diagram](screenshots/system-architecture.svg) or [the Chinese version](screenshots/system-architecture.zh-CN.svg). The three columns show entry points, planning/control, and distributed execution. Arrows represent runtime messages; dashed outlines mark optional integrations. Shared-service access is described within each card, while the lower workflow shows UC's inference acceptance boundary.
 
-Both language versions use one layout source, [the architecture generator](../scripts/generate-architecture.py). Run `python scripts/generate-architecture.py` to regenerate them, or add `--check` to verify the checked-in SVGs. The source SVGs contain selectable text and accessible descriptions; no browser scripts or remote assets are required.
+The README uses a [compact overview](screenshots/architecture-overview.svg), also available in [a mobile layout](screenshots/architecture-overview-mobile.svg). The overview summarizes responsibilities and task flow; the service diagram above shows protocol routes and acceptance boundaries.
+
+All views are generated in English and Chinese by [the architecture generator](../scripts/generate-architecture.py), with a shared layout for each language pair. Run `python scripts/generate-architecture.py` to regenerate the six SVGs, or add `--check` to verify the checked-in outputs. The source SVGs contain selectable text and accessible descriptions; no browser scripts or remote assets are required.
 
 ## Component ownership
 

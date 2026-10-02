@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid meet" xml:lang="en" role="img" aria-labelledby="title desc">
+  <title id="title">UltimateCoders · System architecture</title>
+  <desc id="desc">Overview of UltimateCoders: Dashboard and optional OMP submit tasks; Python plans DAGs and Rust owns task state and dispatch. NATS connects the control plane to scalable Workers in isolated Git worktrees. Shared services supply search, memory and models. Optional MetaInfer supplies specialized GPU tools, with UC acceptance.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M1 1 L9 5 L1 9 Z" fill="#60758c"/>
+    </marker>
+    <style>
+      text { font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif; fill: #334155; }
+      .heading { font-weight: 600; fill: #0f172a; }
+      .section { font-weight: 600; letter-spacing: 1.5px; }
+      .muted { fill: #64748b; }
+      .connector { fill: none; stroke: #60758c; stroke-width: 2; stroke-linejoin: round; }
+    </style>
+  </defs>
+  <rect width="1200" height="800" fill="#ffffff"/>
+  <text x="32" y="44" font-size="16" class="section muted" text-anchor="start">ULTIMATECODERS</text>
+  <text x="32" y="94" font-size="36" class="heading" text-anchor="start">System architecture</text>
+  <text x="32" y="132" font-size="21" class="muted" text-anchor="start">Python plans · Rust dispatches · Workers execute</text>
+  <path d="M368 330 H432" class="connector" marker-end="url(#arrow)"/>
+  <path d="M768 330 H832" class="connector" marker-end="url(#arrow)"/>
+  <rect x="32" y="180" width="336" height="300" rx="14" fill="#f1f5fb" stroke="#dbe5f1"/>
+  <text x="56" y="220" font-size="25" class="heading" text-anchor="start">Entry points</text>
+  <rect x="432" y="180" width="336" height="300" rx="14" fill="#f0f8f6" stroke="#d8e9e4"/>
+  <text x="456" y="220" font-size="25" class="heading" text-anchor="start">Planning &amp; control</text>
+  <rect x="832" y="180" width="336" height="300" rx="14" fill="#f6f3fb" stroke="#e3dcf0"/>
+  <text x="856" y="220" font-size="25" class="heading" text-anchor="start">Worker pool</text>
+  <text x="56" y="270" font-size="24" class="heading" text-anchor="start">Web Dashboard</text>
+  <text x="56" y="302" font-size="21" class="muted" text-anchor="start">React · gRPC-Web</text>
+  <text x="56" y="346" font-size="24" class="heading" text-anchor="start">Dashboard API</text>
+  <text x="56" y="378" font-size="21" class="muted" text-anchor="start">FastAPI · REST / SSE</text>
+  <rect x="56" y="400" width="288" height="40" rx="14" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="6 5"/>
+  <text x="72" y="427" font-size="21" class="" text-anchor="start">OMP terminal · optional</text>
+  <text x="456" y="270" font-size="24" class="heading" text-anchor="start">Python Planner</text>
+  <text x="456" y="302" font-size="21" class="muted" text-anchor="start">DAG · domain routing</text>
+  <text x="456" y="354" font-size="24" class="heading" text-anchor="start">Rust Gateway</text>
+  <text x="456" y="386" font-size="21" class="muted" text-anchor="start">State · dispatch · recovery</text>
+  <text x="856" y="270" font-size="24" class="heading" text-anchor="start">Python Workers</text>
+  <text x="856" y="302" font-size="21" class="muted" text-anchor="start">Scale from 1 to N workers</text>
+  <text x="856" y="354" font-size="21" class="" text-anchor="start">Sandbox + Git worktrees</text>
+  <text x="856" y="386" font-size="21" class="" text-anchor="start">Coding / inference adapters</text>
+  <rect x="32" y="502" width="1136" height="52" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="600" y="535" font-size="23" class="heading" text-anchor="middle">NATS · Core messages / JetStream delivery</text>
+  <rect x="32" y="572" width="1136" height="44" rx="14" fill="#f8fafc" stroke="none"/>
+  <text x="600" y="601" font-size="21" class="muted" text-anchor="middle">WatchTask / SSE · durable events · checkpoint / replay</text>
+  <text x="32" y="644" font-size="16" class="section muted" text-anchor="start">SHARED SERVICES</text>
+  <rect x="32" y="664" width="368" height="104" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="56" y="700" font-size="24" class="heading" text-anchor="start">Search + Memory</text>
+  <text x="56" y="733" font-size="21" class="muted" text-anchor="start">Text · Semantic · AST</text>
+  <rect x="416" y="664" width="368" height="104" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="440" y="700" font-size="24" class="heading" text-anchor="start">Model providers</text>
+  <text x="440" y="733" font-size="21" class="muted" text-anchor="start">Cloud APIs / local Ollama</text>
+  <rect x="800" y="664" width="368" height="104" rx="14" fill="#ffffff" stroke="#cbd5e1" stroke-dasharray="6 5"/>
+  <text x="824" y="700" font-size="24" class="heading" text-anchor="start">External MetaInfer</text>
+  <text x="824" y="733" font-size="21" class="muted" text-anchor="start">GPU tools · UC acceptance</text>
+  <text x="1144" y="699" font-size="17" class="muted" text-anchor="end">Optional</text>
+</svg>

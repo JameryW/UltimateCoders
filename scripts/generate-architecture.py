@@ -1,4 +1,4 @@
-"""Generate English and Chinese architecture SVGs from one shared layout.
+"""Generate bilingual architecture SVGs for the README and reference guide.
 
 Run from any directory: python scripts/generate-architecture.py
 Use --check to verify that the checked-in illustrations match this source.
@@ -106,60 +106,99 @@ LABELS = {
         "Graph attempts: UC_DATABASE_URL + UC_GRAPH_SHADOW=on.",
         "默认：TaskStore + 持久事件 · Graph Attempt：UC_DATABASE_URL + UC_GRAPH_SHADOW=on。",
     ),
+    "overview_description": (
+        "Overview of UltimateCoders: Dashboard and optional OMP submit tasks; "
+        "Python plans DAGs and Rust owns task state and dispatch. NATS connects the control "
+        "plane to scalable Workers in isolated Git worktrees. Shared services supply search, "
+        "memory and models. Optional MetaInfer supplies specialized GPU tools, with UC acceptance.",
+        "UltimateCoders 概览：Dashboard 和可选 OMP 提交任务；Python 规划 DAG，"
+        "Rust 管理任务状态与调度。NATS 连接控制层和隔离 worktree 中的可扩展 Worker。"
+        "共享服务提供检索、记忆和模型；可选 MetaInfer 提供 GPU 工具，UC 负责验收。",
+    ),
+    "overview_entry": ("Entry points", "交互入口"),
+    "overview_control": ("Planning & control", "规划与控制"),
+    "overview_workers": ("Worker pool", "Worker 集群"),
+    "overview_gateway": ("State · dispatch · recovery", "状态 · 调度 · 恢复"),
+    "overview_planner": ("DAG · domain routing", "DAG · 领域路由"),
+    "overview_isolation": ("Sandbox + Git worktrees", "Sandbox + Git worktree"),
+    "overview_adapters": ("Coding / inference adapters", "编程 / 推理适配器"),
+    "overview_scale": ("Scale from 1 to N workers", "从 1 个扩展到 N 个 Worker"),
+    "overview_omp": ("OMP terminal · optional", "OMP 终端 · 可选"),
+    "overview_transport": (
+        "NATS · Core messages / JetStream delivery",
+        "NATS · Core 消息 / JetStream 投递",
+    ),
+    "overview_memory": ("Search + Memory", "检索与 Memory"),
+    "overview_knowledge": ("Text · Semantic · AST", "文本 · 语义 · AST"),
+    "overview_metainfer": ("GPU tools · UC acceptance", "GPU 工具 · UC 验收"),
+    "overview_status": (
+        "WatchTask / SSE · durable events · checkpoint / replay",
+        "WatchTask / SSE · 持久事件 · checkpoint / replay",
+    ),
 }
 
 
-def render(language: str) -> str:
-    """Return a self-contained SVG; labels vary, coordinates stay identical."""
-    locale = 0 if language == "en" else 1
-    parts = [
-        '<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1140" '
-        'viewBox="0 0 1440 1140" preserveAspectRatio="xMidYMid meet" '
-        f'xml:lang="{language}" role="img" aria-labelledby="title desc">',
-        f'  <title id="title">UltimateCoders · {escape(LABELS["title"][locale])}</title>',
-        f'  <desc id="desc">{escape(LABELS["description"][locale])}</desc>',
-        "  <defs>",
-        '    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" '
-        'markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" '
-        'orient="auto-start-reverse">',
-        '      <path d="M1 1 L9 5 L1 9 Z" fill="#60758c"/>',
-        "    </marker>",
-        "    <style>",
-        '      text { font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", '
-        '"Noto Sans CJK SC", Arial, sans-serif; fill: #334155; }',
-        "      .heading { font-weight: 600; fill: #0f172a; }",
-        "      .section { font-weight: 600; letter-spacing: 1.5px; }",
-        "      .muted { fill: #64748b; }",
-        "      .connector { fill: none; stroke: #60758c; stroke-width: 2; "
-        "stroke-linejoin: round; }",
-        "    </style>",
-        "  </defs>",
-        '  <rect width="1440" height="1140" fill="#ffffff"/>',
-    ]
+class Diagram:
+    """Small SVG primitives shared by every view and language."""
+
+    def __init__(self, language: str, width: int, height: int, description: str) -> None:
+        self.locale = 0 if language == "en" else 1
+        self.parts = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+            f'viewBox="0 0 {width} {height}" preserveAspectRatio="xMidYMid meet" '
+            f'xml:lang="{language}" role="img" aria-labelledby="title desc">',
+            f'  <title id="title">UltimateCoders · {escape(LABELS["title"][self.locale])}</title>',
+            f'  <desc id="desc">{escape(LABELS[description][self.locale])}</desc>',
+            "  <defs>",
+            '    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" '
+            'markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" '
+            'orient="auto-start-reverse">',
+            '      <path d="M1 1 L9 5 L1 9 Z" fill="#60758c"/>',
+            "    </marker>",
+            "    <style>",
+            '      text { font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", '
+            '"Noto Sans CJK SC", Arial, sans-serif; fill: #334155; }',
+            "      .heading { font-weight: 600; fill: #0f172a; }",
+            "      .section { font-weight: 600; letter-spacing: 1.5px; }",
+            "      .muted { fill: #64748b; }",
+            "      .connector { fill: none; stroke: #60758c; stroke-width: 2; "
+            "stroke-linejoin: round; }",
+            "    </style>",
+            "  </defs>",
+            f'  <rect width="{width}" height="{height}" fill="#ffffff"/>',
+        ]
 
     def text(
-        key: str, x: int, y: int, size: int = 19, css: str = "", anchor: str = "start"
+        self, key: str, x: int, y: int, size: int = 19, css: str = "", anchor: str = "start"
     ) -> None:
-        value = LABELS[key][locale] if key in LABELS else key
-        parts.append(
+        value = LABELS[key][self.locale] if key in LABELS else key
+        self.parts.append(
             f'  <text x="{x}" y="{y}" font-size="{size}" class="{css}" '
             f'text-anchor="{anchor}">{escape(value)}</text>'
         )
 
     def rect(
-        x: int, y: int, w: int, h: int, fill: str, stroke: str = "none", optional: bool = False
+        self,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        fill: str,
+        stroke: str = "none",
+        optional: bool = False,
     ) -> None:
         dash = ' stroke-dasharray="6 5"' if optional else ""
-        parts.append(
+        self.parts.append(
             f'  <rect x="{x}" y="{y}" width="{w}" height="{h}" rx="14" '
             f'fill="{fill}" stroke="{stroke}"{dash}/>'
         )
 
-    def edge(path: str, both: bool = False) -> None:
+    def edge(self, path: str, both: bool = False) -> None:
         start = ' marker-start="url(#arrow)"' if both else ""
-        parts.append(f'  <path d="{path}" class="connector" marker-end="url(#arrow)"{start}/>')
+        self.parts.append(f'  <path d="{path}" class="connector" marker-end="url(#arrow)"{start}/>')
 
     def card(
+        self,
         key: str,
         x: int,
         y: int,
@@ -169,12 +208,21 @@ def render(language: str) -> str:
         title_size: int = 25,
         optional: bool = False,
     ) -> None:
-        parts.append(f'  <g data-card="{key}">')
-        rect(x, y, w, h, "#ffffff", "#cbd5e1", optional)
-        text(key, x + 20, y + 37, title_size, "heading")
+        self.parts.append(f'  <g data-card="{key}">')
+        self.rect(x, y, w, h, "#ffffff", "#cbd5e1", optional)
+        self.text(key, x + 20, y + 37, title_size, "heading")
         for index, line in enumerate(lines):
-            text(line, x + 20, y + 73 + index * 28, 19)
-        parts.append("  </g>")
+            self.text(line, x + 20, y + 73 + index * 28, 19)
+        self.parts.append("  </g>")
+
+    def finish(self) -> str:
+        return "\n".join([*self.parts, "</svg>"]) + "\n"
+
+
+def render(language: str) -> str:
+    """Detailed service view with protocol routes and acceptance workflow."""
+    diagram = Diagram(language, 1440, 1140, "description")
+    text, rect, edge, card = diagram.text, diagram.rect, diagram.edge, diagram.card
 
     # Header and legend. No promotional headline competes with the diagram.
     text("ULTIMATECODERS", 40, 48, 16, "section muted")
@@ -272,28 +320,110 @@ def render(language: str) -> str:
     edge("M1018 987 H1090")
     text("evidence", 64, 1055, 18, "muted")
     text("activation", 40, 1114, 18, "muted")
-    parts.append("</svg>")
-    return "\n".join(parts) + "\n"
+    return diagram.finish()
+
+
+def render_overview(language: str, *, portrait: bool = False) -> str:
+    """Show responsibilities without duplicating the detailed protocol map."""
+    width, height = (620, 1436) if portrait else (1200, 800)
+    diagram = Diagram(language, width, height, "overview_description")
+    text, rect, edge = diagram.text, diagram.rect, diagram.edge
+    text("ULTIMATECODERS", 32, 44, 16, "section muted")
+    text("title", 32, 94, 36, "heading")
+    text("subtitle", 32, 132, 21, "muted")
+
+    # Arrows describe the task lifecycle at this level, not wire protocols.
+    # OMP remains visibly optional beside the two default Web components.
+    if portrait:
+        panels = [(32, 168, 556, 264), (32, 470, 556, 230), (32, 738, 556, 218)]
+        edge("M310 432 V470")
+        edge("M310 700 V738")
+        transport_y, services_y = 978, 1088
+    else:
+        panels = [(32, 180, 336, 300), (432, 180, 336, 300), (832, 180, 336, 300)]
+        edge("M368 330 H432")
+        edge("M768 330 H832")
+        transport_y, services_y = 502, 664
+
+    for (x, y, w, h), key, color, stroke in zip(
+        panels,
+        ["overview_entry", "overview_control", "overview_workers"],
+        ["#f1f5fb", "#f0f8f6", "#f6f3fb"],
+        ["#dbe5f1", "#d8e9e4", "#e3dcf0"],
+    ):
+        rect(x, y, w, h, color, stroke)
+        text(key, x + 24, y + 40, 25, "heading")
+
+    x, y, w, _ = panels[0]
+    text("dashboard", x + 24, y + 90, 24, "heading")
+    text("dashboard_detail", x + 24, y + 122, 21, "muted")
+    text("api", x + 24, y + 166, 24, "heading")
+    text("api_detail", x + 24, y + 198, 21, "muted")
+    rect(x + 24, y + 220, w - 48, 40, "#ffffff", "#94a3b8", True)
+    text("overview_omp", x + 40, y + 247, 21)
+
+    x, y, _, _ = panels[1]
+    text("planner", x + 24, y + 90, 24, "heading")
+    text("overview_planner", x + 24, y + 122, 21, "muted")
+    text("gateway", x + 24, y + 174, 24, "heading")
+    text("overview_gateway", x + 24, y + 206, 21, "muted")
+
+    x, y, _, _ = panels[2]
+    text("workers", x + 24, y + 90, 24, "heading")
+    text("overview_scale", x + 24, y + 122, 21, "muted")
+    text("overview_isolation", x + 24, y + 174, 21)
+    text("overview_adapters", x + 24, y + 206, 21)
+
+    # The message hub and observability span the runtime. Shared-service
+    # cards intentionally have no crossing dependency lines in this overview.
+    rect(32, transport_y, width - 64, 52, "#f8fafc", "#e2e8f0")
+    text("overview_transport", width // 2, transport_y + 33, 23, "heading", "middle")
+    if portrait:
+        text("shared", 32, services_y - 20, 16, "section muted")
+        service_cards = [
+            (32, services_y, 556),
+            (32, services_y + 100, 556),
+            (32, services_y + 200, 556),
+        ]
+    else:
+        rect(32, 572, width - 64, 44, "#f8fafc")
+        text("overview_status", width // 2, 601, 21, "muted", "middle")
+        text("shared", 32, services_y - 20, 16, "section muted")
+        service_cards = [(32, services_y, 368), (416, services_y, 368), (800, services_y, 368)]
+    for (x, y, w), key, line in zip(
+        service_cards,
+        ["overview_memory", "models", "metainfer"],
+        ["overview_knowledge", "model_backends", "overview_metainfer"],
+    ):
+        rect(x, y, w, 88 if portrait else 104, "#ffffff", "#cbd5e1", key == "metainfer")
+        text(key, x + 24, y + 36, 24, "heading")
+        text(line, x + 24, y + 69, 21, "muted")
+        if key == "metainfer":
+            text("optional", x + w - 24, y + 35, 17, "muted", "end")
+    if portrait:
+        text("WatchTask / SSE · checkpoint / replay", 32, 1410, 22, "muted")
+    return diagram.finish()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Check outputs without modifying them")
     args = parser.parse_args()
-    for language, filename in [
-        ("en", "system-architecture.svg"),
-        ("zh-CN", "system-architecture.zh-CN.svg"),
-    ]:
-        destination = OUTPUT / filename
-        svg = render(language)
-        if args.check:
-            if not destination.exists() or destination.read_text(encoding="utf-8") != svg:
-                print(f"Out of date: {destination.name}")
-                return 1
-            print(f"Up to date: {destination.name}")
-        else:
-            destination.write_bytes(svg.encode("utf-8"))
-            print(f"Generated: {destination.name}")
+    for language, suffix in [("en", ""), ("zh-CN", ".zh-CN")]:
+        for name, svg in [
+            ("system-architecture", render(language)),
+            ("architecture-overview", render_overview(language)),
+            ("architecture-overview-mobile", render_overview(language, portrait=True)),
+        ]:
+            destination = OUTPUT / f"{name}{suffix}.svg"
+            if args.check:
+                if not destination.exists() or destination.read_text(encoding="utf-8") != svg:
+                    print(f"Out of date: {destination.name}")
+                    return 1
+                print(f"Up to date: {destination.name}")
+            else:
+                destination.write_bytes(svg.encode("utf-8"))
+                print(f"Generated: {destination.name}")
     return 0
 
 
