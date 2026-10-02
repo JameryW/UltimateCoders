@@ -153,11 +153,14 @@ RUN npm install -g \
 # ponytail: dsh depends on node-pty, a native module — node-gyp needs
 # make/g++ which the slim runtime lacks. Install them transiently and
 # purge in the SAME layer so the compiled module ships without the
-# toolchain bloat. Pin the last complete DSH release: the unpinned latest
-# release can resolve a missing prerelease worker package and fail Docker builds.
+# toolchain bloat. Pinned (not latest): an unpinned install once resolved
+# a missing prerelease worker package and failed Docker builds. 0.2.0-rc.2
+# is verified: headless one-shot contract unchanged, boots with both flat
+# and structured $DSH_HOME/.credentials.yaml shapes (0.1.0-rc.x only
+# accepted the flat shape and crashed on structured files).
 RUN apt-get update -qq \
     && apt-get install -y -qq --no-install-recommends make g++ \
-    && npm install -g @deepseek-ai/dsh@0.1.0-rc.7 \
+    && npm install -g @deepseek-ai/dsh@0.2.0-rc.2 \
     && dsh --version \
     && apt-get purge -y -qq make g++ \
     && apt-get autoremove -y -qq \
