@@ -157,6 +157,13 @@ jobs:
     runs-on: ubuntu-latest
     # Only run on main pushes or manual trigger to avoid PR noise from infra flakiness
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    env:
+      UC_PG_URL: postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders
+      UC_PG_URL_TEST: postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders
+      UC_QDRANT_URL: http://127.0.0.1:6334
+      UC_TIKV_PD_ENDPOINTS: 127.0.0.1:2379
+      UC_NATS_TEST_URL: nats://127.0.0.1:4222
+      UC_GATEWAY_TEST_ADDR: http://127.0.0.1:50051
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -173,6 +180,16 @@ jobs:
             sleep 5
             docker compose -f docker/docker-compose.yml up -d --wait
           }
+      - name: Expose TiKV discovery to host tests
+        run: |
+          # PD and TiKV advertise Docker names, including TiKV's unpublished
+          # port. Host-side Rust clients must resolve the discovered addresses.
+          for service in pd tikv; do
+            container_id=$(docker compose -f docker/docker-compose.yml ps -q "$service")
+            address=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}' "$container_id" | head -n 1)
+            test -n "$address"
+            printf '%s %s\n' "$address" "$service" | sudo tee -a /etc/hosts
+          done
       - name: Wait for TiKV store readiness
         run: |
           # PD can be healthy while TiKV store is still initializing.
@@ -187,14 +204,44 @@ jobs:
           done
           echo "::warning::TiKV store not confirmed ready after 30s, proceeding anyway"
       - name: Run storage integration tests
-        run: cargo test --features storage -- --ignored
+        run: |
+          # --ignored includes live NATS replay and deployed-Gateway contracts.
+          # Supply both fixtures instead of stopping at the first missing URL.
+          curl --fail --silent --show-error http://127.0.0.1:8222/jsz > /dev/null
+          cargo build -p uc-grpc-server
+          target/debug/uc-grpc-server > "$RUNNER_TEMP/uc-storage-gateway.log" 2>&1 &
+          gateway_pid=$!
+          trap 'kill "$gateway_pid" 2>/dev/null || true; wait "$gateway_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if ! kill -0 "$gateway_pid" 2>/dev/null; then
+              cat "$RUNNER_TEMP/uc-storage-gateway.log"
+              exit 1
+            fi
+            if (echo > /dev/tcp/127.0.0.1/50051) 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if ! (echo > /dev/tcp/127.0.0.1/50051) 2>/dev/null; then
+            cat "$RUNNER_TEMP/uc-storage-gateway.log"
+            echo "Gateway did not become ready"
+            exit 1
+          fi
+          cargo test --features storage -- --ignored
         env:
-          UC_PG_URL: postgresql://ultimate_coders:ultimate_coders@localhost:5432/ultimate_coders
-          UC_QDRANT_URL: http://localhost:6334
-          UC_TIKV_PD_ENDPOINTS: localhost:2379
+          UC_DATABASE_URL: ${{ env.UC_PG_URL }}
+          UC_TASK_BACKEND: postgres
+          UC_EVENT_BACKEND: nats
+          UC_SCHEDULE_BACKEND: postgres
+          UC_NATS_URL: ${{ env.UC_NATS_TEST_URL }}
+          UC_GRPC_ADDR: 127.0.0.1:50051
       - name: Print logs on failure
         if: failure()
-        run: docker compose -f docker/docker-compose.yml logs
+        run: |
+          docker compose -f docker/docker-compose.yml logs
+          if [ -f "$RUNNER_TEMP/uc-storage-gateway.log" ]; then
+            cat "$RUNNER_TEMP/uc-storage-gateway.log"
+          fi
       - name: Stop storage infrastructure
         if: always()
         run: docker compose -f docker/docker-compose.yml down -v

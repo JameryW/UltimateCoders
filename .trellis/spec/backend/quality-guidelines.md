@@ -272,3 +272,68 @@ assert call_kwargs[1]["key_scope"] == "task"
 - [ ] Feature-gated code has both `#[cfg(feature = "...")]` and `#[cfg(not(feature = "..."))]` paths
 - [ ] No `unwrap()` in production code paths (test code is acceptable)
 - [ ] Logging uses the correct level (info/warn/debug) per the logging guidelines
+
+---
+
+## Live Rust CI Fixtures
+
+### 1. Scope / Trigger
+
+The `storage-integration` job in `.github/workflows/ci-rust.yml` runs the
+workspace's ignored integration tests on main pushes and manual dispatches.
+Adding an ignored test with a new service dependency must update this job.
+
+### 2. Signatures
+
+Build the fixture with `cargo build -p uc-grpc-server`, then execute
+`cargo test --features storage -- --ignored` with the fixture endpoints below.
+
+### 3. Contracts
+
+- `UC_PG_URL` and `UC_PG_URL_TEST` point to the job's PostgreSQL fixture over IPv4.
+- Host-side Rust clients resolve PD/TiKV's advertised Docker names to the
+  job's live container IPs. The bootstrap PD port alone is insufficient:
+  discovery reconnects to `pd:2379` and the unpublished `tikv:20160` endpoint.
+- `UC_NATS_TEST_URL` selects the job's isolated JetStream broker for event replay
+  and task snapshot tests. Starting a broker alone does not configure these tests.
+- `UC_GATEWAY_TEST_ADDR` selects a running fixture Gateway for deployed controls.
+  Its `UC_DATABASE_URL` matches `UC_PG_URL`; `UC_TASK_BACKEND` and
+  `UC_SCHEDULE_BACKEND` are `postgres`, `UC_EVENT_BACKEND` is `nats`, and
+  `UC_NATS_URL` matches `UC_NATS_TEST_URL`.
+- Check JetStream readiness and Gateway process/TCP readiness before testing.
+  Bound Gateway startup to 30 seconds, retain its log, and terminate/wait for
+  the owned process on shell exit, including failed tests.
+- Parallel NATS tests use unique task/project IDs and filter global dispatch
+  messages by their own graph ID. A negative assertion must observe its task,
+  rather than assume that the shared broker carries no other dispatches.
+- A retry lifecycle fixture resets terminal control state through an explicit
+  Gateway command before publishing a coordinator retry snapshot. Assert the
+  snapshot's child transition as well as the parent state so the command alone
+  cannot satisfy the test.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Broker not ready, Gateway exits or readiness deadline expires | Fail before the suite; print Gateway logs when available |
+| Required test endpoint absent | Integration test fails loudly; do not convert it to a skip |
+| Test failure | Preserve its failure status, stop Gateway, print service logs |
+
+### 5. Good / Base / Bad Cases
+
+Good: manual dispatch starts all fixtures and runs the ignored suite. Base:
+PR checks retain the configured main-only storage-job skip. Bad: a broker is
+healthy but `UC_NATS_TEST_URL` is absent, so replay tests fail before connecting.
+
+### 6. Tests Required
+
+Run the workflow input guard and its tests. Validate the ignored NATS replay,
+task snapshot and deployed Gateway suites against real fixtures. Manually
+dispatch Rust CI on a repair branch to validate the main-only storage job
+before merging its workflow changes.
+
+### 7. Wrong vs Correct
+
+Wrong: assume every ignored test needs only TiKV/Qdrant/PostgreSQL, or narrow
+the command to hide newly selected tests. Correct: keep the complete ignored
+suite and provision each explicitly required fixture endpoint.
