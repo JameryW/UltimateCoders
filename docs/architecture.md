@@ -58,7 +58,7 @@ Explicit review nodes require the opt-in `review` capability and a structured JS
 
 ## Inference infrastructure and model backends
 
-`InferenceInfraAgent` is an optional engineering domain. Enabling `UC_METAINFER_URL` on the planner and eligible Workers activates routing and inference capability advertising. The `metainfer` coding-adapter slot launches the UC inference runner; the HTTP adapter delegates specialized generation/analysis to an **external MetaInfer service**. UC does not vendor the service or require its GPU libraries in the Worker image.
+`InferenceInfraAgent` is an optional engineering domain. Workers probe live schemas and advertise only supported operation capabilities, while `inference_benchmark` remains local. The `metainfer` adapter launches the UC inference runner and delegates generation/analysis to an external service. UC retains worktree leases, operation identity, cancellation and acceptance; no MetaInfer source or GPU library enters its Worker image.
 
 Optimization follows **fixed baseline → candidate generation/import → compile/benchmark/profile → Oracle verdict → accept or rollback**. UC owns clean assigned worktrees, protected benchmark files, Oracle policy, cancellation and rollback. MetaInfer owns specialized execution and GPU allocation; both sides must access the assigned workspace at the same absolute path. Runtime generation is not automatically optimization of an existing framework: the latter needs a suitable service plugin.
 
@@ -79,3 +79,11 @@ Planning models and coding adapters are configured independently. Ollama can sup
 File-overlap detection is advisory; authoritative cross-worker reconciliation happens at Git merge time. External Git push/merge is opt-in. With graph-backed arbitration, Rust grants the fenced merge barrier and Python MergeArbiter performs the merge. Worker/Gateway contract versions must align; follow the root README's deployment instructions when upgrading.
 
 See [the README](../README.md) for runnable commands and configuration, [the runtime policy](architecture/durable-runtime-p2-policy.md) for diagnostics/review/placement boundaries, and [the migration assessment](architecture/durable-runtime-migration-assessment.md) for the original design decisions and delivery history.
+
+## Inference recovery boundary
+
+The existing PostgreSQL deployment also stores Python operation/experiment records, exclusive workspace and execution claims, delivery receipts, and terminal outbox records. SQLite is a native single-host fallback only. Remote submission intent precedes HTTP creation; confirmed remote IDs are adopted on restart. Unknown submission or stop outcome quarantines the workspace and retains its backend reservation.
+
+The validation path is now baseline → generate/import → repeated benchmark → Oracle → accepted candidate → UC commit → merge/optional push. Acceptance and delivery have separate evidence. Atomic checkpoints and manifests live outside candidate-editable files. Dashboard API artifact reads require authentication, root containment and SHA-256 verification; Compose mounts the artifact volume read-only there.
+
+Terminal dispatch ACK follows durable outbox creation. Independent replay requests coordinator and Gateway confirmation, including durable task/event writes. Restarted coordinators read current Gateway nodes/attempts before applying a result; stale complete snapshots are fenced before mutation. These runtime records do not enable execution-graph shadow mode or change the source of Gateway scheduling authority. See [the inference guide](inference-infra.md) for configuration and operator recovery boundaries.

@@ -139,8 +139,8 @@ async def test_cancel_node_executions_kills_and_cancels_only_target():
 
     sibling = asyncio.create_task(asyncio.sleep(60))
     target = asyncio.create_task(asyncio.sleep(60))
-    nw._running_node_tasks[("t-1", "st-b")] = sibling
-    nw._running_node_tasks[("t-1", "st-a")] = target
+    nw._running_node_tasks[("t-1", "st-b")] = {sibling}
+    nw._running_node_tasks[("t-1", "st-a")] = {target}
 
     moved = nw._cancel_node_executions("t-1", ["st-a"])
 
@@ -210,7 +210,7 @@ async def test_handle_task_cancelled_event_also_kills_node_groups():
     nw._orchestrator.cancel_task = AsyncMock()
 
     execution = asyncio.create_task(asyncio.sleep(60))
-    nw._running_node_tasks[("t-1", "st-a")] = execution
+    nw._running_node_tasks[("t-1", "st-a")] = {execution}
 
     await nw._handle_task_event(_event_msg("task_cancelled", "t-1"))
 

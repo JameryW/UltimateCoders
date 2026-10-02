@@ -8,6 +8,12 @@ from unittest.mock import MagicMock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolated_runtime_state(tmp_path, monkeypatch):
+    """Runtime recovery records belong to one test, never to the developer's checkout."""
+    monkeypatch.setenv("UC_RUNTIME_STATE_DIR", str(tmp_path / "runtime-state"))
+
+
 class StubEngine:
     """Pure-Python stub engine for testing without the Rust extension.
 

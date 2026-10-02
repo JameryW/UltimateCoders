@@ -16,8 +16,17 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from ultimate_coders.agent.types import Subtask
+from ultimate_coders.agent.types import Subtask, SubtaskResult
 from ultimate_coders.nats_worker import NatsWorker as _NatsWorker
+
+
+def _terminal_sender(publisher):
+    async def send(event, update):
+        await publisher.publish_event(event["type"], task_id=event["task_id"],
+                                      subtask_id=event["subtask_id"], data=event["data"])
+        await publisher.publish_update(update, partial=True)
+        return True
+    return send
 
 
 def _make_worker() -> _NatsWorker:
@@ -247,6 +256,7 @@ async def test_js_max_deliver_cap_terms_and_publishes_failed():
 
     publisher = MagicMock()
     publisher.publish_event = AsyncMock()
+    publisher.publish_terminal = AsyncMock(side_effect=_terminal_sender(publisher))
     nw._publisher = publisher
 
     ack = AsyncMock()
@@ -289,7 +299,7 @@ async def test_js_below_max_deliver_executes_normally():
     async def slow_execute(subtask):
         started.set()
         await release.wait()
-        result = MagicMock()
+        result = SubtaskResult()
         result.success = True
         result.summary = "done"
         result.modified_files = []
@@ -304,6 +314,7 @@ async def test_js_below_max_deliver_executes_normally():
     publisher = MagicMock()
     publisher.publish_event = AsyncMock()
     publisher.publish_update = AsyncMock()
+    publisher.publish_terminal = AsyncMock(side_effect=_terminal_sender(publisher))
     nw._publisher = publisher
 
     ack = AsyncMock()
@@ -353,6 +364,7 @@ async def test_js_capability_miss_naks_and_publishes_rejection():
 
     publisher = MagicMock()
     publisher.publish_event = AsyncMock()
+    publisher.publish_terminal = AsyncMock(side_effect=_terminal_sender(publisher))
     nw._publisher = publisher
 
     ack = AsyncMock()
@@ -391,7 +403,7 @@ async def test_execute_and_report_acks_on_success():
     nw._running = True
 
     async def execute(subtask):
-        result = MagicMock()
+        result = SubtaskResult()
         result.success = True
         result.summary = "done"
         result.modified_files = []
@@ -405,6 +417,7 @@ async def test_execute_and_report_acks_on_success():
     publisher = MagicMock()
     publisher.publish_event = AsyncMock()
     publisher.publish_update = AsyncMock()
+    publisher.publish_terminal = AsyncMock(side_effect=_terminal_sender(publisher))
     nw._publisher = publisher
 
     ack = AsyncMock()
@@ -440,7 +453,7 @@ async def test_long_running_subtask_renews_jetstream_ack_wait():
 
     async def execute(subtask):
         await finish.wait()
-        result = MagicMock()
+        result = SubtaskResult()
         result.success = True
         result.summary = "done"
         result.modified_files = []
@@ -453,6 +466,7 @@ async def test_long_running_subtask_renews_jetstream_ack_wait():
     publisher = MagicMock()
     publisher.publish_event = AsyncMock()
     publisher.publish_update = AsyncMock()
+    publisher.publish_terminal = AsyncMock(side_effect=_terminal_sender(publisher))
     nw._publisher = publisher
 
     js_msg = MagicMock()
@@ -479,7 +493,7 @@ async def test_execute_and_report_acks_on_failure():
     nw._running = True
 
     async def execute(subtask):
-        result = MagicMock()
+        result = SubtaskResult()
         result.success = False
         result.summary = "failed"
         result.error = "boom"
@@ -494,6 +508,7 @@ async def test_execute_and_report_acks_on_failure():
     publisher = MagicMock()
     publisher.publish_event = AsyncMock()
     publisher.publish_update = AsyncMock()
+    publisher.publish_terminal = AsyncMock(side_effect=_terminal_sender(publisher))
     nw._publisher = publisher
 
     ack = AsyncMock()
@@ -527,6 +542,7 @@ async def test_execute_and_report_acks_on_exception():
     publisher = MagicMock()
     publisher.publish_event = AsyncMock()
     publisher.publish_update = AsyncMock()
+    publisher.publish_terminal = AsyncMock(side_effect=_terminal_sender(publisher))
     nw._publisher = publisher
 
     ack = AsyncMock()
@@ -557,7 +573,7 @@ async def test_execute_and_report_acks_on_publish_failure():
     nw._running = True
 
     async def execute(subtask):
-        result = MagicMock()
+        result = SubtaskResult()
         result.success = True
         result.summary = "done"
         result.modified_files = []
@@ -572,6 +588,7 @@ async def test_execute_and_report_acks_on_publish_failure():
     # publish_event raises — simulates NATS connection drop mid-publish
     publisher.publish_event = AsyncMock(side_effect=ConnectionError("NATS down"))
     publisher.publish_update = AsyncMock()
+    publisher.publish_terminal = AsyncMock(side_effect=_terminal_sender(publisher))
     nw._publisher = publisher
 
     ack = AsyncMock()
@@ -592,7 +609,7 @@ async def test_execute_and_report_acks_on_publish_update_failure():
     nw._running = True
 
     async def execute(subtask):
-        result = MagicMock()
+        result = SubtaskResult()
         result.success = True
         result.summary = "done"
         result.modified_files = []
@@ -607,6 +624,7 @@ async def test_execute_and_report_acks_on_publish_update_failure():
     publisher.publish_event = AsyncMock()
     # publish_update raises — second publish call fails
     publisher.publish_update = AsyncMock(side_effect=RuntimeError("gRPC down"))
+    publisher.publish_terminal = AsyncMock(side_effect=_terminal_sender(publisher))
     nw._publisher = publisher
 
     ack = AsyncMock()
@@ -626,7 +644,7 @@ async def test_execute_and_report_no_js_msg_no_ack():
     nw._running = True
 
     async def execute(subtask):
-        result = MagicMock()
+        result = SubtaskResult()
         result.success = True
         result.summary = "done"
         result.modified_files = []
@@ -640,6 +658,7 @@ async def test_execute_and_report_no_js_msg_no_ack():
     publisher = MagicMock()
     publisher.publish_event = AsyncMock()
     publisher.publish_update = AsyncMock()
+    publisher.publish_terminal = AsyncMock(side_effect=_terminal_sender(publisher))
     nw._publisher = publisher
 
     subtask = Subtask(id="st-1", parent_id="t-1", description="d")
@@ -662,6 +681,7 @@ async def test_cancelled_task_skips_execution_and_acks_jetstream():
     publisher = MagicMock()
     publisher.publish_event = AsyncMock()
     publisher.publish_update = AsyncMock()
+    publisher.publish_terminal = AsyncMock(side_effect=_terminal_sender(publisher))
     nw._publisher = publisher
 
     ack = AsyncMock()

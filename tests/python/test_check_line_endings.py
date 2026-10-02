@@ -198,6 +198,8 @@ def test_real_repo_is_reconciled() -> None:
     # Cargo.lock (1), Rust live checks (3), dashboard helpers/tests (4),
     # deployment probe (1), Python regression (1), and report (1).
     assert (int(m.group(1)), int(m.group(2))) in {
+        (1957, 1948),  # README architecture sources added seven text files.
+        (1972, 1963),  # Runtime repair, fault tests and task/tracker evidence: 15 text files.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

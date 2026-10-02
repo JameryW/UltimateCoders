@@ -17,11 +17,14 @@ isolation. Upgrade to overlayfs if git worktrees are too slow.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import shutil
+import socket
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -35,6 +38,11 @@ _WORKER_IDENTITY_EMAIL = "uc-worker@local"
 _WORKER_IDENTITY_NAME = "UC Worker"
 
 
+def subtask_branch(subtask_id: str, *, inference: bool = False) -> str:
+    suffix = hashlib.sha256(subtask_id.encode()).hexdigest()[:16] if inference else subtask_id[:12]
+    return f"uc/subtask/{suffix}"
+
+
 @dataclass
 class WorkspaceHandle:
     """A workspace allocated for a subtask."""
@@ -45,6 +53,7 @@ class WorkspaceHandle:
     subtask_id: str = ""
     project_path: str = ""
     status: str = "ready"  # ready | active | merging | completed | failed
+    lease_key: str = ""
 
     @property
     def is_active(self) -> bool:
@@ -82,6 +91,41 @@ class WorkspaceManager:
         self._push_on_release = push_on_release
         self._active: dict[str, WorkspaceHandle] = {}
         self._pool: list[WorkspaceHandle] = []
+        self._state = None
+
+    async def _lease_update(self, handle: WorkspaceHandle, delivery: dict | None = None) -> None:
+        if self._state and handle.lease_key:
+            await asyncio.to_thread(
+                self._state.mutate,
+                "workspace_leases",
+                handle.lease_key,
+                lambda old: {
+                    **old, "handle": asdict(handle), "status": handle.status,
+                    **({"delivery": delivery} if delivery is not None else {}),
+                },
+            )
+
+    async def quarantine(self, handle: WorkspaceHandle) -> None:
+        handle.status = "cleanup_pending"
+        await self._lease_update(handle)
+
+    def bind_runtime_state(self, state) -> None:
+        """Worker checkpoints and workspace leases must share one state store."""
+        if (self._state is not None
+                and (self._state.url, self._state.path) != (state.url, state.path)):
+            raise RuntimeError("Workspace and Worker runtime state stores differ")
+        self._state = state
+
+    async def runner_owner(self, working_dir: str) -> dict | None:
+        """Give the runner the current lease token, outside stable experiment identity."""
+        if self._state is None:
+            return None
+        handle = next((item for item in self._active.values()
+                       if item.lease_key and item.worktree_path == working_dir), None)
+        if handle is None:
+            return None
+        lease = await asyncio.to_thread(self._state.get, "workspace_leases", handle.lease_key)
+        return {"lease_key": handle.lease_key, "claim": lease["claim"]}
 
     @property
     def active_count(self) -> int:
@@ -175,7 +219,9 @@ class WorkspaceManager:
                     key, res["stderr"][:200],
                 )
 
-    async def acquire(self, subtask_id: str) -> WorkspaceHandle | None:
+    async def acquire(
+        self, subtask_id: str, *, require_worktree: bool = False
+    ) -> WorkspaceHandle | None:
         """Create an isolated workspace for a subtask.
 
         Creates a git worktree on a new branch. The worker can
@@ -188,12 +234,75 @@ class WorkspaceManager:
         if len(self._active) >= self._max_worktrees:
             logger.warning(
                 "Max worktrees (%d) reached, cannot allocate for %s",
-                self._max_worktrees, subtask_id[:8],
+                self._max_worktrees,
+                subtask_id[:8],
             )
             return None
 
+        lease_key = ""
+        if require_worktree:
+            from ultimate_coders.runtime_state import (
+                RuntimeState,
+                process_identity,
+                process_matches,
+            )
+
+            if self._state is None:
+                self._state = await asyncio.to_thread(
+                    RuntimeState,
+                    Path(os.environ.get("UC_RUNTIME_STATE_DIR") or
+                         Path(self._project_path).resolve() / ".uc/runtime") / "state.sqlite3",
+                )
+            lease_key = hashlib.sha256(
+                (str(Path(self._project_path).resolve()) + ":" + subtask_id).encode()
+            ).hexdigest()
+            claim = uuid.uuid4().hex
+            experiments = await asyncio.to_thread(self._state.records, "experiments")
+
+            def claim_lease(old):
+                if old and old.get("status") != "completed":
+                    if (
+                        old.get("status") in ("cleanup_pending", "failed")
+                        or old.get("host") != socket.gethostname()
+                    ):
+                        return old
+                    if old.get("runner_pid") and (
+                        old.get("runner_host") != socket.gethostname()
+                        or process_matches(old["runner_pid"], old.get("runner_process_identity"))
+                    ):
+                        return old
+                    if process_matches(old.get("pid", os.getpid()), old.get("process_identity")):
+                        return old
+                    for experiment in experiments:
+                        if (experiment.get("workspace")
+                                == old.get("handle", {}).get("worktree_path")):
+                            if (experiment.get("owner_host") != socket.gethostname()
+                                or process_matches(experiment.get("owner_pid", os.getpid()),
+                                                   experiment.get("owner_process_identity"))):
+                                return old
+                return {
+                    **old,
+                    "claim": claim,
+                    "host": socket.gethostname(),
+                    "pid": os.getpid(),
+                    "process_identity": process_identity(os.getpid()),
+                    "status": "active",
+                }
+
+            lease = await asyncio.to_thread(
+                self._state.mutate, "workspace_leases", lease_key, claim_lease
+            )
+            if lease.get("claim") != claim:
+                return None
+            if lease.get("handle") and lease["handle"].get("status") != "completed":
+                recovered = WorkspaceHandle(**lease["handle"])
+                if Path(recovered.worktree_path).is_dir():
+                    recovered.status = "active"
+                    self._active[recovered.workspace_id] = recovered
+                    return recovered
+
         ws_id = f"ws-{uuid.uuid4().hex[:8]}"
-        branch_name = f"uc/subtask/{subtask_id[:12]}"
+        branch_name = subtask_branch(subtask_id, inference=require_worktree)
 
         handle = WorkspaceHandle(
             workspace_id=ws_id,
@@ -202,7 +311,9 @@ class WorkspaceManager:
             subtask_id=subtask_id,
             project_path=self._project_path,
             status="active",
+            lease_key=lease_key,
         )
+        await self._lease_update(handle)
 
         try:
             # Determine the base ref to branch the worktree from.
@@ -220,8 +331,10 @@ class WorkspaceManager:
                 else:
                     logger.warning(
                         "fetch %s/%s failed, branching off local %s: %s",
-                        self._remote_name, self._base_branch,
-                        self._base_branch, fetch_result["stderr"][:200],
+                        self._remote_name,
+                        self._base_branch,
+                        self._base_branch,
+                        fetch_result["stderr"][:200],
                     )
 
             # Create git worktree on a new branch
@@ -238,11 +351,17 @@ class WorkspaceManager:
                 if result["exit_code"] != 0:
                     logger.error(
                         "Failed to create worktree for %s: %s",
-                        subtask_id[:8], result["stderr"][:200],
+                        subtask_id[:8],
+                        result["stderr"][:200],
                     )
+                    if require_worktree:
+                        handle.status = "completed"
+                        await self._lease_update(handle)
+                        return None
                     # Fallback: use in-project temp directory
                     handle.worktree_path = os.path.join(
-                        self._project_path, f".uc/workspaces/{ws_id}",
+                        self._project_path,
+                        f".uc/workspaces/{ws_id}",
                     )
                     await self._mkdir(handle.worktree_path)
                     # Copy project files
@@ -254,19 +373,26 @@ class WorkspaceManager:
                     handle.branch_name = ""
             else:
                 handle.worktree_path = os.path.join(
-                    self._project_path, f".uc/worktrees/{ws_id}",
+                    self._project_path,
+                    f".uc/worktrees/{ws_id}",
                 )
 
             self._active[ws_id] = handle
+            if handle.branch_name:
+                handle.worktree_path = os.path.join(self._project_path, f".uc/worktrees/{ws_id}")
+            await self._lease_update(handle)
             logger.info(
                 "Workspace %s acquired for subtask %s (branch=%s)",
-                ws_id, subtask_id[:8], branch_name,
+                ws_id,
+                subtask_id[:8],
+                branch_name,
             )
             return handle
 
         except Exception as e:
             logger.error("Workspace acquisition failed: %s", e, exc_info=True)
             handle.status = "failed"
+            await self._lease_update(handle)
             return None
 
     async def release(
@@ -290,6 +416,45 @@ class WorkspaceManager:
         result_info: dict[str, Any] = {"workspace_id": handle.workspace_id}
 
         if merge and handle.branch_name:
+            # UC owns the commit after validation. Inference candidates deliberately
+            # leave accepted edits unstaged; merging only pre-existing commits lost them.
+            dirty = await self._git(["status", "--porcelain"], cwd=handle.worktree_path)
+            if dirty["exit_code"]:
+                handle.status = "failed"
+                await self._lease_update(handle)
+                return {
+                    **result_info,
+                    "status": "commit_failed",
+                    "branch_preserved": handle.branch_name,
+                }
+            if dirty["stdout"].strip():
+                staged = await self._git(["add", "--all", "--", "."], cwd=handle.worktree_path)
+                committed = (
+                    await self._git(
+                        [
+                            "-c",
+                            f"user.name={_WORKER_IDENTITY_NAME}",
+                            "-c",
+                            f"user.email={_WORKER_IDENTITY_EMAIL}",
+                            "commit",
+                            "-m",
+                            f"UC accepted subtask {handle.subtask_id}",
+                        ],
+                        cwd=handle.worktree_path,
+                    )
+                    if staged["exit_code"] == 0
+                    else staged
+                )
+                if committed["exit_code"]:
+                    handle.status = "failed"
+                    await self._lease_update(handle)
+                    return {
+                        **result_info,
+                        "status": "commit_failed",
+                        "branch_preserved": handle.branch_name,
+                    }
+            head = await self._git(["rev-parse", "HEAD"], cwd=handle.worktree_path)
+            result_info["commit_sha"] = head["stdout"].strip()
             # Check if there are any commits on the branch
             log_result = await self._git(
                 ["log", f"{self._base_branch}..{handle.branch_name}", "--oneline"],
@@ -309,7 +474,8 @@ class WorkspaceManager:
                     result_info["branch_preserved"] = handle.branch_name
                     logger.warning(
                         "Merge conflict for workspace %s, branch %s preserved",
-                        handle.workspace_id, handle.branch_name,
+                        handle.workspace_id,
+                        handle.branch_name,
                     )
                 else:
                     result_info["status"] = "merged"
@@ -327,7 +493,8 @@ class WorkspaceManager:
             ):
                 push_result = await self._git(
                     [
-                        "push", self._remote_name,
+                        "push",
+                        self._remote_name,
                         f"{handle.branch_name}:refs/heads/{handle.branch_name}",
                     ],
                     cwd=self._project_path,
@@ -335,13 +502,23 @@ class WorkspaceManager:
                 if push_result["exit_code"] != 0:
                     logger.warning(
                         "release: push of branch %s failed (non-fatal): %s",
-                        handle.branch_name, push_result["stderr"][:200],
+                        handle.branch_name,
+                        push_result["stderr"][:200],
                     )
                     result_info["push_status"] = "failed"
                     result_info["push_error"] = push_result["stderr"][:200]
                 else:
                     result_info["push_status"] = "pushed"
 
+        if result_info.get("status") == "conflict" or result_info.get("push_status") == "failed":
+            handle.status = "failed"
+            await self._lease_update(handle, result_info)
+            return result_info
+
+        # Delivery survives a crash between worktree removal and the Worker's
+        # final checkpoint. Recovery must not recreate and rerun the candidate.
+        handle.status = "delivered"
+        await self._lease_update(handle, result_info)
         # Remove the worktree
         try:
             wt_path = os.path.join(
@@ -369,6 +546,7 @@ class WorkspaceManager:
             logger.debug("Worktree cleanup failed (non-fatal): %s", e)
 
         handle.status = "completed"
+        await self._lease_update(handle)
         self._active.pop(handle.workspace_id, None)
         return result_info
 
@@ -383,15 +561,31 @@ class WorkspaceManager:
         if not os.path.exists(worktrees_dir):
             return 0
 
+        if self._state is None:
+            from ultimate_coders.runtime_state import RuntimeState
+
+            self._state = await asyncio.to_thread(
+                RuntimeState,
+                Path(os.environ.get("UC_RUNTIME_STATE_DIR") or
+                     Path(self._project_path).resolve() / ".uc/runtime") / "state.sqlite3",
+            )
+        leases = await asyncio.to_thread(self._state.records, "workspace_leases")
+
         for entry in os.listdir(worktrees_dir):
             path = os.path.join(worktrees_dir, entry)
+            Path(path).resolve().relative_to(Path(worktrees_dir).resolve())
             if not os.path.isdir(path):
                 continue
             # ponytail: simple check — remove if not in active handles
             is_active = any(
-                h.worktree_path == path and h.is_active
-                for h in self._active.values()
+                h.worktree_path == path and h.status != "completed" for h in self._active.values()
             )
+            if self._state:
+                is_active = is_active or any(
+                    item.get("status") not in ("completed", "delivered")
+                    and item.get("handle", {}).get("worktree_path") == path
+                    for item in leases
+                )
             if not is_active:
                 try:
                     await self._git(

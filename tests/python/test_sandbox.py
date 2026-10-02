@@ -2754,6 +2754,7 @@ class TestNatsWorkerGatewayRegistrationRetry:
             ))
             # F52: the heartbeat tick now awaits Worker.send_heartbeat()
             # (liveness refresh) — must be awaitable on the mock.
+            worker.refresh_inference_capabilities = AsyncMock(return_value=False)
             worker.send_heartbeat = AsyncMock(return_value={})
             nw._worker = worker
 

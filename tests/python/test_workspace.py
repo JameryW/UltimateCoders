@@ -76,6 +76,26 @@ async def test_ensure_clone_noop_without_remote(tmp_path):
     assert not (tmp_path / "proj" / ".git").exists()
 
 
+async def test_release_delivers_accepted_uncommitted_files(tmp_path):
+    remote = _make_bare_remote(tmp_path)
+    project = tmp_path / "project"
+    manager = WorkspaceManager(str(project), remote_url=str(remote))
+    await manager.ensure_clone()
+    handle = await manager.acquire("accepted-inference")
+    assert handle is not None
+    worktree = Path(handle.worktree_path)
+    (worktree / "README.md").write_text("accepted candidate\n")
+    (worktree / "kernel.py").write_text("def kernel(): return 42\n")
+
+    released = await manager.release(handle, merge=True)
+
+    assert released["status"] == "merged"
+    assert released["commit_sha"]
+    assert (project / "README.md").read_text() == "accepted candidate\n"
+    assert (project / "kernel.py").read_text() == "def kernel(): return 42\n"
+    assert not worktree.exists()
+
+
 async def test_ensure_clone_clones_from_remote(tmp_path):
     """ensure_clone clones the bare remote into project_path."""
     remote = _make_bare_remote(tmp_path)

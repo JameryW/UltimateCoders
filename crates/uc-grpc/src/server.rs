@@ -685,6 +685,7 @@ pub struct TaskStore {
     /// the read source of truth). Startup recovery via `load_tasks_from_backend`
     /// reloads the HashMap from PG; runtime reads never hit PG directly.
     task_backend: Option<Arc<dyn uc_engine::TaskStoreBackend>>,
+    task_write_barrier: std::sync::Mutex<Option<EventWriteBarrier>>,
     /// Optional graph-table shadow writer (T2, `UC_GRAPH_SHADOW=on` only).
     /// When wired at the assembly point, every `persist_task` also upserts
     /// the graph row tables fire-and-forget, warn-only. `None` (default)
@@ -731,6 +732,7 @@ impl TaskStore {
             event_store: Arc::new(uc_engine::InMemoryEventStore::new()),
             event_write_barrier: None,
             task_backend: None,
+            task_write_barrier: std::sync::Mutex::new(None),
             graph_shadow: None,
             last_heartbeat: None,
             worker_heartbeats: HashMap::new(),
@@ -749,6 +751,7 @@ impl TaskStore {
             event_store,
             event_write_barrier: None,
             task_backend: None,
+            task_write_barrier: std::sync::Mutex::new(None),
             graph_shadow: None,
             last_heartbeat: None,
             worker_heartbeats: HashMap::new(),
@@ -770,6 +773,7 @@ impl TaskStore {
             event_store,
             event_write_barrier: None,
             task_backend: Some(task_backend),
+            task_write_barrier: std::sync::Mutex::new(None),
             graph_shadow: None,
             last_heartbeat: None,
             worker_heartbeats: HashMap::new(),
@@ -844,6 +848,47 @@ impl TaskStore {
     /// Check if a message_id has already been processed.
     /// Returns `true` if the message is a duplicate (already seen).
     /// If not a duplicate, records the message_id and returns `false`.
+    #[cfg(feature = "messaging")]
+    fn full_snapshot_is_stale(&self, update: &NatsTaskUpdate, confirmed: bool) -> bool {
+        !update.partial
+            && self
+                .tasks
+                .get(&update.task_id)
+                .map(|task| {
+                    // Control-plane cancellation/pause need not increment
+                    // attempts. A snapshot read before that action cannot
+                    // undo it, even when every attempt still matches.
+                    let protected_task = matches!(
+                        task.status,
+                        uc_types::TaskStatus::Paused
+                            | uc_types::TaskStatus::Failed
+                            | uc_types::TaskStatus::Completed
+                    ) && task_status_from_str(&update.status).as_ref() != Some(&task.status);
+                    protected_task || update.subtasks.iter().any(|incoming| {
+                        task.subtasks
+                            .iter()
+                            .find(|node| node.id.0 == incoming.subtask_id)
+                            .map(|node| {
+                                let protected_node = matches!(
+                                    node.status,
+                                    uc_types::SubtaskStatus::Failed
+                                        | uc_types::SubtaskStatus::Completed
+                                ) && subtask_status_from_str(&incoming.status).as_ref()
+                                    != Some(&node.status);
+                                protected_node || incoming
+                                    .attempt_id
+                                    .map(|attempt| {
+                                        let current = node.dispatch_retry_count as u64;
+                                        attempt < current || (confirmed && attempt > current)
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+    }
+
     pub fn check_and_record_message_id(&mut self, message_id: &Option<String>) -> bool {
         // No message_id means no dedup — always process
         let mid = match message_id {
@@ -940,9 +985,30 @@ impl TaskStore {
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
                 let backend = backend.clone();
                 let task = task.clone();
+                let mut tail = match self.task_write_barrier.lock() {
+                    Ok(tail) => tail,
+                    Err(error) => {
+                        tracing::warn!(%error, "Task persistence barrier poisoned");
+                        return;
+                    }
+                };
+                let previous = tail.clone();
+                let write = async move {
+                    if let Some(previous) = previous {
+                        let _ = previous.await;
+                    }
+                    backend
+                        .update_task(task)
+                        .await
+                        .map(|_| ())
+                        .map_err(|error| error.to_string())
+                }
+                .boxed()
+                .shared();
+                *tail = Some(write.clone());
                 handle.spawn(async move {
-                    if let Err(e) = backend.update_task(task).await {
-                        tracing::warn!("task_backend update_task failed: {}", e);
+                    if let Err(error) = write.await {
+                        tracing::warn!(%error, "Task persistence failed");
                     }
                 });
             }
@@ -1078,17 +1144,9 @@ impl TaskStore {
     /// first write uses the cheaper single-row INSERT path rather than the
     /// upsert's conflict check.
     fn persist_new_task(&self, task: &uc_types::Task) {
-        if let Some(backend) = &self.task_backend {
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                let backend = backend.clone();
-                let task = task.clone();
-                handle.spawn(async move {
-                    if let Err(e) = backend.submit_task(task).await {
-                        tracing::warn!("task_backend submit_task failed: {}", e);
-                    }
-                });
-            }
-        }
+        // Creation must share the update barrier: a delayed initial write must
+        // never overwrite a newer terminal snapshot.
+        self.persist_task(task);
     }
 
     /// Load all tasks from the backend into the in-memory HashMap (startup
@@ -1683,6 +1741,20 @@ impl TaskStore {
                 // may lag the wire during re-dispatch), and unstamped legacy
                 // updates are never fenced (upgrade-window compat).
                 if update.partial {
+                    // A cancelled node can keep the same attempt counter.
+                    // Coordinator confirmation of that cancellation must not
+                    // let the original worker's replay resurrect the node.
+                    let terminal = matches!(subtask.status,
+                        uc_types::SubtaskStatus::Failed | uc_types::SubtaskStatus::Completed);
+                    let same_or_old_attempt = subtask_update.attempt_id
+                        .map(|attempt| attempt <= subtask.dispatch_retry_count as u64)
+                        .unwrap_or(true);
+                    if terminal && same_or_old_attempt
+                        && subtask_status_from_str(&subtask_update.status).as_ref()
+                            != Some(&subtask.status)
+                    {
+                        continue;
+                    }
                     if let Some(received) = subtask_update.attempt_id {
                         let current = subtask.dispatch_retry_count as u64;
                         if received < current {
@@ -3227,6 +3299,64 @@ where
     }
 }
 
+#[cfg(feature = "messaging")]
+async fn confirm_terminal_update(
+    client: &async_nats::Client,
+    message: &async_nats::Message,
+    id: &Option<String>,
+    task_store: &Arc<Mutex<TaskStore>>,
+    task_id: &str,
+) {
+    let recipient = message
+        .headers
+        .as_ref()
+        .and_then(|headers| headers.get("UC-Recipient"));
+    if recipient.map(|value| value.as_str()) != Some("gateway") {
+        return;
+    }
+    let barrier = {
+        let store = task_store.lock().await;
+        if !store
+            .task_backend
+            .as_ref()
+            .map(|backend| backend.is_durable())
+            .unwrap_or(false)
+        {
+            return; // In-memory fallback cannot certify a durable terminal outcome.
+        }
+        let Some(task) = store.tasks.get(task_id) else {
+            return;
+        };
+        // Replay retries a failed write; serialized appends prevent older snapshots
+        // from overwriting this terminal version after it has been confirmed.
+        store.persist_task(task);
+        let barrier = match store.task_write_barrier.lock() {
+            Ok(tail) => tail.clone(),
+            Err(error) => {
+                tracing::warn!(%error, "Terminal confirmation withheld: persistence barrier poisoned");
+                return;
+            }
+        };
+        barrier
+    };
+    if let Some(barrier) = barrier {
+        if let Err(error) = barrier.await {
+            tracing::warn!(%error, "Terminal task persistence remains pending");
+            return;
+        }
+    }
+    if let Err(error) = flush_task_events(task_store).await {
+        tracing::warn!(%error, "Terminal event persistence remains pending");
+        return;
+    }
+    if let Some(reply) = &message.reply {
+        let payload = serde_json::json!({"message_id": id}).to_string();
+        if let Err(error) = client.publish(reply.clone(), payload.into()).await {
+            tracing::warn!(%error, "Could not confirm terminal task update");
+        }
+    }
+}
+
 /// Spawn a background task that subscribes to `uc.task.update`,
 /// `uc.task.event`, and `uc.heartbeat`, updating the TaskStore accordingly,
 /// while periodically requesting complete task snapshots for recovery.
@@ -3237,6 +3367,52 @@ fn spawn_nats_subscriber(
     worker_registry: Arc<RwLock<WorkerRegistry>>,
     event_tx: broadcast::Sender<TaskEvent>,
 ) {
+    // Read-only recovery for a restarted Python coordinator. Keep the
+    // Gateway's current attempt/status authoritative without a proto change.
+    let snapshot_client = nats_client.clone();
+    let snapshot_store = task_store.clone();
+    tokio::spawn(async move {
+        use futures::StreamExt;
+
+        loop {
+            match snapshot_client
+                .subscribe("uc.task.gateway-snapshot.request")
+                .await
+            {
+                Ok(mut subscription) => {
+                    while let Some(message) = subscription.next().await {
+                        let Some(reply) = message.reply else {
+                            continue;
+                        };
+                        let Ok(request) =
+                            serde_json::from_slice::<serde_json::Value>(&message.payload)
+                        else {
+                            continue;
+                        };
+                        let Some(id) = request.get("task_id").and_then(|value| value.as_str())
+                        else {
+                            continue;
+                        };
+                        let task = snapshot_store.lock().await.tasks.get(id).cloned();
+                        match serde_json::to_vec(&serde_json::json!({"task": task})) {
+                            Ok(payload) => {
+                                if let Err(error) =
+                                    snapshot_client.publish(reply, payload.into()).await
+                                {
+                                    tracing::warn!(%error, "Gateway snapshot reply failed");
+                                }
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, "Gateway snapshot encoding failed")
+                            }
+                        }
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "Gateway snapshot subscription failed"),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    });
     tokio::spawn(async move {
         // Resubscribe loop: if NATS drops (server restart, network blip), the
         // subscription streams end. Without this loop the subscriber task would
@@ -3317,7 +3493,28 @@ fn spawn_nats_subscriber(
                                 // Dedup: skip if this message_id was already processed
                                 {
                                     let mut store = task_store.lock().await;
+                                    if update.partial && !store.tasks.contains_key(&update.task_id)
+                                    {
+                                        // Wait for the complete planner snapshot before confirming.
+                                        continue;
+                                    }
+                                    // A read -> confirm race with Gateway retry must not
+                                    // revive stale attempts through a full snapshot.
+                                    if store
+                                        .full_snapshot_is_stale(&update, message.reply.is_some())
+                                    {
+                                        continue;
+                                    }
                                     if store.check_and_record_message_id(&update.message_id) {
+                                        drop(store);
+                                        confirm_terminal_update(
+                                            &nats_client,
+                                            &message,
+                                            &update.message_id,
+                                            &task_store,
+                                            &update.task_id,
+                                        )
+                                        .await;
                                         continue;
                                     }
                                 }
@@ -3327,6 +3524,14 @@ fn spawn_nats_subscriber(
                                 // borrow conflicts between immutable read and mutable write.
                                 let events_to_record: Vec<uc_engine::AgentEventType> = {
                                     let mut store = task_store.lock().await;
+                                    if store
+                                        .full_snapshot_is_stale(&update, message.reply.is_some())
+                                    {
+                                        if let Some(id) = &update.message_id {
+                                            store.seen_messages.remove(id);
+                                        }
+                                        continue;
+                                    }
                                     let previous_status = store
                                         .tasks
                                         .get(&update.task_id)
@@ -3461,6 +3666,14 @@ fn spawn_nats_subscriber(
                                     &task_store,
                                     &worker_registry,
                                     &nats_client,
+                                    &update.task_id,
+                                )
+                                .await;
+                                confirm_terminal_update(
+                                    &nats_client,
+                                    &message,
+                                    &update.message_id,
+                                    &task_store,
                                     &update.task_id,
                                 )
                                 .await;
@@ -5603,6 +5816,64 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {}
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn full_snapshot_cannot_undo_same_attempt_control_actions() {
+        for action in ["cancel", "pause", "node-cancel"] {
+            let mut store = super::TaskStore::new();
+            let task = store.submit_task("fixture".into(), "fixture".into());
+            let id = task.id.0.clone();
+            let node_id = task.subtasks[0].id.0.clone();
+            let mut update: super::NatsTaskUpdate = serde_json::from_value(serde_json::json!({
+                "task_id": id, "status": "Completed", "partial": false,
+                "subtasks": [{"subtask_id": node_id, "status": "Completed", "attempt_id": 0}]
+            })).unwrap();
+            assert!(!store.full_snapshot_is_stale(&update, true));
+            match action {
+                "cancel" => { store.cancel_task(&id).unwrap(); }
+                "pause" => { store.pause_task(&id).unwrap(); }
+                _ => { store.fail_subtasks(&id, &[node_id]); }
+            }
+            assert!(store.full_snapshot_is_stale(&update, true), "{action}");
+            assert!(store.full_snapshot_is_stale(&update, false), "{action}");
+            if action != "pause" {
+                update.partial = true;
+                store.apply_update(&update);
+                assert_eq!(store.tasks[&id].subtasks[0].status,
+                           uc_types::SubtaskStatus::Failed, "{action}");
+                update.partial = false;
+            }
+            // A paused parent may accept an in-flight outcome while remaining paused.
+            if action == "pause" {
+                update.status = "Paused".into();
+                assert!(!store.full_snapshot_is_stale(&update, true));
+            }
+        }
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn full_snapshot_fences_obsolete_and_future_confirmed_attempts() {
+        let mut store = super::TaskStore::new();
+        let task = store.submit_task("fixture".into(), "fixture".into());
+        store.tasks.get_mut(&task.id.0).unwrap().subtasks[0].dispatch_retry_count = 1;
+        let mut update: super::NatsTaskUpdate = serde_json::from_value(serde_json::json!({
+            "task_id": task.id.0, "status": "Completed", "partial": false,
+            "subtasks": [{"subtask_id": task.subtasks[0].id.0,
+                          "status": "Completed", "attempt_id": 0}]
+        }))
+        .unwrap();
+        assert!(store.full_snapshot_is_stale(&update, true));
+        assert!(store.full_snapshot_is_stale(&update, false));
+        update.subtasks[0].attempt_id = Some(2);
+        assert!(store.full_snapshot_is_stale(&update, true));
+        update.subtasks[0].attempt_id = Some(1);
+        assert!(!store.full_snapshot_is_stale(&update, true));
+        update.partial = true;
+        update.subtasks[0].attempt_id = Some(0);
+        assert!(!store.full_snapshot_is_stale(&update, true)); // partial has its node fence
+    }
+
     use super::*;
     use futures::stream;
     // TaskStoreBackend trait methods (get_task, etc.) are needed for backend

@@ -139,13 +139,13 @@ UltimateCoders 负责全局规划、调度、工作区归属和结果验收。�
 UC_METAINFER_URL=http://metainfer-host:8765
 ```
 
-启用后，Worker 声明 `inference_infra` 及领域能力。自动路由同时要求推理上下文和工程任务意图，显式 Agent 选择优先。地址留空时不启用自动推理路由或相应能力声明。
+Worker 无需 MetaInfer 即可声明本机 `inference_benchmark`。远程任务需要 `inference_infra` 及通过实时插件探测的具体操作能力；心跳会刷新并撤销不可用能力。自动路由要求推理上下文和工程任务意图，显式 Agent 选择优先。
 
 通过 Dashboard 提交 API 或 Python Orchestrator 传入 `agent_config.inference_task`，也可在工作流步骤中选择 `metainfer` 适配器。服务任务需要实际插件参数；优化或本机测量任务还需要 benchmark 配置。自然语言不会自动补出模型路径或 GPU 可用性。可选的 `UC_INFERENCE_TASK_JSON` 为自然语言路由提供默认实验配置。
 
 优化流程先测量基线，再请求候选实现，执行编译、基准和 profiling，通过公共 Oracle 检查正确性、性能及显存/数值误差上限。更好的实现保留，未通过的候选回滚后进入下一轮。使用 `protected_paths` 保护基准脚本；服务在独立工作区生成产物时，通过显式 argv `apply_command` 导入选中的实现。
 
-UC 和 MetaInfer 必须以相同绝对路径访问已分配的工作区；优化任务需要独占、初始干净的 Git worktree，跨主机时需共享对应文件系统。Compose 使用 `worker_inference_artifacts` 卷将报告、基准历史、执行适配图和已接受补丁持久化到 `/artifacts/inference`；通过验收的结构化证据也会写入项目 Memory。
+UC 和 MetaInfer 必须以相同绝对路径访问已分配的真实、独占 Git worktree。PostgreSQL 运行记录持久化远程作业身份、检查点和终态 outbox；提交或停止状态不明时隔离工作区。UC 将已接受代码提交后再合并，交付失败时保留代码。原子清单和经过完整性校验的产物可通过带认证的 Dashboard API 查询。详见[可靠性验证报告](docs/metainfer-reliability-verification.md)。
 
 验证快照（2026-09-30）：生产 Docker 应用已在本地运行，并验证了真实 Ollama 分布式编码、通过固定 Oracle 的 GPU 对话基准、存储、任务控制和恢复。外部 MetaInfer 优化服务尚未配置。实际证据、复现命令和限制见[本地部署验证报告](docs/local-deployment-verification.md)。
 
@@ -394,6 +394,10 @@ Worker 可以在容器中运行，并从外部 Git remote（GitHub/GitLab）同�
 | `UC_METAINFER_URL` | 空 | 可选外部 MetaInfer 服务，启用推理能力声明和自动领域路由 |
 | `UC_INFERENCE_TASK_JSON` | 空 | JSON `agent_config`，为推理实验和自然语言路由提供默认配置 |
 | `UC_INFERENCE_ARTIFACT_DIR` | 已分配仓库旁的 `.uc-inference-artifacts` | 本机实验产物根目录；Compose 使用持久卷中的 `/artifacts/inference` |
+| `UC_DATABASE_URL` | PostgreSQL in Compose | Gateway、协调器、Worker 和 API 共用的运行记录数据库 |
+| `UC_RUNTIME_STATE_DIR` | `.uc/runtime` | 无数据库 URL 时的本机 SQLite；应位于候选工作区之外 |
+| `UC_METAINFER_MAX_CONCURRENCY` | `1` | 同一后端的共享并发作业上限 |
+| `UC_METAINFER_TASK_TYPES` | Default plugins | 操作名到服务插件 ID 的 JSON 映射；探测与执行共用 |
 | `XAI_API_KEY` | - | 默认 Grok Build Worker 使用的 xAI API key |
 | `ANTHROPIC_API_KEY` | - | Claude Code 使用的 Anthropic API key |
 | `OPENAI_API_KEY` | - | Codex 使用的 OpenAI API key |

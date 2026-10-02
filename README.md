@@ -140,13 +140,13 @@ Set the service URL on the planner and eligible workers, or in `docker/.env` for
 UC_METAINFER_URL=http://metainfer-host:8765
 ```
 
-An enabled worker advertises `inference_infra` and its domain capabilities. Automatic routing requires both inference context and engineering intent; explicit agent choices take priority. Leave the URL empty to disable automatic inference routing and capability advertising.
+Workers advertise local `inference_benchmark` without MetaInfer. Remote tasks require `inference_infra` plus the operation capability confirmed by live plugin probes; heartbeat refresh withdraws unhealthy capabilities. Automatic routing requires inference context and engineering intent, and explicit agent choices take priority.
 
 Submit `agent_config.inference_task` through the Dashboard submit API or Python Orchestrator, or select the `metainfer` adapter in a workflow step. Service tasks need actual plugin parameters; optimization and local measurement also require benchmark configuration. Prose does not supply model paths or GPU availability. Optional `UC_INFERENCE_TASK_JSON` provides defaults for natural-language routing.
 
 The optimization workflow measures a baseline, requests a candidate, compiles/benchmarks/profiles it, and uses the shared Oracle to check correctness, performance and memory/error limits. It keeps improvements and restores rejected candidates before the next iteration. Protect the benchmark harness with `protected_paths`; use an explicit argv `apply_command` when generated output must be imported from the service workspace.
 
-UC and MetaInfer must see the assigned worktree at the same absolute path. Optimization requires an exclusively owned, initially clean git worktree. Share the required filesystem mounts across hosts. Compose persists reports, benchmark history, adaptation graphs and accepted patches in `worker_inference_artifacts` at `/artifacts/inference`; accepted structured evidence also enters project Memory.
+UC and MetaInfer must share the assigned worktree at the same absolute path. Mutating tasks require an exclusive real Git worktree. PostgreSQL runtime records preserve remote-job identity, checkpoints and terminal outbox; uncertain submission or termination quarantines the workspace. UC commits accepted edits before merge and retains failed delivery for recovery. Atomic manifests and integrity-checked artifacts are available through authenticated Dashboard API routes. See [reliability verification](docs/metainfer-reliability-verification.md).
 
 Validation snapshot (2026-09-30): the production Docker app now runs locally. Real Ollama distributed coding, GPU chat benchmarking with an immutable Oracle, storage, task controls and recovery were exercised. External MetaInfer optimization remains unconfigured. See the [local deployment verification report](docs/local-deployment-verification.md) for evidence, reproducible commands and limitations.
 
@@ -451,6 +451,10 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_METAINFER_URL` | _(empty)_ | Optional external MetaInfer service; enables inference capabilities and automatic domain routing |
 | `UC_INFERENCE_TASK_JSON` | _(empty)_ | JSON `agent_config` defaults for inference experiments and natural-language routing |
 | `UC_INFERENCE_ARTIFACT_DIR` | `.uc-inference-artifacts` beside the assigned repository | Native experiment artifact root; Compose sets `/artifacts/inference` on a persistent volume |
+| `UC_DATABASE_URL` | PostgreSQL in Compose | Shared Gateway/coordinator/Worker/API runtime database |
+| `UC_RUNTIME_STATE_DIR` | `.uc/runtime` | Local SQLite when no database URL is set; keep outside candidate worktrees |
+| `UC_METAINFER_MAX_CONCURRENCY` | `1` | Shared concurrent-job limit for one backend |
+| `UC_METAINFER_TASK_TYPES` | Default plugins | JSON operation-to-plugin map shared by probing and execution |
 | `XAI_API_KEY` | - | xAI API key for the default Grok Build worker agent |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for Claude Code calls |
 | `OPENAI_API_KEY` | - | OpenAI API key for Codex calls |

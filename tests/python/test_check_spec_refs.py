@@ -602,7 +602,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # Architecture refresh removes three duplicate backticked launcher paths
     # (run-omp.sh, run-gateway.sh, run-cluster.sh) from docs/architecture.md:
     # 275 -> 272; the launch commands remain documented in both READMEs.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 272
+    assert sum(1 for r in rows if r["kind"] == "mention") == 278
 
 
 def test_real_corpus_has_no_false_content_mismatch():
