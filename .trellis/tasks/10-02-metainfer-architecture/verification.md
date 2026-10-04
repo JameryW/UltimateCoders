@@ -106,9 +106,18 @@ observable device is rejected. Full table in
 R8 stays **unclaimed**, and the reason is now precise rather than general:
 `nvidia-smi` is present, `metainfer` is not. No MetaInfer process, package or
 checkout exists on the host, so `scripts/verify-metainfer-release.py` could not
-be run at all. Worse, pointing it at stock upstream would *correctly* fail: the
-gate requires UC's service extension endpoints (`/api/uc/contract`,
-`/api/uc/workspaces/verify`, `/api/uc/hardware`), which upstream does not carry.
+be run at all. Worse, pointing it at stock upstream would *correctly* fail. That
+used to be an inference; it is now checked against the real pinned source
+(`HuangPuStar/MetaInfer` @ `b3f6505a11ab`, 2026-09-29), checked out and searched:
+`/api/uc` and `quiescence`/`workspace_probe`/`contract_version`/`uc-metainfer`
+are all **0 occurrences**, and the route table carries no UC contract route.
+
+The other half of the adapter surface *is* compatible -- `/api/sys-shell/
+task-types`, `/api/sys-shell/task-types/{type}/schema` and the sys-shell
+CRUD/control routes exist upstream and are covered there by the upstream
+`test_app_core` server suite. So the gap is narrow: **only the safety contract
+is missing** -- the three `/api/uc/*` endpoints that gate a mutating job behind
+workspace sharing, all-writer quiescence and GPU identity.
 
 The remaining input is therefore a MetaInfer deployment carrying the UC service
 extension at pinned revision `b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890`. Until

@@ -136,11 +136,37 @@ could not be run and no service-side evidence exists.
 
 That script stops before creating a remote job by design, and it requires a
 service exposing UC's extension endpoints -- `/api/uc/contract`,
-`/api/uc/workspaces/verify` and `/api/uc/hardware`. Stock upstream MetaInfer does
-not carry those, so pointing the gate at an unmodified upstream would correctly
-fail the contract check rather than produce evidence. The remaining input is a
-MetaInfer deployment that carries the UC service extension at pinned revision
-`b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890`.
+`/api/uc/workspaces/verify` and `/api/uc/hardware`.
+
+### Verified against the pinned upstream source
+
+"Stock upstream does not carry those" was previously an inference from the
+naming of `python/ultimate_coders/inference/service_contract.py`. It is now
+checked against the real source: `HuangPuStar/MetaInfer` at pinned revision
+`b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890` (2026-09-29) was checked out and
+searched in full.
+
+| Question | Result |
+|----------|--------|
+| `/api/uc` anywhere in the tree | **0 occurrences** |
+| `quiescence`, `workspace_probe`, `contract_version`, `uc-metainfer` | **0 occurrences** |
+| Route table | task plugins (`/calc/*`, `/iterations`, `/kernels/*`, ...) and cluster routes (`/workers`, `/scoreboard`, `/jobs`); no UC contract route |
+
+The other half of UC's adapter surface **is** compatible, and that changes how
+the gap should be described: `/api/sys-shell/task-types`,
+`/api/sys-shell/task-types/{type}/schema` and the `/api/sys-shell` CRUD/control
+routes exist upstream and are covered there by the upstream `test_app_core`
+server suite. The adapter's dispatch half matches the pinned service as-is.
+
+The gap is therefore narrow and specific: **only the safety contract is
+missing** -- the three `/api/uc/*` endpoints that gate a mutating job behind a
+workspace-sharing proof, all-writer quiescence evidence and GPU identity. UC
+must not degrade those to best effort; they are what makes cancellation and
+rollback safe. Pointing the gate at an unmodified upstream will correctly fail
+the contract check rather than produce evidence.
+
+The remaining input is a MetaInfer deployment that carries the UC service
+extension at pinned revision `b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890`.
 
 Until that exists, no MetaInfer acceptance, cancellation, recovery or artifact
 delivery result is claimed, and the CPU fixtures are not a substitute for one.
