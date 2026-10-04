@@ -144,7 +144,10 @@ service exposing UC's extension endpoints -- `/api/uc/contract`,
 naming of `python/ultimate_coders/inference/service_contract.py`. It is now
 checked against the real source: `HuangPuStar/MetaInfer` at pinned revision
 `b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890` (2026-09-29) was checked out and
-searched in full.
+searched in full. The result is corroborated by a second, independent
+extraction: the upstream source dumps taken during the 2026-10-02 review also
+contain zero occurrences of either pattern, so this is not a single-source
+reading.
 
 | Question | Result |
 |----------|--------|
