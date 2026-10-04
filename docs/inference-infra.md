@@ -4,7 +4,7 @@ UltimateCoders retains the global planner, distributed dispatch, worktree owners
 
 ## Configure a service
 
-Run MetaInfer separately according to its [upstream instructions](https://github.com/HuangPuStar/MetaInfer). The adapter is pinned to commit `b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890` for release evidence, but the stock server at that commit has no UC stop/workspace contract. UC therefore allows schema discovery while failing closed before any mutating POST. A compatible deployment must expose `uc-metainfer/1`, a stable `backend_id`, the pinned `revision`, workspace probes and quiescence receipts scoped to every writer. Set these on the UC planner and eligible workers:
+Run MetaInfer separately according to its [upstream instructions](https://github.com/HuangPuStar/MetaInfer). The adapter is pinned to commit `b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890` for release evidence, but the stock server at that commit has no UC stop/workspace contract. UC therefore allows schema discovery while failing closed before any mutating POST. A compatible deployment must expose `uc-metainfer/1`, a stable `backend_id`, the pinned `revision`, workspace probes and quiescence receipts scoped to every writer -- the implementable endpoint-by-endpoint contract is [metainfer-service-contract.md](metainfer-service-contract.md), extracted from the code that consumes it. Set these on the UC planner and eligible workers:
 
 ```dotenv
 UC_METAINFER_URL=http://metainfer-host:8765

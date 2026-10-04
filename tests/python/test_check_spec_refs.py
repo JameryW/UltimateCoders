@@ -656,23 +656,21 @@ def test_real_corpus_unanchored_census_is_reported():
     # Architecture refresh removes three duplicate backticked launcher paths
     # (run-omp.sh, run-gateway.sh, run-cluster.sh) from docs/architecture.md:
     # 275 -> 272; the launch commands remain documented in both READMEs.
-    # 278 -> 285 -> 290 -> 291 -> 290 -> 291 (measured across the MetaInfer
-    # architecture work). The closing passes added backticked path mentions:
-    # the typing rules in type-safety.md; gotcha/convention sections 7a/7b in
+    # 278 -> 285 -> 290 -> 291 -> 290 -> 291 -> 297. The last move is the
+    # implementable uc-metainfer/1 contract doc (docs/metainfer-service-contract.md),
+    # which names the four endpoints' consuming modules and its own test file,
+    # plus the link to it from docs/inference-infra.md. Earlier moves: the
+    # typing rules in type-safety.md; gotcha/convention sections 7a/7b in
     # inference-infra-spec.md (service_contract.py, runner.py, resources.py,
     # crates/uc-types/src/error.rs, the component-guidelines path); the
     # "Toolchain Lockstep With CI" section in quality-guidelines.md (ci-rust.yml
     # and the two files holding the tonic::Status rule); and the real-GPU
-    # evidence section in docs/metainfer-reliability-verification.md (the
-    # release gate script, plus service_contract.py again once the upstream
-    # claim there became a checked one). Intermediate moves were a net -1 when
-    # the PEP 604 warning stopped framing the `Optional[str]` sites as legacy,
-    # and a net +1 when the upstream verification was added. Every one is
-    # MENTION_RESOLVED (the guard reports 0 unclassified), so the unclassified
+    # evidence section in docs/metainfer-reliability-verification.md. Every one
+    # is MENTION_RESOLVED (the guard reports 0 unclassified), so the unclassified
     # count is untouched. Upstream file paths are named WITHOUT their extension
     # so the guard resolves them against this repo rather than calling them
     # dangling -- `test_app_core` rather than `metainfer/server/tests/...py`.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 291
+    assert sum(1 for r in rows if r["kind"] == "mention") == 297
 
 
 def test_real_corpus_has_no_false_content_mismatch():

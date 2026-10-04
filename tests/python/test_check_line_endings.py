@@ -206,6 +206,7 @@ def test_real_repo_is_reconciled() -> None:
         (1957, 1948),  # README architecture sources added seven text files.
         (1972, 1963),  # Runtime repair, fault tests and task/tracker evidence: 15 text files.
         (1991, 1982),  # MetaInfer architecture R1-R8: 12 new sources, 4 task artifacts, 2 specs.
+        (1992, 1983),  # The implementable uc-metainfer/1 service contract doc.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
