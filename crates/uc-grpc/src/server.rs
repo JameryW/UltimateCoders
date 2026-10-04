@@ -656,6 +656,16 @@ async fn flush_task_events(store: &Arc<Mutex<TaskStore>>) -> Result<(), uc_types
     Ok(())
 }
 
+/// Persist the parent task and its events before a dispatch entry is closed.
+///
+/// Returns `Status` by value because every caller is an RPC handler whose
+/// signature is `Result<_, Status>`; the type is the gRPC error contract and is
+/// shared with the generated service traits, so boxing it here would diverge
+/// from the whole surface for no gain. Same reason, same lint, as the
+/// `#[allow]` on `ultimate_coders` in `lib.rs` and on `batch_write_memory`
+/// below. Clippy 1.99 raised `result_large_err`'s visibility enough to reach
+/// this free function; the trait impls are skipped by the lint.
+#[allow(clippy::result_large_err)]
 async fn flush_task_state(store: &mut TaskStore, task_id: &str) -> Result<(), Status> {
     // Keep every dispatch entry closed until both durable writes are confirmed.
     store.durability_faults.insert(task_id.to_string());
@@ -3639,9 +3649,7 @@ fn spawn_nats_subscriber(
                                     }
                                     // A read -> confirm race with Gateway retry must not
                                     // revive stale attempts through a full snapshot.
-                                    if store
-                                        .full_snapshot_is_stale(&update)
-                                    {
+                                    if store.full_snapshot_is_stale(&update) {
                                         continue;
                                     }
                                     if store.check_and_record_message_id(&update.message_id) {
@@ -3663,9 +3671,7 @@ fn spawn_nats_subscriber(
                                 // borrow conflicts between immutable read and mutable write.
                                 let events_to_record: Vec<uc_engine::AgentEventType> = {
                                     let mut store = task_store.lock().await;
-                                    if store
-                                        .full_snapshot_is_stale(&update)
-                                    {
+                                    if store.full_snapshot_is_stale(&update) {
                                         if let Some(id) = &update.message_id {
                                             store.seen_messages.remove(id);
                                         }
