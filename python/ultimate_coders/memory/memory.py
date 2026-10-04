@@ -27,6 +27,7 @@ class MemoryKey:
     - "project": Long-term memory (Qdrant), requires project_id
     - "global": Long-term memory (Qdrant), no scope qualifier
     """
+
     scope: str
     key: str
     task_id: str | None = None
@@ -40,8 +41,7 @@ class MemoryKey:
             raise ValueError("project_id is required for project-scoped memory")
         if self.scope not in ("task", "project", "global"):
             raise ValueError(
-                f"Invalid scope: {self.scope!r}. "
-                "Must be 'task', 'project', or 'global'."
+                f"Invalid scope: {self.scope!r}. Must be 'task', 'project', or 'global'."
             )
 
 
@@ -51,6 +51,7 @@ class MemoryEntry:
 
     Wraps either a PyMemoryEntry from the Rust extension or a dict.
     """
+
     id: str = ""
     key: MemoryKey = field(default_factory=lambda: MemoryKey(scope="global", key=""))
     content: str = ""
@@ -382,7 +383,7 @@ class LongTermMemory:
         entries = []
         # ponytail: F61 — engine may return None when unavailable; iterate
         # safely instead of raising TypeError.
-        for raw in (raw_results or []):
+        for raw in raw_results or []:
             # search_memory returns MemorySearchResult objects
             entry_obj = getattr(raw, "entry", None)
             if entry_obj is not None:

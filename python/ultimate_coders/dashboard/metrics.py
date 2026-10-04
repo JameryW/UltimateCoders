@@ -21,6 +21,7 @@ from typing import Any
 # ── Prometheus export (optional dependency) ──────────────
 try:
     import prometheus_client as pc  # type: ignore[import-untyped]
+
     _PROM_AVAILABLE = True
 except ImportError:
     pc = None  # type: ignore[assignment]
@@ -38,9 +39,11 @@ EVENT_RATE_WINDOW = 300  # 5min window for events/min
 
 # ── Data classes ───────────────────────────────────────────
 
+
 @dataclass
 class _TimedEvent:
     """An event timestamped for sliding-window expiry."""
+
     ts: float  # monotonic seconds
     event_type: str
     duration_ms: float | None = None
@@ -50,6 +53,7 @@ class _TimedEvent:
 @dataclass
 class MetricsSample:
     """A single 1-min trend sample point."""
+
     timestamp: int  # unix seconds
     events_per_minute: float = 0.0
     avg_duration_ms: float = 0.0
@@ -104,9 +108,11 @@ class MetricsSnapshot:
 
 # ── Alert system ───────────────────────────────────────────
 
+
 @dataclass
 class AlertConfig:
     """Configurable thresholds for alert conditions."""
+
     stale_worker_threshold_seconds: float = 120.0
     rate_limiter_threshold_pct: float = 80.0
     failure_window_minutes: float = 60.0
@@ -120,6 +126,7 @@ class AlertConfig:
 @dataclass
 class Alert:
     """A single alert event."""
+
     alert_type: str
     message: str
     severity: str  # "warning" | "critical"
@@ -128,6 +135,7 @@ class Alert:
 
 
 # ── Aggregator ─────────────────────────────────────────────
+
 
 class MetricsAggregator:
     """Sliding-window metrics aggregator.
@@ -187,12 +195,14 @@ class MetricsAggregator:
         worker_id: str | None = data.get("worker_id") or data.get("assigned_worker")
 
         with self._lock:
-            self._events.append(_TimedEvent(
-                ts=now,
-                event_type=event_type,
-                duration_ms=duration_ms,
-                worker_id=str(worker_id) if worker_id else None,
-            ))
+            self._events.append(
+                _TimedEvent(
+                    ts=now,
+                    event_type=event_type,
+                    duration_ms=duration_ms,
+                    worker_id=str(worker_id) if worker_id else None,
+                )
+            )
 
             # Update cumulative counters
             if event_type in ("task_completed", "subtask_completed"):
@@ -243,12 +253,14 @@ class MetricsAggregator:
 
             # ── Task metrics ───────────────────────────────
             completed_events = [
-                e for e in recent
+                e
+                for e in recent
                 if e.event_type in ("task_completed", "subtask_completed")
                 and e.duration_ms is not None
             ]
             durations = sorted(
-                e.duration_ms for e in completed_events
+                e.duration_ms
+                for e in completed_events
                 if e.duration_ms is not None and e.duration_ms > 0
             )
 
@@ -303,11 +315,11 @@ class MetricsAggregator:
             rate_events = [e for e in recent if e.ts >= event_rate_cutoff]
             rate_window_seconds = (
                 min(EVENT_RATE_WINDOW, now - rate_events[0].ts)
-                if rate_events else EVENT_RATE_WINDOW
+                if rate_events
+                else EVENT_RATE_WINDOW
             )
             events_per_minute = (
-                len(rate_events) / (rate_window_seconds / 60)
-                if rate_window_seconds > 0 else 0.0
+                len(rate_events) / (rate_window_seconds / 60) if rate_window_seconds > 0 else 0.0
             )
 
             # Error spike: error rate in event rate window
@@ -419,8 +431,10 @@ class MetricsAggregator:
         # 6. Recent failures (within sliding window)
         if snap.task.recent_failed > 0:
             current_types.add("recent_failures")
-            if "recent_failures" not in self._active_alert_types \
-                    and snap.task.recent_failed >= cfg.failure_count_threshold:
+            if (
+                "recent_failures" not in self._active_alert_types
+                and snap.task.recent_failed >= cfg.failure_count_threshold
+            ):
                 msg = f"{snap.task.recent_failed} recent failure(s) (1h window)"
                 a = Alert("recent_failures", msg, "critical", now)
                 self._alert_store.insert(a)
@@ -462,6 +476,7 @@ class MetricsAggregator:
 
 
 # ── Helpers ────────────────────────────────────────────────
+
 
 def _percentile(sorted_values: list[float], pct: float) -> float:
     """Compute percentile from a sorted list. Returns 0.0 for empty list."""
@@ -608,6 +623,7 @@ class AlertStore(_ThreadLocalSQLiteStore):
         ).fetchall()
         return [dict(r) for r in rows]
 
+
 # ── MetricsStore (SQLite time-series persistence) ──────────
 
 _METRICS_RETENTION_DAYS = int(os.environ.get("UC_METRICS_RETENTION_DAYS", "7"))
@@ -648,9 +664,13 @@ class MetricsStore(_ThreadLocalSQLiteStore):
             "INSERT OR REPLACE INTO metrics_samples "
             "(timestamp, events_per_minute, avg_duration_ms, "
             "error_rate, cluster_utilization) VALUES (?, ?, ?, ?, ?)",
-            (sample.timestamp, sample.events_per_minute,
-             sample.avg_duration_ms, sample.error_rate,
-             sample.cluster_utilization),
+            (
+                sample.timestamp,
+                sample.events_per_minute,
+                sample.avg_duration_ms,
+                sample.error_rate,
+                sample.cluster_utilization,
+            ),
         )
         conn.commit()
         # Retention cleanup — run at most once per hour, gated on elapsed
@@ -690,6 +710,7 @@ class MetricsStore(_ThreadLocalSQLiteStore):
 
 # ── Prometheus Exporter ─────────────────────────────────────
 
+
 class PrometheusExporter:
     """Export metrics in Prometheus text format.
 
@@ -710,32 +731,47 @@ class PrometheusExporter:
         registry = pc.CollectorRegistry()
 
         self.tasks_completed = pc.Counter(
-            "uc_tasks_completed_total", "Total completed tasks", registry=registry,
+            "uc_tasks_completed_total",
+            "Total completed tasks",
+            registry=registry,
         )
         self.tasks_failed = pc.Counter(
-            "uc_tasks_failed_total", "Total failed tasks", registry=registry,
+            "uc_tasks_failed_total",
+            "Total failed tasks",
+            registry=registry,
         )
         self.task_duration = pc.Histogram(
-            "uc_task_duration_seconds", "Task duration in seconds",
-            buckets=[10, 30, 60, 300, 600, 1800], registry=registry,
+            "uc_task_duration_seconds",
+            "Task duration in seconds",
+            buckets=[10, 30, 60, 300, 600, 1800],
+            registry=registry,
         )
         self.subtask_retries = pc.Counter(
-            "uc_subtask_retries_total", "Total subtask retries", registry=registry,
+            "uc_subtask_retries_total",
+            "Total subtask retries",
+            registry=registry,
         )
         self.events = pc.Counter(
-            "uc_events_total", "Total events", ["event_type"], registry=registry,
+            "uc_events_total",
+            "Total events",
+            ["event_type"],
+            registry=registry,
         )
         self.workers_heartbeat_age = pc.Gauge(
             "uc_workers_heartbeat_age_seconds",
-            "Worker heartbeat age", ["worker_id"],
+            "Worker heartbeat age",
+            ["worker_id"],
             registry=registry,
         )
         self.cluster_utilization = pc.Gauge(
             "uc_cluster_utilization",
-            "Cluster utilization ratio", registry=registry,
+            "Cluster utilization ratio",
+            registry=registry,
         )
         self.rate_limiter_remaining = pc.Gauge(
-            "uc_rate_limiter_remaining_ratio", "Rate limiter remaining ratio", registry=registry,
+            "uc_rate_limiter_remaining_ratio",
+            "Rate limiter remaining ratio",
+            registry=registry,
         )
         self._registry = registry
 
@@ -766,9 +802,9 @@ class PrometheusExporter:
         worker_id = data.get("worker_id") or data.get("assigned_worker")
         if worker_id and "heartbeat_age" in data:
             try:
-                self.workers_heartbeat_age.labels(
-                    worker_id=str(worker_id)
-                ).set(float(data["heartbeat_age"]))
+                self.workers_heartbeat_age.labels(worker_id=str(worker_id)).set(
+                    float(data["heartbeat_age"])
+                )
             except (ValueError, TypeError):
                 pass
 

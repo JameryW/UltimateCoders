@@ -109,7 +109,8 @@ def corpus(tmp_path, monkeypatch):
 
     monkeypatch.setattr(guard, "WORKSPACE_DIR", base)
     monkeypatch.setattr(
-        guard, "iter_journal_paths",
+        guard,
+        "iter_journal_paths",
         lambda workspace_dir=None: (sorted(base.glob("*/journal-*.md")), None),
     )
     return guard, write
@@ -125,6 +126,7 @@ def run(guard, capsys):
 # the happy path
 # ---------------------------------------------------------------------------
 
+
 def test_clean_synthetic_corpus_passes(corpus, capsys):
     guard, write = corpus
     write({"dev/journal-1.md": journal(session(1), session(2))})
@@ -139,12 +141,16 @@ def test_clean_synthetic_corpus_passes(corpus, capsys):
 # the criterion itself
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("marker,section", [
-    ("- [OK] (Add test results)", "Testing"),
-    ("- None - task complete", "Next Steps"),
-    ("(Add details)", "Main Changes"),
-    ("(Add summary)", "Summary"),
-])
+
+@pytest.mark.parametrize(
+    "marker,section",
+    [
+        ("- [OK] (Add test results)", "Testing"),
+        ("- None - task complete", "Next Steps"),
+        ("(Add details)", "Main Changes"),
+        ("(Add summary)", "Summary"),
+    ],
+)
 def test_bare_placeholder_line_fails(corpus, capsys, marker, section):
     """The whole-line form is exactly what the skeleton leaves behind."""
     guard, write = corpus
@@ -194,6 +200,7 @@ def test_substring_criterion_would_be_red_on_a_clean_journal(corpus):
 # structural drift
 # ---------------------------------------------------------------------------
 
+
 def test_missing_standard_heading_fails(corpus, capsys):
     """The S16/17/18 shape: no `### Git Commits` at all."""
     guard, write = corpus
@@ -207,10 +214,18 @@ def test_missing_standard_heading_fails(corpus, capsys):
 def test_duplicated_heading_fails(corpus, capsys):
     """The leftover-skeleton-tail shape: the real section plus the stub."""
     guard, write = corpus
-    tail = "\n".join([
-        "### Testing", "", "- [OK] (Add test results)", "",
-        "### Status", "", "[OK] **Completed**", "",
-    ])
+    tail = "\n".join(
+        [
+            "### Testing",
+            "",
+            "- [OK] (Add test results)",
+            "",
+            "### Status",
+            "",
+            "[OK] **Completed**",
+            "",
+        ]
+    )
     write({"dev/journal-1.md": journal(session(1, extra=(tail,)))})
     code, out = run(guard, capsys)
     assert code == 1, out
@@ -237,10 +252,12 @@ def test_session_heading_without_a_number_fails(corpus, capsys, broken_heading):
 
 def test_duplicate_session_number_fails(corpus, capsys):
     guard, write = corpus
-    write({
-        "dev/journal-1.md": journal(session(7)),
-        "dev/journal-2.md": journal(session(7)),
-    })
+    write(
+        {
+            "dev/journal-1.md": journal(session(7)),
+            "dev/journal-2.md": journal(session(7)),
+        }
+    )
     code, out = run(guard, capsys)
     assert code == 1, out
     assert "session 7 is used twice" in out
@@ -249,6 +266,7 @@ def test_duplicate_session_number_fails(corpus, capsys):
 # ---------------------------------------------------------------------------
 # the empty corpus must not pass
 # ---------------------------------------------------------------------------
+
 
 def test_no_journals_at_all_fails(corpus, capsys):
     guard, _write = corpus
@@ -277,6 +295,7 @@ def test_index_failure_fails_closed(corpus, capsys, monkeypatch):
 # ---------------------------------------------------------------------------
 # line endings
 # ---------------------------------------------------------------------------
+
 
 def test_crlf_journal_is_still_measured(corpus, capsys):
     """A `\\r` left by a CRLF checkout must not hide a placeholder.
@@ -323,6 +342,7 @@ def test_mixed_line_endings_are_advisory_only(corpus, capsys):
 # the legacy pin table
 # ---------------------------------------------------------------------------
 
+
 def test_legacy_pin_drift_fails(corpus, capsys):
     """T26's criterion: a declared count must match the corpus."""
     guard, write = corpus
@@ -349,6 +369,7 @@ def test_a_new_file_under_a_legacy_dir_is_judged_not_pinned(corpus, capsys):
 # stale skeleton (the check watching itself)
 # ---------------------------------------------------------------------------
 
+
 def test_skeleton_missing_a_heading_is_stale(tmp_path, monkeypatch):
     guard = _load_guard()
     skeleton = tmp_path / "add_session.py"
@@ -371,7 +392,8 @@ def test_stale_skeleton_verdict_reaches_the_run(corpus, capsys, monkeypatch):
     guard, write = corpus
     write({"dev/journal-1.md": journal(session(1))})
     monkeypatch.setattr(
-        guard, "check_skeleton",
+        guard,
+        "check_skeleton",
         lambda skeleton=None: [guard.Violation("skeleton", 0, "STALE_SKELETON", "boom")],
     )
     code, out = run(guard, capsys)
@@ -382,6 +404,7 @@ def test_stale_skeleton_verdict_reaches_the_run(corpus, capsys, monkeypatch):
 # ---------------------------------------------------------------------------
 # the real repository asserts its own state
 # ---------------------------------------------------------------------------
+
 
 def test_real_corpus_conforms(capsys):
     guard = _load_guard()

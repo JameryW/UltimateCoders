@@ -282,14 +282,25 @@ async def test_sandbox_cancellation_stops_remote_job_and_rolls_back(tmp_path, ca
             self.wfile.write(encoded)
 
         def do_GET(self):
-            if self.path.endswith("/schema"):
+            from .metainfer_fixture import contract_response
+
+            contract = contract_response(self.path)
+            if contract is not None:
+                self.reply(contract)
+            elif self.path.endswith("/schema"):
                 self.reply({"fields": [{"key": "kernel_file_path", "required": True}]})
             else:
                 started.set()  # Polling means the runner already knows the remote task ID.
                 self.reply({"run": {"finished": False}, "status": {"running": True}})
 
         def do_POST(self):
-            self.rfile.read(int(self.headers["Content-Length"]))
+            from .metainfer_fixture import contract_response
+
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            contract = contract_response(self.path, body)
+            if contract is not None:
+                self.reply(contract)
+                return
             if self.path.endswith("/control"):
                 stopped.set()
                 self.reply({"ok": True})

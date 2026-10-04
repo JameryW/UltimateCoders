@@ -116,9 +116,7 @@ def test_archive_repoints_own_json_citations(tmp_path):
     assert f".trellis/tasks/archive/{_month()}/{NAME}/prd.md" in check
 
     task_json = json.loads((dest / "task.json").read_text(encoding="utf-8"))
-    assert task_json["research"] == [
-        f".trellis/tasks/archive/{_month()}/{NAME}/research/notes.md"
-    ]
+    assert task_json["research"] == [f".trellis/tasks/archive/{_month()}/{NAME}/research/notes.md"]
     assert (tmp_path / task_json["research"][0]).is_file()
 
 
@@ -137,10 +135,9 @@ def test_archive_does_not_touch_another_tasks_citations(tmp_path):
     _make_task(tmp_path)
     other = _make_task(tmp_path, name="01-02-other", jsonl_refs=False, md_ref=False)
     (other / "implement.jsonl").write_bytes(
-        (
-            json.dumps({"file": f".trellis/tasks/{NAME}/prd.md", "reason": "upstream"})
-            + "\n"
-        ).encode("utf-8")
+        (json.dumps({"file": f".trellis/tasks/{NAME}/prd.md", "reason": "upstream"}) + "\n").encode(
+            "utf-8"
+        )
     )
 
     result = _archive(tmp_path)
@@ -211,9 +208,7 @@ def test_archive_does_not_rewrite_a_longer_task_name(tmp_path):
 
     lines = [
         json.loads(line)
-        for line in (_dest(tmp_path) / "implement.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
+        for line in (_dest(tmp_path) / "implement.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     by_reason = {item["reason"]: item["file"] for item in lines}

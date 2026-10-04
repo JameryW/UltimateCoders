@@ -53,12 +53,14 @@ class FakeJetStream:
             ),
             SimpleNamespace(
                 data=json.dumps(
-                    {"SubtaskProgress": {
-                        "task_id": TASK_ID,
-                        "subtask_id": "s1",
-                        "phase": "executing",
-                        "percent": 50,
-                    }}
+                    {
+                        "SubtaskProgress": {
+                            "task_id": TASK_ID,
+                            "subtask_id": "s1",
+                            "phase": "executing",
+                            "percent": 50,
+                        }
+                    }
                 ).encode(),
                 metadata=SimpleNamespace(timestamp=datetime(2026, 9, 24, 2, tzinfo=timezone.utc)),
                 subject=f"task.{TASK_ID}",
@@ -135,9 +137,7 @@ def test_rest_events_fall_back_when_stream_is_not_configured():
     app = DashboardApp(orchestrator=None, nats_client=MissingHistoryNats())
     app._event_log.appendleft({"task_id": TASK_ID, "type": "local_event"})
 
-    result = TestClient(app._app).get(
-        "/dashboard/api/events", params={"task_id": TASK_ID}
-    ).json()
+    result = TestClient(app._app).get("/dashboard/api/events", params={"task_id": TASK_ID}).json()
 
     assert result["total"] == 1
     assert result["events"][0]["type"] == "local_event"

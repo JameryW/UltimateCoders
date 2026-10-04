@@ -91,12 +91,16 @@ def run(sb: pathlib.Path) -> tuple[int, str]:
 
 
 def problems(out: str) -> list[str]:
-    return [line.strip().lstrip("- ").strip() for line in out.splitlines()
-            if line.strip().startswith("- ")]
+    return [
+        line.strip().lstrip("- ").strip()
+        for line in out.splitlines()
+        if line.strip().startswith("- ")
+    ]
 
 
-def mutate(sb: pathlib.Path, rel: str, old: str, new: str, expect: int,
-           how: str = "first") -> bytes:
+def mutate(
+    sb: pathlib.Path, rel: str, old: str, new: str, expect: int, how: str = "first"
+) -> bytes:
     """Apply one mutation, asserting the anchor occurs exactly `expect` times."""
     p = sb / rel
     b = p.read_bytes()
@@ -153,92 +157,128 @@ def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
     cases = [
         (
             "A a row grows a path the YAML lacks",
-            "fabrication", README,
+            "fabrication",
+            README,
             "| **Dashboard CI** (`ci-dashboard.yml`) | `dashboard/**` |",
             "| **Dashboard CI** (`ci-dashboard.yml`) | `dashboard/**`, `newfake/**` |",
-            1, "first",
+            1,
+            "first",
         ),
         (
             "B a row drops a path the YAML has",
-            "omission", README,
+            "omission",
+            README,
             "`Cargo.toml`, `Cargo.lock`, `docker/docker-compose.yml`",
             "`Cargo.toml`, `docker/docker-compose.yml`",
-            1, "first",
+            1,
+            "first",
         ),
         (
             "C the table names a workflow that does not exist",
-            "existence", README,
-            "(`ci-journal.yml`)", "(`ci-journalX.yml`)",
-            1, "first",
+            "existence",
+            README,
+            "(`ci-journal.yml`)",
+            "(`ci-journalX.yml`)",
+            1,
+            "first",
         ),
         (
             "D the YAML drifts without the README (the real scenario)",
-            "omission", dash,
+            "omission",
+            dash,
             ITEM.format(path="dashboard/**"),
             ITEM.format(path="dashboard/**") + '\n      - "newdir/**"',
-            2, "all",
+            2,
+            "all",
         ),
         (
             "E push changes without pull_request",
-            "symmetry", trellis,
+            "symmetry",
+            trellis,
             ITEM.format(path=".trellis/scripts/**"),
             ITEM.format(path=".trellis/scriptsX/**"),
-            2, "first",
+            2,
+            "first",
         ),
         (
             "F a workflow stops targeting main",
-            "branches", journal,
-            "branches: [main]", "branches: [develop]",
-            2, "all",
+            "branches",
+            journal,
+            "branches: [main]",
+            "branches: [develop]",
+            2,
+            "all",
         ),
         (
             "G a workflow loses its paths filter",
-            "filter-shape", dash,
-            '    paths:\n' + ITEM.format(path="dashboard/**") + '\n'
-            + ITEM.format(path=".github/workflows/ci-dashboard.yml") + '\n',
+            "filter-shape",
+            dash,
+            "    paths:\n"
+            + ITEM.format(path="dashboard/**")
+            + "\n"
+            + ITEM.format(path=".github/workflows/ci-dashboard.yml")
+            + "\n",
             "",
-            2, "all",
+            2,
+            "all",
         ),
         (
             "H the CI heading is renamed away",
-            "non-vacuity", README,
-            "\n## CI\n", "\n## Continuous Integration\n",
-            1, "first",
+            "non-vacuity",
+            README,
+            "\n## CI\n",
+            "\n## Continuous Integration\n",
+            1,
+            "first",
         ),
         (
             "I the EN prose count drifts off the real number",
-            "prose-count", README,
+            "prose-count",
+            README,
             # NOTE: these anchors quote the README's real wording, so adding
-            # a workflow (which moves Nine -> Ten) breaks them. The anchor
+            # a workflow (which moves Ten -> Eleven) breaks them. The anchor
             # count assertion is what makes that a loud failure at the anchor
             # rather than a mutation that quietly replaces nothing.
-            "Ten independent workflows", "Nine independent workflows",
-            1, "first",
+            "Eleven independent workflows",
+            "Ten independent workflows",
+            1,
+            "first",
         ),
         (
             "J the ZH prose count drifts off the real number",
-            "prose-count", README_ZH,
+            "prose-count",
+            README_ZH,
+            "\u5341\u4e00\u5957\u72ec\u7acb\u5de5\u4f5c\u6d41",
             "\u5341\u5957\u72ec\u7acb\u5de5\u4f5c\u6d41",
-            "\u4e5d\u5957\u72ec\u7acb\u5de5\u4f5c\u6d41",
-            1, "first",
+            1,
+            "first",
         ),
         (
             "M the prose count is reworded past the parser",
-            "prose-count-missing", README,
-            "Ten independent workflows", "Several independent workflows",
-            1, "first",
+            "prose-count-missing",
+            README,
+            "Eleven independent workflows",
+            "Several independent workflows",
+            1,
+            "first",
         ),
         (
             "K a workflow drops its own YAML from its paths",
-            "self-reference", f"{WORKFLOWS}/ci-dashboard.yml",
-            ITEM.format(path=f"{WORKFLOWS}/ci-dashboard.yml"), "",
-            2, "all",
+            "self-reference",
+            f"{WORKFLOWS}/ci-dashboard.yml",
+            ITEM.format(path=f"{WORKFLOWS}/ci-dashboard.yml"),
+            "",
+            2,
+            "all",
         ),
         (
             "L a workflow loses workflow_dispatch",
-            "manual-dispatch", f"{WORKFLOWS}/ci-journal.yml",
-            "  workflow_dispatch:\n", "",
-            1, "first",
+            "manual-dispatch",
+            f"{WORKFLOWS}/ci-journal.yml",
+            "  workflow_dispatch:\n",
+            "",
+            1,
+            "first",
         ),
     ]
 
@@ -283,20 +323,19 @@ def test_parsers_are_pinned_both_ways() -> None:
     guard = _load_guard()
 
     covers = [
-        (".github/workflows/ci-dashboard.yml",
-         ".github/workflows/ci-dashboard.yml", True),
+        (".github/workflows/ci-dashboard.yml", ".github/workflows/ci-dashboard.yml", True),
         (".github/workflows/**", ".github/workflows/ci-readme-ci-table.yml", True),
         ("crates/**", "crates/uc-python/src/lib.rs", True),
         ("docs/agents/*.md", "docs/agents/domain.md", True),
         ("crates/**", "cratesfoo/x", False),
         ("dashboard/**", "docs/dashboard/x", False),
         ("docs/agents/*.md", "docs/agents/nested/domain.md", False),
-        (".github/workflows/ci-dashboard.yml",
-         ".github/workflows/ci-journal.yml", False),
+        (".github/workflows/ci-dashboard.yml", ".github/workflows/ci-journal.yml", False),
     ]
     for pattern, path, expected in covers:
         assert guard.pattern_covers(pattern, path) is expected, (
-            f"pattern_covers({pattern!r}, {path!r}) should be {expected}")
+            f"pattern_covers({pattern!r}, {path!r}) should be {expected}"
+        )
 
     counts = [
         ("Nine independent workflows run on pushes", "README.md", (9, "Nine")),

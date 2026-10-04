@@ -24,6 +24,7 @@ pytestmark = pytest.mark.asyncio
 # Helpers
 # --------------------------------------------------------------------------- #
 
+
 def _git(args: list[str], cwd: str) -> None:
     """Run a git command, asserting success."""
     result = subprocess.run(
@@ -32,13 +33,12 @@ def _git(args: list[str], cwd: str) -> None:
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, (
-        f"git {args} failed in {cwd}: {result.stderr}"
-    )
+    assert result.returncode == 0, f"git {args} failed in {cwd}: {result.stderr}"
 
 
 def _remove_tree(path: Path) -> None:
     """Remove a git worktree, including read-only object files on Windows."""
+
     def _make_writable_and_retry(func, target, _exc_info):
         os.chmod(target, stat.S_IWRITE)
         func(target)
@@ -67,6 +67,7 @@ def _make_bare_remote(tmp_path: Path) -> Path:
 # --------------------------------------------------------------------------- #
 # ensure_clone
 # --------------------------------------------------------------------------- #
+
 
 async def test_ensure_clone_noop_without_remote(tmp_path):
     """Local-only mode: ensure_clone is a no-op when remote_url is empty."""
@@ -144,6 +145,7 @@ async def test_ensure_clone_idempotent(tmp_path):
 # --------------------------------------------------------------------------- #
 # acquire / release with remote sync
 # --------------------------------------------------------------------------- #
+
 
 async def test_acquire_release_pushes_subtask_branch(tmp_path):
     """Full cycle: clone → acquire (fetch) → commit → release (push).

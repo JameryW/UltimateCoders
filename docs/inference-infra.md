@@ -4,10 +4,12 @@ UltimateCoders retains the global planner, distributed dispatch, worktree owners
 
 ## Configure a service
 
-Run MetaInfer separately according to its [upstream instructions](https://github.com/HuangPuStar/MetaInfer). Compatibility was checked against commit `b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890`; each submission discovers the live plugin form schema. Set these on the UC planner and eligible workers:
+Run MetaInfer separately according to its [upstream instructions](https://github.com/HuangPuStar/MetaInfer). The adapter is pinned to commit `b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890` for release evidence, but the stock server at that commit has no UC stop/workspace contract. UC therefore allows schema discovery while failing closed before any mutating POST. A compatible deployment must expose `uc-metainfer/1`, a stable `backend_id`, the pinned `revision`, workspace probes and quiescence receipts scoped to every writer. Set these on the UC planner and eligible workers:
 
 ```dotenv
 UC_METAINFER_URL=http://metainfer-host:8765
+UC_METAINFER_REVISION=b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890
+UC_METAINFER_BACKEND_ID=metainfer-gpu-a
 ```
 
 Workers always advertise local `inference_benchmark`. Remote capabilities require successful live schema probes: `inference_infra` plus the supported `model_porting`, `kernel_optimization`, `runtime_optimization` or `trace_analysis` operation. Startup and heartbeats refresh these probes and withdraw unavailable operations. A URL alone does not prove readiness or GPU availability. Explicit agent choices win over automatic routing. Routing requires inference context and engineering intent; ordinary frontend work and references to a Linux kernel retain their coding adapter.
@@ -101,7 +103,7 @@ Experiment IDs derive from graph/node/attempt/workflow-step identity, so restart
 
 Remote operation intent is committed before POST, and the returned remote ID is committed before polling. A known ID resumes without another submission. A lost response leaves `submission_unknown`; an unconfirmed stop leaves `cleanup_pending`. Both are nonretryable and preserve code, checkpoints, leases and concurrency reservations. No rollback or release runs while a remote writer may remain alive. Deadlines survive restart. Confirmed completion or termination releases the shared backend slot, including recovery after a crash between completion and slot release. UC gives the runner eight seconds to stop remote work before forcing local process-group/Job Object termination. A hard OS kill cannot guarantee HTTP cleanup; inspect the remote job before manually reconciling its quarantined workspace.
 
-The automated suite exercises the real HTTP contract, rollback in temporary git repos, Oracle failures, routing/config forwarding, and a real UC sandbox subprocess. Real correctness and GPU speedups need a configured service, shared code/weights and hardware; no production performance improvement is claimed by these CPU contract tests.
+The automated suite exercises the UC HTTP contract, rollback in temporary git repos, Oracle failures, routing/config forwarding, and a real UC sandbox subprocess. The fixture service is deliberately separate from a production MetaInfer deployment. Real correctness and GPU speedups need a configured contract-compatible service, shared code/weights and hardware; no production performance improvement is claimed by these CPU contract tests.
 
 ## Durable execution and evidence
 
@@ -120,6 +122,15 @@ Authenticated Dashboard API routes:
 - `GET /dashboard/api/experiments?task_id=<graph-id>` lists state, UC identity and delivery metadata.
 - `GET /dashboard/api/experiments/<experiment-id>/artifacts/<name>` serves `report.json`, `benchmarks.json`, `graph.json` or `accepted.patch` with an integrity ETag. Tampering returns 409; missing host artifacts return 404; files over 16 MiB return 413. Internal transaction checkpoints are not downloadable.
 
-For quarantined operations, inspect the experiment/remote-job record and remote service status first. Stop or establish completion of the remote writer, review preserved code and the original benchmark evidence, then reconcile the lease/operation with the responsible UC operator. Do not clear a slot, delete a worktree or resubmit merely because a heartbeat expired. For a Gateway event-persistence failure, fix storage and restart the Gateway to clear its failed event barrier; the durable outbox continues replaying.
+For quarantined operations, inspect the experiment/remote-job record and remote service status first. Stop or establish completion of the remote writer, review preserved code and the original benchmark evidence, then reconcile the lease/operation with the responsible UC operator. Do not clear a slot, delete a worktree or resubmit merely because a heartbeat expired. For a Gateway event-persistence failure, fix storage and restart the Gateway to clear its failed event barrier; the durable outbox continues replaying. Delivered outcomes are compacted to replay-safe tombstones after `UC_OUTBOX_RETENTION_SECONDS`.
+
+Version-checked operator recovery is available from the worker environment:
+
+```powershell
+python -m ultimate_coders.inference.reconcile inspect <operation-id>
+python -m ultimate_coders.inference.reconcile attach <operation-id> --remote-id <id> --expected-version <n> --actor <operator>
+python -m ultimate_coders.inference.reconcile confirm_stop <operation-id> --expected-version <n> --actor <operator>
+python -m ultimate_coders.inference.reconcile recover_workspace <lease-key> --expected-version <n> --actor <operator>
+```
 
 Regression and deployment evidence for this repair is recorded in [MetaInfer reliability verification](metainfer-reliability-verification.md).

@@ -94,9 +94,7 @@ class TestFsTools:
 
     def test_edit_file_not_found_message(self, tmp_path: Path) -> None:
         ws = str(tmp_path)
-        out = asyncio.run(
-            _edit_file(ws, {"path": "nope.py", "old_string": "a", "new_string": "b"})
-        )
+        out = asyncio.run(_edit_file(ws, {"path": "nope.py", "old_string": "a", "new_string": "b"}))
         assert "not found" in out[0].text
 
     def test_read_file_missing(self, tmp_path: Path) -> None:

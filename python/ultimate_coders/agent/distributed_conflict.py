@@ -52,6 +52,7 @@ NATS_SUBJECT_FILE_UNLOCK = "uc.file.unlock"
 
 # ── Distributed EditIntent ────────────────────────────────────────
 
+
 class DistributedConflictDetector:
     """Advisory conflict detector that broadcasts edit intents via NATS.
 
@@ -100,7 +101,8 @@ class DistributedConflictDetector:
         return self._local
 
     async def declare_intent(
-        self, intent: EditIntent,
+        self,
+        intent: EditIntent,
     ) -> tuple[ConflictResult, ConflictInfo | None]:
         """Declare edit intent with distributed coordination.
 
@@ -208,7 +210,9 @@ class DistributedConflictDetector:
 
         logger.debug(
             "Received remote intent: %s on %s from %s",
-            edit_type.value, file_path, worker_id[:8],
+            edit_type.value,
+            file_path,
+            worker_id[:8],
         )
 
     def receive_remote_release(self, release_data: dict[str, Any]) -> None:
@@ -221,8 +225,7 @@ class DistributedConflictDetector:
             # Remove from remote intents tracking
             if file_path in self._remote_intents:
                 self._remote_intents[file_path] = [
-                    i for i in self._remote_intents[file_path]
-                    if i.worker_id != worker_id
+                    i for i in self._remote_intents[file_path] if i.worker_id != worker_id
                 ]
 
     async def _acquire_lock(self, file_path: str) -> bool:
@@ -269,7 +272,8 @@ class DistributedConflictDetector:
         """
         now = time.time()
         stale = [
-            fp for fp, (owner, lock_time) in self._file_locks.items()
+            fp
+            for fp, (owner, lock_time) in self._file_locks.items()
             if now - lock_time > self._lock_timeout and owner != self._worker_id
         ]
         for fp in stale:
@@ -282,6 +286,7 @@ class DistributedConflictDetector:
 
 
 # ── Merge Verification ────────────────────────────────────────────
+
 
 class MergeVerifier:
     """Verify merged files by running compile/test commands.

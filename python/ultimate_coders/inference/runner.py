@@ -23,6 +23,7 @@ from ultimate_coders.runtime_state import (
 )
 
 from .adapter import MetaInferAdapter, RemoteStateUncertainError
+from .artifact_store import ArtifactStore
 from .artifacts import artifact_root as resolve_artifact_root
 from .benchmark import BenchmarkRunner, BenchmarkSpec, run_command
 from .graph import ExecutionAdaptationGraph
@@ -77,23 +78,31 @@ async def run_inference(request: dict[str, Any]) -> dict[str, Any]:
     state = RuntimeState(request["runtime_path"])
     owner = request.get("workspace_owner")
     if owner:
+
         def register_runner(lease):
-            if (lease.get("claim") != owner["claim"]
-                    or lease.get("status") != "active"
-                    or lease.get("host") != socket.gethostname()
-                    or not process_matches(lease["pid"], lease.get("process_identity"))):
+            if (
+                lease.get("claim") != owner["claim"]
+                or lease.get("status") != "active"
+                or lease.get("host") != socket.gethostname()
+                or not process_matches(lease["pid"], lease.get("process_identity"))
+            ):
                 raise RemoteStateUncertainError("Workspace owner exited or lease was superseded")
             if lease.get("runner_pid") and process_matches(
                 lease["runner_pid"], lease.get("runner_process_identity")
             ):
                 raise RemoteStateUncertainError("Workspace already has an active runner")
-            return {**lease, "runner_pid": os.getpid(), "runner_host": socket.gethostname(),
-                    "runner_process_identity": process_identity(os.getpid())}
+            return {
+                **lease,
+                "runner_pid": os.getpid(),
+                "runner_host": socket.gethostname(),
+                "runner_process_identity": process_identity(os.getpid()),
+            }
 
         # Atomic with worktree adoption: either this child registers before
         # takeover, or the stale child exits before executing any commands.
-        await asyncio.to_thread(state.mutate, "workspace_leases", owner["lease_key"],
-                                register_runner)
+        await asyncio.to_thread(
+            state.mutate, "workspace_leases", owner["lease_key"], register_runner
+        )
     config_sha = hashlib.sha256(
         json.dumps(
             {key: value for key, value in request["config"].items() if not key.startswith("_uc_")},
@@ -125,23 +134,26 @@ async def run_inference(request: dict[str, Any]) -> dict[str, Any]:
         register,
     )
     try:
-        return await _execute_inference(request, artifact_dir)
+        return await _execute_with_resources(request, artifact_dir, state)
     except BaseException as exc:
         report = Path(artifact_dir) / "report.json"
-        atomic_json(
-            report,
-            {
-                "success": False,
-                "error": str(exc),
-                "error_type": type(exc).__name__,
-                "cleanup_pending": getattr(exc, "cleanup_pending", False),
-            },
-        )
+        if not getattr(exc, "publication_pending", False):
+            atomic_json(
+                report,
+                {
+                    "success": False,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "cleanup_pending": getattr(exc, "cleanup_pending", False),
+                },
+            )
         failure = {
             "experiment_id": experiment_id,
             "identity": identity,
             "config_sha256": config_sha,
-            "state": "cleanup_pending" if getattr(exc, "cleanup_pending", False) else "failed",
+            "state": "publication_pending"
+            if getattr(exc, "publication_pending", False)
+            else ("cleanup_pending" if getattr(exc, "cleanup_pending", False) else "failed"),
             "artifacts": _artifact_metadata(Path(artifact_dir)),
         }
         atomic_json(Path(artifact_dir) / "manifest.json", failure)
@@ -169,6 +181,63 @@ async def run_inference(request: dict[str, Any]) -> dict[str, Any]:
             raise asyncio.CancelledError(message) from exc
         exc.args = (message,)
         raise
+
+
+async def _execute_with_resources(
+    request: dict[str, Any], artifact_dir: str, state: RuntimeState
+) -> dict:
+    from .hardware import capture_environment
+    from .resources import ResourceBudget
+
+    benchmark = request["config"].get("benchmark")
+    inference = request["config"].get("inference_task") or {}
+    declared_hardware = str(inference.get("hardware") or "").strip()
+    generic_cpu = declared_hardware.lower() in {"cpu", "host", ""}
+    benchmark_environment = dict((benchmark or {}).get("environment") or {})
+    gpu_required = benchmark_environment.get("require_gpu", "false").lower() == "true"
+    gpu_required = gpu_required or (bool(declared_hardware) and not generic_cpu)
+    held = []
+    preserve = False
+    try:
+        if gpu_required:
+            benchmark_environment["require_gpu"] = "true"
+            environment = await asyncio.to_thread(capture_environment, benchmark_environment)
+            devices = environment["identity"]["devices"]
+            if (
+                declared_hardware
+                and not generic_cpu
+                and not any(
+                    declared_hardware.lower() in str(device["model"]).lower() for device in devices
+                )
+            ):
+                raise ValueError("Declared task hardware differs from actual GPU model")
+            for device in sorted(devices, key=lambda item: item["uuid"]):
+                budget = ResourceBudget(state, "gpu:" + device["uuid"])
+                await budget.acquire(
+                    request["experiment_id"], timeout=request.get("timeout_seconds", 3600)
+                )
+                held.append(budget)
+            await asyncio.to_thread(
+                state.mutate,
+                "experiments",
+                request["experiment_id"],
+                lambda old: {**old, "gpu_reservations": [budget.resource_id for budget in held]},
+            )
+        return await _execute_inference(request, artifact_dir)
+    except BaseException as exc:
+        preserve = getattr(exc, "cleanup_pending", False)
+        raise
+    finally:
+        if not preserve:
+            for budget in held:
+                await asyncio.to_thread(budget.release, request["experiment_id"])
+            if held:
+                await asyncio.to_thread(
+                    state.mutate,
+                    "experiments",
+                    request["experiment_id"],
+                    lambda old: {**old, "gpu_reservations": []},
+                )
 
 
 async def _execute_inference(request: dict[str, Any], artifact_dir: str) -> dict[str, Any]:
@@ -302,7 +371,24 @@ async def _execute_inference(request: dict[str, Any], artifact_dir: str) -> dict
         ).stdout.strip(),
         "state": "accepted" if result["success"] and result.get("patch") else "completed",
         "artifacts": _artifact_metadata(artifacts),
+        "artifact_state": "pending",
+        "remote_id": (result.get("backend") or {}).get("task_id"),
+        "verdict": result.get("iterations", [{}])[-1].get("verdict")
+        if result.get("iterations")
+        else None,
+        "delivery": result["delivery"],
     }
+    atomic_json(artifacts / "manifest.json", manifest)
+    try:
+        published = await asyncio.to_thread(ArtifactStore(state).publish, artifacts)
+    except Exception as exc:
+        pending = RemoteStateUncertainError(
+            "Accepted evidence retained; artifact publication needs recovery"
+        )
+        pending.publication_pending = True
+        raise pending from exc
+    manifest["artifacts"].update(published)
+    manifest["artifact_state"] = "published"
     atomic_json(artifacts / "manifest.json", manifest)
     await asyncio.to_thread(
         state.mutate, "experiments", request["experiment_id"], lambda old: {**old, **manifest}
@@ -350,13 +436,24 @@ async def _main(request: dict[str, Any]) -> int:
         )
         return 0 if success else 1
     except (Exception, asyncio.CancelledError) as exc:
+        retryable = getattr(exc, "retryable", not isinstance(exc, asyncio.CancelledError))
+        if isinstance(exc, asyncio.TimeoutError) and request.get("experiment_id"):
+            state = RuntimeState(request["runtime_path"])
+            waiting = await asyncio.to_thread(
+                state.query,
+                "remote_jobs",
+                prefix=request["experiment_id"] + ":",
+                status="waiting_resource",
+            )
+            if waiting:
+                retryable = False
         print(
             json.dumps(
                 {
                     "event": "final",
                     "success": False,
                     "summary": f"Inference execution failed: {type(exc).__name__}: {exc}",
-                    "retryable": getattr(exc, "retryable", True),
+                    "retryable": retryable,
                     "cleanup_pending": getattr(exc, "cleanup_pending", False),
                 }
             ),

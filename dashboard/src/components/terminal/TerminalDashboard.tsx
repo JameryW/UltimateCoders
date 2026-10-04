@@ -5,6 +5,7 @@ import { SearchPanel } from "@/components/panels/SearchPanel";
 import { TaskDetail } from "@/components/panels/TaskDetail";
 import { TasksPanel } from "@/components/panels/TasksPanel";
 import { WorkersPanel } from "@/components/panels/WorkersPanel";
+import { InferencePanel } from "@/components/panels/InferencePanel";
 import type { GrpcConnectionState, GrpcSubmitResult, GrpcTaskActionResult } from "@/hooks/useGrpcWeb";
 import type { DashboardConnectionState } from "@/hooks/useDashboardGrpc";
 import type { Theme } from "@/hooks/useTheme";
@@ -22,7 +23,7 @@ import type {
   WorkersData,
 } from "@/types/dashboard";
 
-type TerminalView = "overview" | "tasks" | "workers" | "search" | "memory" | "logs";
+type TerminalView = "overview" | "tasks" | "workers" | "search" | "memory" | "logs" | "inference";
 
 const VIEWS: Array<{ id: TerminalView; label: string; meta: string; key: string; icon: string }> = [
   { id: "overview", label: "概览", meta: "CLUSTER", key: "1", icon: "◯" },
@@ -31,6 +32,7 @@ const VIEWS: Array<{ id: TerminalView; label: string; meta: string; key: string;
   { id: "search", label: "检索", meta: "SEARCH", key: "4", icon: "⌕" },
   { id: "memory", label: "记忆", meta: "MEMORY", key: "5", icon: "◌" },
   { id: "logs", label: "日志", meta: "EVENTS", key: "6", icon: "☷" },
+  { id: "inference", label: "推理实验", meta: "INFERENCE", key: "7", icon: "◈" },
 ];
 
 interface TerminalDashboardProps {
@@ -421,6 +423,7 @@ export function TerminalDashboard({
               </section>
             </div>}
             {view === "workers" && <div className="terminal-data-view"><WorkersPanel workers={workers} tasks={tasks} stale={grpcStale} onJumpTask={(id) => { onSelectTask(id); setView("tasks"); }} /></div>}
+            {view === "inference" && <div className="terminal-data-view"><InferencePanel /></div>}
             {view === "logs" && <div className="terminal-data-view"><EventLogPanel events={eventLog} stale={grpcStale} onSelectTask={(id) => { onSelectTask(id); setView("tasks"); }} /></div>}
             {view === "search" && <div className="terminal-data-view"><SearchPanel grpcState={grpcState} onNavigateFile={setFileBrowserNav} stale={grpcStale} /></div>}
             {view === "memory" && <div className="terminal-empty-contract"><span className="terminal-empty-icon">◌</span><h2>Memory surface</h2><p>记忆检索仍由 EngineService 暴露；当前 dashboard Connect 合约未提供独立 Memory RPC。使用 Search 进入真实检索入口。</p><button onClick={() => setView("search")}>打开 Search</button></div>}

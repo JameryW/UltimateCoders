@@ -17,6 +17,8 @@ import httpx
 from ultimate_coders.runtime_state import RuntimeState
 
 from .models import InferenceTaskType, MetaInferResult, MetaInferTask, nonnegative_number
+from .resources import ResourceBudget, ResourceWaitExpiredError
+from .service_contract import validate_quiescence, verify_hardware, verify_workspace
 
 DEFAULT_TASK_TYPES = {
     InferenceTaskType.PORT_MODEL: "port-model",
@@ -55,6 +57,10 @@ class RemoteStateUncertainError(MetaInferError):
     cleanup_pending = True
 
 
+class RemoteJobStoppedError(MetaInferError):
+    retryable = False
+
+
 class MetaInferAdapter:
     def __init__(
         self,
@@ -66,6 +72,7 @@ class MetaInferAdapter:
         state: RuntimeState | None = None,
         operation_id: str | None = None,
         max_concurrency: int = 1,
+        backend_id: str | None = None,
     ) -> None:
         parsed = urlsplit(url)
         if (
@@ -85,6 +92,11 @@ class MetaInferAdapter:
         self.client = client
         self.state, self.operation_id = state, operation_id
         self.max_concurrency = max_concurrency
+        self.backend_id = (
+            backend_id
+            or os.environ.get("UC_METAINFER_BACKEND_ID")
+            or hashlib.sha256(self.url.encode()).hexdigest()
+        )
         if type(max_concurrency) is not int or max_concurrency < 1:
             raise ValueError("max_concurrency must be a positive integer")
 
@@ -112,9 +124,47 @@ class MetaInferAdapter:
         if not _SAFE_ID.fullmatch(task_type):
             raise ValueError("Invalid upstream task type")
         if self.client is not None:
+            await self._preflight(self.client, task)
             return await self._execute(self.client, task, task_type)
         async with httpx.AsyncClient(follow_redirects=False) as client:
+            await self._preflight(client, task)
             return await self._execute(client, task, task_type)
+
+    async def _preflight(self, client: httpx.AsyncClient, task: MetaInferTask) -> None:
+        if task.task_type in (
+            InferenceTaskType.PORT_MODEL,
+            InferenceTaskType.OPTIMIZE_KERNEL,
+            InferenceTaskType.OPTIMIZE_RUNTIME,
+        ):
+            receipt = await verify_workspace(
+                client,
+                self.url,
+                task.repository,
+                expected_revision=os.environ.get("UC_METAINFER_REVISION") or None,
+            )
+            configured = os.environ.get("UC_METAINFER_BACKEND_ID")
+            if configured and receipt["backend_id"] != configured:
+                raise ValueError("Configured MetaInfer backend identity differs from service")
+            self.backend_id = receipt["backend_id"]
+            declared_hardware = task.hardware.strip()
+            if declared_hardware and declared_hardware.casefold() not in {"cpu", "host"}:
+                await verify_hardware(
+                    client,
+                    self.url,
+                    self.backend_id,
+                    expected_revision=os.environ.get("UC_METAINFER_REVISION") or None,
+                    expected_model=declared_hardware,
+                )
+
+    async def confirm_quiescence(self, client: httpx.AsyncClient, remote_id: str) -> dict:
+        async def wait():
+            while True:
+                proof = await self._request(client, "GET", f"/api/uc/jobs/{remote_id}/quiescence")
+                if proof.get("writers_stopped") is True:
+                    return validate_quiescence(proof, remote_id, self.backend_id)
+                await asyncio.sleep(max(self.poll_interval, 0.05))
+
+        return await asyncio.wait_for(wait(), timeout=5)
 
     async def _execute(
         self,
@@ -134,17 +184,24 @@ class MetaInferAdapter:
         )
         if record:
             if (
-                record.get("backend", self.url) != self.url
+                record.get("backend_id", self.backend_id) != self.backend_id
+                or (not record.get("backend_id") and record.get("backend", self.url) != self.url)
                 or record.get("task_type", task_type) != task_type
                 or record.get("request_sha256", request_sha) != request_sha
             ):
                 raise RemoteStateUncertainError(
                     "Remote operation identity changed; reconcile before retry"
                 )
+            if record.get("state") == "stopped":
+                raise RemoteJobStoppedError("Remote job was stopped; recover the saved transaction")
             if record.get("result"):
                 # Completion is persisted before slot release. Recover that
                 # crash window instead of leaking a backend's entire budget.
                 if self.state:
+                    await asyncio.to_thread(
+                        ResourceBudget(self.state, self.backend_id, self.max_concurrency).release,
+                        key,
+                    )
                     for slot in await asyncio.to_thread(self.state.records, "backend_slots"):
                         if slot.get("operation_id") == key:
                             await asyncio.to_thread(
@@ -155,11 +212,16 @@ class MetaInferAdapter:
                             )
                 return MetaInferResult(**record["result"])
             remote_id = record.get("remote_id")
-            if not remote_id:
+            if not remote_id and record.get("state") != "waiting_resource":
                 raise RemoteStateUncertainError(
                     "Submission outcome unknown; reconcile at MetaInfer before retry"
                 )
-        backend_key = hashlib.sha256(self.url.encode()).hexdigest()
+        backend_key = self.backend_id
+        budget = (
+            ResourceBudget(self.state, backend_key, self.max_concurrency)
+            if self.state and key
+            else None
+        )
         slot_key = None
 
         async def persist(**values):
@@ -175,29 +237,92 @@ class MetaInferAdapter:
             nonlocal slot_key
             if not self.state or not key:
                 return
+            legacy = []
             for index in range(self.max_concurrency):
-                slot = f"{backend_key}:{index}"
-                value = await asyncio.to_thread(
+                for resource in {backend_key, hashlib.sha256(self.url.encode()).hexdigest()}:
+                    slot = await asyncio.to_thread(
+                        self.state.get, "backend_slots", f"{resource}:{index}"
+                    )
+                    if slot and slot.get("operation_id"):
+                        legacy.append(slot["operation_id"])
+            await asyncio.to_thread(budget.inherit_reservations, legacy)
+            if not remote_id:
+                waiting = await asyncio.to_thread(
                     self.state.mutate,
-                    "backend_slots",
-                    slot,
+                    "remote_jobs",
+                    key,
                     lambda old: (
-                        {"operation_id": key}
-                        if not old.get("operation_id") or old.get("operation_id") == key
+                        {
+                            **old,
+                            "state": "waiting_resource",
+                            "backend_id": self.backend_id,
+                            "backend": self.url,
+                            "task_type": task_type,
+                            "request_sha256": request_sha,
+                        }
+                        if not old or old.get("state") == "waiting_resource"
                         else old
                     ),
                 )
+                if waiting.get("state") != "waiting_resource":
+                    raise RemoteStateUncertainError("Remote submission already has an owner")
+            await budget.acquire(key, timeout=self.timeout_seconds)
+            for index in range(self.max_concurrency):
+                slot = f"{backend_key}:{index}"
+                claim_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        self.state.mutate,
+                        "backend_slots",
+                        slot,
+                        lambda old: (
+                            {"operation_id": key}
+                            if not old.get("operation_id") or old.get("operation_id") == key
+                            else old
+                        ),
+                    )
+                )
+                try:
+                    value = await asyncio.shield(claim_task)
+                except asyncio.CancelledError:
+                    value = await claim_task
+                    if value.get("operation_id") == key:
+                        await asyncio.to_thread(
+                            self.state.mutate,
+                            "backend_slots",
+                            slot,
+                            lambda old: {} if old.get("operation_id") == key else old,
+                        )
+                    raise
                 if value.get("operation_id") == key:
                     slot_key = slot
                     return
-            raise MetaInferError("MetaInfer concurrency budget exhausted")
+            # Legacy slots are still occupied: do not bypass an old writer's reservation.
+            raise RemoteStateUncertainError("Legacy backend reservation requires reconciliation")
 
         async def release_slot() -> None:
-            if slot_key:
+            # Nothing was ever reserved without a state store, so there is
+            # nothing to release either. Guarding here keeps the original
+            # failure (and the cancellation) from being masked by an
+            # AttributeError on the cleanup path.
+            if not self.state:
+                return
+            if budget:
+                await asyncio.to_thread(budget.release, key)
+            slot_resources = {backend_key, hashlib.sha256(self.url.encode()).hexdigest()}
+            slots = (
+                [slot_key]
+                if slot_key
+                else [
+                    f"{resource}:{index}"
+                    for resource in slot_resources
+                    for index in range(self.max_concurrency)
+                ]
+            )
+            for slot in slots:
                 await asyncio.to_thread(
                     self.state.mutate,
                     "backend_slots",
-                    slot_key,
+                    slot,
                     lambda old: {} if old.get("operation_id") == key else old,
                 )
 
@@ -234,12 +359,14 @@ class MetaInferAdapter:
                         key,
                         lambda old: (
                             old
-                            or {
+                            if old.get("state") != "waiting_resource" and old
+                            else {
                                 "state": "submission_unknown",
                                 "operation_id": key,
                                 "claim": claim,
                                 "task_type": task_type,
                                 "backend": self.url,
+                                "backend_id": self.backend_id,
                                 "request_sha256": request_sha,
                                 "payload_sha256": hashlib.sha256(
                                     json.dumps(payload, sort_keys=True).encode()
@@ -289,6 +416,8 @@ class MetaInferAdapter:
                             f"MetaInfer task {remote_id} ended with {final_status}"
                         )
                     evidence = {"state": state}
+                    if task.task_type != InferenceTaskType.ANALYZE_TRACE:
+                        evidence["quiescence"] = await self.confirm_quiescence(client, remote_id)
                     for name in ("iterations", "state-graph"):
                         path = f"/api/{task_type}/{remote_id}/{name}"
                         response = await client.get(self.url + path, timeout=15)
@@ -330,21 +459,27 @@ class MetaInferAdapter:
                     )
                     if not isinstance(stopped, dict) or stopped.get("ok") is not True:
                         raise MetaInferError("Service did not confirm kill")
+                    proof = await self.confirm_quiescence(client, remote_id)
                 except (Exception, asyncio.CancelledError) as stop_exc:
                     await persist(state="cleanup_pending", remote_id=remote_id)
                     raise RemoteStateUncertainError(
                         f"MetaInfer task {remote_id}: termination unconfirmed; "
                         "stop it at the service"
                     ) from stop_exc
-                await persist(state="stopped", remote_id=remote_id)
+                await persist(state="stopped", remote_id=remote_id, quiescence=proof)
                 await release_slot()
             elif (
                 not self.state
                 or not key
-                or not await asyncio.to_thread(self.state.get, "remote_jobs", key)
+                or (await asyncio.to_thread(self.state.get, "remote_jobs", key) or {}).get("state")
+                == "waiting_resource"
             ):
                 await release_slot()
             if isinstance(exc, asyncio.TimeoutError):
+                if not remote_id:
+                    raise ResourceWaitExpiredError(
+                        "Resource wait timed out before remote submission"
+                    ) from exc
                 raise MetaInferError(f"MetaInfer deadline exceeded (task {remote_id})") from exc
             raise
 

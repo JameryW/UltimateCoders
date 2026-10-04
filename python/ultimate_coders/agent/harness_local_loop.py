@@ -66,35 +66,70 @@ not invent extra work.
 """
 
 _TOOLS: list[dict[str, Any]] = [
-    {"type": "function", "function": {
-        "name": "list_dir",
-        "description": "List a directory (relative path, '.' = root).",
-        "parameters": {"type": "object", "properties": {
-            "path": {"type": "string"}}, "required": ["path"]}}},
-    {"type": "function", "function": {
-        "name": "read_file",
-        "description": "Read a UTF-8 text file (relative path), 8 KiB at a time by default.",
-        "parameters": {"type": "object", "properties": {
-            "path": {"type": "string"},
-            "offset": {"type": "integer", "minimum": 0},
-            "max_bytes": {"type": "integer", "minimum": 1, "maximum": MAX_READ_BYTES},
-        }, "required": ["path"]}}},
-    {"type": "function", "function": {
-        "name": "write_file",
-        "description": "Create or overwrite a UTF-8 file (relative path).",
-        "parameters": {"type": "object", "properties": {
-            "path": {"type": "string"},
-            "content": {"type": "string"}}, "required": ["path", "content"]}}},
-    {"type": "function", "function": {
-        "name": "run_command",
-        "description": "Run a short shell command (build/test/lint).",
-        "parameters": {"type": "object", "properties": {
-            "command": {"type": "string"}}, "required": ["command"]}}},
-    {"type": "function", "function": {
-        "name": "done",
-        "description": "Finish with a one-paragraph summary.",
-        "parameters": {"type": "object", "properties": {
-            "summary": {"type": "string"}}, "required": ["summary"]}}},
+    {
+        "type": "function",
+        "function": {
+            "name": "list_dir",
+            "description": "List a directory (relative path, '.' = root).",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read a UTF-8 text file (relative path), 8 KiB at a time by default.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "offset": {"type": "integer", "minimum": 0},
+                    "max_bytes": {"type": "integer", "minimum": 1, "maximum": MAX_READ_BYTES},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Create or overwrite a UTF-8 file (relative path).",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_command",
+            "description": "Run a short shell command (build/test/lint).",
+            "parameters": {
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "done",
+            "description": "Finish with a one-paragraph summary.",
+            "parameters": {
+                "type": "object",
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
+        },
+    },
 ]
 
 
@@ -102,17 +137,19 @@ def register(reg: Any) -> None:
     """Register into a plugin registry (idempotent)."""
     from ultimate_coders.agent.registry import AgentPluginSpec
 
-    reg.register(AgentPluginSpec(
-        name=AGENT_NAME,
-        aliases=AGENT_ALIASES,
-        factory=LocalLoopHarnessAdapter,
-        api_key_env=None,  # provider comes from the litellm env route
-        cli_probe=None,    # API-backed, no external CLI
-        description=(
-            "Lightweight litellm tool loop tuned for small local models "
-            "(Ollama/vLLM); uses the UC_LLM_PROVIDER/OPENAI_API_BASE route"
-        ),
-    ))
+    reg.register(
+        AgentPluginSpec(
+            name=AGENT_NAME,
+            aliases=AGENT_ALIASES,
+            factory=LocalLoopHarnessAdapter,
+            api_key_env=None,  # provider comes from the litellm env route
+            cli_probe=None,  # API-backed, no external CLI
+            description=(
+                "Lightweight litellm tool loop tuned for small local models "
+                "(Ollama/vLLM); uses the UC_LLM_PROVIDER/OPENAI_API_BASE route"
+            ),
+        )
+    )
 
 
 # ── Adapter (sandbox side) ───────────────────────────────────────────
@@ -141,10 +178,14 @@ class LocalLoopHarnessAdapter(AgentAdapter):
         return {
             "command": sys.executable,
             "args": [
-                "-m", "ultimate_coders.agent.harness_local_loop",
-                "--cwd", working_dir,
-                "--prompt-file", prompt_file.name,
-                "--max-turns", str(max_turns),
+                "-m",
+                "ultimate_coders.agent.harness_local_loop",
+                "--cwd",
+                working_dir,
+                "--prompt-file",
+                prompt_file.name,
+                "--max-turns",
+                str(max_turns),
             ],
             "timeout_secs": config.max_cpu_seconds,
             "working_dir": working_dir,
@@ -244,9 +285,7 @@ def _tool_list_dir(root: Path, args: dict[str, Any]) -> str:
     target = _safe_resolve(root, str(args.get("path") or "."))
     if not target.is_dir():
         return json.dumps({"error": f"not a directory: {args.get('path')}"})
-    entries = sorted(
-        (e.name + "/" if e.is_dir() else e.name) for e in target.iterdir()
-    )
+    entries = sorted((e.name + "/" if e.is_dir() else e.name) for e in target.iterdir())
     return json.dumps({"entries": entries[:500]}, ensure_ascii=False)
 
 
@@ -270,11 +309,14 @@ def _tool_read_file(root: Path, args: dict[str, Any]) -> str:
         if exc.reason != "unexpected end of data" or exc.end != len(data):
             return json.dumps({"error": "not a UTF-8 text file"})
         # Keep the paging offset on a character boundary.
-        data = data[:exc.start]
+        data = data[: exc.start]
         text = data.decode("utf-8")
     return json.dumps(
-        {"content": text, "truncated": offset + len(data) < target.stat().st_size,
-         "next_offset": offset + len(data)},
+        {
+            "content": text,
+            "truncated": offset + len(data) < target.stat().st_size,
+            "next_offset": offset + len(data),
+        },
         ensure_ascii=False,
     )
 
@@ -314,8 +356,7 @@ async def _tool_run_command(root: Path, args: dict[str, Any]) -> str:
             pass
         return json.dumps({"error": "command timed out", "exit_code": -1})
     return json.dumps(
-        {"exit_code": proc.returncode,
-         "output": out.decode("utf-8", errors="replace")[-4000:]},
+        {"exit_code": proc.returncode, "output": out.decode("utf-8", errors="replace")[-4000:]},
         ensure_ascii=False,
     )
 
@@ -362,21 +403,33 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                 hit_done = True
                 break
 
-            messages.append({
-                "role": "assistant",
-                "content": assistant_text or None,
-                "tool_calls": [
-                    {"id": tc.id, "type": "function",
-                     "function": {"name": tc.function.name,
-                                  "arguments": tc.function.arguments}}
-                    for tc in tool_calls
-                ],
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": assistant_text or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in tool_calls
+                    ],
+                }
+            )
             usage = getattr(response, "usage", None)
             if usage is not None:
-                _emit({"event": "usage", "turn": stats.turns,
-                       "prompt_tokens": getattr(usage, "prompt_tokens", 0),
-                       "completion_tokens": getattr(usage, "completion_tokens", 0)})
+                _emit(
+                    {
+                        "event": "usage",
+                        "turn": stats.turns,
+                        "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+                        "completion_tokens": getattr(usage, "completion_tokens", 0),
+                    }
+                )
 
             finished = False
             for tc in tool_calls:
@@ -386,8 +439,7 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                     fn_args = json.loads(tc.function.arguments or "{}")
                 except json.JSONDecodeError:
                     fn_args = {}
-                _emit({"event": "tool_call", "tool": name,
-                       "args_preview": str(fn_args)[:200]})
+                _emit({"event": "tool_call", "tool": name, "args_preview": str(fn_args)[:200]})
                 try:
                     if name == "list_dir":
                         result = _tool_list_dir(root, fn_args)
@@ -414,14 +466,27 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
     except KeyboardInterrupt:
         raise
     except Exception as exc:
-        _emit({"event": "final", "success": False,
-               "summary": f"Local harness failed: {type(exc).__name__}: {exc}",
-               "turns": stats.turns, "tool_calls": stats.tool_calls})
+        _emit(
+            {
+                "event": "final",
+                "success": False,
+                "summary": f"Local harness failed: {type(exc).__name__}: {exc}",
+                "turns": stats.turns,
+                "tool_calls": stats.tool_calls,
+            }
+        )
         return 1
 
-    _emit({"event": "final", "success": hit_done, "summary": final_summary,
-           "turns": stats.turns, "tool_calls": stats.tool_calls,
-           "files_written": stats.files_written})
+    _emit(
+        {
+            "event": "final",
+            "success": hit_done,
+            "summary": final_summary,
+            "turns": stats.turns,
+            "tool_calls": stats.tool_calls,
+            "files_written": stats.files_written,
+        }
+    )
     return 0 if hit_done else 1
 
 

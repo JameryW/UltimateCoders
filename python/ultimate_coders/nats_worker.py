@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import signal
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -141,8 +142,7 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
         dispatched_description = st.description
         if not partial and st.user_request and st.user_request != st.description:
             dispatched_description = (
-                f"{st.description}\n\nOriginal user request and constraints: "
-                f"{st.user_request}"
+                f"{st.description}\n\nOriginal user request and constraints: {st.user_request}"
             )
         entry: dict[str, Any] = {
             "subtask_id": st.id,
@@ -163,9 +163,14 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
                 file_constraints=st.file_constraints,
                 expected_output=st.expected_output,
                 workflow_steps=[
-                    {**{key: value for key, value in step.to_dict().items()
-                        if key != "agent_config"},
-                     "agent_config_json": json.dumps(step.agent_config)}
+                    {
+                        **{
+                            key: value
+                            for key, value in step.to_dict().items()
+                            if key != "agent_config"
+                        },
+                        "agent_config_json": json.dumps(step.agent_config),
+                    }
                     for step in st.steps
                 ],
             )
@@ -349,7 +354,10 @@ class MergeGate:
         return await self._engine.issue_merge_grant_async(graph_id)
 
     async def report_merge_outcome(
-        self, graph_id: str, merge_idempotency_key: str, outcome: dict,
+        self,
+        graph_id: str,
+        merge_idempotency_key: str,
+        outcome: dict,
     ) -> dict:
         """Report the merge outcome carrying the grant key (non-fatal)."""
         return await self._engine.report_merge_outcome_async(
@@ -400,7 +408,9 @@ class NatsPublisher:
         """Wait for the Gateway's durable full-snapshot confirmation."""
         try:
             response = await self._nc.request(
-                NATS_SUBJECT_TASK_UPDATE, json.dumps(update).encode(), timeout=5,
+                NATS_SUBJECT_TASK_UPDATE,
+                json.dumps(update).encode(),
+                timeout=5,
                 headers={"UC-Recipient": "gateway"},
             )
             return json.loads(response.data).get("message_id") == update["message_id"]
@@ -1166,9 +1176,7 @@ class NatsWorker:
                 await asyncio.sleep(self._SUBTASK_TRANSPORT_RETRY_SECONDS)
                 continue
             self._subtask_js_available = True
-            self._subtask_fetch_task = asyncio.create_task(
-                self._subtask_fetch_loop()
-            )
+            self._subtask_fetch_task = asyncio.create_task(self._subtask_fetch_loop())
             # T12 #654: bind the per-worker consumer too. Best-effort by
             # design — the shared consumer above is what makes the worker
             # dispatchable at all, and a per-worker bind can legitimately fail
@@ -1255,9 +1263,7 @@ class NatsWorker:
         """Pull-fetch loop for the SHARED JetStream subtask consumer."""
         await self._subtask_fetch_loop_for(self._subtask_pull_sub, "shared")
 
-    async def _subtask_fetch_loop_for(
-        self, pull_sub: Any, label: str
-    ) -> None:
+    async def _subtask_fetch_loop_for(self, pull_sub: Any, label: str) -> None:
         """Pull-fetch loop over one durable consumer.
 
         Continuously fetches batches of messages and dispatches each to
@@ -1728,7 +1734,9 @@ class NatsWorker:
         """Start and retain an execution so its task cancellation can stop it."""
         execution = self._spawn_bg(
             self._execute_and_report(
-                subtask, js_msg=js_msg, gateway_context_block=gateway_context_block,
+                subtask,
+                js_msg=js_msg,
+                gateway_context_block=gateway_context_block,
             )
         )
         self._running_subtask_tasks.setdefault(subtask.parent_id, set()).add(execution)
@@ -1955,10 +1963,7 @@ class NatsWorker:
 
         tasks = []
         if self._orchestrator is not None:
-            tasks = [
-                _make_task_update_payload(task)
-                for task in self._orchestrator.tasks.values()
-            ]
+            tasks = [_make_task_update_payload(task) for task in self._orchestrator.tasks.values()]
 
         try:
             await msg.respond(json.dumps({"v": 1, "tasks": tasks}).encode())
@@ -1974,8 +1979,9 @@ class NatsWorker:
         provide a worker publisher without the Orchestrator hook.
         """
         state = await self._state_store()
-        await asyncio.to_thread(state.mutate, "coordinator_tasks", task.id,
-                                lambda _: NatsWorker._coordinator_plan(task))
+        await asyncio.to_thread(
+            state.mutate, "coordinator_tasks", task.id, lambda _: NatsWorker._coordinator_plan(task)
+        )
         callback = getattr(self._orchestrator, "_publish_task_update", None)
         if callback is not None:
             try:
@@ -2235,9 +2241,7 @@ class NatsWorker:
                     EditIntent(worker_id="remote", file_path=fp)
                 )
 
-        envelope = _execution_envelope(
-            subtask.parent_id, subtask.id, subtask.dispatch_retry_count
-        )
+        envelope = _execution_envelope(subtask.parent_id, subtask.id, subtask.dispatch_retry_count)
         msg = json.dumps(
             {
                 # T4 #640 (D3 lockstep): no legacy task_id/subtask_id — the
@@ -2515,9 +2519,7 @@ class NatsWorker:
             # T5 #641 / D4 #633 Q1: how this worker consumes
             # uc.subtask.execute. "unavailable" on a non-worker-mode worker
             # is expected (it does not consume that subject).
-            "subtask_transport": (
-                "jetstream" if self._subtask_js_available else "unavailable"
-            ),
+            "subtask_transport": ("jetstream" if self._subtask_js_available else "unavailable"),
         }
         compose_project = os.environ.get("UC_COMPOSE_PROJECT", "")
         if compose_project:
@@ -2669,7 +2671,9 @@ class NatsWorker:
         # no ack → redelivery). T10 #652: the gateway-composed context block
         # rides the dispatch — worker prefers it over the local injector.
         self._spawn_subtask_execution(
-            subtask, js_msg=js_msg, gateway_context_block=data.get("context_block"),
+            subtask,
+            js_msg=js_msg,
+            gateway_context_block=data.get("context_block"),
         )
 
     @staticmethod
@@ -2859,7 +2863,8 @@ class NatsWorker:
         if gateway_context_block is None:
             return await self._worker.execute_subtask(subtask)
         return await self._worker.execute_subtask(
-            subtask, gateway_context_block=gateway_context_block,
+            subtask,
+            gateway_context_block=gateway_context_block,
         )
 
     async def _execute_and_report(
@@ -2889,7 +2894,9 @@ class NatsWorker:
         )
         try:
             await self._execute_and_report_body(
-                subtask, js_msg=js_msg, gateway_context_block=gateway_context_block,
+                subtask,
+                js_msg=js_msg,
+                gateway_context_block=gateway_context_block,
             )
         finally:
             if progress_task is not None:
@@ -2918,22 +2925,43 @@ class NatsWorker:
     async def _deliver_outcome(self, key: str, record: dict) -> bool:
         if self._publisher is None:
             return False
-        delivered = await self._publisher.publish_terminal(record["event"], record["update"])
-        if delivered is True:
-            state = await self._state_store()
-            await asyncio.to_thread(
-                state.mutate, "result_outbox", key, lambda old: {**old, "delivered": True}
+        from ultimate_coders.outbox import OutcomeOutbox
+
+        outbox = OutcomeOutbox(await self._state_store())
+        claim = await asyncio.to_thread(outbox.claim, key)
+        if claim is None:
+            return record.get("delivered", False)
+
+        async def renew():
+            while True:
+                await asyncio.sleep(30)
+                await asyncio.to_thread(outbox.renew, claim)
+
+        renewal = asyncio.create_task(renew())
+        delivered = False
+        try:
+            delivered = await self._publisher.publish_terminal(
+                claim.record["event"], claim.record["update"]
             )
-            return True
-        return False
+            return delivered is True
+        finally:
+            renewal.cancel()
+            await asyncio.gather(renewal, return_exceptions=True)
+            await asyncio.to_thread(outbox.finish, claim, delivered=delivered is True)
 
     async def _outbox_loop(self) -> None:
         while self._running:
             try:
                 state = await self._state_store()
-                for record in await asyncio.to_thread(state.records, "result_outbox"):
-                    if not record.get("delivered"):
-                        await self._deliver_outcome(record["key"], record)
+                from ultimate_coders.outbox import OutcomeOutbox
+
+                for record in await asyncio.to_thread(OutcomeOutbox(state).pending):
+                    await self._deliver_outcome(record["key"], record)
+                retention = float(os.environ.get("UC_OUTBOX_RETENTION_SECONDS", "604800"))
+                if retention > 0:
+                    await asyncio.to_thread(
+                        state.archive_delivered, older_than=time.time() - retention
+                    )
             except Exception:
                 logger.warning("Result outbox replay deferred", exc_info=True)
             await asyncio.sleep(5)
@@ -2973,13 +3001,20 @@ class NatsWorker:
                 )
                 if old and (
                     (old.get("host") != socket.gethostname() and domain)
-                    or (old.get("host") == socket.gethostname()
-                        and process_matches(old.get("pid", os.getpid()),
-                                            old.get("process_identity")))
+                    or (
+                        old.get("host") == socket.gethostname()
+                        and process_matches(
+                            old.get("pid", os.getpid()), old.get("process_identity")
+                        )
+                    )
                 ):
                     return old
-                return {"claim": claim, "host": socket.gethostname(), "pid": os.getpid(),
-                        "process_identity": process_identity(os.getpid())}
+                return {
+                    "claim": claim,
+                    "host": socket.gethostname(),
+                    "pid": os.getpid(),
+                    "process_identity": process_identity(os.getpid()),
+                }
 
             lease = await asyncio.to_thread(state.mutate, "execution_claims", key, acquire)
             if lease.get("claim") != claim:
@@ -3072,7 +3107,9 @@ class NatsWorker:
             if owned:
                 try:
                     await asyncio.to_thread(
-                        state.mutate, "execution_claims", key,
+                        state.mutate,
+                        "execution_claims",
+                        key,
                         lambda old: {} if old.get("claim") == claim else old,
                     )
                 except Exception:
@@ -3236,7 +3273,8 @@ class NatsWorker:
             # subtask result, leaking edit intents, and stalling tasks.)
             subtask_id = data.get("subtask_id", "")
             confirmation = (
-                self._mode == "default" and getattr(msg, "reply", "")
+                self._mode == "default"
+                and getattr(msg, "reply", "")
                 and (getattr(msg, "headers", None) or {}).get("UC-Recipient") == "coordinator"
             )
             if confirmation:
@@ -3287,7 +3325,8 @@ class NatsWorker:
         try:
             response = await self._nc.request(
                 "uc.task.gateway-snapshot.request",
-                json.dumps({"task_id": data["task_id"]}).encode(), timeout=5,
+                json.dumps({"task_id": data["task_id"]}).encode(),
+                timeout=5,
             )
             raw = json.loads(response.data).get("task")
         except Exception:
@@ -3296,8 +3335,10 @@ class NatsWorker:
         if not raw:
             return
         saved_task = self._orchestrator.get_task_status(data["task_id"])
-        saved = NatsWorker._coordinator_plan(saved_task) if saved_task else await asyncio.to_thread(
-            state.get, "coordinator_tasks", data["task_id"]
+        saved = (
+            NatsWorker._coordinator_plan(saved_task)
+            if saved_task
+            else await asyncio.to_thread(state.get, "coordinator_tasks", data["task_id"])
         )
         task = self._coordinator_task_from_gateway(raw, saved or {})
         node = next((st for st in task.subtasks if st.id == data["subtask_id"]), None)
@@ -3311,20 +3352,32 @@ class NatsWorker:
             return
         self._orchestrator.tasks[task.id] = task
         await self._handle_remote_subtask_result(
-            data["type"], task.id, node.id, data,
+            data["type"],
+            task.id,
+            node.id,
+            data,
         )
         # A previously applied partial report can already be terminal while
         # the parent snapshot still awaits delivery. Derive it from all nodes.
         if task.status not in (TaskStatus.PAUSED, TaskStatus.FAILED):
             self._orchestrator._update_task_status(task)
-        await asyncio.to_thread(state.mutate, "coordinator_tasks", task.id,
-                                lambda _: NatsWorker._coordinator_plan(task))
-        await asyncio.to_thread(state.mutate, "coordinator_receipts", data["message_id"],
-                                lambda old: old or {"task_id": task.id, "confirmed": False})
+        await asyncio.to_thread(
+            state.mutate, "coordinator_tasks", task.id, lambda _: NatsWorker._coordinator_plan(task)
+        )
+        await asyncio.to_thread(
+            state.mutate,
+            "coordinator_receipts",
+            data["message_id"],
+            lambda old: old or {"task_id": task.id, "confirmed": False},
+        )
         if await self._publisher.confirm_update(_make_task_update_payload(task)) is not True:
             return
-        await asyncio.to_thread(state.mutate, "coordinator_receipts", data["message_id"],
-                                lambda old: {**old, "confirmed": True})
+        await asyncio.to_thread(
+            state.mutate,
+            "coordinator_receipts",
+            data["message_id"],
+            lambda old: {**old, "confirmed": True},
+        )
         await msg.respond(json.dumps({"message_id": data["message_id"]}).encode())
 
     @staticmethod
@@ -3350,17 +3403,22 @@ class NatsWorker:
         for raw_node in raw["subtasks"]:
             node = {**previous.get(raw_node["id"], {}), **raw_node}
             node["status"] = status(raw_node["status"])
-            node["dispatch_mode"] = raw_node.get("dispatch_mode", "PreferRemote").replace(
-                "PreferRemote", "prefer_remote").lower()
+            node["dispatch_mode"] = (
+                raw_node.get("dispatch_mode", "PreferRemote")
+                .replace("PreferRemote", "prefer_remote")
+                .lower()
+            )
             node["agent_config"] = json.loads(raw_node.get("agent_config_json") or "{}")
             result = raw_node.get("result")
             if result:
                 node["result"] = {
                     **result,
                     "modified_files": [
-                        {"path": change["file_path"],
-                         "change_type": change["change_type"].lower(),
-                         "diff_stats": change.get("diff", "")}
+                        {
+                            "path": change["file_path"],
+                            "change_type": change["change_type"].lower(),
+                            "diff_stats": change.get("diff", ""),
+                        }
                         for change in result.get("modified_files", [])
                     ],
                 }

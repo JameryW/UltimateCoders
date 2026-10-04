@@ -46,7 +46,10 @@ class TestFromRust:
         entry = MemoryEntry.from_rust(_py_entry())
         assert entry.id == "mem-1"
         assert entry.key == MemoryKey(
-            scope="task", key="summary", task_id="t-123", project_id=None,
+            scope="task",
+            key="summary",
+            task_id="t-123",
+            project_id=None,
         )
         assert entry.content == "print('hi')"
         # content_type must come from the field, NOT be hardcoded "text".
@@ -63,24 +66,36 @@ class TestFromRust:
         assert entry.key.task_id == "t-9"
 
     def test_preserves_project_scope(self):
-        entry = MemoryEntry.from_rust(_py_entry(
-            key_scope="project", task_id=None, project_id="proj-1",
-        ))
+        entry = MemoryEntry.from_rust(
+            _py_entry(
+                key_scope="project",
+                task_id=None,
+                project_id="proj-1",
+            )
+        )
         assert entry.key.scope == "project"
         assert entry.key.project_id == "proj-1"
 
     def test_global_scope(self):
-        entry = MemoryEntry.from_rust(_py_entry(
-            key_scope="global", task_id=None, project_id=None,
-        ))
+        entry = MemoryEntry.from_rust(
+            _py_entry(
+                key_scope="global",
+                task_id=None,
+                project_id=None,
+            )
+        )
         assert entry.key.scope == "global"
 
     def test_i64_millis_converted_to_datetime(self):
         """created_at/updated_at are i64 epoch millis on the Rust side."""
         from datetime import datetime, timezone
-        entry = MemoryEntry.from_rust(_py_entry(
-            created_at=1700000000000, updated_at=1700000005000,
-        ))
+
+        entry = MemoryEntry.from_rust(
+            _py_entry(
+                created_at=1700000000000,
+                updated_at=1700000005000,
+            )
+        )
         assert entry.created_at == datetime.fromtimestamp(1700000000.0, tz=timezone.utc)
         assert entry.updated_at == datetime.fromtimestamp(1700000005.0, tz=timezone.utc)
 
@@ -92,9 +107,12 @@ class TestFromRust:
     def test_structured_content_type_preserved(self):
         """Regression: content_type was hardcoded 'text', losing structured/
         diff/reference types entirely."""
-        entry = MemoryEntry.from_rust(_py_entry(
-            content_type="structured", content='{"k": 1}',
-        ))
+        entry = MemoryEntry.from_rust(
+            _py_entry(
+                content_type="structured",
+                content='{"k": 1}',
+            )
+        )
         assert entry.content_type == "structured"
         assert entry.content == '{"k": 1}'
 

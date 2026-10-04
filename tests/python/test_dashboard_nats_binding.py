@@ -54,9 +54,7 @@ async def test_dashboard_snapshot_populates_standalone_fallback():
         "tasks": {"available": True, "tasks": [], "status_counts": {}},
         "scheduler": {"available": True, "running": True},
     }
-    await app._handle_dashboard_snapshot(
-        SimpleNamespace(data=json.dumps(payload).encode("utf-8"))
-    )
+    await app._handle_dashboard_snapshot(SimpleNamespace(data=json.dumps(payload).encode("utf-8")))
 
     assert app._get_health_data()["available"] is True
     assert app._get_workers_data()["available"] is True

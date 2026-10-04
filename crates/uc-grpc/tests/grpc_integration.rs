@@ -73,16 +73,16 @@ async fn failed_event_append_is_reported_by_checkpoint_and_recovery() {
     let paused = server
         .pause_task(tonic::Request::new(PauseTaskRequest { task_id: id.into() }))
         .await
-        .unwrap()
-        .into_inner();
-    assert!(paused.success, "{paused:?}");
-    server
+        .unwrap_err();
+    assert_eq!(paused.code(), tonic::Code::Unavailable);
+    let cancelled = server
         .cancel_task(tonic::Request::new(CancelTaskRequest {
             task_id: id.into(),
             ..Default::default()
         }))
         .await
-        .unwrap();
+        .unwrap_err();
+    assert_eq!(cancelled.code(), tonic::Code::Unavailable);
     let checkpoint = server
         .create_checkpoint(tonic::Request::new(CreateCheckpointRequest {
             task_id: id.into(),

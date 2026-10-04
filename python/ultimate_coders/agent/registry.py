@@ -133,9 +133,7 @@ class AgentAdapterRegistry:
         """Like :meth:`get_spec` but raises for unknown names."""
         spec = self.get_spec(name)
         if spec is None:
-            raise ValueError(
-                f"Unknown agent: {name}. Available: {self.available()}"
-            )
+            raise ValueError(f"Unknown agent: {name}. Available: {self.available()}")
         return spec
 
     def create(self, name: str):
@@ -212,59 +210,73 @@ def ensure_builtin_plugins() -> None:
             OpenCodeAdapter,
         )
 
-        registry.register(AgentPluginSpec(
-            name="grok-build",
-            aliases=GROK_AGENT_ALIASES,
-            factory=GrokBuildAdapter,
-            api_key_env="XAI_API_KEY",
-            cli_probe="grok",
-            description="xAI Grok Build terminal coding agent",
-        ))
-        registry.register(AgentPluginSpec(
-            name="claude-code",
-            factory=ClaudeCodeAdapter,
-            api_key_env="ANTHROPIC_API_KEY",
-            cli_probe="claude",
-            description="Anthropic Claude Code CLI",
-        ))
-        registry.register(AgentPluginSpec(
-            name="claude-code-decompose",
-            factory=DecomposeAdapter,
-            api_key_env="ANTHROPIC_API_KEY",
-            cli_probe="claude",
-            description="Claude Code single-turn decomposition helper",
-            discoverable=False,
-        ))
-        registry.register(AgentPluginSpec(
-            name="codex",
-            factory=CodexAdapter,
-            api_key_env="OPENAI_API_KEY",
-            cli_probe="codex",
-            description="OpenAI Codex CLI",
-        ))
-        registry.register(AgentPluginSpec(
-            name="opencode",
-            factory=OpenCodeAdapter,
-            api_key_env="MIMO_API_KEY",
-            cli_probe="opencode",
-            description="OpenCode V2 CLI with MiMo V2.6 Flash",
-        ))
-        registry.register(AgentPluginSpec(
-            name="oh-my-pi",
-            aliases=("omp",),
-            factory=OhMyPiAdapter,
-            api_key_env="XIAOMI_API_KEY",
-            cli_probe="omp",
-            description="oh-my-pi CLI with MiMo and DeepSeek Flash fallback",
-        ))
-        registry.register(AgentPluginSpec(
-            name="mimo-code",
-            aliases=("mimo",),
-            factory=MiMoCodeAdapter,
-            api_key_env="MIMO_API_KEY",
-            cli_probe="mimo",
-            description="Xiaomi MiMo Code CLI with MiMo V2.6 Flash",
-        ))
+        registry.register(
+            AgentPluginSpec(
+                name="grok-build",
+                aliases=GROK_AGENT_ALIASES,
+                factory=GrokBuildAdapter,
+                api_key_env="XAI_API_KEY",
+                cli_probe="grok",
+                description="xAI Grok Build terminal coding agent",
+            )
+        )
+        registry.register(
+            AgentPluginSpec(
+                name="claude-code",
+                factory=ClaudeCodeAdapter,
+                api_key_env="ANTHROPIC_API_KEY",
+                cli_probe="claude",
+                description="Anthropic Claude Code CLI",
+            )
+        )
+        registry.register(
+            AgentPluginSpec(
+                name="claude-code-decompose",
+                factory=DecomposeAdapter,
+                api_key_env="ANTHROPIC_API_KEY",
+                cli_probe="claude",
+                description="Claude Code single-turn decomposition helper",
+                discoverable=False,
+            )
+        )
+        registry.register(
+            AgentPluginSpec(
+                name="codex",
+                factory=CodexAdapter,
+                api_key_env="OPENAI_API_KEY",
+                cli_probe="codex",
+                description="OpenAI Codex CLI",
+            )
+        )
+        registry.register(
+            AgentPluginSpec(
+                name="opencode",
+                factory=OpenCodeAdapter,
+                api_key_env="MIMO_API_KEY",
+                cli_probe="opencode",
+                description="OpenCode V2 CLI with MiMo V2.6 Flash",
+            )
+        )
+        registry.register(
+            AgentPluginSpec(
+                name="oh-my-pi",
+                aliases=("omp",),
+                factory=OhMyPiAdapter,
+                api_key_env="XIAOMI_API_KEY",
+                cli_probe="omp",
+                description="oh-my-pi CLI with MiMo and DeepSeek Flash fallback",
+            )
+        )
+        registry.register(
+            AgentPluginSpec(
+                name="mimo-code",
+                aliases=("mimo",),
+                factory=MiMoCodeAdapter,
+                api_key_env="MIMO_API_KEY",
+                cli_probe="mimo",
+                description="Xiaomi MiMo Code CLI with MiMo V2.6 Flash",
+            )
+        )
         harness_deepseek.register(registry)
         harness_local_loop.register(registry)
         harness_metainfer.register(registry)
@@ -379,6 +391,7 @@ def _import_package_dir(path: Path) -> str:
 
 
 # ── Convenience module-level API (what core code uses) ──────────────
+
 
 def register_agent(spec: AgentPluginSpec, *, replace: bool = False) -> None:
     """Register a plugin into the default registry."""

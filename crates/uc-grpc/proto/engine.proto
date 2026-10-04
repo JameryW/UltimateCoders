@@ -30,6 +30,8 @@ service TaskService {
     rpc ResumeTask(ResumeTaskRequest) returns (ResumeTaskResponse);
     rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
     rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
+    // Authoritative retry; generic projection updates cannot reopen nodes.
+    rpc RetrySubtask(RetrySubtaskRequest) returns (RetrySubtaskResponse);
     // Create a checkpoint (snapshot) of a task's current state by replaying
     // its event stream. Returns the snapshot id.
     rpc CreateCheckpoint(CreateCheckpointRequest) returns (CreateCheckpointResponse);
@@ -356,6 +358,18 @@ message UpdateTaskResponse {
     string task_id = 2;
     string status = 3;
     optional string error = 4;
+}
+
+message RetrySubtaskRequest {
+    string task_id = 1;
+    string subtask_id = 2;
+    uint32 expected_attempt = 3;
+}
+
+message RetrySubtaskResponse {
+    bool success = 1;
+    optional TaskProto task = 2;
+    optional string error = 3;
 }
 
 // ── Checkpoint / Recovery ───────────────────────────────

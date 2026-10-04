@@ -52,20 +52,16 @@ def _git_init(root: pathlib.Path) -> None:
         ["config", "user.name", "t"],
         ["config", "core.autocrlf", "false"],
     ):
-        subprocess.run(["git"] + argv, cwd=str(root), env=env, check=True,
-                       capture_output=True)
+        subprocess.run(["git"] + argv, cwd=str(root), env=env, check=True, capture_output=True)
     (root / ".gitignore").write_bytes(b"")
     (root / "tracked.txt").write_bytes(b"tracked\n")
-    subprocess.run(["git", "add", "-A"], cwd=str(root), env=env, check=True,
-                   capture_output=True)
+    subprocess.run(["git", "add", "-A"], cwd=str(root), env=env, check=True, capture_output=True)
 
 
 def _jsonl(root: pathlib.Path, rel: str, entries: list[object]) -> pathlib.Path:
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = "".join(
-        (e if isinstance(e, str) else json.dumps(e)) + "\n" for e in entries
-    )
+    body = "".join((e if isinstance(e, str) else json.dumps(e)) + "\n" for e in entries)
     path.write_bytes(body.encode("utf-8"))
     return path
 
@@ -93,10 +89,10 @@ def _commit(root: pathlib.Path, msg: str = "c") -> None:
             "GIT_COMMITTER_EMAIL": "t@example.com",
         }
     )
-    subprocess.run(["git", "add", "-A"], cwd=str(root), env=env, check=True,
-                   capture_output=True)
-    subprocess.run(["git", "commit", "-q", "-m", msg], cwd=str(root), env=env,
-                   check=True, capture_output=True)
+    subprocess.run(["git", "add", "-A"], cwd=str(root), env=env, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", msg], cwd=str(root), env=env, check=True, capture_output=True
+    )
 
 
 def _load_guard():
@@ -140,11 +136,15 @@ def test_non_trellis_and_missing_file_key_are_not_counted(tmp_path):
     _git_init(tmp_path)
     task = tmp_path / ".trellis" / "tasks" / TASK
     task.mkdir(parents=True)
-    _jsonl(tmp_path, f".trellis/tasks/{TASK}/implement.jsonl", [
-        {"file": "tracked.txt", "reason": "bare name"},
-        {"path": ".trellis/nope.md", "reason": "wrong key -- not this guard's"},
-        {"step": "recon", "detail": "prose mentioning .trellis/tasks/"},
-    ])
+    _jsonl(
+        tmp_path,
+        f".trellis/tasks/{TASK}/implement.jsonl",
+        [
+            {"file": "tracked.txt", "reason": "bare name"},
+            {"path": ".trellis/nope.md", "reason": "wrong key -- not this guard's"},
+            {"step": "recon", "detail": "prose mentioning .trellis/tasks/"},
+        ],
+    )
     _commit(tmp_path)
 
     result = _run(tmp_path)
@@ -161,9 +161,13 @@ def test_dangling_citation_fails_and_is_listed(tmp_path):
     _git_init(tmp_path)
     task = tmp_path / ".trellis" / "tasks" / TASK
     task.mkdir(parents=True)
-    _jsonl(tmp_path, f".trellis/tasks/{TASK}/implement.jsonl", [
-        {"file": f".trellis/tasks/{TASK}/gone.md", "reason": "deleted target"},
-    ])
+    _jsonl(
+        tmp_path,
+        f".trellis/tasks/{TASK}/implement.jsonl",
+        [
+            {"file": f".trellis/tasks/{TASK}/gone.md", "reason": "deleted target"},
+        ],
+    )
     _commit(tmp_path)
 
     result = _run(tmp_path, "--audit")
@@ -181,9 +185,13 @@ def test_archive_move_makes_a_citation_dangle(tmp_path):
     task = tmp_path / ".trellis" / "tasks" / TASK
     task.mkdir(parents=True)
     (task / "prd.md").write_bytes(b"# t\n")
-    _jsonl(tmp_path, f".trellis/tasks/{TASK}/implement.jsonl", [
-        {"file": f".trellis/tasks/{TASK}/prd.md", "reason": "own"},
-    ])
+    _jsonl(
+        tmp_path,
+        f".trellis/tasks/{TASK}/implement.jsonl",
+        [
+            {"file": f".trellis/tasks/{TASK}/prd.md", "reason": "own"},
+        ],
+    )
     _commit(tmp_path)
     assert _run(tmp_path).returncode == 0
 
@@ -207,9 +215,13 @@ def test_basename_under_the_wrong_directory_is_dangling(tmp_path):
     (tmp_path / ".trellis" / "spec" / "frontend" / "type-safety.md").write_bytes(b"x\n")
     task = tmp_path / ".trellis" / "tasks" / TASK
     task.mkdir(parents=True)
-    _jsonl(tmp_path, f".trellis/tasks/{TASK}/implement.jsonl", [
-        {"file": ".trellis/spec/backend/type-safety.md", "reason": "wrong dir"},
-    ])
+    _jsonl(
+        tmp_path,
+        f".trellis/tasks/{TASK}/implement.jsonl",
+        [
+            {"file": ".trellis/spec/backend/type-safety.md", "reason": "wrong dir"},
+        ],
+    )
     _commit(tmp_path)
 
     assert _run(tmp_path).returncode != 0
@@ -228,9 +240,13 @@ def test_untracked_target_does_not_resolve(tmp_path):
     _git_init(tmp_path)
     task = tmp_path / ".trellis" / "tasks" / TASK
     task.mkdir(parents=True)
-    _jsonl(tmp_path, f".trellis/tasks/{TASK}/implement.jsonl", [
-        {"file": f".trellis/tasks/{TASK}/ghost.md", "reason": "not committed"},
-    ])
+    _jsonl(
+        tmp_path,
+        f".trellis/tasks/{TASK}/implement.jsonl",
+        [
+            {"file": f".trellis/tasks/{TASK}/ghost.md", "reason": "not committed"},
+        ],
+    )
     _commit(tmp_path, "citation only")
     # `ghost.md` is now created on disk, and deliberately never committed
     (task / "ghost.md").write_bytes(b"on disk only\n")
@@ -249,10 +265,14 @@ def test_malformed_line_fails_and_is_reported(tmp_path):
     _git_init(tmp_path)
     task = tmp_path / ".trellis" / "tasks" / TASK
     task.mkdir(parents=True)
-    _jsonl(tmp_path, f".trellis/tasks/{TASK}/implement.jsonl", [
-        {"file": ".trellis/tasks/01-01-demo/prd.md"},
-        "{not json",
-    ])
+    _jsonl(
+        tmp_path,
+        f".trellis/tasks/{TASK}/implement.jsonl",
+        [
+            {"file": ".trellis/tasks/01-01-demo/prd.md"},
+            "{not json",
+        ],
+    )
     (task / "prd.md").write_bytes(b"# t\n")
     _commit(tmp_path)
 
@@ -272,10 +292,10 @@ def test_json_array_inside_a_jsonl_file_is_malformed(tmp_path):
     task = tmp_path / ".trellis" / "tasks" / TASK
     task.mkdir(parents=True)
     (task / "check.jsonl").write_bytes(
-        b'[\n'
+        b"[\n"
         b'  {"file": ".trellis/tasks/01-01-demo/prd.md", "reason": "a"},\n'
         b'  {"file": ".trellis/tasks/01-01-demo/prd.md", "reason": "b"},\n'
-        b']\n'
+        b"]\n"
     )
     _commit(tmp_path)
 
@@ -307,9 +327,13 @@ def test_json_mode_is_machine_readable_and_carries_the_same_verdict(tmp_path):
     _git_init(tmp_path)
     task = tmp_path / ".trellis" / "tasks" / TASK
     task.mkdir(parents=True)
-    _jsonl(tmp_path, f".trellis/tasks/{TASK}/implement.jsonl", [
-        {"file": f".trellis/tasks/{TASK}/gone.md"},
-    ])
+    _jsonl(
+        tmp_path,
+        f".trellis/tasks/{TASK}/implement.jsonl",
+        [
+            {"file": f".trellis/tasks/{TASK}/gone.md"},
+        ],
+    )
     _commit(tmp_path)
 
     result = _run(tmp_path, "--json")
@@ -327,11 +351,15 @@ def test_summary_line_accounts_for_every_reference(tmp_path):
     task = tmp_path / ".trellis" / "tasks" / TASK
     task.mkdir(parents=True)
     (task / "prd.md").write_bytes(b"# t\n")
-    _jsonl(tmp_path, f".trellis/tasks/{TASK}/implement.jsonl", [
-        {"file": f".trellis/tasks/{TASK}/prd.md"},
-        {"file": f".trellis/tasks/{TASK}/gone.md"},
-        {"file": f".trellis/tasks/{TASK}/gone2.md"},
-    ])
+    _jsonl(
+        tmp_path,
+        f".trellis/tasks/{TASK}/implement.jsonl",
+        [
+            {"file": f".trellis/tasks/{TASK}/prd.md"},
+            {"file": f".trellis/tasks/{TASK}/gone.md"},
+            {"file": f".trellis/tasks/{TASK}/gone2.md"},
+        ],
+    )
     _commit(tmp_path)
 
     out = _run(tmp_path).stdout.decode()
@@ -358,8 +386,9 @@ def test_exclude_set_is_applied_on_top_of_git(tmp_path):
     (tmp_path / ".scratch").mkdir()
     (tmp_path / ".scratch" / "note.md").write_bytes(b"scratch\n")
     # force-track it, as the history did
-    subprocess.run(["git", "add", "-f", ".scratch/note.md"], cwd=str(tmp_path),
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "add", "-f", ".scratch/note.md"], cwd=str(tmp_path), check=True, capture_output=True
+    )
     _commit(tmp_path)
 
     guard = _load_guard()
@@ -371,8 +400,9 @@ def test_exclude_set_is_applied_on_top_of_git(tmp_path):
     finally:
         guard.ROOT = saved
 
-    tracked = subprocess.run(["git", "ls-files"], cwd=str(tmp_path),
-                             check=True, capture_output=True).stdout.decode()
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=str(tmp_path), check=True, capture_output=True
+    ).stdout.decode()
     assert ".scratch/note.md" in tracked, "precondition: the file is tracked"
     assert ".scratch/note.md" not in index, "the exclude set is not being applied"
     assert "tracked.txt" in index, "the exclude set removed too much"
@@ -543,9 +573,13 @@ def test_untracked_carrier_is_not_audited(tmp_path):
     task = tmp_path / ".trellis" / "tasks" / TASK
     task.mkdir(parents=True)
     # a draft carrier that is never committed, citing a path that does not exist
-    _jsonl(tmp_path, f".trellis/tasks/{TASK}/implement.jsonl", [
-        {"file": ".trellis/tasks/nowhere.md", "reason": "draft"},
-    ])
+    _jsonl(
+        tmp_path,
+        f".trellis/tasks/{TASK}/implement.jsonl",
+        [
+            {"file": ".trellis/tasks/nowhere.md", "reason": "draft"},
+        ],
+    )
 
     result = _run(tmp_path)
     assert result.returncode == 0, (

@@ -27,8 +27,10 @@ logger = logging.getLogger(__name__)
 
 # ── File Change Events ────────────────────────────────────────────
 
+
 class FileChangeEventType(Enum):
     """Type of file change event."""
+
     CREATED = "created"
     MODIFIED = "modified"
     DELETED = "deleted"
@@ -99,6 +101,7 @@ class FileChangeEvent:
 
 
 # ── Context Injection ─────────────────────────────────────────────
+
 
 @dataclass
 class SubtaskContext:
@@ -220,8 +223,10 @@ class ContextInjector:
 
 # ── Workspace State Machine ───────────────────────────────────────
 
+
 class WorkspaceState(Enum):
     """States in the workspace lifecycle."""
+
     CREATED = "created"
     BRANCHED = "branched"
     COMMITTED = "committed"
@@ -234,6 +239,7 @@ class WorkspaceState(Enum):
 @dataclass
 class WorkspaceStateEntry:
     """Track the state of a workspace through its lifecycle."""
+
     workspace_id: str = ""
     subtask_id: str = ""
     branch_name: str = ""
@@ -305,7 +311,9 @@ class WorkspaceStateMachine:
         if new_state not in allowed:
             logger.warning(
                 "Invalid workspace state transition: %s → %s for %s",
-                entry.state.value, new_state.value, workspace_id,
+                entry.state.value,
+                new_state.value,
+                workspace_id,
             )
             return entry
 

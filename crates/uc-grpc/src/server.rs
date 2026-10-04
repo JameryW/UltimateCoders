@@ -656,6 +656,34 @@ async fn flush_task_events(store: &Arc<Mutex<TaskStore>>) -> Result<(), uc_types
     Ok(())
 }
 
+/// Persist the parent task and its events before a dispatch entry is closed.
+///
+/// Returns `Status` by value because every caller is an RPC handler whose
+/// signature is `Result<_, Status>`; the type is the gRPC error contract and is
+/// shared with the generated service traits, so boxing it here would diverge
+/// from the whole surface for no gain. Same reason, same lint, as the
+/// `#[allow]` on `ultimate_coders` in `lib.rs` and on `batch_write_memory`
+/// below. Clippy 1.99 raised `result_large_err`'s visibility enough to reach
+/// this free function; the trait impls are skipped by the lint.
+#[allow(clippy::result_large_err)]
+async fn flush_task_state(store: &mut TaskStore, task_id: &str) -> Result<(), Status> {
+    // Keep every dispatch entry closed until both durable writes are confirmed.
+    store.durability_faults.insert(task_id.to_string());
+    let barrier = store
+        .task_write_barrier
+        .lock()
+        .map_err(|_| Status::internal("Task persistence barrier poisoned"))?
+        .clone();
+    if let Some(barrier) = barrier {
+        barrier.await.map_err(Status::unavailable)?;
+    }
+    if let Some(barrier) = store.event_write_barrier.clone() {
+        barrier.await.map_err(Status::unavailable)?;
+    }
+    store.durability_faults.remove(task_id);
+    Ok(())
+}
+
 type EventWriteBarrier =
     futures::future::Shared<futures::future::BoxFuture<'static, Result<(), String>>>;
 
@@ -674,6 +702,7 @@ type EventWriteBarrier =
 /// to the broadcast channel for real-time delivery.
 pub struct TaskStore {
     tasks: HashMap<String, uc_types::Task>,
+    durability_faults: std::collections::HashSet<String>,
     /// Inline event log — kept for backward compatibility with existing callers.
     /// New code should use `event_store` for reads.
     events: Vec<uc_engine::AgentEventType>,
@@ -728,6 +757,7 @@ impl TaskStore {
     pub fn new() -> Self {
         Self {
             tasks: HashMap::new(),
+            durability_faults: Default::default(),
             events: Vec::new(),
             event_store: Arc::new(uc_engine::InMemoryEventStore::new()),
             event_write_barrier: None,
@@ -747,6 +777,7 @@ impl TaskStore {
     pub fn with_event_store(event_store: Arc<dyn uc_engine::EventStore>) -> Self {
         Self {
             tasks: HashMap::new(),
+            durability_faults: Default::default(),
             events: Vec::new(),
             event_store,
             event_write_barrier: None,
@@ -769,6 +800,7 @@ impl TaskStore {
     ) -> Self {
         Self {
             tasks: HashMap::new(),
+            durability_faults: Default::default(),
             events: Vec::new(),
             event_store,
             event_write_barrier: None,
@@ -845,11 +877,14 @@ impl TaskStore {
         to_evict
     }
 
-    /// Check if a message_id has already been processed.
-    /// Returns `true` if the message is a duplicate (already seen).
-    /// If not a duplicate, records the message_id and returns `false`.
-    #[cfg(feature = "messaging")]
-    fn full_snapshot_is_stale(&self, update: &NatsTaskUpdate, confirmed: bool) -> bool {
+    /// Is a NATS full snapshot older than the control state we already hold?
+    ///
+    /// A full snapshot is a whole-graph echo read out of the worker's own view,
+    /// so it can arrive after a Gateway-side Pause/Cancel/Retry has already
+    /// moved on. Such a snapshot must not be applied: it would reopen a task the
+    /// operator closed and, worse, replay a superseded attempt's partial result.
+    /// Partial updates are not judged here -- they carry their own node fence.
+    fn full_snapshot_is_stale(&self, update: &NatsTaskUpdate) -> bool {
         !update.partial
             && self
                 .tasks
@@ -883,10 +918,9 @@ impl TaskStore {
                                             .attempt_id
                                             .map(|attempt| {
                                                 let current = node.dispatch_retry_count as u64;
-                                                attempt < current
-                                                    || (confirmed && attempt > current)
+                                                attempt != current
                                             })
-                                            .unwrap_or(false)
+                                            .unwrap_or(node.dispatch_retry_count > 0)
                                 })
                                 .unwrap_or(false)
                         })
@@ -1390,6 +1424,44 @@ impl TaskStore {
         description: &str,
         project_id: &str,
     ) -> Result<(uc_types::Task, Vec<uc_engine::AgentEventType>), String> {
+        // Validate the entire projection before mutation (including creation).
+        let parsed = proto_status_to_task_status(status)?;
+        if let Some(current) = self.tasks.get(task_id) {
+            if matches!(
+                current.status,
+                uc_types::TaskStatus::Paused
+                    | uc_types::TaskStatus::Failed
+                    | uc_types::TaskStatus::Completed
+            ) && current.status != parsed
+            {
+                return Err(
+                    "Projection cannot reverse task control state; use a control command".into(),
+                );
+            }
+            for incoming in &subtasks {
+                if let Some(node) = current.subtasks.iter().find(|node| node.id == incoming.id) {
+                    if node.dispatch_retry_count != incoming.dispatch_retry_count {
+                        return Err("Projection attempt differs from Gateway attempt".into());
+                    }
+                    if matches!(
+                        node.status,
+                        uc_types::SubtaskStatus::Failed | uc_types::SubtaskStatus::Completed
+                    ) && node.status != incoming.status
+                    {
+                        return Err(
+                            "Projection cannot reopen terminal node; use RetrySubtask".into()
+                        );
+                    }
+                } else if matches!(
+                    current.status,
+                    uc_types::TaskStatus::Paused
+                        | uc_types::TaskStatus::Failed
+                        | uc_types::TaskStatus::Completed
+                ) {
+                    return Err("Projection cannot extend a controlled or terminal task".into());
+                }
+            }
+        }
         // Create-if-not-exists: when description is non-empty and task not found,
         // insert a new task with the client-provided task_id (preserving the
         // orchestrator's original ID — no new ID generation).
@@ -1427,7 +1499,6 @@ impl TaskStore {
         // of silently keeping the old status while refreshing updated_at
         // (which masked the rejected update as a successful no-op timestamp
         // bump). proto_status_to_task_status returns a clear Err message.
-        let parsed = proto_status_to_task_status(status)?;
         task.status = parsed;
         task.updated_at = chrono::Utc::now();
 
@@ -1540,6 +1611,66 @@ impl TaskStore {
         Ok((updated, events))
     }
 
+    /// Compare-and-set a failed node to a fresh execution identity.
+    pub fn retry_subtask(
+        &mut self,
+        task_id: &str,
+        node_id: &str,
+        expected_attempt: u32,
+    ) -> Result<uc_types::Task, String> {
+        let task = self
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| "Task not found".to_string())?;
+        if matches!(
+            task.status,
+            uc_types::TaskStatus::Paused | uc_types::TaskStatus::Completed
+        ) {
+            return Err("Cannot retry a paused or completed task".into());
+        }
+        let index = task
+            .subtasks
+            .iter()
+            .position(|node| node.id.0 == node_id)
+            .ok_or_else(|| "Subtask not found".to_string())?;
+        let node = &task.subtasks[index];
+        if node.dispatch_retry_count != expected_attempt
+            || node.status != uc_types::SubtaskStatus::Failed
+        {
+            return Err("Retry requires the current failed attempt".into());
+        }
+        if !node.depends_on.iter().all(|dep| {
+            task.subtasks
+                .iter()
+                .any(|node| &node.id == dep && node.status == uc_types::SubtaskStatus::Completed)
+        }) {
+            return Err("Retry dependencies are not completed".into());
+        }
+        let next = expected_attempt
+            .checked_add(1)
+            .ok_or_else(|| "Attempt overflow".to_string())?;
+        let node = &mut task.subtasks[index];
+        node.dispatch_retry_count = next;
+        node.status = uc_types::SubtaskStatus::Pending;
+        node.result = None;
+        node.assigned_worker = None;
+        self.assigned_subtask_times.remove(node_id);
+        task.status = uc_types::TaskStatus::InProgress;
+        task.updated_at = chrono::Utc::now();
+        let updated = task.clone();
+        self.record_event(uc_engine::AgentEventType::TaskUpdated {
+            task_id: updated.id.clone(),
+            status: "InProgress".into(),
+        });
+        self.record_event(uc_engine::AgentEventType::SubtaskRetried {
+            task_id: updated.id.clone(),
+            subtask_id: uc_types::TaskId(node_id.into()),
+            attempt_id: next,
+        });
+        self.persist_task(&updated);
+        Ok(updated)
+    }
+
     /// Read events from the given offset (from inline log).
     /// For persistent reads, use `event_store().read_from()` instead.
     pub fn read_events_from(&self, offset: usize) -> Vec<uc_engine::AgentEventType> {
@@ -1586,6 +1717,10 @@ impl TaskStore {
         description: Option<&str>,
         project_id: Option<&str>,
     ) {
+        if self.full_snapshot_is_stale(update) {
+            tracing::warn!(task_id = %update.task_id, "Rejected stale task projection");
+            return;
+        }
         if !self.tasks.contains_key(&update.task_id) {
             if update.partial {
                 tracing::warn!(
@@ -1764,9 +1899,12 @@ impl TaskStore {
                     {
                         continue;
                     }
+                    if subtask_update.attempt_id.is_none() && subtask.dispatch_retry_count > 0 {
+                        continue;
+                    }
                     if let Some(received) = subtask_update.attempt_id {
                         let current = subtask.dispatch_retry_count as u64;
-                        if received < current {
+                        if received != current {
                             stale_rejects.push((subtask.id.0.clone(), received, current));
                             continue;
                         }
@@ -2193,7 +2331,9 @@ impl TaskStore {
         };
 
         // Only dispatch if task is actively running
-        if task.status != uc_types::TaskStatus::InProgress {
+        if task.status != uc_types::TaskStatus::InProgress
+            || self.durability_faults.contains(task_id)
+        {
             return Vec::new();
         }
 
@@ -3509,9 +3649,7 @@ fn spawn_nats_subscriber(
                                     }
                                     // A read -> confirm race with Gateway retry must not
                                     // revive stale attempts through a full snapshot.
-                                    if store
-                                        .full_snapshot_is_stale(&update, message.reply.is_some())
-                                    {
+                                    if store.full_snapshot_is_stale(&update) {
                                         continue;
                                     }
                                     if store.check_and_record_message_id(&update.message_id) {
@@ -3533,9 +3671,7 @@ fn spawn_nats_subscriber(
                                 // borrow conflicts between immutable read and mutable write.
                                 let events_to_record: Vec<uc_engine::AgentEventType> = {
                                     let mut store = task_store.lock().await;
-                                    if store
-                                        .full_snapshot_is_stale(&update, message.reply.is_some())
-                                    {
+                                    if store.full_snapshot_is_stale(&update) {
                                         if let Some(id) = &update.message_id {
                                             store.seen_messages.remove(id);
                                         }
@@ -5360,6 +5496,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         task_id: task.id.clone(),
                     };
                     store.record_event(event.clone());
+                    flush_task_state(&mut store, &task_id).await?;
                     let proto_event: TaskEvent = event.into();
                     drop(store);
                     let _ = self.inner.event_tx.send(proto_event);
@@ -5420,6 +5557,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         task_id: task.id.clone(),
                     };
                     store.record_event(event.clone());
+                    flush_task_state(&mut store, &task_id).await?;
                     let proto_event: TaskEvent = event.into();
                     drop(store);
                     let _ = self.inner.event_tx.send(proto_event);
@@ -5580,6 +5718,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         task_id: task.id.clone(),
                     };
                     store.record_event(event.clone());
+                    flush_task_state(&mut store, &task_id).await?;
                     let proto_event: TaskEvent = event.into();
                     drop(store);
                     let _ = self.inner.event_tx.send(proto_event);
@@ -5738,6 +5877,55 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         }
     }
 
+    async fn retry_subtask(
+        &self,
+        request: Request<RetrySubtaskRequest>,
+    ) -> Result<Response<RetrySubtaskResponse>, Status> {
+        let req = request.into_inner();
+        let result = {
+            let mut store = self.inner.task_store.lock().await;
+            let result = store.retry_subtask(&req.task_id, &req.subtask_id, req.expected_attempt);
+            if result.is_ok() {
+                flush_task_state(&mut store, &req.task_id).await?;
+            }
+            result
+        };
+        match result {
+            Ok(task) => {
+                if let Some(sink) = {
+                    let store = self.inner.task_store.lock().await;
+                    store.graph_shadow()
+                } {
+                    let attempt = task
+                        .subtasks
+                        .iter()
+                        .find(|node| node.id.0 == req.subtask_id)
+                        .map(|node| node.dispatch_retry_count)
+                        .unwrap_or(req.expected_attempt + 1);
+                    let envelope = uc_types::ExecutionEnvelope::new(
+                        &req.task_id,
+                        &req.subtask_id,
+                        &attempt.to_string(),
+                    );
+                    sink.on_retry(&envelope).await;
+                }
+                self.publish_task_status_event(&req.task_id, "task_resumed")
+                    .await;
+                self.publish_ready_subtasks(&req.task_id).await;
+                Ok(Response::new(RetrySubtaskResponse {
+                    success: true,
+                    task: Some(task.into()),
+                    error: None,
+                }))
+            }
+            Err(error) => Ok(Response::new(RetrySubtaskResponse {
+                success: false,
+                task: None,
+                error: Some(error),
+            })),
+        }
+    }
+
     /// T9 #651 / D9 #646 — merge-barrier grant issuance. The gateway is the
     /// single writer: the arbiter must hold a grant BEFORE merging. The grant
     /// is gated on graph quiescence and carries a deterministic
@@ -5838,7 +6026,7 @@ mod tests {
                 "subtasks": [{"subtask_id": node_id, "status": "Completed", "attempt_id": 0}]
             }))
             .unwrap();
-            assert!(!store.full_snapshot_is_stale(&update, true));
+            assert!(!store.full_snapshot_is_stale(&update));
             match action {
                 "cancel" => {
                     store.cancel_task(&id).unwrap();
@@ -5850,8 +6038,7 @@ mod tests {
                     store.fail_subtasks(&id, &[node_id]);
                 }
             }
-            assert!(store.full_snapshot_is_stale(&update, true), "{action}");
-            assert!(store.full_snapshot_is_stale(&update, false), "{action}");
+            assert!(store.full_snapshot_is_stale(&update), "{action}");
             if action != "pause" {
                 update.partial = true;
                 store.apply_update(&update);
@@ -5865,14 +6052,14 @@ mod tests {
             // A paused parent may accept an in-flight outcome while remaining paused.
             if action == "pause" {
                 update.status = "Paused".into();
-                assert!(!store.full_snapshot_is_stale(&update, true));
+                assert!(!store.full_snapshot_is_stale(&update));
             }
         }
     }
 
     #[cfg(feature = "messaging")]
     #[test]
-    fn full_snapshot_fences_obsolete_and_future_confirmed_attempts() {
+    fn full_snapshot_fences_obsolete_and_future_attempts() {
         let mut store = super::TaskStore::new();
         let task = store.submit_task("fixture".into(), "fixture".into());
         store.tasks.get_mut(&task.id.0).unwrap().subtasks[0].dispatch_retry_count = 1;
@@ -5882,15 +6069,14 @@ mod tests {
                           "status": "Completed", "attempt_id": 0}]
         }))
         .unwrap();
-        assert!(store.full_snapshot_is_stale(&update, true));
-        assert!(store.full_snapshot_is_stale(&update, false));
+        assert!(store.full_snapshot_is_stale(&update));
         update.subtasks[0].attempt_id = Some(2);
-        assert!(store.full_snapshot_is_stale(&update, true));
+        assert!(store.full_snapshot_is_stale(&update));
         update.subtasks[0].attempt_id = Some(1);
-        assert!(!store.full_snapshot_is_stale(&update, true));
+        assert!(!store.full_snapshot_is_stale(&update));
         update.partial = true;
         update.subtasks[0].attempt_id = Some(0);
-        assert!(!store.full_snapshot_is_stale(&update, true)); // partial has its node fence
+        assert!(!store.full_snapshot_is_stale(&update)); // partial has its node fence
     }
 
     use super::*;
@@ -6899,7 +7085,7 @@ mod tests {
     /// snapshots (partial=false) bypass the fence entirely — the orchestrator
     /// does not track the gateway's attempt counter.
     #[test]
-    fn task_store_unstamped_and_full_updates_pass_the_fence() {
+    fn task_store_unstamped_and_old_full_updates_are_fenced_after_retry() {
         let mut store = TaskStore::new();
         let (task, _) = store.submit_task_pending("Test task".to_string(), "p1".to_string());
         let task_id = task.id.0.clone();
@@ -6927,7 +7113,7 @@ mod tests {
         });
         store.increment_dispatch_retry(&task_id, "st-legacy");
 
-        // Partial but UNSTAMPED (legacy worker): passes.
+        // Unstamped legacy reports cannot certify a replacement attempt.
         store.apply_update(&NatsTaskUpdate {
             message_id: None,
             task_id: task_id.clone(),
@@ -6956,10 +7142,10 @@ mod tests {
             .iter()
             .find(|st| st.id.0 == "st-legacy")
             .unwrap();
-        assert_eq!(st.status, uc_types::SubtaskStatus::Completed);
+        assert_eq!(st.status, uc_types::SubtaskStatus::Assigned);
         assert_eq!(store.stale_dispatch_dropped(), 0);
 
-        // Complete snapshot stamped with an old attempt: NOT fenced.
+        // A full snapshot also cannot certify an obsolete attempt.
         store.apply_update(&NatsTaskUpdate {
             message_id: None,
             task_id: task_id.clone(),
@@ -6988,7 +7174,7 @@ mod tests {
             .iter()
             .find(|st| st.id.0 == "st-legacy")
             .unwrap();
-        assert_eq!(st.status, uc_types::SubtaskStatus::Completed);
+        assert_eq!(st.status, uc_types::SubtaskStatus::Assigned);
         assert_eq!(store.stale_dispatch_dropped(), 0);
     }
 
@@ -8293,6 +8479,52 @@ mod tests {
     }
 
     #[test]
+    fn projection_cannot_reverse_cancel_or_pause() {
+        for cancel in [false, true] {
+            let mut store = TaskStore::new();
+            let original = store.submit_task("control fence".into(), "p".into());
+            if cancel {
+                store.cancel_task(&original.id.0).unwrap();
+            } else {
+                store.pause_task(&original.id.0).unwrap();
+            }
+            let before = store.get_task(&original.id.0).unwrap().clone();
+            assert!(store
+                .update_task(
+                    &original.id.0,
+                    "InProgress",
+                    original.subtasks.clone(),
+                    "",
+                    ""
+                )
+                .is_err());
+            let after = store.get_task(&original.id.0).unwrap();
+            assert_eq!(after.status, before.status);
+            assert_eq!(after.subtasks[0].status, before.subtasks[0].status);
+            assert_eq!(after.updated_at, before.updated_at);
+        }
+    }
+
+    #[test]
+    fn explicit_retry_fences_old_projection_and_repeated_command() {
+        let mut store = TaskStore::new();
+        let original = store.submit_task("retry fence".into(), "p".into());
+        let node_id = original.subtasks[0].id.0.clone();
+        store.cancel_task(&original.id.0).unwrap();
+        let retried = store.retry_subtask(&original.id.0, &node_id, 0).unwrap();
+        assert_eq!(retried.subtasks[0].dispatch_retry_count, 1);
+        assert_eq!(retried.subtasks[0].status, uc_types::SubtaskStatus::Pending);
+        assert!(store.retry_subtask(&original.id.0, &node_id, 0).is_err());
+        assert!(store
+            .update_task(&original.id.0, "InProgress", original.subtasks, "", "")
+            .is_err());
+        assert_eq!(
+            store.get_task(&original.id.0).unwrap().subtasks[0].dispatch_retry_count,
+            1
+        );
+    }
+
+    #[test]
     fn evict_completed_tasks_clears_assigned_subtask_tracking() {
         // Defensive: evict_completed_tasks clears residual assigned_subtask_times
         // entries for evicted tasks' subtasks, so a future path that removes a
@@ -9397,6 +9629,13 @@ mod tests {
         let (mut store, sink) = wired_store();
         let task = store.submit_task("Test".to_string(), "p1".to_string());
         let task_id = task.id.0.clone();
+        let mut keepalive = task.subtasks[0].clone();
+        keepalive.id = uc_types::TaskId("keepalive".into());
+        keepalive.status = uc_types::SubtaskStatus::Pending;
+        store
+            .update_task(&task_id, "InProgress", vec![keepalive], "", "")
+            .unwrap();
+
         let st_id = task.subtasks[0].id.0.clone();
         sink.take_verbs();
 
@@ -9667,6 +9906,13 @@ mod tests {
         let (mut store, sink) = wired_store();
         let task = store.submit_task("Test".to_string(), "p1".to_string());
         let task_id = task.id.0.clone();
+        let mut keepalive = task.subtasks[0].clone();
+        keepalive.id = uc_types::TaskId("keepalive".into());
+        keepalive.status = uc_types::SubtaskStatus::Pending;
+        store
+            .update_task(&task_id, "InProgress", vec![keepalive], "", "")
+            .unwrap();
+
         let st_id = task.subtasks[0].id.0.clone();
 
         store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
@@ -10072,7 +10318,13 @@ mod tests {
 
         // Terminal success, same sparse shape — still there, so the review node
         // that becomes READY on it has a known producer to exclude.
-        store.apply_update(&update("build", "Completed", None));
+        store.retry_subtask(&task_id, "build", 0).unwrap();
+        let mut started = update("build", "Assigned", Some("w-b"));
+        started.subtasks[0].attempt_id = Some(1);
+        store.apply_update(&started);
+        let mut success = update("build", "Completed", None);
+        success.subtasks[0].attempt_id = Some(1);
+        store.apply_update(&success);
         let completed = store.get_task(&task_id).unwrap();
         assert_eq!(
             completed.subtasks[1].status,
@@ -10080,14 +10332,14 @@ mod tests {
         );
         assert_eq!(
             completed.subtasks[1].assigned_worker,
-            Some(uc_types::WorkerId("w-a".to_string()))
+            Some(uc_types::WorkerId("w-b".to_string()))
         );
 
         let review = mk_review_of(&task_id, "build");
         let ind = crate::worker_service::review_independence(&review, Some(completed));
         assert_eq!(
             ind.excluded_producers,
-            std::collections::HashSet::from(["w-a".to_string()])
+            std::collections::HashSet::from(["w-b".to_string()])
         );
     }
 

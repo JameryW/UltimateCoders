@@ -1,0 +1,41 @@
+name: MetaInfer release gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      workspace:
+        description: Absolute path shared by UC and the pinned MetaInfer service
+        required: true
+        type: string
+      require_gpu:
+        description: Require service-owned GPU identity and runtime evidence
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  contract-and-gpu-gate:
+    # This is intentionally manual and self-hosted: GitHub-hosted runners do
+    # not provide the production MetaInfer service or a release GPU.
+    runs-on: [self-hosted, linux, gpu, metainfer]
+    environment: metainfer-gpu
+    env:
+      UC_METAINFER_URL: ${{ secrets.UC_METAINFER_URL }}
+      UC_METAINFER_REVISION: b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e .
+      - name: Verify pinned service contract and shared workspace
+        run: >-
+          python scripts/verify-metainfer-release.py
+          --workspace "${{ inputs.workspace }}"
+          --output .uc/metainfer-release-evidence.json
+          ${{ inputs.require_gpu && '--require-gpu' || '' }}
+      - name: Upload release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: metainfer-release-evidence
+          path: .uc/metainfer-release-evidence.json

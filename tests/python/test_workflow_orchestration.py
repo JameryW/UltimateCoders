@@ -118,7 +118,7 @@ def test_render_prev_outputs_json_step0_is_empty_object():
         context_block="",
         file_constraints_str="",
     )
-    assert rendered == 'prior={}'
+    assert rendered == "prior={}"
 
 
 def test_render_prev_outputs_json_contains_full_artifact():
@@ -156,7 +156,7 @@ def test_render_prev_outputs_json_contains_full_artifact():
     import json as _json
 
     # Extract the JSON blob from the rendered string.
-    blob = rendered[len("CR: "):]
+    blob = rendered[len("CR: ") :]
     data = _json.loads(blob)
 
     assert data["summary"] == "wrote main.rs"
@@ -200,7 +200,7 @@ def test_render_step_n_outputs_json_references_earlier_step():
     )
     import json as _json
 
-    blob = rendered[len("revise; step0_json="):]
+    blob = rendered[len("revise; step0_json=") :]
     data = _json.loads(blob)
     assert data["summary"] == "wrote main.rs"
     assert data["success"] is True
@@ -305,8 +305,13 @@ async def test_execute_steps_runs_chain_in_order_and_threads_output():
     calls: list[tuple[str, str]] = []  # (agent, prompt)
 
     async def fake_execute(
-        prompt, *, working_dir=None, on_stdout_line=None, subtask_config=None,
-        agent=None, cancel_key=None,
+        prompt,
+        *,
+        working_dir=None,
+        on_stdout_line=None,
+        subtask_config=None,
+        agent=None,
+        cancel_key=None,
     ):
         calls.append((agent, prompt))
         # Return distinct summaries so we can assert they were threaded.
@@ -706,24 +711,33 @@ def test_pending_task_count_counts_in_progress_not_created():
 
     # One IN_PROGRESS task → counted.
     t1 = Task(
-        id="t1", description="d", project_id="p",
-        status=TaskStatus.IN_PROGRESS, subtasks=[],
+        id="t1",
+        description="d",
+        project_id="p",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[],
     )
     orch.tasks[t1.id] = t1
     assert orch.pending_task_count == 1
 
     # A COMPLETED task is terminal → not pending.
     t2 = Task(
-        id="t2", description="d", project_id="p",
-        status=TaskStatus.COMPLETED, subtasks=[],
+        id="t2",
+        description="d",
+        project_id="p",
+        status=TaskStatus.COMPLETED,
+        subtasks=[],
     )
     orch.tasks[t2.id] = t2
     assert orch.pending_task_count == 1  # only t1
 
     # A PAUSED task is still active → pending.
     t3 = Task(
-        id="t3", description="d", project_id="p",
-        status=TaskStatus.PAUSED, subtasks=[],
+        id="t3",
+        description="d",
+        project_id="p",
+        status=TaskStatus.PAUSED,
+        subtasks=[],
     )
     orch.tasks[t3.id] = t3
     assert orch.pending_task_count == 2  # t1 + t3
@@ -784,9 +798,7 @@ async def test_execute_steps_retry_exhausted_all_attempts_fail():
     """retry_count=1 → 2 total attempts; both fail → step fails."""
     w = _make_worker()
     w._publish_event = AsyncMock()
-    w._sandbox_manager.execute = AsyncMock(
-        return_value=AgentOutput(summary="boom", success=False)
-    )
+    w._sandbox_manager.execute = AsyncMock(return_value=AgentOutput(summary="boom", success=False))
     subtask = Subtask(
         id="st-1",
         parent_id="t-1",
@@ -808,9 +820,7 @@ async def test_execute_steps_retry_count_zero_no_retry():
     """retry_count=0 → single attempt on failure (current behavior)."""
     w = _make_worker()
     w._publish_event = AsyncMock()
-    w._sandbox_manager.execute = AsyncMock(
-        return_value=AgentOutput(summary="fail", success=False)
-    )
+    w._sandbox_manager.execute = AsyncMock(return_value=AgentOutput(summary="fail", success=False))
     subtask = Subtask(
         id="st-1",
         parent_id="t-1",
@@ -869,7 +879,7 @@ def test_workflow_step_condition_roundtrip():
         condition='prev.success && prev.files.contains("src/")',
     )
     d = s.to_dict()
-    assert 'prev.success' in d["condition"]
+    assert "prev.success" in d["condition"]
     again = WorkflowStep.from_dict(d)
     assert again.condition == 'prev.success && prev.files.contains("src/")'
 
@@ -993,9 +1003,7 @@ async def test_execute_steps_condition_parse_error_fails_subtask():
     """A malformed condition → subtask fails with a clear error message."""
     w = _make_worker()
     w._publish_event = AsyncMock()
-    w._sandbox_manager.execute = AsyncMock(
-        return_value=AgentOutput(summary="s0", success=True)
-    )
+    w._sandbox_manager.execute = AsyncMock(return_value=AgentOutput(summary="s0", success=True))
     subtask = Subtask(
         id="st-1",
         parent_id="t-1",
@@ -1023,9 +1031,7 @@ async def test_execute_steps_condition_step0_prev_none():
     """Step 0 with prev.success condition → skipped (no predecessor)."""
     w = _make_worker()
     w._publish_event = AsyncMock()
-    w._sandbox_manager.execute = AsyncMock(
-        return_value=AgentOutput(summary="s1", success=True)
-    )
+    w._sandbox_manager.execute = AsyncMock(return_value=AgentOutput(summary="s1", success=True))
     subtask = Subtask(
         id="st-1",
         parent_id="t-1",
@@ -1245,9 +1251,7 @@ async def test_execute_steps_records_one_usage_record_per_step():
             AgentOutput(
                 summary="wrote",
                 success=True,
-                token_usage=TokenUsage(
-                    input_tokens=10, output_tokens=4, source="grok-build"
-                ),
+                token_usage=TokenUsage(input_tokens=10, output_tokens=4, source="grok-build"),
             ),
             AgentOutput(
                 summary="cr",
@@ -1262,9 +1266,7 @@ async def test_execute_steps_records_one_usage_record_per_step():
             AgentOutput(
                 summary="revised",
                 success=True,
-                token_usage=TokenUsage(
-                    input_tokens=30, output_tokens=6, source="claude-code"
-                ),
+                token_usage=TokenUsage(input_tokens=30, output_tokens=6, source="claude-code"),
             ),
         ]
     )
@@ -1279,9 +1281,7 @@ async def test_execute_steps_records_one_usage_record_per_step():
             WorkflowStep(agent="claude-code", prompt="revise {{prev_summary}}"),
         ],
     )
-    out = await w._execute_steps(
-        subtask, working_dir=None, on_stdout_line=None, context_block=""
-    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
 
     assert [s.step_index for s in out.step_usages] == [0, 1, 2]
     assert [s.parallel_group for s in out.step_usages] == ["", "", ""]
@@ -1337,9 +1337,7 @@ async def test_execute_steps_silent_step_keeps_usage_none_and_names_its_adapter(
             WorkflowStep(agent="claude-code", prompt="s2 {{prev_summary}}"),
         ],
     )
-    out = await w._execute_steps(
-        subtask, working_dir=None, on_stdout_line=None, context_block=""
-    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
 
     assert out.step_usages[1].usage is None
     assert out.step_usages[1].parallel_group == ""
@@ -1394,18 +1392,14 @@ async def test_execute_steps_parallel_group_records_each_member_separately():
             for n in ("a", "b", "c")
         ],
     )
-    out = await w._execute_steps(
-        subtask, working_dir=None, on_stdout_line=None, context_block=""
-    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
 
     assert len(out.step_usages) == 3, "one record per group member, not one per group"
     assert [s.step_index for s in out.step_usages] == [0, 1, 2]
     assert {s.parallel_group for s in out.step_usages} == {"review"}
     assert [s.usage.input_tokens for s in out.step_usages] == [11, 22, 33]
     # 11+22+33 = 66 must NOT appear anywhere: no group-level total exists.
-    assert not any(
-        getattr(s.usage, "input_tokens", None) == 66 for s in out.step_usages
-    )
+    assert not any(getattr(s.usage, "input_tokens", None) == 66 for s in out.step_usages)
 
 
 @pytest.mark.asyncio
@@ -1448,9 +1442,7 @@ async def test_execute_steps_skipped_step_leaves_no_record_but_a_gap():
             WorkflowStep(agent="claude-code", prompt="finalize {{prev_summary}}"),
         ],
     )
-    out = await w._execute_steps(
-        subtask, working_dir=None, on_stdout_line=None, context_block=""
-    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
 
     assert w._sandbox_manager.execute.await_count == 2
     assert [s.step_index for s in out.step_usages] == [0, 2], (
@@ -1493,9 +1485,7 @@ async def test_execute_steps_aborting_failure_still_records_what_ran():
             WorkflowStep(agent="codex", prompt="s1 {{prev_summary}}"),
         ],
     )
-    out = await w._execute_steps(
-        subtask, working_dir=None, on_stdout_line=None, context_block=""
-    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
 
     assert out.success is False
     assert w._sandbox_manager.execute.await_count == 2
@@ -1510,9 +1500,7 @@ def test_step_usage_source_prefers_measured_stamp_then_declared_agent():
     The ordering matters because the fallback is the ONLY naming left when a
     step's adapter reported nothing.
     """
-    measured = AgentOutput(
-        token_usage=TokenUsage(input_tokens=1, source="claude_code")
-    )
+    measured = AgentOutput(token_usage=TokenUsage(input_tokens=1, source="claude_code"))
     assert _step_usage(0, "", "claude-code", measured).source == "claude_code"
 
     silent = AgentOutput()
@@ -1622,5 +1610,3 @@ async def test_execute_in_sandbox_workflow_forwards_the_chain_records():
     assert [s.usage.input_tokens for s in result.step_usages] == [7, 8]
     # The node-level block still carries the last step's numbers (acceptance 4).
     assert result.usage.input_tokens == 8
-
-

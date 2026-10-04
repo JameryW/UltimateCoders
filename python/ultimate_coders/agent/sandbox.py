@@ -105,7 +105,9 @@ ADAPTER_ENV_ALLOWLIST: dict[str, tuple[str, ...]] = {
     # so only an explicit entry can cover it.
     "deepseek-harness": ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"),
     "local-harness": (
-        "OPENAI_API_KEY", "OPENAI_API_BASE", "OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE",
+        "OPENAI_BASE_URL",
         "OPENAI_DEFAULT_MODEL",
     ),
 }
@@ -134,6 +136,7 @@ def _canonical_agent_name(agent: str) -> str:
 
 class NetworkMode:
     """Network access modes for sandbox execution."""
+
     NONE = "none"
     RESTRICTED = "restricted"
     FULL = "full"
@@ -175,6 +178,7 @@ class SandboxConfig:
     not a way to re-widen the host set. Use ``UC_SANDBOX_ENV_EXTRA`` for
     that (logged at SandboxManager construction).
     """
+
     agent: str = field(
         default_factory=lambda: os.environ.get("UC_CODING_AGENT", DEFAULT_CODING_AGENT)
     )
@@ -190,13 +194,13 @@ class SandboxConfig:
     working_dir: str = ""
     env_vars: dict[str, str] = field(default_factory=dict)
     # Agent customization (translated to the selected CLI's flags/config)
-    tools: list[str] | None = None              # --tools (e.g. ["default", "mcp__codegraph__*"])
-    allowed_tools: list[str] | None = None      # --allowedTools
-    disallowed_tools: list[str] | None = None   # --disallowedTools
+    tools: list[str] | None = None  # --tools (e.g. ["default", "mcp__codegraph__*"])
+    allowed_tools: list[str] | None = None  # --allowedTools
+    disallowed_tools: list[str] | None = None  # --disallowedTools
     mcp_configs: list[str | dict[str, Any]] | None = None
     append_system_prompt: str | None = None
-    agent_name: str | None = None                # --agent (custom agent name)
-    agents_json: str | None = None               # --agents JSON string
+    agent_name: str | None = None  # --agent (custom agent name)
+    agents_json: str | None = None  # --agents JSON string
 
     def to_engine_config(self) -> dict[str, Any]:
         """Convert to a dict suitable for passing to the Rust engine."""
@@ -328,6 +332,7 @@ class SandboxConfig:
 @dataclass
 class SandboxHandle:
     """Handle to a sandbox instance."""
+
     id: str = ""
     status: str = "ready"
     created_at: int = 0
@@ -336,6 +341,7 @@ class SandboxHandle:
 @dataclass
 class ExecResult:
     """Result of executing a command in a sandbox."""
+
     exit_code: int = -1
     stdout: str = ""
     stderr: str = ""
@@ -350,6 +356,7 @@ class ExecResult:
 @dataclass
 class AgentOutput:
     """Structured output from an agent adapter."""
+
     summary: str = ""
     file_changes: list[FileChange] = field(default_factory=list)
     token_usage: TokenUsage | None = None
@@ -378,6 +385,7 @@ class AgentOutput:
 @dataclass
 class TokenUsage:
     """Token usage from an LLM API call."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     total_cost_usd: float | None = None
@@ -581,6 +589,7 @@ class SandboxManager:
         else:
             # Pure Python fallback: create a pseudo-handle
             import uuid
+
             handle = SandboxHandle(
                 id=str(uuid.uuid4()),
                 status="busy",
@@ -634,14 +643,17 @@ class SandboxManager:
 
             # Build and execute the agent command
             exec_request = adapter.build_request(
-                prompt, wd, self.config,
+                prompt,
+                wd,
+                self.config,
                 subtask_config=subtask_config,
             )
             temp_files = exec_request.pop("_temp_files", [])
             cancel_file = exec_request.pop("_cancel_file", None)
 
             if (
-                not cancel_file and self.engine is not None
+                not cancel_file
+                and self.engine is not None
                 and hasattr(self.engine, "execute_in_sandbox")
             ):
                 result_dict = await self.engine.execute_in_sandbox(
@@ -801,7 +813,10 @@ class SandboxManager:
                 display_args.append(a)
         logger.info(
             "Sandbox subprocess: %s %s (timeout=%ds, cwd=%s)",
-            command, " ".join(display_args), timeout_secs, working_dir,
+            command,
+            " ".join(display_args),
+            timeout_secs,
+            working_dir,
         )
 
         # T11 #653 — deny-by-default allowlist. This is the single choke
@@ -820,19 +835,26 @@ class SandboxManager:
                 from ultimate_coders.inference.process import spawn_command
 
                 proc, tree = await spawn_command(
-                    [command, *args], stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE, cwd=working_dir, env=env,
+                    [command, *args],
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=working_dir,
+                    env=env,
                 )
                 self._process_trees[proc.pid] = tree
             else:
                 proc = await asyncio.create_subprocess_exec(
-                    command, *args, stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE, cwd=working_dir, env=env,
-                # T7 #643 — own process group on POSIX so a cooperative
-                # cancel can kill the agent AND its children (the coding
-                # CLI spawns tool subprocesses) with one killpg. Windows
-                # has no process groups; the single-process kill in the
-                # cancel path is the documented fallback.
+                    command,
+                    *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=working_dir,
+                    env=env,
+                    # T7 #643 — own process group on POSIX so a cooperative
+                    # cancel can kill the agent AND its children (the coding
+                    # CLI spawns tool subprocesses) with one killpg. Windows
+                    # has no process groups; the single-process kill in the
+                    # cancel path is the documented fallback.
                     start_new_session=(os.name == "posix"),
                 )
             if cancel_key is not None:
@@ -921,8 +943,10 @@ class SandboxManager:
 
                 logger.info(
                     "Sandbox subprocess completed: exit=%d, time=%.1fs, stdout=%dB, stderr=%dB",
-                    result.exit_code, elapsed,
-                    len(result.stdout), len(result.stderr),
+                    result.exit_code,
+                    elapsed,
+                    len(result.stdout),
+                    len(result.stderr),
                 )
                 if result.exit_code != 0:
                     logger.warning(
@@ -936,7 +960,8 @@ class SandboxManager:
                 await asyncio.shield(self._start_stopping(proc, cancel_file, tree))
                 logger.error(
                     "Sandbox subprocess timed out after %.1fs (limit=%ds)",
-                    elapsed, timeout_secs,
+                    elapsed,
+                    timeout_secs,
                 )
                 return ExecResult(
                     exit_code=-1,
@@ -1024,14 +1049,19 @@ class DecomposeAdapter(AgentAdapter):
             env_vars.setdefault("ANTHROPIC_API_KEY", config.api_key)
         logger.info(
             "DecomposeAdapter: building request (timeout=%ds, cwd=%s, prompt_len=%d)",
-            timeout, working_dir, len(prompt),
+            timeout,
+            working_dir,
+            len(prompt),
         )
         return {
             "command": "claude",
             "args": [
-                "-p", prompt,
-                "--output-format", "json",
-                "--max-turns", "1",
+                "-p",
+                prompt,
+                "--output-format",
+                "json",
+                "--max-turns",
+                "1",
                 "--dangerously-skip-permissions",
             ],
             "timeout_secs": timeout,
@@ -1054,7 +1084,8 @@ class DecomposeAdapter(AgentAdapter):
         """
         if result.timed_out:
             logger.error(
-                "DecomposeAdapter: timed out after %dms", result.duration_ms,
+                "DecomposeAdapter: timed out after %dms",
+                result.duration_ms,
             )
             return AgentOutput(
                 summary=f"Task decomposition timed out after {result.duration_ms}ms",
@@ -1064,7 +1095,8 @@ class DecomposeAdapter(AgentAdapter):
         if result.exit_code != 0:
             logger.error(
                 "DecomposeAdapter: exit=%d, stderr=%s",
-                result.exit_code, result.stderr[:500],
+                result.exit_code,
+                result.stderr[:500],
             )
             return AgentOutput(
                 summary=f"Decomposition failed (exit {result.exit_code}): {result.stderr[:200]}",
@@ -1074,7 +1106,8 @@ class DecomposeAdapter(AgentAdapter):
         output = result.stdout.strip()
         logger.info(
             "DecomposeAdapter: success, stdout_len=%d, duration=%dms",
-            len(output), result.duration_ms,
+            len(output),
+            result.duration_ms,
         )
         logger.debug("DecomposeAdapter raw output: %s", output[:2000])
         return AgentOutput(
@@ -1145,7 +1178,8 @@ def parse_decomposition_output(raw_stdout: str) -> list[dict[str, Any]]:
     except json.JSONDecodeError as e:
         logger.error(
             "Failed to parse decomposition JSON: %s\nText preview: %s",
-            e, text[:1000],
+            e,
+            text[:1000],
         )
         logger.debug("Full raw output: %s", raw_stdout[:2000])
         raise ValueError(f"Failed to parse decomposition output: {e}") from e
@@ -1169,9 +1203,13 @@ def _merge_agent_config(
     """
     result: dict[str, Any] = {}
     for key in (
-        "tools", "allowed_tools", "disallowed_tools",
-        "mcp_configs", "append_system_prompt",
-        "agent_name", "agents_json",
+        "tools",
+        "allowed_tools",
+        "disallowed_tools",
+        "mcp_configs",
+        "append_system_prompt",
+        "agent_name",
+        "agents_json",
     ):
         val = getattr(config, key, None)
         if val is not None:
@@ -1214,6 +1252,7 @@ def _codex_mcp_server_toml(name: str, cfg: dict[str, Any]) -> str:
     Handles both stdio and streamable-http transports.
     ponytail: minimal toml — only command/args/url, no OAuth or per-tool overrides.
     """
+
     def _toml_escape(s: str) -> str:
         """Escape a string for TOML double-quoted value."""
         return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
@@ -1270,9 +1309,17 @@ def _grok_mcp_server_toml(name: str, cfg: dict[str, Any]) -> str:
     # native TOML shape. Keeping the translation explicit prevents arbitrary
     # user input from becoming a TOML table/key.
     for key in (
-        "command", "args", "env", "url", "headers",
-        "bearer_token_env_var", "enabled_tools", "disabled_tools",
-        "enabled", "startup_timeout_sec", "tool_timeout_sec",
+        "command",
+        "args",
+        "env",
+        "url",
+        "headers",
+        "bearer_token_env_var",
+        "enabled_tools",
+        "disabled_tools",
+        "enabled",
+        "startup_timeout_sec",
+        "tool_timeout_sec",
     ):
         if key in cfg:
             lines.append(f"{key} = {_grok_toml_value(cfg[key])}")
@@ -1345,8 +1392,14 @@ def _grok_text(value: Any, *, _depth: int = 0) -> str:
         return ""
 
     for key in (
-        "result", "output_text", "text", "summary", "response",
-        "message", "content", "output",
+        "result",
+        "output_text",
+        "text",
+        "summary",
+        "response",
+        "message",
+        "content",
+        "output",
     ):
         if key in value:
             text = _grok_text(value[key], _depth=_depth + 1)
@@ -1409,13 +1462,15 @@ def _parse_agent_file_changes(output: str) -> list[FileChange]:
         trimmed = line.strip()
         for keyword, change_type in change_types.items():
             if trimmed.startswith(keyword):
-                path = trimmed[len(keyword):].strip()
+                path = trimmed[len(keyword) :].strip()
                 if path:
-                    changes.append(FileChange(
-                        file_path=path,
-                        change_type=change_type,
-                        diff="",
-                    ))
+                    changes.append(
+                        FileChange(
+                            file_path=path,
+                            change_type=change_type,
+                            diff="",
+                        )
+                    )
                 break
     return changes
 
@@ -1438,9 +1493,12 @@ class GrokBuildAdapter(AgentAdapter):
             "--no-auto-update",
             "--no-alt-screen",
             "--always-approve",
-            "--cwd", working_dir,
-            "--output-format", "streaming-json",
-            "-p", prompt,
+            "--cwd",
+            working_dir,
+            "--output-format",
+            "streaming-json",
+            "-p",
+            prompt,
         ]
 
         if cfg.get("tools"):
@@ -1448,8 +1506,7 @@ class GrokBuildAdapter(AgentAdapter):
             # Claude-compatible MCP names are mcp__server__tool; Grok names
             # the same tools server__tool.
             normalized = [
-                str(tool)[len("mcp__"):]
-                if str(tool).startswith("mcp__") else str(tool)
+                str(tool)[len("mcp__") :] if str(tool).startswith("mcp__") else str(tool)
                 for tool in tools
             ]
             args += ["--tools", ",".join(normalized)]
@@ -1573,9 +1630,7 @@ class GrokBuildAdapter(AgentAdapter):
         tool_calls: list[str] = []
         token_usage: TokenUsage | None = None
         for event in events:
-            event_type = str(
-                event.get("type", event.get("event", event.get("kind", "")))
-            ).lower()
+            event_type = str(event.get("type", event.get("event", event.get("kind", "")))).lower()
             tool_name = _grok_tool_name(event)
             if tool_name and ("tool" in event_type or "call" in event_type):
                 tool_calls.append(tool_name)
@@ -1621,13 +1676,16 @@ class ClaudeCodeAdapter(AgentAdapter):
         subtask_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         args = [
-            "-p", prompt,
-            "--output-format", "stream-json",
+            "-p",
+            prompt,
+            "--output-format",
+            "stream-json",
             # Claude Code requires verbose mode when stream-json is used with
             # --print; without this flag current releases exit before making
             # an API call.
             "--verbose",
-            "--max-turns", "20",
+            "--max-turns",
+            "20",
             "--dangerously-skip-permissions",
         ]
 
@@ -1686,6 +1744,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             )
 
         import json
+
         output = result.stdout.strip()
 
         # ── Try stream-json format (one JSON event per line) ──────
@@ -1727,8 +1786,7 @@ class ClaudeCodeAdapter(AgentAdapter):
                             texts = [
                                 b.get("text", "")
                                 for b in content
-                                if isinstance(b, dict)
-                                and b.get("type") == "text"
+                                if isinstance(b, dict) and b.get("type") == "text"
                             ]
                             if texts:
                                 summary = " ".join(texts)[:500]
@@ -1838,13 +1896,12 @@ class CodexAdapter(AgentAdapter):
             # Must place the file in CODEX_HOME and name it <name>.config.toml
             # so that --profile <name> resolves to $CODEX_HOME/<name>.config.toml
             target_dir = (
-                codex_home
-                if os.path.isdir(codex_home) and os.access(codex_home, os.W_OK)
-                else None
+                codex_home if os.path.isdir(codex_home) and os.access(codex_home, os.W_OK) else None
             )
             try:
                 fd, config_path = tempfile.mkstemp(
-                    suffix=".config.toml", prefix="uc-codex-",
+                    suffix=".config.toml",
+                    prefix="uc-codex-",
                     dir=target_dir,
                 )
             except OSError:
@@ -1852,7 +1909,8 @@ class CodexAdapter(AgentAdapter):
                 # profile in a writable temp directory and point this process
                 # at it so --profile still resolves correctly.
                 fd, config_path = tempfile.mkstemp(
-                    suffix=".config.toml", prefix="uc-codex-",
+                    suffix=".config.toml",
+                    prefix="uc-codex-",
                 )
                 target_dir = None
             with os.fdopen(fd, "w") as f:
@@ -1872,7 +1930,8 @@ class CodexAdapter(AgentAdapter):
         args = [
             "exec",
             "--json",
-            "--sandbox", "workspace-write",
+            "--sandbox",
+            "workspace-write",
             "--skip-git-repo-check",
             prompt,
         ]
@@ -1910,17 +1969,13 @@ class CodexAdapter(AgentAdapter):
                             with open(entry) as f:
                                 data = json.load(f)
                             for name, server_cfg in data.get("mcpServers", {}).items():
-                                sections.append(
-                                    _codex_mcp_server_toml(name, server_cfg)
-                                )
+                                sections.append(_codex_mcp_server_toml(name, server_cfg))
                         except (json.JSONDecodeError, OSError):
                             logger.warning("Failed to read MCP config: %s", entry)
                 elif isinstance(entry, dict):
                     # Inline config — each key is a server name
                     for name, server_cfg in entry.items():
-                        sections.append(
-                            _codex_mcp_server_toml(name, server_cfg)
-                        )
+                        sections.append(_codex_mcp_server_toml(name, server_cfg))
 
         # Tool allow/deny lists — Codex only supports per-MCP-server tool filters,
         # not global allow/deny. Log a warning if global filters are specified.
@@ -1931,7 +1986,8 @@ class CodexAdapter(AgentAdapter):
                 "Codex adapter does not support global allowed/disallowed_tools; "
                 "use per-MCP-server enabled_tools/disabled_tools in mcp_configs instead. "
                 "allowed=%s disallowed=%s",
-                allowed, disallowed,
+                allowed,
+                disallowed,
             )
 
         if not sections:
@@ -1970,9 +2026,7 @@ class CodexAdapter(AgentAdapter):
             json_events = True
             item = event.get("item")
             item_kind = item.get("type") if isinstance(item, dict) else None
-            event_kinds.append(
-                f"{event['type']}:{item_kind}" if item_kind else str(event["type"])
-            )
+            event_kinds.append(f"{event['type']}:{item_kind}" if item_kind else str(event["type"]))
             if event.get("type") == "turn.failed":
                 turn_failed = True
                 error = event.get("error")
@@ -2003,9 +2057,9 @@ class CodexAdapter(AgentAdapter):
                 )
                 return AgentOutput(
                     summary=(
-                        "Codex turn failed: " if turn_failed
-                        else "Codex produced no final answer: "
-                    ) + (failures[-1] if failures else "unknown reason")[:500],
+                        "Codex turn failed: " if turn_failed else "Codex produced no final answer: "
+                    )
+                    + (failures[-1] if failures else "unknown reason")[:500],
                     success=False,
                 )
             return AgentOutput(
@@ -2021,18 +2075,20 @@ class CodexAdapter(AgentAdapter):
             # Look for file path patterns
             for keyword in ("Created:", "Modified:", "Deleted:"):
                 if trimmed.startswith(keyword):
-                    path = trimmed[len(keyword):].strip()
+                    path = trimmed[len(keyword) :].strip()
                     if path:
                         change_type_map = {
                             "Created:": ChangeType.CREATED,
                             "Modified:": ChangeType.MODIFIED,
                             "Deleted:": ChangeType.DELETED,
                         }
-                        file_changes.append(FileChange(
-                            file_path=path,
-                            change_type=change_type_map[keyword],
-                            diff="",
-                        ))
+                        file_changes.append(
+                            FileChange(
+                                file_path=path,
+                                change_type=change_type_map[keyword],
+                                diff="",
+                            )
+                        )
                     break
             else:
                 if trimmed:
@@ -2251,9 +2307,22 @@ def _opencode_mcp_servers(mcp_configs: Any) -> dict[str, dict[str, Any]]:
                     name,
                 )
         unsupported = sorted(
-            key for key in server
-            if key not in {"type", "command", "args", "env", "environment", "cwd", "url", "headers",
-                           "bearer_token_env_var", "disabled", "timeout"}
+            key
+            for key in server
+            if key
+            not in {
+                "type",
+                "command",
+                "args",
+                "env",
+                "environment",
+                "cwd",
+                "url",
+                "headers",
+                "bearer_token_env_var",
+                "disabled",
+                "timeout",
+            }
         )
         if unsupported:
             logger.warning(
@@ -2266,17 +2335,55 @@ def _opencode_mcp_servers(mcp_configs: Any) -> dict[str, dict[str, Any]]:
 
 
 _OMP_BUILTIN_TOOLS = {
-    "read", "bash", "edit", "ast_grep", "ast_edit", "ask", "debug", "eval", "ssh",
-    "github", "find", "search", "lsp", "inspect_image", "browser", "checkpoint",
-    "rewind", "task", "job", "irc", "todo", "web_search", "search_tool_bm25", "write",
-    "memory_edit", "retain", "recall", "reflect", "learn", "manage_skill",
+    "read",
+    "bash",
+    "edit",
+    "ast_grep",
+    "ast_edit",
+    "ask",
+    "debug",
+    "eval",
+    "ssh",
+    "github",
+    "find",
+    "search",
+    "lsp",
+    "inspect_image",
+    "browser",
+    "checkpoint",
+    "rewind",
+    "task",
+    "job",
+    "irc",
+    "todo",
+    "web_search",
+    "search_tool_bm25",
+    "write",
+    "memory_edit",
+    "retain",
+    "recall",
+    "reflect",
+    "learn",
+    "manage_skill",
 }
 
 _MIMOCODE_TOOL_ALIASES = {
-    "read": "read", "edit": "edit", "write": "write", "notebookedit": "notebook_edit",
-    "bash": "bash", "glob": "glob", "grep": "grep", "list": "list", "patch": "patch",
-    "task": "task", "webfetch": "webfetch", "websearch": "websearch", "skill": "skill",
-    "question": "question", "lsp": "lsp", "todowrite": "todowrite",
+    "read": "read",
+    "edit": "edit",
+    "write": "write",
+    "notebookedit": "notebook_edit",
+    "bash": "bash",
+    "glob": "glob",
+    "grep": "grep",
+    "list": "list",
+    "patch": "patch",
+    "task": "task",
+    "webfetch": "webfetch",
+    "websearch": "websearch",
+    "skill": "skill",
+    "question": "question",
+    "lsp": "lsp",
+    "todowrite": "todowrite",
 }
 _MIMOCODE_BUILTIN_TOOLS = set(_MIMOCODE_TOOL_ALIASES.values())
 
@@ -2285,7 +2392,7 @@ def _mimocode_tool_rule(value: Any, *, agent: str) -> tuple[str | None, str | No
     """Map a generic tool selector to a MiMo Code tool and optional resource."""
     text = str(value).strip()
     if text.startswith("mcp__"):
-        server, separator, tool = text[len("mcp__"):].partition("__")
+        server, separator, tool = text[len("mcp__") :].partition("__")
         if server and separator and tool:
             normalized_server = "".join(
                 char if char.isalnum() or char in "_-" else "_" for char in server
@@ -2335,8 +2442,12 @@ class OpenCodeAdapter(AgentAdapter):
     ) -> dict[str, Any]:
         cfg = _merge_agent_config(config, subtask_config)
         supported = {
-            "tools", "allowed_tools", "disallowed_tools", "mcp_configs",
-            "append_system_prompt", "agent_name",
+            "tools",
+            "allowed_tools",
+            "disallowed_tools",
+            "mcp_configs",
+            "append_system_prompt",
+            "agent_name",
         }
         _warn_unsupported_config(self.name(), cfg, supported)
         # OpenCode's V2 run command is non-interactive: unmatched permissions
@@ -2344,12 +2455,20 @@ class OpenCodeAdapter(AgentAdapter):
         # the ordinary worker actions and keep filesystem escape denied; the
         # generic per-agent rules below are appended last and therefore win.
         default_actions = (
-            "read", "edit", "shell", "glob", "grep", "subagent", "skill",
-            "execute", "question", "webfetch", "websearch",
+            "read",
+            "edit",
+            "shell",
+            "glob",
+            "grep",
+            "subagent",
+            "skill",
+            "execute",
+            "question",
+            "webfetch",
+            "websearch",
         )
         default_permissions: list[dict[str, str]] = [
-            {"action": action, "resource": "*", "effect": "allow"}
-            for action in default_actions
+            {"action": action, "resource": "*", "effect": "allow"} for action in default_actions
         ]
         default_permissions.append(
             {"action": "external_directory", "resource": "*", "effect": "deny"}
@@ -2358,12 +2477,21 @@ class OpenCodeAdapter(AgentAdapter):
         has_allowlist = cfg.get("allowed_tools") is not None
         permissions = (
             [{"action": "*", "resource": "*", "effect": "deny"}]
-            if has_allowlist else list(default_permissions)
+            if has_allowlist
+            else list(default_permissions)
         )
         action_aliases = {
-            "read": "read", "edit": "edit", "write": "edit", "notebookedit": "edit",
-            "bash": "shell", "glob": "glob", "grep": "grep", "task": "subagent",
-            "webfetch": "webfetch", "websearch": "websearch", "skill": "skill",
+            "read": "read",
+            "edit": "edit",
+            "write": "edit",
+            "notebookedit": "edit",
+            "bash": "shell",
+            "glob": "glob",
+            "grep": "grep",
+            "task": "subagent",
+            "webfetch": "webfetch",
+            "websearch": "websearch",
+            "skill": "skill",
         }
 
         def add_permission(value: Any, effect: str) -> None:
@@ -2373,7 +2501,7 @@ class OpenCodeAdapter(AgentAdapter):
             action: str | None = None
             resource = "*"
             if text.startswith("mcp__"):
-                server, separator, tool = text[len("mcp__"):].partition("__")
+                server, separator, tool = text[len("mcp__") :].partition("__")
                 normalized_server = "".join(
                     char if char.isalnum() or char in "_-" else "_" for char in server
                 )
@@ -2407,9 +2535,17 @@ class OpenCodeAdapter(AgentAdapter):
             add_permission(item, "deny")
 
         tool_aliases = {
-            "read": "read", "edit": "edit", "write": "write", "notebookedit": "notebookedit",
-            "bash": "bash", "glob": "glob", "grep": "grep", "task": "task",
-            "webfetch": "webfetch", "websearch": "websearch", "skill": "skill",
+            "read": "read",
+            "edit": "edit",
+            "write": "write",
+            "notebookedit": "notebookedit",
+            "bash": "bash",
+            "glob": "glob",
+            "grep": "grep",
+            "task": "task",
+            "webfetch": "webfetch",
+            "websearch": "websearch",
+            "skill": "skill",
         }
         if cfg.get("tools") is not None:
             tool_values = _config_values(cfg.get("tools"))
@@ -2498,14 +2634,15 @@ class OpenCodeAdapter(AgentAdapter):
                 if not has_allowlist:
                     for server_name in servers:
                         normalized_name = "".join(
-                            char if char.isalnum() or char in "_-" else "_"
-                            for char in server_name
+                            char if char.isalnum() or char in "_-" else "_" for char in server_name
                         )
-                        permissions.append({
-                            "action": f"{normalized_name}_*",
-                            "resource": "*",
-                            "effect": "allow",
-                        })
+                        permissions.append(
+                            {
+                                "action": f"{normalized_name}_*",
+                                "resource": "*",
+                                "effect": "allow",
+                            }
+                        )
         if document_tools:
             document["tools"] = document_tools
         document["permissions"] = permissions
@@ -2556,7 +2693,11 @@ class OhMyPiAdapter(AgentAdapter):
     ) -> dict[str, Any]:
         cfg = _merge_agent_config(config, subtask_config)
         supported = {
-            "tools", "allowed_tools", "disallowed_tools", "mcp_configs", "append_system_prompt",
+            "tools",
+            "allowed_tools",
+            "disallowed_tools",
+            "mcp_configs",
+            "append_system_prompt",
         }
         _warn_unsupported_config(self.name(), cfg, supported)
         temp_dir = tempfile.mkdtemp(prefix="uc-omp-")
@@ -2586,10 +2727,21 @@ class OhMyPiAdapter(AgentAdapter):
         }
         tool_approval: dict[str, str] = {}
         omp_tool_aliases = {
-            "read": "read", "edit": "edit", "write": "write", "bash": "bash",
-            "task": "task", "websearch": "web_search", "web_search": "web_search",
-            "find": "find", "search": "search", "ask": "ask", "browser": "browser",
-            "lsp": "lsp", "github": "github", "ssh": "ssh", "todo": "todo",
+            "read": "read",
+            "edit": "edit",
+            "write": "write",
+            "bash": "bash",
+            "task": "task",
+            "websearch": "web_search",
+            "web_search": "web_search",
+            "find": "find",
+            "search": "search",
+            "ask": "ask",
+            "browser": "browser",
+            "lsp": "lsp",
+            "github": "github",
+            "ssh": "ssh",
+            "todo": "todo",
         }
         allowed_mcp_servers: set[str] = set()
         selected_mcp_servers: set[str] = set()
@@ -2601,7 +2753,7 @@ class OhMyPiAdapter(AgentAdapter):
             text = str(value).strip()
             if not text.startswith("mcp__"):
                 return None
-            server, separator, tool = text[len("mcp__"):].partition("__")
+            server, separator, tool = text[len("mcp__") :].partition("__")
             if not server or not separator or not tool:
                 logger.warning("OMP cannot map incomplete MCP tool rule %r", value)
                 return None
@@ -2683,11 +2835,16 @@ class OhMyPiAdapter(AgentAdapter):
         if tool_approval:
             overlay["tools"] = {"approvalMode": "yolo", "approval": tool_approval}
         args = [
-            "--cwd", working_dir,
-            "--config", os.path.join(temp_dir, "settings.yml"),
-            "--mode", "json",
-            "--max-time", str(max(config.max_cpu_seconds, 1)),
-            "--approval-mode", "yolo",
+            "--cwd",
+            working_dir,
+            "--config",
+            os.path.join(temp_dir, "settings.yml"),
+            "--mode",
+            "json",
+            "--max-time",
+            str(max(config.max_cpu_seconds, 1)),
+            "--approval-mode",
+            "yolo",
             "--no-session",
             "--no-extensions",
             "-p",
@@ -2729,9 +2886,7 @@ class OhMyPiAdapter(AgentAdapter):
         if has_allowlist:
             mcp_selection_constraints.append(allowed_mcp_servers)
         selected_mcp_server_intersection = (
-            set.intersection(*mcp_selection_constraints)
-            if mcp_selection_constraints
-            else None
+            set.intersection(*mcp_selection_constraints) if mcp_selection_constraints else None
         )
         if cfg.get("mcp_configs") and selected_mcp_server_intersection == set():
             logger.warning(
@@ -2742,11 +2897,13 @@ class OhMyPiAdapter(AgentAdapter):
             servers = _mcp_server_entries(cfg["mcp_configs"], agent="OMP")
             if selected_mcp_server_intersection is not None:
                 servers = {
-                    name: server for name, server in servers.items()
+                    name: server
+                    for name, server in servers.items()
                     if name in selected_mcp_server_intersection
                 }
             servers = {
-                name: server for name, server in servers.items()
+                name: server
+                for name, server in servers.items()
                 if name not in denied_mcp_servers
                 and name not in unsupported_allowed_mcp_servers
                 and name not in unsupported_selected_mcp_servers
@@ -2854,10 +3011,13 @@ class MiMoCodeAdapter(AgentAdapter):
         if tool_restrictions:
             tool_flags.update({name: name in selected_tools for name in _MIMOCODE_BUILTIN_TOOLS})
             tool_flags.update({name: name in selected_tools for name in server_tools})
-            tool_flags.update({
-                name: True for name in selected_tools
-                if name not in _MIMOCODE_BUILTIN_TOOLS and name not in server_tools
-            })
+            tool_flags.update(
+                {
+                    name: True
+                    for name in selected_tools
+                    if name not in _MIMOCODE_BUILTIN_TOOLS and name not in server_tools
+                }
+            )
 
         permission: dict[str, Any] = {}
         allowed_values = _config_values(allowed_values)
@@ -2897,8 +3057,14 @@ class MiMoCodeAdapter(AgentAdapter):
         with open(os.path.join(config_dir, "mimocode.jsonc"), "w", encoding="utf-8") as target:
             json.dump(document, target, ensure_ascii=False)
         args = [
-            "run", "--dir", working_dir, "--model", "mimo/mimo-v2.6-flash",
-            "--format", "json", "--dangerously-skip-permissions",
+            "run",
+            "--dir",
+            working_dir,
+            "--model",
+            "mimo/mimo-v2.6-flash",
+            "--format",
+            "json",
+            "--dangerously-skip-permissions",
         ]
         if cfg.get("agent_name"):
             args += ["--agent", str(cfg["agent_name"])]
@@ -2906,11 +3072,13 @@ class MiMoCodeAdapter(AgentAdapter):
         env_vars = config._build_env_vars()
         if config.api_key:
             env_vars.setdefault("MIMO_API_KEY", config.api_key)
-        env_vars.update({
-            "MIMOCODE_HOME": temp_home,
-            "MIMOCODE_DISABLE_PROJECT_CONFIG": "1",
-            "MIMOCODE_MIMO_ONLY": "0",
-        })
+        env_vars.update(
+            {
+                "MIMOCODE_HOME": temp_home,
+                "MIMOCODE_DISABLE_PROJECT_CONFIG": "1",
+                "MIMOCODE_MIMO_ONLY": "0",
+            }
+        )
         return {
             "command": "mimo",
             "args": args,

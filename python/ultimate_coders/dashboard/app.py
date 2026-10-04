@@ -52,6 +52,20 @@ def _status_str(obj: Any) -> str:
     return s.value if hasattr(s, "value") else str(s)
 
 
+def _unavailable(message: str, exc: Exception) -> JSONResponse:
+    """Map an unexpected backend failure to 503, with the cause on the record.
+
+    These endpoints back onto the shared runtime store and the inference
+    operations behind it, which can be legitimately absent -- a fresh host, a
+    storage outage, an unreadable database. That is a 503, not a 500. But the
+    reason is an operator's to diagnose, so it is logged here rather than
+    dropped on the floor: a swallowed `except Exception` above made "Experiment
+    state unavailable" indistinguishable between a missing store and a bug.
+    """
+    logger.warning("%s: %s", message, exc, exc_info=True)
+    return JSONResponse({"error": message}, status_code=503)
+
+
 # ── NATS subject constants (must match nats_worker.py + Rust server.rs) ──
 
 NATS_SUBJECT_TASK_SUBMIT: str = "uc.task.submit"
@@ -228,9 +242,18 @@ class DashboardApp:
                 return resp
             try:
                 state = await experiment_state()
-                records = await asyncio.to_thread(state.records, "experiments")
-            except Exception:
-                return JSONResponse({"error": "Experiment state unavailable"}, status_code=503)
+                limit = int(request.query_params.get("limit", "100"))
+                records = await asyncio.to_thread(
+                    state.query,
+                    "experiments",
+                    task_id=request.query_params.get("task_id"),
+                    after=request.query_params.get("after", ""),
+                    limit=limit,
+                )
+            except ValueError:
+                return JSONResponse({"error": "Invalid pagination"}, status_code=400)
+            except Exception as e:
+                return _unavailable("Experiment state unavailable", e)
             task_id = request.query_params.get("task_id")
             return JSONResponse(
                 {
@@ -239,11 +262,23 @@ class DashboardApp:
                             key: value
                             for key, value in record.items()
                             if key
-                            in ("key", "identity", "state", "artifacts", "code_sha", "delivery")
+                            in (
+                                "key",
+                                "identity",
+                                "state",
+                                "artifacts",
+                                "artifact_state",
+                                "code_sha",
+                                "delivery",
+                                "gpu_reservations",
+                                "verdict",
+                                "remote_id",
+                            )
                         }
                         for record in records
                         if not task_id or record.get("identity", {}).get("graph_id") == task_id
-                    ]
+                    ],
+                    "next_cursor": records[-1]["key"] if len(records) == limit else None,
                 }
             )
 
@@ -257,12 +292,31 @@ class DashboardApp:
             try:
                 state = await experiment_state()
                 record = await asyncio.to_thread(state.get, "experiments", experiment_id)
-            except Exception:
-                return JSONResponse({"error": "Experiment state unavailable"}, status_code=503)
+            except Exception as e:
+                return _unavailable("Experiment state unavailable", e)
             metadata = (record or {}).get("artifacts", {}).get(name)
             if not metadata:
                 return JSONResponse({"error": "Unknown artifact"}, status_code=404)
+            if metadata.get("artifact_id"):
+                from ultimate_coders.inference.artifact_store import ArtifactStore
+
+                try:
+                    data = await asyncio.to_thread(ArtifactStore(state).read, metadata)
+                except FileNotFoundError:
+                    return JSONResponse(
+                        {"error": "Artifact publication unavailable"}, status_code=404
+                    )
+                except (ValueError, KeyError):
+                    return JSONResponse({"error": "Artifact integrity mismatch"}, status_code=409)
+                except Exception as e:
+                    return _unavailable("Artifact store unavailable", e)
+                return Response(
+                    data,
+                    media_type="application/json" if name.endswith(".json") else "text/plain",
+                    headers={"ETag": metadata["sha256"]},
+                )
             from ultimate_coders.inference.artifacts import artifact_root
+
             root = artifact_root()
             path = (pathlib.Path(record["artifact_dir"]) / name).resolve()
             try:
@@ -283,6 +337,89 @@ class DashboardApp:
                 media_type="application/json" if name.endswith(".json") else "text/plain",
                 headers={"ETag": metadata["sha256"]},
             )
+
+        @app.get("/dashboard/api/inference/operations")
+        async def inference_operations_api(request: Request):
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            try:
+                state = await experiment_state()
+                limit = int(request.query_params.get("limit", "100"))
+                rows = await asyncio.to_thread(
+                    state.query,
+                    "remote_jobs",
+                    after=request.query_params.get("after", ""),
+                    limit=limit,
+                )
+                jobs = []
+                for row in rows:
+                    versioned = await asyncio.to_thread(
+                        state.versioned_get, "remote_jobs", row["key"]
+                    )
+                    jobs.append(
+                        {
+                            "key": row["key"],
+                            "version": versioned.version,
+                            **{
+                                key: value
+                                for key, value in versioned.data.items()
+                                if key
+                                in ("state", "remote_id", "backend_id", "deadline", "quiescence")
+                            },
+                        }
+                    )
+                return JSONResponse(
+                    {
+                        "jobs": jobs,
+                        "resources": await asyncio.to_thread(
+                            state.query, "resource_budgets", limit=limit
+                        ),
+                        "outbox": await asyncio.to_thread(state.statistics, "result_outbox"),
+                        "remote_states": await asyncio.to_thread(state.statistics, "remote_jobs"),
+                        "leases": await asyncio.to_thread(state.statistics, "workspace_leases"),
+                        "next_cursor": rows[-1]["key"] if len(rows) == limit else None,
+                    }
+                )
+            except ValueError:
+                return JSONResponse({"error": "Invalid pagination"}, status_code=400)
+            except Exception as e:
+                return _unavailable("Inference operations unavailable", e)
+
+        @app.post("/dashboard/api/inference/operations/{operation_id}/reconcile")
+        async def inference_reconcile_api(operation_id: str, request: Request):
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            from ultimate_coders.inference.reconcile import RemoteJobs
+            from ultimate_coders.runtime_state import RecordConflictError
+
+            try:
+                body = await request.json()
+                if type(body.get("expected_version")) is not int:
+                    raise ValueError("expected_version is required")
+                result = await RemoteJobs(
+                    await experiment_state(), os.environ.get("UC_METAINFER_URL", "")
+                ).reconcile(
+                    operation_id,
+                    body["expected_version"],
+                    body.get("action", ""),
+                    actor=body.get("actor", "dashboard-operator"),
+                    remote_id=body.get("remote_id"),
+                )
+                return JSONResponse(
+                    {"state": result["state"], "remote_id": result.get("remote_id")}
+                )
+            except RecordConflictError:
+                return JSONResponse(
+                    {"error": "Record changed; reload before retry"}, status_code=409
+                )
+            except (ValueError, TypeError):
+                return JSONResponse(
+                    {"error": "Invalid reconciliation or mismatched evidence"}, status_code=400
+                )
+            except Exception as e:
+                return _unavailable(
+                    "Remote evidence unavailable; isolation retained", e
+                )
 
         @app.get("/dashboard/api/health")
         async def health_api(request: Request):
@@ -930,11 +1067,13 @@ class DashboardApp:
         result = []
         for repo_id, local_path in repos.items():
             p = pathlib.Path(local_path)
-            result.append({
-                "repo_id": repo_id,
-                "local_path": local_path,
-                "exists": p.is_dir(),
-            })
+            result.append(
+                {
+                    "repo_id": repo_id,
+                    "local_path": local_path,
+                    "exists": p.is_dir(),
+                }
+            )
         return {"available": True, "repos": result, "total": len(result)}
 
     def _resolve_repos(self) -> dict[str, str]:
@@ -1012,12 +1151,14 @@ class DashboardApp:
                 except OSError:
                     continue
                 rel = str(item.relative_to(pathlib.Path(local_path).resolve()))
-                entries.append({
-                    "name": name,
-                    "path": rel,
-                    "type": "directory" if item.is_dir() else "file",
-                    "size": stat.st_size if item.is_file() else 0,
-                })
+                entries.append(
+                    {
+                        "name": name,
+                        "path": rel,
+                        "type": "directory" if item.is_dir() else "file",
+                        "size": stat.st_size if item.is_file() else 0,
+                    }
+                )
         except PermissionError:
             return {"error": "Permission denied"}
 
@@ -1082,15 +1223,40 @@ class DashboardApp:
         # Guess language from extension
         suffix = safe.suffix.lstrip(".")
         lang_map = {
-            "py": "python", "rs": "rust", "ts": "typescript", "tsx": "typescript",
-            "js": "javascript", "jsx": "javascript", "go": "go", "java": "java",
-            "rb": "ruby", "cpp": "cpp", "c": "c", "h": "c", "hpp": "cpp",
-            "cs": "csharp", "swift": "swift", "kt": "kotlin", "scala": "scala",
-            "sh": "bash", "bash": "bash", "zsh": "bash", "sql": "sql",
-            "html": "html", "css": "css", "scss": "scss", "json": "json",
-            "yaml": "yaml", "yml": "yaml", "toml": "toml", "xml": "xml",
-            "md": "markdown", "proto": "protobuf", "dockerfile": "dockerfile",
-            "tf": "hcl", "hcl": "hcl",
+            "py": "python",
+            "rs": "rust",
+            "ts": "typescript",
+            "tsx": "typescript",
+            "js": "javascript",
+            "jsx": "javascript",
+            "go": "go",
+            "java": "java",
+            "rb": "ruby",
+            "cpp": "cpp",
+            "c": "c",
+            "h": "c",
+            "hpp": "cpp",
+            "cs": "csharp",
+            "swift": "swift",
+            "kt": "kotlin",
+            "scala": "scala",
+            "sh": "bash",
+            "bash": "bash",
+            "zsh": "bash",
+            "sql": "sql",
+            "html": "html",
+            "css": "css",
+            "scss": "scss",
+            "json": "json",
+            "yaml": "yaml",
+            "yml": "yaml",
+            "toml": "toml",
+            "xml": "xml",
+            "md": "markdown",
+            "proto": "protobuf",
+            "dockerfile": "dockerfile",
+            "tf": "hcl",
+            "hcl": "hcl",
         }
         language = lang_map.get(suffix, "")
         basename = safe.name.lower()
@@ -1423,6 +1589,7 @@ class DashboardApp:
     def _metrics_to_dict(snap: MetricsSnapshot) -> dict:  # noqa: F821
         """Convert a MetricsSnapshot dataclass to a JSON-serializable dict."""
         import dataclasses
+
         return dataclasses.asdict(snap)
 
     # ── Server Lifecycle ─────────────────────────────────────────
@@ -1652,9 +1819,7 @@ class DashboardApp:
 
         # Normalize to TaskEvent format
         event_dict: dict[str, Any] = {
-            "timestamp": payload.get(
-                "timestamp", datetime.now(timezone.utc).isoformat()
-            ),
+            "timestamp": payload.get("timestamp", datetime.now(timezone.utc).isoformat()),
             "type": payload.get("type", "unknown"),
             "task_id": payload.get("task_id", ""),
         }

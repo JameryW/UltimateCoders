@@ -303,12 +303,25 @@ fn extract_task_id(event: &AgentEventType) -> Option<String> {
         AgentEventType::TaskResumed { task_id } => Some(task_id.0.clone()),
         AgentEventType::TaskCancelled { task_id } => Some(task_id.0.clone()),
         AgentEventType::TaskUpdated { task_id, .. } => Some(task_id.0.clone()),
+        AgentEventType::SubtaskRetried { task_id, .. } => Some(task_id.0.clone()),
     }
 }
 
 /// Apply an event to a task snapshot (for replay).
 fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) {
     match event {
+        AgentEventType::SubtaskRetried { subtask_id, .. } => {
+            if let Some(node) = snapshot
+                .subtasks
+                .iter_mut()
+                .find(|node| node.subtask_id == subtask_id.0)
+            {
+                node.status = "pending".into();
+                node.assigned_worker = None;
+                node.result_summary = None;
+            }
+            snapshot.status = "in_progress".into();
+        }
         AgentEventType::TaskCreated { .. } => {
             snapshot.status = "created".to_string();
         }

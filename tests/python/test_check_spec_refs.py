@@ -76,8 +76,9 @@ def guard(tmp_path):
 
 
 def _dangling_rows(module):
-    return [r for r in module.collect()
-            if r["kind"] == "mention" and r["verdict"] == module.DANGLING]
+    return [
+        r for r in module.collect() if r["kind"] == "mention" and r["verdict"] == module.DANGLING
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -141,8 +142,7 @@ def test_subject_removed_banner_controls_the_exemption(guard):
     # Without the banner the exemption is withheld, and the self-check says why.
     _write_files(guard.ROOT, {ALPHA_PATH: "See `ghost.rs`.\n"})
     rows = guard.collect()
-    dangling = [r for r in rows
-                if r["kind"] == "mention" and r["verdict"] == guard.DANGLING]
+    dangling = [r for r in rows if r["kind"] == "mention" and r["verdict"] == guard.DANGLING]
     assert len(dangling) == 1
     assert guard._mention_exemption(dangling[0]["spec"], dangling[0]["ref"]) is None
     assert any("banner missing" in p for p in guard.exemption_self_check(rows))
@@ -172,11 +172,14 @@ def test_ambiguous_and_dangling_are_distinct_verdicts(guard):
     guard reported 47, because the extra 21 were ambiguous (a basename that
     matches several files) rather than dangling.
     """
-    _write_files(guard.ROOT, {
-        ALPHA_PATH: "See `dup.rs` and `ghost.rs`.\n",
-        "crates/one/dup.rs": "fn one() {}\n",
-        "crates/two/dup.rs": "fn two() {}\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            ALPHA_PATH: "See `dup.rs` and `ghost.rs`.\n",
+            "crates/one/dup.rs": "fn one() {}\n",
+            "crates/two/dup.rs": "fn two() {}\n",
+        },
+    )
     mentions = {r["ref"]: r for r in guard.collect() if r["kind"] == "mention"}
     assert mentions["dup.rs"]["verdict"] == guard.MENTION_AMBIGUOUS
     assert mentions["ghost.rs"]["verdict"] == guard.DANGLING
@@ -220,8 +223,7 @@ def test_bold_prose_is_not_a_symbol_anchor(guard):
     resolvable symbol at all (OK); the loose form resolves the prose word `delete`
     at line 40, i.e. 38 lines away (STALE).
     """
-    spec_line = ("See `crates/one/target.py:2` -- "
-                 "**Handling `GhostThing` when delete runs**.")
+    spec_line = "See `crates/one/target.py:2` -- **Handling `GhostThing` when delete runs**."
 
     # The tightened semantics, asserted directly on the anchor set.
     symbols = guard._symbols_on(spec_line)
@@ -229,10 +231,13 @@ def test_bold_prose_is_not_a_symbol_anchor(guard):
     assert "delete" not in symbols, "prose inside a bold span is not an anchor"
 
     target = "\n".join(["# filler"] * 39 + ["def delete():", "    pass"])
-    _write_files(guard.ROOT, {
-        "crates/one/target.py": target,
-        ".trellis/spec/backend/bold-spec.md": spec_line + "\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/target.py": target,
+            ".trellis/spec/backend/bold-spec.md": spec_line + "\n",
+        },
+    )
 
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
     assert len(rows) == 1
@@ -255,43 +260,57 @@ def test_bold_prose_is_not_a_symbol_anchor(guard):
 
 def test_both_roots_are_scanned(guard):
     """A spec under `docs/` must produce rows, and the rows must say which root."""
-    _write_files(guard.ROOT, {
-        "crates/one/target.py": "def f():\n    return 1\n",
-        ".trellis/spec/backend/spec.md": "see `crates/one/target.py:1`\n",
-        "docs/architecture/note.md": "see `crates/one/target.py:2`\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/target.py": "def f():\n    return 1\n",
+            ".trellis/spec/backend/spec.md": "see `crates/one/target.py:1`\n",
+            "docs/architecture/note.md": "see `crates/one/target.py:2`\n",
+        },
+    )
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
     assert {r["spec"] for r in rows} == {
-        ".trellis/spec/backend/spec.md", "docs/architecture/note.md"}, rows
+        ".trellis/spec/backend/spec.md",
+        "docs/architecture/note.md",
+    }, rows
     assert {r["verdict"] for r in rows} == {"OK"}, rows
 
 
 def test_docs_reference_with_a_wrong_directory_is_structural(guard):
     """Ablation A -- the shape that was actually broken in the real repo
     (`uc-types/src/agent.rs` where the file lives at `crates/uc-types/src/agent.rs`)."""
-    _write_files(guard.ROOT, {
-        "crates/one/target.py": "x = 1\n",
-        "docs/architecture/note.md": "see `one/target.py:1`\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/target.py": "x = 1\n",
+            "docs/architecture/note.md": "see `one/target.py:1`\n",
+        },
+    )
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
     assert [r["verdict"] for r in rows] == ["PATH_FORM"], rows
 
 
 def test_docs_reference_past_the_end_is_structural(guard):
     """Ablation B."""
-    _write_files(guard.ROOT, {
-        "crates/one/target.py": "x = 1\n",
-        "docs/architecture/note.md": "see `crates/one/target.py:99`\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/target.py": "x = 1\n",
+            "docs/architecture/note.md": "see `crates/one/target.py:99`\n",
+        },
+    )
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
     assert [r["verdict"] for r in rows] == ["OUT_OF_RANGE"], rows
 
 
 def test_docs_reference_to_a_nonexistent_file_is_structural(guard):
     """Ablation C."""
-    _write_files(guard.ROOT, {
-        "docs/architecture/note.md": "see `crates/one/ghost.py:1`\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "docs/architecture/note.md": "see `crates/one/ghost.py:1`\n",
+        },
+    )
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
     assert [r["verdict"] for r in rows] == ["MISSING_FILE"], rows
 
@@ -303,14 +322,15 @@ def test_the_docs_root_is_what_makes_those_visible(guard):
     this, A/B/C could be passing on some incidental property of the fixture
     (e.g. the guard reading a directory it was not asked to read).
     """
-    _write_files(guard.ROOT, {
-        "crates/one/target.py": "x = 1\n",
-        "docs/architecture/note.md": (
-            "a `one/target.py:1`\n"
-            "b `crates/one/target.py:99`\n"
-            "c `crates/one/ghost.py:1`\n"
-        ),
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/target.py": "x = 1\n",
+            "docs/architecture/note.md": (
+                "a `one/target.py:1`\nb `crates/one/target.py:99`\nc `crates/one/ghost.py:1`\n"
+            ),
+        },
+    )
     with_docs = [r["verdict"] for r in guard.collect() if r["kind"] == "ref"]
     assert with_docs == ["PATH_FORM", "OUT_OF_RANGE", "MISSING_FILE"], with_docs
 
@@ -326,11 +346,14 @@ def test_a_short_name_cannot_serve_two_namespaces(guard):
     one root.  With two, the same short can exist under each, and a rule written
     for one would silently fire in the other.  Asserted against the corpus.
     """
-    _write_files(guard.ROOT, {
-        "crates/one/target.py": "x = 1\n",
-        ".trellis/spec/guides/twin.md": "see `crates/one/target.py`\n",
-        "docs/guides/twin.md": "see `crates/one/target.py`\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/target.py": "x = 1\n",
+            ".trellis/spec/guides/twin.md": "see `crates/one/target.py`\n",
+            "docs/guides/twin.md": "see `crates/one/target.py`\n",
+        },
+    )
     problems = guard.exemption_self_check(guard.collect())
     assert any("not namespace-unique" in p for p in problems), problems
     assert any("guides/twin.md" in p for p in problems), problems
@@ -343,9 +366,12 @@ def test_a_docs_rule_is_corpus_checked_like_any_other(guard):
     is reported dead/drifted rather than quietly widening.
     """
     guard.MENTION_EXEMPT = (("agents/domain.md", "CONTEXT.md", 2, "fixture rule"),)
-    _write_files(guard.ROOT, {
-        "docs/agents/domain.md": "read `CONTEXT.md`, `CONTEXT.md` and `CONTEXT.md`\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "docs/agents/domain.md": "read `CONTEXT.md`, `CONTEXT.md` and `CONTEXT.md`\n",
+        },
+    )
     problems = guard.exemption_self_check(guard.collect())
     assert any("hit count drifted" in p for p in problems), problems
     assert any("declares 2" in p for p in problems), problems
@@ -363,8 +389,7 @@ def test_real_corpus_docs_root_is_live():
     assert len(docs_specs) >= 6, docs_specs
     assert guard.exemption_self_check(rows) == []
 
-    context = [r for r in rows
-               if r["ref"] == "CONTEXT.md" and r["verdict"] == guard.DANGLING]
+    context = [r for r in rows if r["ref"] == "CONTEXT.md" and r["verdict"] == guard.DANGLING]
     assert len(context) == 2, context
     assert all(guard._mention_exemption(r["spec"], r["ref"]) for r in context), context
 
@@ -389,9 +414,11 @@ def test_real_corpus_has_no_untriaged_dangling_mention():
     unclassified.
     """
     guard = _load_guard()
-    unclassified = [(r["spec"], r["spec_line"], r["ref"])
-                    for r in _dangling_rows(guard)
-                    if guard._mention_exemption(r["spec"], r["ref"]) is None]
+    unclassified = [
+        (r["spec"], r["spec_line"], r["ref"])
+        for r in _dangling_rows(guard)
+        if guard._mention_exemption(r["spec"], r["ref"]) is None
+    ]
     assert unclassified == []
 
 
@@ -410,8 +437,7 @@ def test_repo_index_is_built_from_git_not_from_the_filesystem():
     is the one CI sees.
     """
     guard = _load_guard()
-    listed = subprocess.run(["git", "ls-files", "-z"], cwd=str(guard.ROOT),
-                            capture_output=True)
+    listed = subprocess.run(["git", "ls-files", "-z"], cwd=str(guard.ROOT), capture_output=True)
     if listed.returncode != 0:
         pytest.skip("not a git checkout")
     tracked = {rel for rel in listed.stdout.decode("utf-8").split("\0") if rel}
@@ -444,10 +470,22 @@ def _shape(module):
     proves a line-number mutation invisible, and it must therefore be able
     to see a change in either one.
     """
-    return [(r["spec"], r["spec_line"], r["ref"].split(":")[0], r["verdict"],
-             r["symbol"], r["def_line"], r["offset"], r["unanchored"],
-             r["line_unchecked"], r["content_candidate_count"])
-            for r in module.collect() if r["kind"] == "ref"]
+    return [
+        (
+            r["spec"],
+            r["spec_line"],
+            r["ref"].split(":")[0],
+            r["verdict"],
+            r["symbol"],
+            r["def_line"],
+            r["offset"],
+            r["unanchored"],
+            r["line_unchecked"],
+            r["content_candidate_count"],
+        )
+        for r in module.collect()
+        if r["kind"] == "ref"
+    ]
 
 
 def test_a_located_reference_with_nothing_to_check_is_reported(guard):
@@ -461,11 +499,13 @@ def test_a_located_reference_with_nothing_to_check_is_reported(guard):
     names a symbol" reds D but leaves A green, while a flag that is never
     set reds both -- measured as M1/M2 in the ablation run.
     """
-    _write_files(guard.ROOT, {
-        "crates/one/target.py": "import os\ndef run_loop():\n    return 1\n",
-        ".trellis/spec/backend/spec.md":
-            "see `crates/one/target.py:2` for the loop\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/target.py": "import os\ndef run_loop():\n    return 1\n",
+            ".trellis/spec/backend/spec.md": "see `crates/one/target.py:2` for the loop\n",
+        },
+    )
     assert guard._symbols_on("see `crates/one/target.py:2` for the loop") == []
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
     assert [r["verdict"] for r in rows] == ["OK"], rows
@@ -484,10 +524,13 @@ def test_moving_the_line_number_is_invisible_without_an_anchor(guard):
     fixture where the guard never reads the line number at all.
     """
     spec = ".trellis/spec/backend/spec.md"
-    _write_files(guard.ROOT, {
-        "crates/one/worker.py": "import os\ndef run_loop():\n    return 1\n",
-        spec: "see `worker.py:2` for the loop\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/worker.py": "import os\ndef run_loop():\n    return 1\n",
+            spec: "see `worker.py:2` for the loop\n",
+        },
+    )
     first = _shape(guard)
     _write_files(guard.ROOT, {spec: "see `worker.py:3` for the loop\n"})
     assert _shape(guard) == first
@@ -503,15 +546,20 @@ def test_the_same_mutation_is_visible_once_an_anchor_exists(guard):
     stale count 7 -> 6.
     """
     spec = ".trellis/spec/backend/spec.md"
-    body = ("# one\n# two\n# three\n# four\n# five\n# six\n# seven\n"
-            "# eight\n# nine\ndef run_loop():\n    return 1\n# twelve\n")
-    _write_files(guard.ROOT, {"crates/one/worker.py": body,
-                              spec: "see `worker.py:10-12` (`run_loop`)\n"})
-    inside = [(r["verdict"], r["offset"], r["unanchored"])
-              for r in guard.collect() if r["kind"] == "ref"]
+    body = (
+        "# one\n# two\n# three\n# four\n# five\n# six\n# seven\n"
+        "# eight\n# nine\ndef run_loop():\n    return 1\n# twelve\n"
+    )
+    _write_files(
+        guard.ROOT, {"crates/one/worker.py": body, spec: "see `worker.py:10-12` (`run_loop`)\n"}
+    )
+    inside = [
+        (r["verdict"], r["offset"], r["unanchored"]) for r in guard.collect() if r["kind"] == "ref"
+    ]
     _write_files(guard.ROOT, {spec: "see `worker.py:2-4` (`run_loop`)\n"})
-    outside = [(r["verdict"], r["offset"], r["unanchored"])
-               for r in guard.collect() if r["kind"] == "ref"]
+    outside = [
+        (r["verdict"], r["offset"], r["unanchored"]) for r in guard.collect() if r["kind"] == "ref"
+    ]
     assert inside == [("OK", None, False)], inside
     assert outside == [("STALE", 8, False)], outside
 
@@ -533,13 +581,14 @@ def test_a_symbol_with_no_definition_still_counts_as_unanchored(guard):
     `_`-bearing inline span would also become a *content candidate*, and the
     line would stop being unanchored for an unrelated reason.
     """
-    assert guard._symbols_on("see `worker.py:2` for **never_defined**") == [
-        "never_defined"]
-    _write_files(guard.ROOT, {
-        "crates/one/worker.py": "import os\ndef run_loop():\n    return 1\n",
-        ".trellis/spec/backend/spec.md":
-            "see `worker.py:2` for **never_defined**\n",
-    })
+    assert guard._symbols_on("see `worker.py:2` for **never_defined**") == ["never_defined"]
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/worker.py": "import os\ndef run_loop():\n    return 1\n",
+            ".trellis/spec/backend/spec.md": "see `worker.py:2` for **never_defined**\n",
+        },
+    )
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
     assert [r["unanchored"] for r in rows] == [True], rows
     assert [r["symbol"] for r in rows] == [None], rows
@@ -559,18 +608,23 @@ def test_a_path_pointer_is_a_pointer_not_quoted_code(guard):
     assert guard.PATH_SPAN_RE.fullmatch(".trellis/spec/guides/guide.md:134")
     assert guard.PATH_SPAN_RE.fullmatch("crates/one/worker.py:2-4")
     matched, candidates = guard._content_anchor(
-        "see `worker.py:2` cf `.trellis/spec/guides/guide.md:134`", "x = 1\n")
+        "see `worker.py:2` cf `.trellis/spec/guides/guide.md:134`", "x = 1\n"
+    )
     assert candidates == [], candidates
     assert matched is None
 
 
 def test_a_doc_pointer_on_the_line_does_not_fake_a_content_mismatch(guard):
     """Ablation E, end to end: the advisory itself must stay silent."""
-    _write_files(guard.ROOT, {
-        "crates/one/worker.py": "import os\ndef run_loop():\n    return 1\n",
-        "docs/architecture/note.md":
-            "see `crates/one/worker.py:2` as written in `docs/guides/other.md:9`\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/worker.py": "import os\ndef run_loop():\n    return 1\n",
+            "docs/architecture/note.md": (
+                "see `crates/one/worker.py:2` as written in `docs/guides/other.md:9`\n"
+            ),
+        },
+    )
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
     assert [r["content_candidate_count"] for r in rows] == [0], rows
     assert [r["content_ok"] for r in rows] == [True], rows
@@ -602,7 +656,17 @@ def test_real_corpus_unanchored_census_is_reported():
     # Architecture refresh removes three duplicate backticked launcher paths
     # (run-omp.sh, run-gateway.sh, run-cluster.sh) from docs/architecture.md:
     # 275 -> 272; the launch commands remain documented in both READMEs.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 278
+    # 278 -> 285 -> 290 (measured on the MetaInfer architecture branch): two
+    # closing passes added backticked path mentions. The corrected typing table
+    # in type-safety.md names the two surviving `Optional[...]` sites and the
+    # two sibling specs it points at. The gotcha/convention sections 7a/7b in
+    # inference-infra-spec.md name service_contract.py, runner.py,
+    # resources.py, crates/uc-types/src/error.rs and the component-guidelines
+    # path. The "Toolchain Lockstep With CI" section in quality-guidelines.md
+    # names ci-rust.yml and the two files holding the tonic::Status rule.
+    # Every one is MENTION_RESOLVED (the guard reports 0 unclassified), so the
+    # unclassified count is untouched.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 290
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -617,8 +681,11 @@ def test_real_corpus_has_no_false_content_mismatch():
     mechanism test above.
     """
     guard = _load_guard()
-    bad = [(r["spec"], r["spec_line"], r["ref"])
-           for r in guard.collect() if r["kind"] == "ref" and not r["content_ok"]]
+    bad = [
+        (r["spec"], r["spec_line"], r["ref"])
+        for r in guard.collect()
+        if r["kind"] == "ref" and not r["content_ok"]
+    ]
     assert bad == []
 
 
@@ -629,22 +696,40 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     line (not merely "no longer unanchored") pins that the anchor is the one
     the edit meant: a line number that drifts out of the range turns these
     STALE, which is precisely the judgement that did not exist before.
+
+    The `refresh_heartbeat` row carries the only def_line that moves on the
+    architecture branch (158 -> 160): `orchestrator.py` gained the
+    projection/control-state guards above it. The row stays OK because the
+    spec's own anchor is still in range -- what moved is the definition it
+    points at, and that is what this tuple records.
     """
     guard = _load_guard()
     want = {
-        (".trellis/spec/backend/database-guidelines.md", 64):
-            ("crates/uc-engine/src/memory/short_term.rs", "ShortTermMemory", 45),
-        (".trellis/spec/backend/database-guidelines.md", 131):
-            ("crates/uc-engine/src/memory/short_term.rs", "list_keys", 270),
-        (".trellis/spec/frontend/hook-guidelines.md", 19):
-            ("crates/uc-engine/src/events.rs", "AgentEventType", 35),
-        (".trellis/spec/frontend/hook-guidelines.md", 109):
-            ("python/ultimate_coders/agent/orchestrator.py", "refresh_heartbeat", 158),
+        (".trellis/spec/backend/database-guidelines.md", 64): (
+            "crates/uc-engine/src/memory/short_term.rs",
+            "ShortTermMemory",
+            45,
+        ),
+        (".trellis/spec/backend/database-guidelines.md", 131): (
+            "crates/uc-engine/src/memory/short_term.rs",
+            "list_keys",
+            270,
+        ),
+        (".trellis/spec/frontend/hook-guidelines.md", 19): (
+            "crates/uc-engine/src/events.rs",
+            "AgentEventType",
+            35,
+        ),
+        (".trellis/spec/frontend/hook-guidelines.md", 109): (
+            "python/ultimate_coders/agent/orchestrator.py",
+            "refresh_heartbeat",
+            160,
+        ),
     }
-    rows = [r for r in guard.collect()
-            if r["kind"] == "ref" and (r["spec"], r["spec_line"]) in want]
-    got = {(r["spec"], r["spec_line"]): (r["target"], r["symbol"], r["def_line"])
-           for r in rows}
+    rows = [
+        r for r in guard.collect() if r["kind"] == "ref" and (r["spec"], r["spec_line"]) in want
+    ]
+    got = {(r["spec"], r["spec_line"]): (r["target"], r["symbol"], r["def_line"]) for r in rows}
     assert got == want
     assert [r["unanchored"] for r in rows] == [False] * 4, rows
 
@@ -658,15 +743,19 @@ def test_real_corpus_line_one_pointers_are_gone():
     the type-safety spec: all four resolve as mentions now).
     """
     guard = _load_guard()
-    pointers = [(r["spec"], r["ref"]) for r in guard.collect()
-                if r["kind"] == "ref" and r["start"] == 1
-                and r["ref"].split(":")[0] in {"types.py", "memory.py",
-                                             "query.py", "config.py"}]
+    pointers = [
+        (r["spec"], r["ref"])
+        for r in guard.collect()
+        if r["kind"] == "ref"
+        and r["start"] == 1
+        and r["ref"].split(":")[0] in {"types.py", "memory.py", "query.py", "config.py"}
+    ]
     assert pointers == []
-    resolved = [(r["spec_line"], r["ref"], r["verdict"])
-                for r in guard.collect()
-                if r["kind"] == "mention"
-                and r["spec"] == ".trellis/spec/frontend/type-safety.md"]
+    resolved = [
+        (r["spec_line"], r["ref"], r["verdict"])
+        for r in guard.collect()
+        if r["kind"] == "mention" and r["spec"] == ".trellis/spec/frontend/type-safety.md"
+    ]
     assert (26, "python/ultimate_coders/agent/types.py", "MENTION_RESOLVED") in resolved
     assert (26, "python/ultimate_coders/config.py", "MENTION_RESOLVED") in resolved
 
@@ -693,16 +782,25 @@ def test_a_content_anchor_alone_leaves_the_line_number_unchecked(guard):
     symbol anchor and the row would stop demonstrating anything.
     """
     spec = ".trellis/spec/backend/spec.md"
-    _write_files(guard.ROOT, {
-        "crates/one/worker.py": 'import os\n\n\n'
-                                'def run_loop():\n'
-                                '    return UC_CAP_BROWSER\n',
-        spec: "see `worker.py:2` for `UC_CAP_BROWSER`\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/worker.py": "import os\n\n\ndef run_loop():\n    return UC_CAP_BROWSER\n",
+            spec: "see `worker.py:2` for `UC_CAP_BROWSER`\n",
+        },
+    )
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
-    assert [(r["verdict"], r["content_candidate_count"], r["content_ok"],
-             r["symbol"], r["unanchored"], r["line_unchecked"])
-            for r in rows] == [("OK", 1, True, None, False, True)], rows
+    assert [
+        (
+            r["verdict"],
+            r["content_candidate_count"],
+            r["content_ok"],
+            r["symbol"],
+            r["unanchored"],
+            r["line_unchecked"],
+        )
+        for r in rows
+    ] == [("OK", 1, True, None, False, True)], rows
 
 
 def test_moving_the_line_number_stays_invisible_with_only_a_content_anchor(guard):
@@ -715,12 +813,13 @@ def test_moving_the_line_number_stays_invisible_with_only_a_content_anchor(guard
     flag that is merely set more often.
     """
     spec = ".trellis/spec/backend/spec.md"
-    _write_files(guard.ROOT, {
-        "crates/one/worker.py": 'import os\n\n\n'
-                                'def run_loop():\n'
-                                '    return UC_CAP_BROWSER\n',
-        spec: "see `worker.py:5` for `UC_CAP_BROWSER`\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/worker.py": "import os\n\n\ndef run_loop():\n    return UC_CAP_BROWSER\n",
+            spec: "see `worker.py:5` for `UC_CAP_BROWSER`\n",
+        },
+    )
     first = _shape(guard)
     _write_files(guard.ROOT, {spec: "see `worker.py:4` for `UC_CAP_BROWSER`\n"})
     assert _shape(guard) == first
@@ -734,18 +833,24 @@ def test_the_same_fixture_is_visible_once_a_symbol_is_named(guard):
     B's silence is about the missing anchor and not about a dead mutation.
     """
     spec = ".trellis/spec/backend/spec.md"
-    _write_files(guard.ROOT, {
-        "crates/one/worker.py": 'import os\n\n\n'
-                                'def run_loop():\n'
-                                '    return UC_CAP_BROWSER\n',
-        spec: "see `worker.py:4` (`run_loop`) for `UC_CAP_BROWSER`\n",
-    })
-    inside = [(r["verdict"], r["offset"], r["unanchored"], r["line_unchecked"])
-              for r in guard.collect() if r["kind"] == "ref"]
-    _write_files(guard.ROOT,
-                 {spec: "see `worker.py:5` (`run_loop`) for `UC_CAP_BROWSER`\n"})
-    outside = [(r["verdict"], r["offset"], r["unanchored"], r["line_unchecked"])
-               for r in guard.collect() if r["kind"] == "ref"]
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/worker.py": "import os\n\n\ndef run_loop():\n    return UC_CAP_BROWSER\n",
+            spec: "see `worker.py:4` (`run_loop`) for `UC_CAP_BROWSER`\n",
+        },
+    )
+    inside = [
+        (r["verdict"], r["offset"], r["unanchored"], r["line_unchecked"])
+        for r in guard.collect()
+        if r["kind"] == "ref"
+    ]
+    _write_files(guard.ROOT, {spec: "see `worker.py:5` (`run_loop`) for `UC_CAP_BROWSER`\n"})
+    outside = [
+        (r["verdict"], r["offset"], r["unanchored"], r["line_unchecked"])
+        for r in guard.collect()
+        if r["kind"] == "ref"
+    ]
     assert inside == [("OK", None, False, False)], inside
     assert outside == [("STALE", -1, False, False)], outside
 
@@ -779,23 +884,28 @@ def test_the_two_calibers_are_nested_and_their_difference_is_content_only():
     content candidate, verdict OK.
     """
     guard = _load_guard()
-    located = [r for r in guard.collect()
-               if r["kind"] == "ref" and r["verdict"] in ("OK", "STALE")]
-    leaked = [(r["spec"], r["spec_line"]) for r in located
-              if r["unanchored"] and not r["line_unchecked"]]
+    located = [r for r in guard.collect() if r["kind"] == "ref" and r["verdict"] in ("OK", "STALE")]
+    leaked = [
+        (r["spec"], r["spec_line"]) for r in located if r["unanchored"] and not r["line_unchecked"]
+    ]
     assert leaked == [], leaked
     diff = [r for r in located if r["line_unchecked"] and not r["unanchored"]]
     assert len(diff) == 51, len(diff)
-    assert [(r["symbol"], r["content_candidate_count"] > 0, r["verdict"])
-            for r in diff] == [(None, True, "OK")] * len(diff)
+    assert [(r["symbol"], r["content_candidate_count"] > 0, r["verdict"]) for r in diff] == [
+        (None, True, "OK")
+    ] * len(diff)
 
 
 def _run_guard(*args):
     """The guard as CI runs it, so the wording comes from the real entry
     point rather than from a helper that could drift from it."""
-    proc = subprocess.run([sys.executable, str(GUARD_PATH), *args],
-                          cwd=str(GUARD_PATH.parents[1]),
-                          capture_output=True, text=True, encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(GUARD_PATH), *args],
+        cwd=str(GUARD_PATH.parents[1]),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     return proc.stdout
 
@@ -807,9 +917,8 @@ def test_the_summary_number_is_the_wider_one():
     detected".  The number beside that claim is now 104 of 121 located.
     """
     out = _run_guard()
-    claim = [line.strip() for line in out.splitlines()
-             if "unchecked line number" in line]
-    assert len(claim) == 2, claim          # the advisory and the summary line
+    claim = [line.strip() for line in out.splitlines() if "unchecked line number" in line]
+    assert len(claim) == 2, claim  # the advisory and the summary line
     assert claim[1].startswith("104 of 121"), claim[1]
     assert "have NO checkable anchor" not in out
 
@@ -821,9 +930,11 @@ def test_the_default_advisory_reports_the_wider_number():
     numbers: the property and the tier.
     """
     out = _run_guard()
-    advisory = [line for line in out.splitlines()
-                if line.startswith("ADVISORY:")
-                and "unchecked line number" in line]
+    advisory = [
+        line
+        for line in out.splitlines()
+        if line.startswith("ADVISORY:") and "unchecked line number" in line
+    ]
     assert len(advisory) == 1, advisory
     assert advisory[0].startswith("ADVISORY: 104 of 121"), advisory[0]
     assert "(53 of them have no anchor at all" in advisory[0], advisory[0]
@@ -840,8 +951,7 @@ def test_the_audit_list_marks_the_anchor_free_tier():
     head = "have an UNCHECKED LINE NUMBER"
     assert out.count(head) == 1
     rest = out.split(head, 1)[1].split("\n", 1)[1]
-    rows = [line for line in rest.split("ADVISORY", 1)[0].splitlines()
-            if line.strip()]
+    rows = [line for line in rest.split("ADVISORY", 1)[0].splitlines() if line.strip()]
     assert len(rows) == 104, len(rows)
     assert sum(1 for line in rows if "<- no anchor at all" in line) == 53
 
@@ -860,15 +970,25 @@ def test_an_ambiguous_row_is_never_anchored(guard):
     unreachable from an AMBIGUOUS verdict.  This test keeps that construction
     from regressing.
     """
-    _write_files(guard.ROOT, {
-        "crates/one/dup.py": "SOME_TOKEN = 1\n",
-        "crates/two/dup.py": "SOME_TOKEN = 2\n",
-        ALPHA_PATH: "see `dup.py:1` for `SOME_TOKEN`\n",
-    })
+    _write_files(
+        guard.ROOT,
+        {
+            "crates/one/dup.py": "SOME_TOKEN = 1\n",
+            "crates/two/dup.py": "SOME_TOKEN = 2\n",
+            ALPHA_PATH: "see `dup.py:1` for `SOME_TOKEN`\n",
+        },
+    )
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
-    assert [(r["verdict"], r["content_candidate_count"], r["content_ok"],
-             r["unanchored"], r["line_unchecked"]) for r in rows] == [
-        ("AMBIGUOUS", 0, True, False, False)], rows
+    assert [
+        (
+            r["verdict"],
+            r["content_candidate_count"],
+            r["content_ok"],
+            r["unanchored"],
+            r["line_unchecked"],
+        )
+        for r in rows
+    ] == [("AMBIGUOUS", 0, True, False, False)], rows
 
 
 # --------------------------------------------------------------------------
@@ -941,11 +1061,15 @@ def test_a_path_pointer_yields_no_symbol_at_all(guard):
     plus the bare basename (already handled before T44), plus the mixed span
     that must NOT lose its real anchor: only the path token's own words go.
     """
-    for shape in ["worker.py:524", "sandbox.py:354", "step_condition.py:1-26",
-                  "worker.py:1487-1500", "worker.py"]:
+    for shape in [
+        "worker.py:524",
+        "sandbox.py:354",
+        "step_condition.py:1-26",
+        "worker.py:1487-1500",
+        "worker.py",
+    ]:
         assert guard._symbols_on(f"see `{shape}`") == [], shape
-    assert guard._symbols_on("`Task.to_dict` (`types.py:67-80`)") == [
-        "Task", "to_dict"]
+    assert guard._symbols_on("`Task.to_dict` (`types.py:67-80`)") == ["Task", "to_dict"]
 
 
 def test_both_consumers_agree_on_a_shape_table(guard):
@@ -959,9 +1083,16 @@ def test_both_consumers_agree_on_a_shape_table(guard):
     before the question is ever asked -- so this tests the predicate rather
     than the pre-filter.
     """
-    shapes = ["worker.py:524", "crates/one/worker.py:2-4", "guide.md:134",
-              "types.py", "Task.to_dict", "prev.files.contains",
-              "abort_on_failure=True", 'prev.summary.contains("text")']
+    shapes = [
+        "worker.py:524",
+        "crates/one/worker.py:2-4",
+        "guide.md:134",
+        "types.py",
+        "Task.to_dict",
+        "prev.files.contains",
+        "abort_on_failure=True",
+        'prev.summary.contains("text")',
+    ]
     kept: list[str] = []
     for shape in shapes:
         line = f"see `{shape}`"
@@ -987,8 +1118,9 @@ def _corpus_calibers(module):
             continue
         path = row["spec"]
         if path not in cache:
-            cache[path] = (module.ROOT / path).read_text(
-                encoding="utf-8", errors="replace").split("\n")
+            cache[path] = (
+                (module.ROOT / path).read_text(encoding="utf-8", errors="replace").split("\n")
+            )
         if not module._symbols_on(cache[path][row["spec_line"] - 1]):
             continue
         named += 1
@@ -1012,15 +1144,20 @@ def test_real_corpus_moves_only_where_predicted():
     assert len(rows) == 130, len(rows)
     assert _corpus_calibers(guard) == (98, 81)
     # and the sides this ticket must NOT move, asserted in the same breath
-    # (OK / STALE deliberately NOT moved on the red-main repair ticket: the
-    # pushed head transiently measured 113 / 8 -- exactly one flip,
-    # durable-runtime-p2-recon.md:38 dispatch_gate OK -> STALE, off +7 with
-    # the def at worker_service.rs:326 after P2's placement_policy lines --
-    # and this same change repairs that pointer to :326 per the T42/T43 rule,
-    # re-measured back to 114 / 7. Pinning the transient 113 / 8 alongside
-    # the repair would be the blind bump this discipline exists to prevent.)
-    assert sum(1 for r in rows if r["verdict"] == "OK") == 114
-    assert sum(1 for r in rows if r["verdict"] == "STALE") == 7
+    # (OK / STALE deliberately NOT moved on the red-main repair ticket).
+    # The architecture branch's counts are stated explicitly, not tolerated as a
+    # range, so a future movement is still visible. Measured on either side of
+    # the MetaInfer reliability work (merge-base 2b22e9ad -> this branch):
+    # OK 114 -> 112, STALE 7 -> 9, AMBIGUOUS unchanged at 9. The two rows that
+    # moved are BOTH historical assessment anchors that drifted as the
+    # implementation grew, and neither is repaired here on purpose -- retyping a
+    # line number into a point-in-time report would falsify the record:
+    #   docs/architecture/durable-runtime-p2-recon.md:23 -> graph_store.rs
+    #     `steps_payload` (definition 2530 -> 2722)
+    #   docs/architecture/durable-runtime-migration-assessment.md:121 ->
+    #     types.py `SubtaskResult` (a third target row now resolves)
+    assert sum(1 for r in rows if r["verdict"] == "OK") == 112
+    assert sum(1 for r in rows if r["verdict"] == "STALE") == 9
     assert sum(1 for r in rows if r["verdict"] == "AMBIGUOUS") == 9
     assert sum(1 for r in rows if r["symbol"] is not None) == 17
     assert sum(1 for r in rows if r["unanchored"]) == 53
@@ -1029,7 +1166,8 @@ def test_real_corpus_moves_only_where_predicted():
 
 _PATH_TOKEN_RE = re.compile(
     r"[\w./\\:-]+\.(?:py|rs|ts|tsx|js|jsx|proto|toml|yml|yaml|json|sql|sh|md)"
-    r"(?::\d+(?:\s*[-\u2013]\s*\d+)?)?")
+    r"(?::\d+(?:\s*[-\u2013]\s*\d+)?)?"
+)
 
 
 def _path_words(module, line):
@@ -1058,9 +1196,12 @@ def _path_words(module, line):
     for span in spans:
         for token in _PATH_TOKEN_RE.findall(span.strip()):
             for part in re.split(r"[.\s()\[\],=:]+", token):
-                if (len(part) > 3 and module.IDENT_RE.fullmatch(part)
-                        and part not in module.SYMBOL_STOPWORDS
-                        and part not in words):
+                if (
+                    len(part) > 3
+                    and module.IDENT_RE.fullmatch(part)
+                    and part not in module.SYMBOL_STOPWORDS
+                    and part not in words
+                ):
                     words.append(part)
     return words
 
@@ -1081,8 +1222,11 @@ def test_no_path_word_is_ever_a_definition_in_its_own_target():
     """
     guard = _load_guard()
     control = guard._definitions(
-        (guard.ROOT / "crates/uc-types/src/agent.rs").read_bytes().decode(
-            "utf-8", "replace").split("\n"))
+        (guard.ROOT / "crates/uc-types/src/agent.rs")
+        .read_bytes()
+        .decode("utf-8", "replace")
+        .split("\n")
+    )
     assert "SubtaskResult" in control, sorted(control)[:5]
 
     cache: dict[str, list[str]] = {}
@@ -1092,16 +1236,16 @@ def test_no_path_word_is_ever_a_definition_in_its_own_target():
             continue
         path = row["spec"]
         if path not in cache:
-            cache[path] = (guard.ROOT / path).read_text(
-                encoding="utf-8", errors="replace").split("\n")
+            cache[path] = (
+                (guard.ROOT / path).read_text(encoding="utf-8", errors="replace").split("\n")
+            )
         words = _path_words(guard, cache[path][row["spec_line"] - 1])
         if not words:
             continue
         definitions = guard._definitions(
-            (guard.ROOT / row["target"]).read_bytes().decode(
-                "utf-8", "replace").split("\n"))
-        triples.extend((word, row["target"], word in definitions)
-                       for word in words)
-    assert len(triples) == 122, len(triples)      # measured, and non-empty
+            (guard.ROOT / row["target"]).read_bytes().decode("utf-8", "replace").split("\n")
+        )
+        triples.extend((word, row["target"], word in definitions) for word in words)
+    assert len(triples) == 122, len(triples)  # measured, and non-empty
     hits = [(word, target) for word, target, hit in triples if hit]
     assert hits == [], hits

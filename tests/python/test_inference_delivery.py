@@ -14,6 +14,8 @@ from ultimate_coders.agent.sandbox import SandboxConfig
 from ultimate_coders.agent.worker import Worker
 from ultimate_coders.agent.workspace import WorkspaceManager
 
+from .metainfer_fixture import contract_response
+
 
 @pytest.fixture
 def inference_repository(tmp_path):
@@ -52,7 +54,10 @@ def candidate_service():
             self.wfile.write(body)
 
         def do_GET(self):  # noqa: N802
-            if self.path.endswith("/schema"):
+            contract = contract_response(self.path)
+            if contract is not None:
+                self.reply(200, contract)
+            elif self.path.endswith("/schema"):
                 self.reply(200, {"fields": [{"key": "kernel_file_path", "required": True}]})
             elif self.path == "/api/sys-shell/candidate":
                 self.reply(200, {"run": {"finished": True, "final_status": "completed"}})
@@ -61,6 +66,10 @@ def candidate_service():
 
         def do_POST(self):  # noqa: N802
             data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            contract = contract_response(self.path, data)
+            if contract is not None:
+                self.reply(200, contract)
+                return
             kernel = Path(data["answers"]["kernel_file_path"])
             paths.append(str(kernel))
             kernel.write_text("37")
@@ -193,8 +202,11 @@ async def test_delivery_recovery_does_not_reexecute_after_removed_worktree(infer
 async def test_reused_pid_does_not_block_dead_workspace_owner(inference_repository):
     manager = WorkspaceManager(str(inference_repository))
     handle = await manager.acquire("recovery", require_worktree=True)
-    manager._state.mutate("workspace_leases", handle.lease_key,
-                          lambda old: {**old, "process_identity": "previous-process-birth"})
+    manager._state.mutate(
+        "workspace_leases",
+        handle.lease_key,
+        lambda old: {**old, "process_identity": "previous-process-birth"},
+    )
     restarted = WorkspaceManager(str(inference_repository))
     adopted = await restarted.acquire("recovery", require_worktree=True)
     assert adopted.worktree_path == handle.worktree_path
@@ -203,7 +215,9 @@ async def test_reused_pid_does_not_block_dead_workspace_owner(inference_reposito
 
 @pytest.mark.asyncio
 async def test_runner_start_and_workspace_takeover_share_lease_transaction(
-    inference_repository, monkeypatch, tmp_path,
+    inference_repository,
+    monkeypatch,
+    tmp_path,
 ):
     from ultimate_coders.inference.adapter import RemoteStateUncertainError
     from ultimate_coders.inference.runner import run_inference
@@ -217,8 +231,9 @@ async def test_runner_start_and_workspace_takeover_share_lease_transaction(
     monkeypatch.setattr("ultimate_coders.inference.runner._execute_inference", execute)
     request = {"cwd": handle.worktree_path, "config": {}, "workspace_owner": owner}
     await run_inference(request)
-    manager._state.mutate("workspace_leases", handle.lease_key,
-                          lambda old: {**old, "process_identity": "dead-parent"})
+    manager._state.mutate(
+        "workspace_leases", handle.lease_key, lambda old: {**old, "process_identity": "dead-parent"}
+    )
     restarted = WorkspaceManager(str(inference_repository))
     assert await restarted.acquire("spawn-boundary", require_worktree=True) is None
     # A child delayed until after its parent dies must never execute.
@@ -230,7 +245,9 @@ async def test_runner_start_and_workspace_takeover_share_lease_transaction(
 
 @pytest.mark.asyncio
 async def test_stale_child_cannot_execute_after_worktree_takeover(
-    inference_repository, monkeypatch, tmp_path,
+    inference_repository,
+    monkeypatch,
+    tmp_path,
 ):
     from ultimate_coders.inference.adapter import RemoteStateUncertainError
     from ultimate_coders.inference.runner import run_inference
@@ -238,8 +255,9 @@ async def test_stale_child_cannot_execute_after_worktree_takeover(
     manager = WorkspaceManager(str(inference_repository))
     handle = await manager.acquire("delayed-child", require_worktree=True)
     owner = await manager.runner_owner(handle.worktree_path)
-    manager._state.mutate("workspace_leases", handle.lease_key,
-                          lambda old: {**old, "process_identity": "dead-parent"})
+    manager._state.mutate(
+        "workspace_leases", handle.lease_key, lambda old: {**old, "process_identity": "dead-parent"}
+    )
     restarted = WorkspaceManager(str(inference_repository))
     adopted = await restarted.acquire("delayed-child", require_worktree=True)
     monkeypatch.setenv("UC_RUNTIME_STATE_DIR", str(manager._state.path.parent))

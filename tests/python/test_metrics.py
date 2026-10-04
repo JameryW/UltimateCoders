@@ -16,10 +16,12 @@ from ultimate_coders.dashboard.metrics import (
 
 # ── Fixtures ────────────────────────────────────────────────
 
+
 @pytest.fixture(autouse=True)
 def _isolate_db(tmp_path):
     """Ensure MetricsAggregator tests use a temp db, not the real one."""
     import ultimate_coders.dashboard.metrics as _m
+
     _original = _m._ALERTS_DB_PATH
     _m._ALERTS_DB_PATH = str(tmp_path / "test.db")
     yield
@@ -27,6 +29,7 @@ def _isolate_db(tmp_path):
 
 
 # ── Helpers ────────────────────────────────────────────────
+
 
 def _record_events(agg: MetricsAggregator, events: list[tuple[str, dict | None]]) -> None:
     """Record a batch of events on the aggregator."""
@@ -43,6 +46,7 @@ def _failed_event(worker_id: str = "w1") -> tuple[str, dict]:
 
 
 # ── _percentile ────────────────────────────────────────────
+
 
 class TestPercentile:
     def test_empty(self) -> None:
@@ -67,6 +71,7 @@ class TestPercentile:
 
 # ── MetricsAggregator ─────────────────────────────────────
 
+
 class TestMetricsAggregator:
     def test_empty_snapshot(self) -> None:
         agg = MetricsAggregator()
@@ -80,11 +85,14 @@ class TestMetricsAggregator:
 
     def test_record_completed_task(self) -> None:
         agg = MetricsAggregator()
-        _record_events(agg, [
-            _completed_event(5000),
-            _completed_event(10000),
-            _completed_event(15000),
-        ])
+        _record_events(
+            agg,
+            [
+                _completed_event(5000),
+                _completed_event(10000),
+                _completed_event(15000),
+            ],
+        )
         snap = agg.snapshot()
         assert snap.task.total_completed == 3
         assert snap.task.avg_duration_ms == 10000.0
@@ -93,65 +101,83 @@ class TestMetricsAggregator:
 
     def test_failed_tasks_counted(self) -> None:
         agg = MetricsAggregator()
-        _record_events(agg, [
-            _completed_event(1000),
-            _failed_event(),
-            _failed_event(),
-        ])
+        _record_events(
+            agg,
+            [
+                _completed_event(1000),
+                _failed_event(),
+                _failed_event(),
+            ],
+        )
         snap = agg.snapshot()
         assert snap.task.total_completed == 1
         assert snap.task.total_failed == 2
         # success_rate = 1/3
-        assert abs(snap.task.success_rate - 1/3) < 0.01
+        assert abs(snap.task.success_rate - 1 / 3) < 0.01
 
     def test_retry_rate(self) -> None:
         agg = MetricsAggregator()
-        _record_events(agg, [
-            _completed_event(1000),
-            _completed_event(2000),
-            ("subtask_retrying", {"worker_id": "w1"}),
-        ])
+        _record_events(
+            agg,
+            [
+                _completed_event(1000),
+                _completed_event(2000),
+                ("subtask_retrying", {"worker_id": "w1"}),
+            ],
+        )
         snap = agg.snapshot()
         # retry_rate = retries / (completed + failed) = 1 / 2
         assert snap.task.retry_rate == pytest.approx(0.5, abs=0.01)
 
     def test_slow_tasks_count(self) -> None:
         agg = MetricsAggregator()
-        _record_events(agg, [
-            _completed_event(1000),
-            _completed_event(400_000),  # > 5min threshold
-            _completed_event(600_000),  # > 5min threshold
-        ])
+        _record_events(
+            agg,
+            [
+                _completed_event(1000),
+                _completed_event(400_000),  # > 5min threshold
+                _completed_event(600_000),  # > 5min threshold
+            ],
+        )
         snap = agg.snapshot()
         assert snap.task.slow_tasks_count == 2
 
     def test_worker_tool_calls(self) -> None:
         agg = MetricsAggregator()
-        _record_events(agg, [
-            ("tool_call", {"worker_id": "w1"}),
-            ("tool_call", {"worker_id": "w1"}),
-            ("tool_call", {"worker_id": "w2"}),
-        ])
+        _record_events(
+            agg,
+            [
+                ("tool_call", {"worker_id": "w1"}),
+                ("tool_call", {"worker_id": "w1"}),
+                ("tool_call", {"worker_id": "w2"}),
+            ],
+        )
         snap = agg.snapshot()
         assert snap.worker.per_worker_tool_calls == {"w1": 2, "w2": 1}
 
     def test_worker_subtask_counts(self) -> None:
         agg = MetricsAggregator()
-        _record_events(agg, [
-            _completed_event(1000, "w1"),
-            _completed_event(2000, "w1"),
-            _failed_event("w2"),
-        ])
+        _record_events(
+            agg,
+            [
+                _completed_event(1000, "w1"),
+                _completed_event(2000, "w1"),
+                _failed_event("w2"),
+            ],
+        )
         snap = agg.snapshot()
         assert snap.worker.per_worker_subtask_count == {"w1": 2, "w2": 1}
 
     def test_event_type_counts(self) -> None:
         agg = MetricsAggregator()
-        _record_events(agg, [
-            ("tool_call", None),
-            ("tool_call", None),
-            ("subtask_completed", {"duration_ms": 100}),
-        ])
+        _record_events(
+            agg,
+            [
+                ("tool_call", None),
+                ("tool_call", None),
+                ("subtask_completed", {"duration_ms": 100}),
+            ],
+        )
         snap = agg.snapshot()
         assert snap.event.event_type_counts.get("tool_call") == 2
         assert snap.event.event_type_counts.get("subtask_completed") == 1
@@ -168,34 +194,43 @@ class TestMetricsAggregator:
     def test_error_spike_detected(self) -> None:
         agg = MetricsAggregator()
         # Record enough failures to trigger spike (>30% with >=3 total outcomes)
-        _record_events(agg, [
-            _completed_event(1000),
-            _failed_event(),
-            _failed_event(),
-            _failed_event(),
-        ])
+        _record_events(
+            agg,
+            [
+                _completed_event(1000),
+                _failed_event(),
+                _failed_event(),
+                _failed_event(),
+            ],
+        )
         snap = agg.snapshot()
         # 3 failed / 4 total = 75% > 30% and total >= 3
         assert snap.event.error_spike
 
     def test_error_spike_not_triggered_below_threshold(self) -> None:
         agg = MetricsAggregator()
-        _record_events(agg, [
-            _completed_event(1000),
-            _completed_event(2000),
-            _completed_event(3000),
-            _failed_event(),
-        ])
+        _record_events(
+            agg,
+            [
+                _completed_event(1000),
+                _completed_event(2000),
+                _completed_event(3000),
+                _failed_event(),
+            ],
+        )
         snap = agg.snapshot()
         # 1/4 = 25% < 30% — no spike
         assert not snap.event.error_spike
 
     def test_error_spike_not_triggered_too_few_outcomes(self) -> None:
         agg = MetricsAggregator()
-        _record_events(agg, [
-            _failed_event(),
-            _failed_event(),
-        ])
+        _record_events(
+            agg,
+            [
+                _failed_event(),
+                _failed_event(),
+            ],
+        )
         snap = agg.snapshot()
         # 2 outcomes < 3 minimum — no spike even if rate is high
         assert not snap.event.error_spike
@@ -267,6 +302,7 @@ class TestMetricsAggregator:
     def test_snapshot_thread_safety(self) -> None:
         """Rapid interleaved record + snapshot should not crash."""
         import threading
+
         agg = MetricsAggregator()
         errors: list[Exception] = []
 

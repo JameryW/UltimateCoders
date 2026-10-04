@@ -138,11 +138,7 @@ class CodegraphClient:
             try:
                 from ultimate_coders.search.query import SearchQuery
 
-                sq = (
-                    SearchQuery(query)
-                    .with_modes(["ast"])
-                    .limit(limit)
-                )
+                sq = SearchQuery(query).with_modes(["ast"]).limit(limit)
                 if self._repo_id:
                     sq = sq.in_repos([self._repo_id])
                 result = self._engine.search(sq)

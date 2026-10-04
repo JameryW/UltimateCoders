@@ -25,7 +25,8 @@ RUST_GOLDEN_KEY = "70944265bd1ad20766b7bfa2f7d5fc4b"
 
 
 def derive_merge_idempotency_key(
-    graph_id: str, succeeded: list[tuple[str, str]],
+    graph_id: str,
+    succeeded: list[tuple[str, str]],
 ) -> str:
     """Python mirror of uc_types::merge::derive_merge_idempotency_key.
 
@@ -111,7 +112,10 @@ class FakeGate:
         return dict(self.decision)
 
     async def report_merge_outcome(
-        self, graph_id: str, merge_idempotency_key: str, outcome: dict,
+        self,
+        graph_id: str,
+        merge_idempotency_key: str,
+        outcome: dict,
     ) -> dict:
         self.reports.append((graph_id, merge_idempotency_key, outcome))
         return dict(self.report_response)
@@ -122,8 +126,14 @@ BRANCHES = ["uc/subtask/aaaaaaaaaaaa", "uc/subtask/bbbbbbbbbbbb"]
 
 def test_grant_refused_skips_arbitration_and_report():
     arbiter = FakeArbiter()
-    gate = FakeGate({"granted": False, "merge_idempotency_key": "",
-                     "idempotent_replay": False, "error": "not quiescent"})
+    gate = FakeGate(
+        {
+            "granted": False,
+            "merge_idempotency_key": "",
+            "idempotent_replay": False,
+            "error": "not quiescent",
+        }
+    )
     orch = Orchestrator(merge_arbiter=arbiter, merge_gate=gate)
     asyncio.run(orch._arbitrate_task("t-1", BRANCHES))
     assert gate.grant_calls == ["t-1"]
@@ -133,9 +143,14 @@ def test_grant_refused_skips_arbitration_and_report():
 
 def test_fresh_grant_arbitrates_then_reports_with_key():
     arbiter = FakeArbiter()
-    gate = FakeGate({"granted": True,
-                     "merge_idempotency_key": "k" * 32,
-                     "idempotent_replay": False, "error": ""})
+    gate = FakeGate(
+        {
+            "granted": True,
+            "merge_idempotency_key": "k" * 32,
+            "idempotent_replay": False,
+            "error": "",
+        }
+    )
     orch = Orchestrator(merge_arbiter=arbiter, merge_gate=gate)
     asyncio.run(orch._arbitrate_task("t-1", BRANCHES))
     assert arbiter.calls == [BRANCHES]
@@ -153,9 +168,9 @@ def test_fresh_grant_arbitrates_then_reports_with_key():
 
 def test_idempotent_replay_skips_arbitration_and_report():
     arbiter = FakeArbiter()
-    gate = FakeGate({"granted": True,
-                     "merge_idempotency_key": "k" * 32,
-                     "idempotent_replay": True, "error": ""})
+    gate = FakeGate(
+        {"granted": True, "merge_idempotency_key": "k" * 32, "idempotent_replay": True, "error": ""}
+    )
     orch = Orchestrator(merge_arbiter=arbiter, merge_gate=gate)
     asyncio.run(orch._arbitrate_task("t-1", BRANCHES))
     # The merge already reported on the first pass — skip execution AND
@@ -168,8 +183,12 @@ def test_idempotent_replay_skips_arbitration_and_report():
 def test_rejected_report_is_non_fatal():
     arbiter = FakeArbiter()
     gate = FakeGate(
-        {"granted": True, "merge_idempotency_key": "k" * 32,
-         "idempotent_replay": False, "error": ""},
+        {
+            "granted": True,
+            "merge_idempotency_key": "k" * 32,
+            "idempotent_replay": False,
+            "error": "",
+        },
         report={"accepted": False, "idempotent_replay": False},
     )
     orch = Orchestrator(merge_arbiter=arbiter, merge_gate=gate)
@@ -187,9 +206,14 @@ def test_no_gate_preserves_legacy_arbitration():
 
 
 def test_no_arbiter_is_noop_even_with_gate():
-    gate = FakeGate({"granted": True,
-                     "merge_idempotency_key": "k" * 32,
-                     "idempotent_replay": False, "error": ""})
+    gate = FakeGate(
+        {
+            "granted": True,
+            "merge_idempotency_key": "k" * 32,
+            "idempotent_replay": False,
+            "error": "",
+        }
+    )
     orch = Orchestrator(merge_arbiter=None, merge_gate=gate)
     asyncio.run(orch._arbitrate_task("t-1", BRANCHES))
     assert gate.grant_calls == []  # gate only consulted when arbiter exists
@@ -202,9 +226,12 @@ class FakeEngine:
     def __init__(self) -> None:
         self.issue_args: list[str] = []
         self.report_args: list[tuple] = []
-        self.issue_result = {"granted": True,
-                             "merge_idempotency_key": "k" * 32,
-                             "idempotent_replay": False, "error": ""}
+        self.issue_result = {
+            "granted": True,
+            "merge_idempotency_key": "k" * 32,
+            "idempotent_replay": False,
+            "error": "",
+        }
         self.report_result = {"accepted": True, "idempotent_replay": False}
 
     async def issue_merge_grant_async(self, graph_id: str) -> dict:
@@ -212,12 +239,23 @@ class FakeEngine:
         return dict(self.issue_result)
 
     async def report_merge_outcome_async(
-        self, graph_id: str, merge_idempotency_key: str, status: str,
-        merged_branches, conflict_branches, push_status: str,
+        self,
+        graph_id: str,
+        merge_idempotency_key: str,
+        status: str,
+        merged_branches,
+        conflict_branches,
+        push_status: str,
     ) -> dict:
         self.report_args.append(
-            (graph_id, merge_idempotency_key, status, merged_branches,
-             conflict_branches, push_status),
+            (
+                graph_id,
+                merge_idempotency_key,
+                status,
+                merged_branches,
+                conflict_branches,
+                push_status,
+            ),
         )
         return dict(self.report_result)
 
@@ -231,9 +269,14 @@ def test_merge_gate_adapter_maps_to_engine_calls():
 
     report = asyncio.run(
         gate.report_merge_outcome(
-            "t-1", "k" * 32,
-            {"status": "merged", "merged_branches": ["b1"],
-             "conflict_branches": ["b2"], "push_status": "pushed"},
+            "t-1",
+            "k" * 32,
+            {
+                "status": "merged",
+                "merged_branches": ["b1"],
+                "conflict_branches": ["b2"],
+                "push_status": "pushed",
+            },
         ),
     )
     assert report == {"accepted": True, "idempotent_replay": False}
@@ -247,9 +290,9 @@ def test_merge_gate_adapter_defaults_push_status():
     gate = MergeGate(engine)
     asyncio.run(
         gate.report_merge_outcome(
-            "t-1", "k" * 32,
-            {"status": "conflict", "merged_branches": [],
-             "conflict_branches": ["b1"]},
+            "t-1",
+            "k" * 32,
+            {"status": "conflict", "merged_branches": [], "conflict_branches": ["b1"]},
         ),
     )
     assert engine.report_args[0][5] == "no_push"

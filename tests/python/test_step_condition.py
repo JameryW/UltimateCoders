@@ -166,9 +166,7 @@ class TestAnd:
         assert evaluate("true && false", None) is False
 
     def test_prev_success_and_files_contains(self):
-        prev = _prev_success(
-            summary="ok", files=[_fc("src/main.rs")]
-        )
+        prev = _prev_success(summary="ok", files=[_fc("src/main.rs")])
         assert evaluate('prev.success && prev.files.contains("src/")', prev) is True
 
     def test_and_short_circuit_false_left(self):
@@ -257,10 +255,13 @@ class TestWhitespace:
 
     def test_spaces_in_complex_expr(self):
         prev = _prev_success(summary="ok", files=[_fc("src/main.rs")])
-        assert evaluate(
-            "  prev.success   &&   prev.files.contains(\"src/\")  ",
-            prev,
-        ) is True
+        assert (
+            evaluate(
+                '  prev.success   &&   prev.files.contains("src/")  ',
+                prev,
+            )
+            is True
+        )
 
     def test_no_spaces_around_and(self):
         assert evaluate("true&&true", None) is True
@@ -300,13 +301,14 @@ class TestComplexExpressions:
         assert evaluate(condition, prev) is True
 
     def test_combined_success_and_file_check(self):
-        prev = _prev_success(
-            summary="done", files=[_fc("src/main.rs")]
+        prev = _prev_success(summary="done", files=[_fc("src/main.rs")])
+        assert (
+            evaluate(
+                'prev.success && prev.files.contains("src/") && prev.summary.contains("done")',
+                prev,
+            )
+            is True
         )
-        assert evaluate(
-            'prev.success && prev.files.contains("src/") && prev.summary.contains("done")',
-            prev,
-        ) is True
 
     def test_negated_contains(self):
         prev = _prev_success(summary="clean")

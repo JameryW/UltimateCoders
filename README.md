@@ -138,7 +138,16 @@ Set the service URL on the planner and eligible workers, or in `docker/.env` for
 
 ```dotenv
 UC_METAINFER_URL=http://metainfer-host:8765
+UC_METAINFER_REVISION=b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890
+UC_METAINFER_BACKEND_ID=metainfer-gpu-a
 ```
+
+Mutating MetaInfer work requires the UC service contract (`uc-metainfer/1`):
+the service must advertise the pinned revision, a stable backend identity,
+workspace probes and all-writer quiescence evidence. The stock upstream server
+at the pinned commit does not expose that contract, so UC refuses mutating
+requests until a compatible companion/extension is deployed. Read-only schema
+probes may still be used for capability discovery.
 
 Workers advertise local `inference_benchmark` without MetaInfer. Remote tasks require `inference_infra` plus the operation capability confirmed by live plugin probes; heartbeat refresh withdraws unhealthy capabilities. Automatic routing requires inference context and engineering intent, and explicit agent choices take priority.
 
@@ -415,7 +424,7 @@ from the same remote, and merge arbitration reconciles concurrent edits.
 
 ## CI
 
-Ten independent workflows run on pushes and pull requests targeting `main`. All but `ci-scripts.yml` are path-filtered, so they only run when one of the listed paths changes; the workflow files themselves are the source of truth:
+Eleven independent workflows are defined. Ten run on pushes and pull requests targeting `main`; `metainfer-release-gate.yml` is manual-only. All but `ci-scripts.yml` and the manual gate are path-filtered, so they only run when one of the listed paths changes; the workflow files themselves are the source of truth:
 
 | Workflow | Trigger paths | Checks |
 |----------|--------------|--------|
@@ -429,6 +438,7 @@ Ten independent workflows run on pushes and pull requests targeting `main`. All 
 | **Codex Issue-Flow CI** (`ci-codex-flow.yml`) | `.agents/skills/**`, `AGENTS.md`, `docs/agents/domain.md`, `docs/agents/issue-tracker.md`, `docs/agents/mattpocock-skills.md`, `docs/agents/triage-labels.md`, `docs/workflows/codex-issue-flow.md`, `scripts/check-codex-issue-flow.py` | issue-workflow wiring validation |
 | **README CI Table CI** (`ci-readme-ci-table.yml`) | `README.md`, `README.zh-CN.md`, `.github/workflows/**`, `scripts/check-readme-ci-table.py`, `tests/python/test_check_readme_ci_table.py` | reconciles this table against the workflow YAML |
 | **Workflow Inputs CI** (`ci-workflow-inputs.yml`) | `.github/workflows/**`, `scripts/check-workflow-inputs.py`, `tests/python/test_check_workflow_inputs.py` | checks that every file a workflow's `run:` steps name is covered by its `paths` |
+| **MetaInfer Release Gate** (`metainfer-release-gate.yml`) | *(no paths filter; manual dispatch only)* | pinned MetaInfer service contract, shared-workspace preflight and GPU identity evidence gate |
 
 Every path-filtered workflow's own YAML file also matches its `paths` (named directly, or through `.github/workflows/**`), so editing a workflow re-runs it, and every workflow supports manual dispatch. The PostgreSQL-backed suite runs on every PR; storage integration tests only run on `main` pushes or manual dispatch (requires Docker Compose infra).
 
@@ -455,6 +465,9 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_RUNTIME_STATE_DIR` | `.uc/runtime` | Local SQLite when no database URL is set; keep outside candidate worktrees |
 | `UC_METAINFER_MAX_CONCURRENCY` | `1` | Shared concurrent-job limit for one backend |
 | `UC_METAINFER_TASK_TYPES` | Default plugins | JSON operation-to-plugin map shared by probing and execution |
+| `UC_METAINFER_REVISION` | _(empty)_ | Expected immutable MetaInfer service revision for mutating work |
+| `UC_METAINFER_BACKEND_ID` | URL hash | Stable service identity shared by all workers and recovery tools |
+| `UC_OUTBOX_RETENTION_SECONDS` | `604800` | How long delivered terminal outcomes remain before compact tombstoning |
 | `XAI_API_KEY` | - | xAI API key for the default Grok Build worker agent |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for Claude Code calls |
 | `OPENAI_API_KEY` | - | OpenAI API key for Codex calls |

@@ -99,8 +99,16 @@ class Oracle:
         return reasons
 
     def evaluate(self, baseline: BenchmarkResult, candidate: BenchmarkResult) -> OracleVerdict:
+        from .hardware import condition_drift
+
         reasons = [f"Baseline: {r}" for r in self.validate(baseline)]
         reasons.extend(self.validate(candidate))
+        reasons.extend(
+            condition_drift(
+                baseline.statistics.get("environment", {}),
+                candidate.statistics.get("environment", {}),
+            )
+        )
         if candidate.workload_id != baseline.workload_id:
             reasons.append("Workload identities differ")
         if candidate.environment_id != baseline.environment_id:

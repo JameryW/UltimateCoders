@@ -737,11 +737,7 @@ class Worker:
         that otherwise succeeded.
         """
         try:
-            incoming = [
-                str(p).strip()
-                for p in (paths or [])
-                if p is not None and str(p).strip()
-            ]
+            incoming = [str(p).strip() for p in (paths or []) if p is not None and str(p).strip()]
         except Exception:
             logger.debug("recent-files recording skipped", exc_info=True)
             return
@@ -1389,17 +1385,23 @@ class Worker:
             if persisted:
                 if persisted.get("delivery") == "pending":
                     leases = await asyncio.to_thread(state.records, "workspace_leases")
-                    delivery = next((
-                        lease.get("delivery") for lease in leases
-                        if lease.get("handle", {}).get("subtask_id") == subtask.id
-                        and lease.get("status") in ("completed", "delivered")
-                    ), None)
+                    delivery = next(
+                        (
+                            lease.get("delivery")
+                            for lease in leases
+                            if lease.get("handle", {}).get("subtask_id") == subtask.id
+                            and lease.get("status") in ("completed", "delivered")
+                        ),
+                        None,
+                    )
                     if delivery:
                         persisted["delivery"] = "complete"
                         if persisted.get("domain_result"):
                             persisted["domain_result"]["delivery"] = delivery
                         await asyncio.to_thread(
-                            state.mutate, "attempt_results", self._attempt_checkpoint_key(subtask),
+                            state.mutate,
+                            "attempt_results",
+                            self._attempt_checkpoint_key(subtask),
                             lambda _: persisted,
                         )
                 return persisted
@@ -1523,9 +1525,9 @@ class Worker:
                     state = await self._domain_state()
                     agent_config["_uc_runtime_state_dir"] = str(state.path.parent)
                     if self._workspace_manager:
-                        agent_config["_uc_workspace_owner"] = await (
-                            self._workspace_manager.runner_owner(working_dir)
-                        )
+                        agent_config[
+                            "_uc_workspace_owner"
+                        ] = await self._workspace_manager.runner_owner(working_dir)
 
                 output: AgentOutput = await self._sandbox_manager.execute(
                     prompt,
@@ -1617,9 +1619,7 @@ class Worker:
             for fp in declared_files:
                 self.conflict_detector.remove_intent(fp, self.worker_id)
 
-    async def _emit_step_event(
-        self, subtask: Subtask, event_type: str, **data: Any
-    ) -> None:
+    async def _emit_step_event(self, subtask: Subtask, event_type: str, **data: Any) -> None:
         """Publish a workflow step event, best-effort.
 
         Wraps _publish_event so a NATS/event-emitter failure never aborts
@@ -2015,8 +2015,8 @@ class Worker:
             state = await self._domain_state()
             merged_cfg["_uc_runtime_state_dir"] = str(state.path.parent)
             if self._workspace_manager:
-                merged_cfg["_uc_workspace_owner"] = await (
-                    self._workspace_manager.runner_owner(working_dir)
+                merged_cfg["_uc_workspace_owner"] = await self._workspace_manager.runner_owner(
+                    working_dir
                 )
 
         logger.info(
@@ -2313,7 +2313,8 @@ class Worker:
                 # gateway silently never re-indexed this file.
                 logger.warning(
                     "Failed to broadcast file change for %s",
-                    fc.file_path, exc_info=True,
+                    fc.file_path,
+                    exc_info=True,
                 )
 
     async def send_heartbeat(self) -> dict[str, Any]:
@@ -2372,12 +2373,11 @@ class Worker:
                 # discovery (SearchQuery.in_all_repos calls sync list_repos,
                 # another blocking RPC). Mirrors its repo_id extraction.
                 repos = await _engine_call(
-                    self.engine, "list_repos", "list_repos_async",
+                    self.engine,
+                    "list_repos",
+                    "list_repos_async",
                 )
-                sq.in_repos([
-                    r.repo_id if hasattr(r, "repo_id") else str(r)
-                    for r in (repos or [])
-                ])
+                sq.in_repos([r.repo_id if hasattr(r, "repo_id") else str(r) for r in (repos or [])])
             d = sq.to_dict()
             cache_key = WorkerLocalCache.search_key(
                 d["query"],
@@ -2388,7 +2388,10 @@ class Worker:
             result = self._search_cache.get_search(cache_key)
             if result is None:
                 result = await _engine_call(
-                    self.engine, "search", "search_async", sq,
+                    self.engine,
+                    "search",
+                    "search_async",
+                    sq,
                 )
                 if result is not None:
                     self._search_cache.put_search(cache_key, result)
@@ -2433,10 +2436,9 @@ class Worker:
 
         # ponytail: F59 — async repo discovery + search (see _build_search_context).
         repos = await _engine_call(self.engine, "list_repos", "list_repos_async")
-        sq = SearchQuery(query).in_repos([
-            r.repo_id if hasattr(r, "repo_id") else str(r)
-            for r in (repos or [])
-        ])
+        sq = SearchQuery(query).in_repos(
+            [r.repo_id if hasattr(r, "repo_id") else str(r) for r in (repos or [])]
+        )
         if modes:
             sq.with_modes(modes)
         sq.limit(max_results)
@@ -2464,7 +2466,9 @@ class Worker:
         # ponytail: F59 — async engine call (sync version blocked the loop in
         # gRPC mode).
         return await _engine_call(
-            self.engine, "read_memory", "read_memory_async",
+            self.engine,
+            "read_memory",
+            "read_memory_async",
             key_scope=scope,
             key=key,
             project_id=pid or None,
@@ -2502,7 +2506,9 @@ class Worker:
             # ponytail: F59 — async engine call (sync version blocked the loop
             # in gRPC mode).
             result = await _engine_call(
-                self.engine, "write_memory", "write_memory_async",
+                self.engine,
+                "write_memory",
+                "write_memory_async",
                 key_scope=scope,
                 key=key,
                 content=content,
@@ -2542,7 +2548,9 @@ class Worker:
             # ponytail: F59 — async engine call (sync version blocked the loop
             # in gRPC mode).
             await _engine_call(
-                self.engine, "delete_memory", "delete_memory_async",
+                self.engine,
+                "delete_memory",
+                "delete_memory_async",
                 key_scope=scope,
                 key=key,
                 project_id=pid or None,

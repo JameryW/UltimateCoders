@@ -961,6 +961,18 @@ fn step_from_proto(s: &WorkflowStepProto) -> uc_types::WorkflowStep {
 impl From<uc_engine::AgentEventType> for TaskEventProto {
     fn from(event: uc_engine::AgentEventType) -> Self {
         let (event_type, task_id, subtask_id, data) = match event {
+            uc_engine::AgentEventType::SubtaskRetried {
+                task_id,
+                subtask_id,
+                attempt_id,
+            } => (
+                "subtask_retried".to_string(),
+                task_id.0,
+                subtask_id.0,
+                vec![("attempt_id".to_string(), attempt_id.to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
             uc_engine::AgentEventType::TaskCreated {
                 task_id,
                 description,

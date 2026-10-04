@@ -94,6 +94,7 @@ class EditIntent:
 
     def __post_init__(self) -> None:
         import time
+
         if self.timestamp == 0.0:
             self.timestamp = time.time() * 1000
 
@@ -190,7 +191,9 @@ class ConflictDetector:
             A tuple of (ConflictResult, optional ConflictInfo).
         """
         result, info = self.check_conflict(
-            intent.file_path, intent.worker_id, intent.regions,
+            intent.file_path,
+            intent.worker_id,
+            intent.regions,
         )
 
         # Always record the intent
@@ -230,16 +233,10 @@ class ConflictDetector:
                 continue
 
             # Check if any regions overlap
-            has_overlap = any(
-                er.overlaps(nr)
-                for er in intent.regions
-                for nr in regions
-            )
+            has_overlap = any(er.overlaps(nr) for er in intent.regions for nr in regions)
 
             # Whole-file edit conflict
-            whole_file_conflict = (
-                (not intent.regions or not regions) and not has_overlap
-            )
+            whole_file_conflict = (not intent.regions or not regions) and not has_overlap
 
             if has_overlap or whole_file_conflict:
                 if intent.worker_id not in conflicting_workers:
@@ -248,16 +245,16 @@ class ConflictDetector:
                 for er in intent.regions:
                     for nr in regions:
                         if er.overlaps(nr):
-                            overlapping_regions.append(LineRange(
-                                start=min(er.start, nr.start),
-                                end=max(er.end, nr.end),
-                            ))
+                            overlapping_regions.append(
+                                LineRange(
+                                    start=min(er.start, nr.start),
+                                    end=max(er.end, nr.end),
+                                )
+                            )
 
         if not conflicting_workers:
             # Check for other workers on same file
-            other_workers = [
-                i.worker_id for i in existing if i.worker_id != worker_id
-            ]
+            other_workers = [i.worker_id for i in existing if i.worker_id != worker_id]
             if other_workers:
                 return ConflictResult.POTENTIAL_CONFLICT, ConflictInfo(
                     file_path=file_path,
@@ -277,8 +274,7 @@ class ConflictDetector:
         """Remove an intent after the edit is completed or abandoned."""
         if file_path in self._active_intents:
             self._active_intents[file_path] = [
-                i for i in self._active_intents[file_path]
-                if i.worker_id != worker_id
+                i for i in self._active_intents[file_path] if i.worker_id != worker_id
             ]
 
     def clear_intents(self) -> None:
@@ -371,13 +367,15 @@ class ConflictResolver:
         for o_start, o_end in ours_changed:
             for t_start, t_end in theirs_changed:
                 if o_start < t_end and t_start < o_end:
-                    conflicts.append(ConflictMarker(
-                        start_line=o_start + 1,
-                        end_line=max(o_end, t_end),
-                        ours="".join(ours_lines[o_start:o_end]) or ours,
-                        theirs="".join(theirs_lines[t_start:t_end]) or theirs,
-                        base="".join(base_lines[o_start:max(o_end, t_end)]) or base,
-                    ))
+                    conflicts.append(
+                        ConflictMarker(
+                            start_line=o_start + 1,
+                            end_line=max(o_end, t_end),
+                            ours="".join(ours_lines[o_start:o_end]) or ours,
+                            theirs="".join(theirs_lines[t_start:t_end]) or theirs,
+                            base="".join(base_lines[o_start : max(o_end, t_end)]) or base,
+                        )
+                    )
 
         if not conflicts:
             # Non-overlapping changes: merge by applying both sets
@@ -425,10 +423,7 @@ class ConflictResolver:
                 base_pos = i2
 
             # Check if the other side also changes this base region
-            other_in_range = [
-                op for op in all_ops
-                if op[5] != side and op[1] < i2 and op[2] > i1
-            ]
+            other_in_range = [op for op in all_ops if op[5] != side and op[1] < i2 and op[2] > i1]
 
             if other_in_range:
                 has_conflict = True
@@ -436,30 +431,33 @@ class ConflictResolver:
                 conflict_start = min(i1, min(op[1] for op in other_in_range))
                 conflict_end = max(i2, max(op[2] for op in other_in_range))
                 if not any(
-                    s <= conflict_start and e >= conflict_end
-                    for s, e in seen_conflict_ranges
+                    s <= conflict_start and e >= conflict_end for s, e in seen_conflict_ranges
                 ):
                     seen_conflict_ranges.append((conflict_start, conflict_end))
                     # ponytail: flatten list-of-str slices from matching ops
                     ours_ops = [op for op in other_in_range if op[5] == "ours"]
                     theirs_ops = [op for op in other_in_range if op[5] == "theirs"]
                     ours_content = (
-                        "".join(ours_lines[j1:j2]) if side == "ours"
-                        else "".join(s for op in ours_ops for s in ours_lines[op[3]:op[4]])
+                        "".join(ours_lines[j1:j2])
+                        if side == "ours"
+                        else "".join(s for op in ours_ops for s in ours_lines[op[3] : op[4]])
                         or "".join(base_lines[conflict_start:conflict_end])
                     )
                     theirs_content = (
-                        "".join(theirs_lines[j1:j2]) if side == "theirs"
-                        else "".join(s for op in theirs_ops for s in theirs_lines[op[3]:op[4]])
+                        "".join(theirs_lines[j1:j2])
+                        if side == "theirs"
+                        else "".join(s for op in theirs_ops for s in theirs_lines[op[3] : op[4]])
                         or "".join(base_lines[conflict_start:conflict_end])
                     )
-                    conflicts.append(ConflictMarker(
-                        start_line=conflict_start + 1,
-                        end_line=conflict_end + 1,
-                        ours=ours_content,
-                        theirs=theirs_content,
-                        base="".join(base_lines[conflict_start:conflict_end]),
-                    ))
+                    conflicts.append(
+                        ConflictMarker(
+                            start_line=conflict_start + 1,
+                            end_line=conflict_end + 1,
+                            ours=ours_content,
+                            theirs=theirs_content,
+                            base="".join(base_lines[conflict_start:conflict_end]),
+                        )
+                    )
             else:
                 # Only one side changed — take that side
                 if side == "ours":
@@ -488,7 +486,8 @@ class ConflictResolver:
 
     @staticmethod
     def _compute_changes(
-        base_lines: list[str], changed_lines: list[str],
+        base_lines: list[str],
+        changed_lines: list[str],
     ) -> list[tuple[int, int]]:
         """Compute (start, end) ranges of lines that differ from base.
 
@@ -559,6 +558,7 @@ class ConflictResolver:
             return self._reassign(base, ours, theirs)
 
         import asyncio
+
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -577,6 +577,7 @@ class ConflictResolver:
             if loop is not None and loop.is_running():
                 # Already in async context — create task
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     merged = pool.submit(
                         asyncio.run,

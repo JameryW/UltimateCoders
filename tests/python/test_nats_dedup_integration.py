@@ -101,18 +101,14 @@ async def test_resends_of_one_dispatch_collapse_but_a_new_attempt_does_not():
     js, name, subject = await _scratch_stream(nc)
     try:
         for _ in range(3):
-            await nc.publish(
-                subject, b'{"attempt_id":"0"}', headers={"Nats-Msg-Id": "k-attempt-0"}
-            )
+            await nc.publish(subject, b'{"attempt_id":"0"}', headers={"Nats-Msg-Id": "k-attempt-0"})
         await asyncio.sleep(0.5)
         assert await _messages(js, name) == 1, (
             "re-sends of the same Nats-Msg-Id must collapse to one stored message"
         )
 
         # A retry mints attempt 1 → new key → must survive dedup.
-        await nc.publish(
-            subject, b'{"attempt_id":"1"}', headers={"Nats-Msg-Id": "k-attempt-1"}
-        )
+        await nc.publish(subject, b'{"attempt_id":"1"}', headers={"Nats-Msg-Id": "k-attempt-1"})
         await asyncio.sleep(0.5)
         assert await _messages(js, name) == 2, (
             "a new attempt must not be deduped against the previous one"

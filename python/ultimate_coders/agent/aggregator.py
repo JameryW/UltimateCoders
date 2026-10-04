@@ -30,10 +30,11 @@ logger = logging.getLogger(__name__)
 
 class AggregationStatus(Enum):
     """Status of result aggregation."""
+
     SUCCESS = "success"
-    PARTIAL = "partial"         # some subtasks failed, partial results accepted
-    CONFLICT = "conflict"       # file merge conflicts detected
-    FAILED = "failed"           # too many failures, cannot aggregate
+    PARTIAL = "partial"  # some subtasks failed, partial results accepted
+    CONFLICT = "conflict"  # file merge conflicts detected
+    FAILED = "failed"  # too many failures, cannot aggregate
 
 
 @dataclass
@@ -108,8 +109,7 @@ class ResultAggregator:
             return AggregatedResult(
                 status=AggregationStatus.FAILED,
                 summary=(
-                    f"Too many failures: "
-                    f"{len(failures)}/{len(subtask_results)} subtasks failed"
+                    f"Too many failures: {len(failures)}/{len(subtask_results)} subtasks failed"
                 ),
                 failed_subtasks=[r.subtask_id for r in failures],
             )
@@ -133,14 +133,18 @@ class ResultAggregator:
             else:
                 # Multiple modifiers — three-way merge
                 merge_result = await self._merge_file(
-                    file_path, changes, base_files,
+                    file_path,
+                    changes,
+                    base_files,
                 )
                 if merge_result.success:
-                    merged_files.append(FileChange(
-                        file_path=file_path,
-                        change_type=changes[0].change_type,
-                        diff=merge_result.merged or "",
-                    ))
+                    merged_files.append(
+                        FileChange(
+                            file_path=file_path,
+                            change_type=changes[0].change_type,
+                            diff=merge_result.merged or "",
+                        )
+                    )
                 else:
                     conflict_files.append(file_path)
                     # Still include the first change as best-effort
@@ -235,7 +239,6 @@ class ResultAggregator:
         """
         if not self._llm_client:
             return ""
-
 
         prompt = (
             "You are a result synthesis agent. Combine the following subtask results "

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+
+# Set before Dashboard imports cache the metrics path. Tests never share the
+# developer's database, including subprocess-based routing tests on Windows.
+os.environ["UC_METRICS_DB"] = os.path.abspath(".uc/test-metrics/metrics.db")
 
 
 @pytest.fixture(autouse=True)
@@ -36,20 +41,15 @@ class StubEngine:
     def remove_index(self, repo_id: str = "", **kwargs: Any) -> None:
         pass
 
-    def read_memory(
-        self, key_scope: str = "", key: str = "", **kwargs: Any
-    ) -> Any:
+    def read_memory(self, key_scope: str = "", key: str = "", **kwargs: Any) -> Any:
         return None
 
     def write_memory(
-        self, key_scope: str = "", key: str = "", content: str = "",
-        **kwargs: Any
+        self, key_scope: str = "", key: str = "", content: str = "", **kwargs: Any
     ) -> Any:
         return True
 
-    def delete_memory(
-        self, key_scope: str = "", key: str = "", **kwargs: Any
-    ) -> bool:
+    def delete_memory(self, key_scope: str = "", key: str = "", **kwargs: Any) -> bool:
         return True
 
     def search_memory(self, **kwargs: Any) -> Any:

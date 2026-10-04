@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 @dataclass
 class SearchResultItem:
     """A single item in the search results."""
+
     repo_id: str
     file_path: str
     start_line: int
@@ -27,6 +28,7 @@ class SearchResultItem:
 @dataclass
 class SearchResult:
     """Collection of search results."""
+
     items: list[SearchResultItem] = field(default_factory=list)
 
     @property
@@ -34,6 +36,4 @@ class SearchResult:
         return len(self.items)
 
     def sorted_by_score(self) -> SearchResult:
-        return SearchResult(
-            items=sorted(self.items, key=lambda x: x.score, reverse=True)
-        )
+        return SearchResult(items=sorted(self.items, key=lambda x: x.score, reverse=True))

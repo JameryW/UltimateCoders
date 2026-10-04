@@ -727,6 +727,11 @@ pub trait GraphShadowSink: Send + Sync {
     /// payload.
     async fn on_fail(&self, _envelope: &ExecutionEnvelope, _reason: &str) {}
 
+    /// Re-arm a legacy failed projection after an explicit, operator-approved
+    /// retry. Implementations must keep the graph CAS and audit event together;
+    /// a missing graph row is a no-op because the shadow mirror may lag.
+    async fn on_retry(&self, _envelope: &ExecutionEnvelope) {}
+
     /// Graph-plane reaper (T6 #642): sweep every `RUNNING` attempt whose
     /// heartbeat (`heartbeat_at`, falling back to `started_at`) is older
     /// than `heartbeat_timeout` through the fail path — attempt `FAILED` +
@@ -1680,6 +1685,63 @@ impl GraphStore {
             .await
             .map_err(|e| EngineError::StorageError(format!("schedule tx commit: {}", e)))?;
         Ok(Some(attempt))
+    }
+
+    /// Explicit retry of a graph node whose retry budget was exhausted. This
+    /// is separate from timeout rearming: the caller has already performed the
+    /// legacy task CAS and supplies the new dispatch attempt as an audit fence.
+    #[cfg(feature = "storage")]
+    pub async fn retry_failed_node(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        dispatch_attempt: u32,
+    ) -> Result<bool, EngineError> {
+        let mut tx = self.begin_tx("retry_failed_node").await?;
+        lock_graph_tx(&mut tx, graph_id).await?;
+        let node: Option<(String, i64)> = sqlx::query_as(
+            "SELECT state, version FROM graph_nodes WHERE graph_id = $1 AND node_id = $2 FOR UPDATE",
+        )
+        .bind(graph_id)
+        .bind(node_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("retry: node lock: {}", e)))?;
+        let Some((state, version)) = node else {
+            return Ok(false);
+        };
+        if state != NodeStatus::Failed.as_str()
+            || !transition_ok(&state, NodeStatus::Ready.as_str())
+        {
+            return Ok(false);
+        }
+        let gv = bump_graph_version_tx(&mut tx, graph_id).await?;
+        if !cas_node_state_tx(
+            &mut tx,
+            graph_id,
+            node_id,
+            &state,
+            version,
+            NodeStatus::Ready.as_str(),
+        )
+        .await?
+        {
+            return Ok(false);
+        }
+        append_event_tx(
+            &mut tx,
+            graph_id,
+            Some(node_id),
+            None,
+            Some(gv),
+            "node_retried",
+            serde_json::json!({ "dispatch_attempt": dispatch_attempt }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|e| EngineError::StorageError(format!("retry tx commit: {}", e)))?;
+        Ok(true)
     }
 
     /// Refresh `heartbeat_at = NOW()` on a still-`RUNNING` attempt. Returns
@@ -3134,6 +3196,17 @@ impl GraphShadowSink for GraphStore {
         {
             Ok(_) => {}
             Err(e) => tracing::warn!("graph on_fail failed: {}", e),
+        }
+    }
+
+    async fn on_retry(&self, envelope: &ExecutionEnvelope) {
+        let dispatch_attempt = envelope.attempt_id.parse::<u32>().unwrap_or_default();
+        match self
+            .retry_failed_node(&envelope.graph_id, &envelope.node_id, dispatch_attempt)
+            .await
+        {
+            Ok(true) | Ok(false) => {}
+            Err(e) => tracing::warn!("graph on_retry failed: {}", e),
         }
     }
 

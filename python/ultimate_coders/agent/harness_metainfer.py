@@ -125,6 +125,8 @@ class MetaInferAgentAdapter(AgentAdapter):
             success=False,
             retryable=False,
             cleanup_pending=getattr(self, "_remote", True),
-            summary=("Inference runner returned no valid final result; "
-                     "remote state requires reconciliation"),
+            summary=(
+                "Inference runner returned no valid final result; "
+                "remote state requires reconciliation"
+            ),
         )

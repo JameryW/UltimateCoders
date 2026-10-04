@@ -10,8 +10,15 @@ from ultimate_coders.dashboard.app import DashboardApp
 
 @pytest.mark.parametrize(
     "body",
-    [None, [], 1, True, {"description": 12}, {"description": []},
-     {"description": "work", "project_id": []}],
+    [
+        None,
+        [],
+        1,
+        True,
+        {"description": 12},
+        {"description": []},
+        {"description": "work", "project_id": []},
+    ],
 )
 def test_invalid_submit_fields_return_bad_request_without_publishing(body):
     with patch("ultimate_coders.dashboard.app.MetricsAggregator"):
@@ -20,7 +27,8 @@ def test_invalid_submit_fields_return_bad_request_without_publishing(body):
     dashboard._nats_publisher = publisher
     with TestClient(dashboard._app, raise_server_exceptions=False) as client:
         response = client.post(
-            "/dashboard/api/tasks/submit", content=json.dumps(body),
+            "/dashboard/api/tasks/submit",
+            content=json.dumps(body),
             headers={"Content-Type": "application/json"},
         )
     assert response.status_code == 400

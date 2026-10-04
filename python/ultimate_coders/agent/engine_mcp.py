@@ -55,16 +55,17 @@ def _create_server(engine: Engine) -> object:
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": (
-                                "Search query (natural language or code pattern)"
-                            ),
+                            "description": ("Search query (natural language or code pattern)"),
                         },
                         "modes": {
                             "type": "array",
                             "items": {
                                 "type": "string",
                                 "enum": [
-                                    "text", "semantic", "ast", "hybrid",
+                                    "text",
+                                    "semantic",
+                                    "ast",
+                                    "hybrid",
                                 ],
                             },
                             "default": ["hybrid"],
@@ -96,10 +97,7 @@ def _create_server(engine: Engine) -> object:
                         },
                         "project_id": {
                             "type": "string",
-                            "description": (
-                                "Project scope (optional,"
-                                " global if empty)"
-                            ),
+                            "description": ("Project scope (optional, global if empty)"),
                         },
                     },
                     "required": ["key"],
@@ -122,10 +120,7 @@ def _create_server(engine: Engine) -> object:
                         },
                         "project_id": {
                             "type": "string",
-                            "description": (
-                                "Project scope (optional,"
-                                " global if empty)"
-                            ),
+                            "description": ("Project scope (optional, global if empty)"),
                         },
                         "content_type": {
                             "type": "string",
@@ -202,9 +197,13 @@ async def _write_memory(engine: Engine, args: dict) -> list[TextContent]:
     importance = args.get("importance", 0.7)
     scope = "project" if project_id else "global"
     result = engine.write_memory(
-        key_scope=scope, key=key, content=content,
-        content_type=content_type, source_agent="mcp:uc-engine",
-        importance=importance, project_id=project_id or None,
+        key_scope=scope,
+        key=key,
+        content=content,
+        content_type=content_type,
+        source_agent="mcp:uc-engine",
+        importance=importance,
+        project_id=project_id or None,
     )
     status = "ok" if result else "failed"
     return [TextContent(type="text", text=f"Memory '{key}' written ({status}).")]
@@ -223,6 +222,7 @@ def main() -> None:
     server = _create_server(engine)
 
     import asyncio
+
     asyncio.run(stdio_server(server).serve())
 
 

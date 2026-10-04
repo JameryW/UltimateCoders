@@ -47,9 +47,13 @@ class TestRegistry:
         ensure_builtin_plugins()
         agents = available_agents()
         for expected in (
-            "grok-build", "grok",
-            "claude-code", "claude-code-decompose", "codex",
-            "deepseek-harness", "deepseek",
+            "grok-build",
+            "grok",
+            "claude-code",
+            "claude-code-decompose",
+            "codex",
+            "deepseek-harness",
+            "deepseek",
         ):
             assert expected in agents, f"{expected} missing from {agents}"
         # no duplicate entries
@@ -176,13 +180,11 @@ class TestPluginDiscovery:
             import logging as _logging
 
             with caplog.at_level(_logging.WARNING, logger="ultimate_coders.agent.registry"):
-                discover_plugins()          # first discovery: imports + registers
+                discover_plugins()  # first discovery: imports + registers
                 first = registry.get_spec("twice-agent")
                 create_adapter("twice-agent")  # internal discover_once() must no-op
-                discover_plugins()          # direct repeat must also no-op
-            conflicts = [
-                r for r in caplog.records if "already registered" in r.getMessage()
-            ]
+                discover_plugins()  # direct repeat must also no-op
+            conflicts = [r for r in caplog.records if "already registered" in r.getMessage()]
             assert not conflicts, f"spurious duplicate warnings: {conflicts}"
             assert registry.get_spec("twice-agent") is first  # same spec object
         finally:
@@ -208,9 +210,7 @@ class TestDeepSeekAdapterRequest:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
-        cfg = SandboxConfig(
-            agent="deepseek-harness", project_path=str(tmp_path), api_key="sk-ds"
-        )
+        cfg = SandboxConfig(agent="deepseek-harness", project_path=str(tmp_path), api_key="sk-ds")
         request = DeepSeekHarnessAdapter().build_request("p", str(tmp_path), cfg)
         assert request["env_vars"].get("DEEPSEEK_API_KEY") == "sk-ds"
         # No explicit gateway → do not override dsh's public default
@@ -273,9 +273,7 @@ class TestDeepSeekAdapterParse:
             'credentials-local: the value for "version" in '
             "C:\\Users\\x\\.dsh\\.credentials.yaml must be a string"
         )
-        out = DeepSeekHarnessAdapter().parse_output(
-            self._result("", stderr=stderr, exit_code=1)
-        )
+        out = DeepSeekHarnessAdapter().parse_output(self._result("", stderr=stderr, exit_code=1))
         assert out.success is False
         assert ".credentials.yaml" in out.summary
         assert "flatten" in out.summary
@@ -330,9 +328,7 @@ class TestDeepSeekPreflight:
                 "C:\\Users\\x\\.dsh\\.credentials.yaml must be a string",
             )
 
-        monkeypatch.setattr(
-            "ultimate_coders.agent.harness_deepseek.subprocess.run", _fail
-        )
+        monkeypatch.setattr("ultimate_coders.agent.harness_deepseek.subprocess.run", _fail)
         ok, message = preflight_check()
         assert ok is False
         assert message == CREDENTIALS_FORMAT_HINT
@@ -360,9 +356,7 @@ class TestDeepSeekPreflight:
         assert credentials_format_hint(tmp_path) == CREDENTIALS_FORMAT_HINT
 
     def test_credentials_format_hint_flat(self, tmp_path: Path) -> None:
-        (tmp_path / ".credentials.yaml").write_text(
-            "DEEPSEEK_API_KEY: sk-x\n", encoding="utf-8"
-        )
+        (tmp_path / ".credentials.yaml").write_text("DEEPSEEK_API_KEY: sk-x\n", encoding="utf-8")
         assert credentials_format_hint(tmp_path) is None
 
     def test_credentials_format_hint_absent(self, tmp_path: Path) -> None:

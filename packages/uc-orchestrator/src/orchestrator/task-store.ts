@@ -38,6 +38,7 @@ export interface PersistedTask {
 		recentToolCalls?: string[];
 		stderrTail?: string;
 		retryCount?: number;
+	dispatchRetryCount?: number;
 		/** Dispatch mode: "local" | "remote" | "prefer_remote" | "auto" */
 		dispatchMode?: DispatchMode;
 		/** File-overlap parallelism grade (C5) — rides the cache so the claim

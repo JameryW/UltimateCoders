@@ -5,6 +5,6 @@
 {"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace config and credential flow across registry, sandbox, Docker, and docs."}
 {"file":".trellis/spec/guides/cross-platform-deployment-thinking-guide.md","reason":"Preserve Docker and cross-platform Worker subprocess behavior."}
 {"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing adapter and subprocess patterns before adding helpers."}
-{"file":".trellis/tasks/09-29-add-opencode-oh-my-pi-mimo-code/research/opencode.md","reason":"Verified current OpenCode V2 install, CLI, MiMo config, and fallback limitations."}
-{"file":".trellis/tasks/09-29-add-opencode-oh-my-pi-mimo-code/research/oh-my-pi.md","reason":"Verified OMP headless invocation, provider setup, and native fallback configuration."}
-{"file":".trellis/tasks/09-29-add-opencode-oh-my-pi-mimo-code/research/mimo-code.md","reason":"Verified MiMo Code headless invocation, direct API setup, and fallback limitations."}
+{"file":".trellis/tasks/archive/2026-10/09-29-add-opencode-oh-my-pi-mimo-code/research/opencode.md","reason":"Verified current OpenCode V2 install, CLI, MiMo config, and fallback limitations."}
+{"file":".trellis/tasks/archive/2026-10/09-29-add-opencode-oh-my-pi-mimo-code/research/oh-my-pi.md","reason":"Verified OMP headless invocation, provider setup, and native fallback configuration."}
+{"file":".trellis/tasks/archive/2026-10/09-29-add-opencode-oh-my-pi-mimo-code/research/mimo-code.md","reason":"Verified MiMo Code headless invocation, direct API setup, and fallback limitations."}

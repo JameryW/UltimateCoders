@@ -31,6 +31,7 @@ pytestmark = pytest.mark.asyncio
 # Helpers
 # --------------------------------------------------------------------------- #
 
+
 def _git(args: list[str], cwd: str) -> str:
     """Run a git command, asserting success, returning stdout."""
     result = subprocess.run(
@@ -39,14 +40,13 @@ def _git(args: list[str], cwd: str) -> str:
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, (
-        f"git {args} failed in {cwd}: {result.stderr}"
-    )
+    assert result.returncode == 0, f"git {args} failed in {cwd}: {result.stderr}"
     return result.stdout
 
 
 def _remove_tree(path: Path) -> None:
     """Remove a git worktree, including read-only object files on Windows."""
+
     def _make_writable_and_retry(func, target, _exc_info):
         os.chmod(target, stat.S_IWRITE)
         func(target)
@@ -110,16 +110,23 @@ def _remote_main_content(remote: Path, file_path: str) -> str:
 # Non-conflicting branches → both merged, main pushed
 # --------------------------------------------------------------------------- #
 
+
 async def test_arbitrate_merges_non_conflicting_branches(tmp_path):
     """Two branches touching DIFFERENT files → both merged, main pushed."""
     remote = _make_bare_remote(tmp_path)
     _make_subtask_branch(
-        remote, tmp_path, "uc/subtask/aaa111222333",
-        "feature_a.txt", "feature A\n",
+        remote,
+        tmp_path,
+        "uc/subtask/aaa111222333",
+        "feature_a.txt",
+        "feature A\n",
     )
     _make_subtask_branch(
-        remote, tmp_path, "uc/subtask/bbb444555666",
-        "feature_b.txt", "feature B\n",
+        remote,
+        tmp_path,
+        "uc/subtask/bbb444555666",
+        "feature_b.txt",
+        "feature B\n",
     )
 
     proj = tmp_path / "arbiter"
@@ -130,10 +137,12 @@ async def test_arbitrate_merges_non_conflicting_branches(tmp_path):
     )
     await arbiter.ensure_clone()
 
-    result = await arbiter.arbitrate([
-        "uc/subtask/aaa111222333",
-        "uc/subtask/bbb444555666",
-    ])
+    result = await arbiter.arbitrate(
+        [
+            "uc/subtask/aaa111222333",
+            "uc/subtask/bbb444555666",
+        ]
+    )
 
     assert result["status"] == "merged"
     assert set(result["merged_branches"]) == {
@@ -152,6 +161,7 @@ async def test_arbitrate_merges_non_conflicting_branches(tmp_path):
 # Conflicting branches → conflict detected, non-conflicting one merged
 # --------------------------------------------------------------------------- #
 
+
 async def test_arbitrate_detects_conflict_same_file(tmp_path):
     """Two branches editing the SAME lines of the same file → conflict.
 
@@ -164,12 +174,18 @@ async def test_arbitrate_detects_conflict_same_file(tmp_path):
     # genuine conflicting change that neither git nor the resolver can
     # auto-merge (both sides changed the same line from "line1").
     _make_subtask_branch(
-        remote, tmp_path, "uc/subtask/ccc111222333",
-        "app.txt", "CHANGED_BY_C\n",
+        remote,
+        tmp_path,
+        "uc/subtask/ccc111222333",
+        "app.txt",
+        "CHANGED_BY_C\n",
     )
     _make_subtask_branch(
-        remote, tmp_path, "uc/subtask/ddd444555666",
-        "app.txt", "CHANGED_BY_D\n",
+        remote,
+        tmp_path,
+        "uc/subtask/ddd444555666",
+        "app.txt",
+        "CHANGED_BY_D\n",
     )
 
     proj = tmp_path / "arbiter"
@@ -180,10 +196,12 @@ async def test_arbitrate_detects_conflict_same_file(tmp_path):
     )
     await arbiter.ensure_clone()
 
-    result = await arbiter.arbitrate([
-        "uc/subtask/ccc111222333",
-        "uc/subtask/ddd444555666",
-    ])
+    result = await arbiter.arbitrate(
+        [
+            "uc/subtask/ccc111222333",
+            "uc/subtask/ddd444555666",
+        ]
+    )
 
     assert result["status"] == "conflict"
     assert result["push_status"] == "skipped"
@@ -197,6 +215,7 @@ async def test_arbitrate_detects_conflict_same_file(tmp_path):
 # --------------------------------------------------------------------------- #
 # Non-overlapping changes to the SAME file → merged via ConflictResolver
 # --------------------------------------------------------------------------- #
+
 
 async def test_arbitrate_resolves_non_overlapping_same_file(tmp_path):
     """Two branches editing DIFFERENT parts of the same file → merged.
@@ -218,12 +237,18 @@ async def test_arbitrate_resolves_non_overlapping_same_file(tmp_path):
 
     # Branch A appends a line at the end; Branch B edits line1.
     _make_subtask_branch(
-        remote, tmp_path, "uc/subtask/eee111222333",
-        "multi.txt", "line1\nline2\nline3\nADDED_BY_E\n",
+        remote,
+        tmp_path,
+        "uc/subtask/eee111222333",
+        "multi.txt",
+        "line1\nline2\nline3\nADDED_BY_E\n",
     )
     _make_subtask_branch(
-        remote, tmp_path, "uc/subtask/fff444555666",
-        "multi.txt", "EDITED_BY_F\nline2\nline3\n",
+        remote,
+        tmp_path,
+        "uc/subtask/fff444555666",
+        "multi.txt",
+        "EDITED_BY_F\nline2\nline3\n",
     )
 
     proj = tmp_path / "arbiter"
@@ -234,10 +259,12 @@ async def test_arbitrate_resolves_non_overlapping_same_file(tmp_path):
     )
     await arbiter.ensure_clone()
 
-    result = await arbiter.arbitrate([
-        "uc/subtask/eee111222333",
-        "uc/subtask/fff444555666",
-    ])
+    result = await arbiter.arbitrate(
+        [
+            "uc/subtask/eee111222333",
+            "uc/subtask/fff444555666",
+        ]
+    )
 
     # git's own merge may or may not resolve this depending on context;
     # the ConflictResolver should handle non-overlapping edits. Either way,
@@ -249,6 +276,7 @@ async def test_arbitrate_resolves_non_overlapping_same_file(tmp_path):
 # --------------------------------------------------------------------------- #
 # No remote → arbitrate is a graceful no-op
 # --------------------------------------------------------------------------- #
+
 
 async def test_arbitrate_no_remote_skips_gracefully(tmp_path):
     """When remote_url is empty, ensure_clone + arbitrate are no-ops.
@@ -273,6 +301,7 @@ async def test_arbitrate_no_remote_skips_gracefully(tmp_path):
 # --------------------------------------------------------------------------- #
 # Empty branch list → skipped
 # --------------------------------------------------------------------------- #
+
 
 async def test_arbitrate_empty_branch_list(tmp_path):
     """An empty subtask_branches list → status skipped."""

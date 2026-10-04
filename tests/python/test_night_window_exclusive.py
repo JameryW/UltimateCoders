@@ -41,9 +41,7 @@ def _st(desc: str) -> dict:
 def _make_orchestrator() -> Orchestrator:
     """Build an Orchestrator with a mock LLM that returns one subtask."""
     llm = MagicMock()
-    llm.complete = AsyncMock(
-        return_value=_llm_response(_subtask_json_list([_st("Do the thing")]))
-    )
+    llm.complete = AsyncMock(return_value=_llm_response(_subtask_json_list([_st("Do the thing")])))
     return Orchestrator(llm_client=llm)
 
 
@@ -139,9 +137,7 @@ class TestNightWindowBypass:
         orch = _make_orchestrator()
         orch.set_night_window_active(True)
 
-        task = await orch.submit_task(
-            "Nightly rebuild", task_id="t-sched", _scheduled=True
-        )
+        task = await orch.submit_task("Nightly rebuild", task_id="t-sched", _scheduled=True)
 
         # Scheduled tasks execute normally even when window is active
         assert task.status == TaskStatus.IN_PROGRESS
@@ -170,9 +166,7 @@ class TestNightWindowInactive:
     async def test_scheduled_executes_when_inactive(self):
         orch = _make_orchestrator()
 
-        task = await orch.submit_task(
-            "Nightly rebuild", task_id="t-sched2", _scheduled=True
-        )
+        task = await orch.submit_task("Nightly rebuild", task_id="t-sched2", _scheduled=True)
 
         assert task.status == TaskStatus.IN_PROGRESS
         assert len(task.subtasks) == 1
@@ -249,17 +243,22 @@ class TestHandleSubmitScheduledFlag:
         """Build a NatsWorker-like mock with just enough to test _handle_submit."""
         worker = MagicMock()
         from ultimate_coders.runtime_state import RuntimeState
+
         worker._state_store = AsyncMock(return_value=RuntimeState(database_url=""))
         worker._orchestrator = _make_orchestrator()
+
         # _spawn_bg receives a coroutine; close it to avoid "never awaited"
         # warnings while still tracking call counts via the mock.
         def _consume_bg(coro):
             coro.close()
+
         worker._spawn_bg = MagicMock(side_effect=_consume_bg)
+
         # _execute_subtasks is a coroutine — return a dummy coro that
         # completes immediately (avoids "never awaited" warnings).
         async def _dummy_exec(task):
             pass
+
         worker._execute_subtasks = lambda task: _dummy_exec(task)
         return worker
 
@@ -276,11 +275,13 @@ class TestHandleSubmitScheduledFlag:
         worker = self._make_worker()
         worker._orchestrator.set_night_window_active(True)
 
-        msg = self._make_msg({
-            "task_id": "t-rt",
-            "description": "Real-time task",
-            "project_id": "proj",
-        })
+        msg = self._make_msg(
+            {
+                "task_id": "t-rt",
+                "description": "Real-time task",
+                "project_id": "proj",
+            }
+        )
 
         await NatsWorker._handle_submit(worker, msg)
 
@@ -295,12 +296,14 @@ class TestHandleSubmitScheduledFlag:
         worker = self._make_worker()
         worker._orchestrator.set_night_window_active(True)
 
-        msg = self._make_msg({
-            "task_id": "t-sched",
-            "description": "Scheduled task",
-            "project_id": "proj",
-            "scheduled": True,
-        })
+        msg = self._make_msg(
+            {
+                "task_id": "t-sched",
+                "description": "Scheduled task",
+                "project_id": "proj",
+                "scheduled": True,
+            }
+        )
 
         await NatsWorker._handle_submit(worker, msg)
 
@@ -315,11 +318,13 @@ class TestHandleSubmitScheduledFlag:
         worker = self._make_worker()
         # night_window_active is False by default
 
-        msg = self._make_msg({
-            "task_id": "t-rt",
-            "description": "Real-time task",
-            "project_id": "proj",
-        })
+        msg = self._make_msg(
+            {
+                "task_id": "t-rt",
+                "description": "Real-time task",
+                "project_id": "proj",
+            }
+        )
 
         await NatsWorker._handle_submit(worker, msg)
 
@@ -332,12 +337,14 @@ class TestHandleSubmitScheduledFlag:
 
         worker = self._make_worker()
 
-        msg = self._make_msg({
-            "task_id": "t-rt",
-            "description": "Real-time task",
-            "project_id": "proj",
-            "scheduled": False,
-        })
+        msg = self._make_msg(
+            {
+                "task_id": "t-rt",
+                "description": "Real-time task",
+                "project_id": "proj",
+                "scheduled": False,
+            }
+        )
 
         await NatsWorker._handle_submit(worker, msg)
 

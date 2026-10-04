@@ -91,12 +91,14 @@ def test_complete_snapshot_preserves_original_request_for_gateway_dispatch():
     task = Task(
         id="t-request",
         description=original,
-        subtasks=[Subtask(
-            id="t-request-s0",
-            parent_id="t-request",
-            description="Read README.md",
-            user_request=original,
-        )],
+        subtasks=[
+            Subtask(
+                id="t-request-s0",
+                parent_id="t-request",
+                description="Read README.md",
+                user_request=original,
+            )
+        ],
         status=TaskStatus.IN_PROGRESS,
     )
 
@@ -108,14 +110,31 @@ def test_complete_snapshot_preserves_original_request_for_gateway_dispatch():
 
 
 def test_snapshot_carries_execution_configuration_but_partial_cannot_replace_it():
-    config = {"agent": "local-harness", "max_turns": 12,
-              "inference_task": {"workload_id": "ollama-chat"}}
-    task = Task(id="t-config", description="verify", subtasks=[Subtask(
-        id="t-config-node", parent_id="t-config", description="execute",
-        agent_config=config, required_capabilities=["inference_infra"],
-        file_constraints=["calculator.py"], expected_output="passing tests",
-        steps=[WorkflowStep(agent="local-harness", prompt="verify", agent_config={"max_turns": 4})],
-    )])
+    config = {
+        "agent": "local-harness",
+        "max_turns": 12,
+        "inference_task": {"workload_id": "ollama-chat"},
+    }
+    task = Task(
+        id="t-config",
+        description="verify",
+        subtasks=[
+            Subtask(
+                id="t-config-node",
+                parent_id="t-config",
+                description="execute",
+                agent_config=config,
+                required_capabilities=["inference_infra"],
+                file_constraints=["calculator.py"],
+                expected_output="passing tests",
+                steps=[
+                    WorkflowStep(
+                        agent="local-harness", prompt="verify", agent_config={"max_turns": 4}
+                    )
+                ],
+            )
+        ],
+    )
     full = _make_task_update_payload(task)["subtasks"][0]
     assert json.loads(full["agent_config_json"]) == config
     assert full["required_capabilities"] == ["inference_infra"]
@@ -123,8 +142,16 @@ def test_snapshot_carries_execution_configuration_but_partial_cannot_replace_it(
     assert full["expected_output"] == "passing tests"
     assert json.loads(full["workflow_steps"][0]["agent_config_json"]) == {"max_turns": 4}
     partial = _make_task_update_payload(task, partial=True)["subtasks"][0]
-    assert not ({"agent_config_json", "required_capabilities", "file_constraints",
-                 "expected_output", "workflow_steps"} & partial.keys())
+    assert not (
+        {
+            "agent_config_json",
+            "required_capabilities",
+            "file_constraints",
+            "expected_output",
+            "workflow_steps",
+        }
+        & partial.keys()
+    )
 
 
 @pytest.mark.asyncio
@@ -381,9 +408,9 @@ def test_dispatch_remote_serializes_steps_in_nats_payload():
     # T4 #640: the dispatch carries Nats-Msg-Id = idempotency_key so the
     # stream's duplicate_window collapses re-sends of this attempt. Without
     # the header a re-publish reaches a worker twice.
-    assert (
-        captured_headers.get("Nats-Msg-Id") == payload["idempotency_key"]
-    ), "dispatch must carry the idempotency key as Nats-Msg-Id"
+    assert captured_headers.get("Nats-Msg-Id") == payload["idempotency_key"], (
+        "dispatch must carry the idempotency key as Nats-Msg-Id"
+    )
 
 
 # ── F52: worker liveness refresh in the heartbeat tick ────────────
@@ -526,10 +553,16 @@ async def test_handle_subtask_execute_js_dispatches_to_background():
     nw._publisher = MagicMock()
     nw._publisher.publish_event = AsyncMock()
     nw._publisher.publish_update = AsyncMock()
+
     async def send_terminal(event, update):
-        await nw._publisher.publish_event(event["type"], task_id=event["task_id"],
-                                         subtask_id=event["subtask_id"], data=event["data"])
+        await nw._publisher.publish_event(
+            event["type"],
+            task_id=event["task_id"],
+            subtask_id=event["subtask_id"],
+            data=event["data"],
+        )
         return True
+
     nw._publisher.publish_terminal = AsyncMock(side_effect=send_terminal)
 
     msg = MagicMock()
@@ -988,12 +1021,14 @@ async def test_handle_remote_subtask_result_publishes_parent_terminal_snapshot()
         id="t-remote-terminal",
         description="d",
         status=TaskStatus.IN_PROGRESS,
-        subtasks=[Subtask(
-            id="st-1",
-            parent_id="t-remote-terminal",
-            description="remote",
-            status=SubtaskStatus.PENDING,
-        )],
+        subtasks=[
+            Subtask(
+                id="st-1",
+                parent_id="t-remote-terminal",
+                description="remote",
+                status=SubtaskStatus.PENDING,
+            )
+        ],
     )
     orch.tasks[task.id] = task
 
@@ -1309,9 +1344,7 @@ async def test_heartbeat_w_info_and_grpc_hb_carry_contract_version():
     worker.send_heartbeat = AsyncMock(return_value={})
     worker.worker_id = "w-hb"
     worker.get_info = MagicMock(
-        return_value=MagicMock(
-            id="w-hb", capabilities=[], current_load=1, max_capacity=3
-        )
+        return_value=MagicMock(id="w-hb", capabilities=[], current_load=1, max_capacity=3)
     )
     nw._worker = worker
     nw._publisher = MagicMock()
@@ -1364,9 +1397,7 @@ def test_parse_subtask_message_reads_graph_identity_and_drops_legacy():
     assert data["idempotency_key"] == "abc"
     assert data["contract_version"] == "v1"
 
-    legacy = json.dumps(
-        {"task_id": "t-1", "subtask_id": "st-1", "description": "d"}
-    ).encode()
+    legacy = json.dumps({"task_id": "t-1", "subtask_id": "st-1", "description": "d"}).encode()
     # T6 #642: legacy identity keys are no longer read — no graph envelope,
     # no identity, no execution.
     assert nw._parse_subtask_message(legacy) is None
@@ -1592,15 +1623,12 @@ def test_dispatch_remote_publishes_execution_envelope():
     assert payload["attempt_id"] == "2"
     assert payload["worker_epoch"] == ""
     assert payload["contract_version"] == "v1"
-    assert (
-        payload["idempotency_key"]
-        == _execution_envelope("t-9", "st-9", 2)["idempotency_key"]
-    )
+    assert payload["idempotency_key"] == _execution_envelope("t-9", "st-9", 2)["idempotency_key"]
     # T4 #640: same key on the wire header — this is the publisher half of
     # the dedup contract (the broker half is test_nats_dedup_integration.py).
-    assert (
-        captured_headers.get("Nats-Msg-Id") == payload["idempotency_key"]
-    ), "dispatch must carry the idempotency key as Nats-Msg-Id"
+    assert captured_headers.get("Nats-Msg-Id") == payload["idempotency_key"], (
+        "dispatch must carry the idempotency key as Nats-Msg-Id"
+    )
 
 
 # ── T15 #660: usage rides uc.task.update ────────────────────────
@@ -1714,22 +1742,24 @@ def test_task_update_payload_emits_steps_with_rust_field_names() -> None:
     drop; this test and the Rust ``step_usage_wire_shape_is_locked`` fail
     together if either side drifts.
     """
-    task = _subtask_with_step_usages([
-        StepUsage(
-            step_index=0,
-            parallel_group="",
-            usage=SubtaskUsage(input_tokens=10, output_tokens=4, source="grok-build"),
-            source="grok-build",
-        ),
-        # Ran, adapter reported nothing: `null`, and still named.
-        StepUsage(step_index=1, parallel_group="", usage=None, source="codex"),
-        StepUsage(
-            step_index=2,
-            parallel_group="review",
-            usage=SubtaskUsage(input_tokens=7, source="codex"),
-            source="codex",
-        ),
-    ])
+    task = _subtask_with_step_usages(
+        [
+            StepUsage(
+                step_index=0,
+                parallel_group="",
+                usage=SubtaskUsage(input_tokens=10, output_tokens=4, source="grok-build"),
+                source="grok-build",
+            ),
+            # Ran, adapter reported nothing: `null`, and still named.
+            StepUsage(step_index=1, parallel_group="", usage=None, source="codex"),
+            StepUsage(
+                step_index=2,
+                parallel_group="review",
+                usage=SubtaskUsage(input_tokens=7, source="codex"),
+                source="codex",
+            ),
+        ]
+    )
 
     entry = _make_task_update_payload(task, partial=True)["subtasks"][0]
     assert entry["steps"] == [

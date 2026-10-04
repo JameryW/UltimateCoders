@@ -55,10 +55,16 @@ class TestLLMDecomposition:
     async def test_llm_decompose_creates_subtasks(self):
         """LLM returns valid JSON → subtasks created from LLM output."""
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_llm_response(_subtask_json_list([
-            _st("Add foo() to bar.py", files=["bar.py"], expected="foo() defined"),
-            _st("Call foo() from main", [1], ["main.py"], "main calls foo()"),
-        ])))
+        llm.complete = AsyncMock(
+            return_value=_llm_response(
+                _subtask_json_list(
+                    [
+                        _st("Add foo() to bar.py", files=["bar.py"], expected="foo() defined"),
+                        _st("Call foo() from main", [1], ["main.py"], "main calls foo()"),
+                    ]
+                )
+            )
+        )
 
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Implement foo and call it", task_id="t-1")
@@ -90,11 +96,17 @@ class TestLLMDecomposition:
     async def test_depends_on_multiple_indices(self):
         """Multiple 1-based depends_on indices are mapped correctly."""
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_llm_response(_subtask_json_list([
-            _st("Step A"),
-            _st("Step B"),
-            _st("Step C (depends on A and B)", [1, 2]),
-        ])))
+        llm.complete = AsyncMock(
+            return_value=_llm_response(
+                _subtask_json_list(
+                    [
+                        _st("Step A"),
+                        _st("Step B"),
+                        _st("Step C (depends on A and B)", [1, 2]),
+                    ]
+                )
+            )
+        )
 
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Three steps", task_id="t-2")
@@ -105,9 +117,15 @@ class TestLLMDecomposition:
     async def test_agent_config_propagated_to_llm_subtasks(self):
         """agent_config passed to submit_task is applied to each LLM subtask."""
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_llm_response(_subtask_json_list([
-            _st("Do thing"),
-        ])))
+        llm.complete = AsyncMock(
+            return_value=_llm_response(
+                _subtask_json_list(
+                    [
+                        _st("Do thing"),
+                    ]
+                )
+            )
+        )
         cfg = {"tools": ["Edit"], "agent_name": "grok-build"}
 
         orch = Orchestrator(llm_client=llm)
@@ -118,9 +136,15 @@ class TestLLMDecomposition:
     async def test_project_id_propagated_to_llm_subtasks(self):
         """project_id is set on each LLM-decomposed subtask."""
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_llm_response(_subtask_json_list([
-            _st("Do thing"),
-        ])))
+        llm.complete = AsyncMock(
+            return_value=_llm_response(
+                _subtask_json_list(
+                    [
+                        _st("Do thing"),
+                    ]
+                )
+            )
+        )
 
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Do thing", task_id="t-4", project_id="proj-x")
@@ -148,7 +172,7 @@ class TestLLMDecomposition:
 
     async def test_llm_subtasks_with_markdown_fences(self):
         """parse_decomposition_output strips markdown fences — end-to-end."""
-        raw = '```json\n' + _subtask_json_list([_st("Fenced task")]) + '\n```'
+        raw = "```json\n" + _subtask_json_list([_st("Fenced task")]) + "\n```"
         llm = MagicMock()
         llm.complete = AsyncMock(return_value=_llm_response(raw))
 
@@ -254,10 +278,16 @@ class TestDecompositionEdgeCases:
     async def test_invalid_depends_on_ignored(self):
         """Non-integer depends_on entries are silently ignored."""
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_llm_response(_subtask_json_list([
-            _st("A"),
-            _st("B", ["invalid", 1]),
-        ])))
+        llm.complete = AsyncMock(
+            return_value=_llm_response(
+                _subtask_json_list(
+                    [
+                        _st("A"),
+                        _st("B", ["invalid", 1]),
+                    ]
+                )
+            )
+        )
 
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Two steps", task_id="t-14")
@@ -269,10 +299,16 @@ class TestDecompositionEdgeCases:
     async def test_out_of_range_depends_on_ignored(self):
         """depends_on index out of range (e.g. 5 when only 2 subtasks)."""
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_llm_response(_subtask_json_list([
-            _st("A"),
-            _st("B", [5]),
-        ])))
+        llm.complete = AsyncMock(
+            return_value=_llm_response(
+                _subtask_json_list(
+                    [
+                        _st("A"),
+                        _st("B", [5]),
+                    ]
+                )
+            )
+        )
 
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Two steps", task_id="t-15")
@@ -283,9 +319,11 @@ class TestDecompositionEdgeCases:
     async def test_missing_optional_fields_default(self):
         """Subtasks missing file_constraints/expected_output get defaults."""
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_llm_response(
-            _subtask_json_list([{"description": "No constraints"}]),
-        ))
+        llm.complete = AsyncMock(
+            return_value=_llm_response(
+                _subtask_json_list([{"description": "No constraints"}]),
+            )
+        )
 
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Minimal", task_id="t-16")
@@ -303,10 +341,16 @@ class TestDecompositionEdgeCases:
         (LLM's 1-based indices reference original array positions).
         """
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_llm_response(_subtask_json_list([
-            _st(""),
-            _st("Valid"),
-        ])))
+        llm.complete = AsyncMock(
+            return_value=_llm_response(
+                _subtask_json_list(
+                    [
+                        _st(""),
+                        _st("Valid"),
+                    ]
+                )
+            )
+        )
 
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Skip empty", task_id="t-17")
@@ -319,9 +363,15 @@ class TestDecompositionEdgeCases:
     async def test_all_subtasks_empty_description_falls_back(self):
         """All LLM subtasks have empty descriptions → newline-split fallback."""
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_llm_response(_subtask_json_list([
-            _st(""),
-        ])))
+        llm.complete = AsyncMock(
+            return_value=_llm_response(
+                _subtask_json_list(
+                    [
+                        _st(""),
+                    ]
+                )
+            )
+        )
 
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Fallback me", task_id="t-18")
@@ -333,9 +383,11 @@ class TestDecompositionEdgeCases:
     async def test_non_dict_items_skipped(self):
         """Non-dict items in the JSON array are skipped."""
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_llm_response(
-            json.dumps(["not a dict", _st("Valid")]),
-        ))
+        llm.complete = AsyncMock(
+            return_value=_llm_response(
+                json.dumps(["not a dict", _st("Valid")]),
+            )
+        )
 
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Mixed", task_id="t-19")
@@ -346,9 +398,13 @@ class TestDecompositionEdgeCases:
     async def test_llm_result_is_string(self):
         """If complete() returns a raw string (duck-typed), used as text."""
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_subtask_json_list([
-            _st("String result"),
-        ]))
+        llm.complete = AsyncMock(
+            return_value=_subtask_json_list(
+                [
+                    _st("String result"),
+                ]
+            )
+        )
 
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("String result", task_id="t-20")
@@ -359,9 +415,15 @@ class TestDecompositionEdgeCases:
     async def test_task_stored_in_tasks_dict(self):
         """Submitted task is stored in orchestrator.tasks for both paths."""
         llm = MagicMock()
-        llm.complete = AsyncMock(return_value=_llm_response(_subtask_json_list([
-            _st("Stored"),
-        ])))
+        llm.complete = AsyncMock(
+            return_value=_llm_response(
+                _subtask_json_list(
+                    [
+                        _st("Stored"),
+                    ]
+                )
+            )
+        )
 
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Stored task", task_id="t-21")

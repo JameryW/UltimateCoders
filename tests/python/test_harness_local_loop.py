@@ -71,11 +71,13 @@ class TestAdapterParse:
         )
 
     def test_final_envelope_success(self) -> None:
-        stdout = "\n".join([
-            json.dumps({"event": "tool_call", "tool": "read_file"}),
-            json.dumps({"event": "tool_call", "tool": "write_file"}),
-            json.dumps({"event": "final", "success": True, "summary": "all done"}),
-        ])
+        stdout = "\n".join(
+            [
+                json.dumps({"event": "tool_call", "tool": "read_file"}),
+                json.dumps({"event": "tool_call", "tool": "write_file"}),
+                json.dumps({"event": "final", "success": True, "summary": "all done"}),
+            ]
+        )
         out = self._parse(stdout)
         assert out.success is True
         assert out.summary == "all done"
@@ -101,10 +103,12 @@ class TestAdapterParse:
         assert "timed out" in out.summary.lower()
 
     def test_final_envelope_takes_last(self) -> None:
-        stdout = "\n".join([
-            json.dumps({"event": "final", "success": True, "summary": "first"}),
-            json.dumps({"event": "final", "success": False, "summary": "second"}),
-        ])
+        stdout = "\n".join(
+            [
+                json.dumps({"event": "final", "success": True, "summary": "first"}),
+                json.dumps({"event": "final", "success": False, "summary": "second"}),
+            ]
+        )
         envelope = _final_envelope(stdout)
         assert envelope is not None and envelope["summary"] == "second"
 
@@ -138,9 +142,12 @@ class TestRunnerTools:
         assert first["content"].startswith("# Heading\n")
         assert first["truncated"] is True
         assert len(first["content"].encode()) <= 8192
-        second = json.loads(_tool_read_file(
-            tmp_path, {"path": "readme.md", "offset": first["next_offset"]},
-        ))
+        second = json.loads(
+            _tool_read_file(
+                tmp_path,
+                {"path": "readme.md", "offset": first["next_offset"]},
+            )
+        )
         assert second["truncated"] is False
         expected = (tmp_path / "readme.md").read_text(encoding="utf-8")
         assert first["content"] + second["content"] == expected
@@ -162,15 +169,19 @@ def _resp(tool_calls: list[tuple[str, dict]], text: str = "") -> SimpleNamespace
 
 class TestRunnerLoop:
     def test_full_loop_until_done(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture,
     ) -> None:
         monkeypatch.setenv("OPENAI_API_KEY", "test")
-        responses = iter([
-            _resp([("list_dir", {"path": "."})], text="looking"),
-            _resp([("write_file", {"path": "out.txt", "content": "hi"})]),
-            _resp([("done", {"summary": "wrote out.txt"})], text="finishing"),
-        ])
+        responses = iter(
+            [
+                _resp([("list_dir", {"path": "."})], text="looking"),
+                _resp([("write_file", {"path": "out.txt", "content": "hi"})]),
+                _resp([("done", {"summary": "wrote out.txt"})], text="finishing"),
+            ]
+        )
         with patch.object(hll, "_completion", side_effect=lambda m: next(responses)):
             code = asyncio.run(hll.run_loop("task", str(tmp_path), 10))
         assert code == 0
@@ -185,7 +196,9 @@ class TestRunnerLoop:
         assert final["turns"] == 3
 
     def test_max_turns_exhaustion(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture,
     ) -> None:
         monkeypatch.setenv("OPENAI_API_KEY", "test")
@@ -199,7 +212,9 @@ class TestRunnerLoop:
         assert "max turns" in final["summary"]
 
     def test_loop_exception_emits_failure_envelope(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture,
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture,
     ) -> None:
         def boom(messages):
             raise RuntimeError("api down")
@@ -215,8 +230,7 @@ class TestRunnerLoop:
     def test_runner_main_deletes_prompt_file(self, tmp_path: Path) -> None:
         prompt = tmp_path / "p.md"
         prompt.write_text("hello", encoding="utf-8")
-        code = hll.main(["--prompt-file", str(prompt), "--cwd", str(tmp_path),
-                         "--max-turns", "1"])
+        code = hll.main(["--prompt-file", str(prompt), "--cwd", str(tmp_path), "--max-turns", "1"])
         assert not prompt.exists()
         # No API key configured path may vary; main itself must return an int.
         assert isinstance(code, int)

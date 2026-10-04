@@ -33,8 +33,7 @@ def _make_task(task_id: str, subtask_ids: list[str]) -> Task:
         id=task_id,
         description="test task",
         subtasks=[
-            Subtask(id=sid, description=f"subtask {sid}", parent_id=task_id)
-            for sid in subtask_ids
+            Subtask(id=sid, description=f"subtask {sid}", parent_id=task_id) for sid in subtask_ids
         ],
         status=TaskStatus.IN_PROGRESS,
     )
@@ -282,6 +281,7 @@ async def test_parent_task_snapshot_retries_publisher_false_result():
     assert nc.publish.await_count == 2
     assert task.status == TaskStatus.COMPLETED
 
+
 # ── ResultAggregator wiring tests ──────────────────────────────
 
 
@@ -304,12 +304,18 @@ class TestAggregatorWiring:
 
         orch._schedule_aggregation = MagicMock()
 
-        await orch.handle_subtask_result(_result_with_files(
-            "st-a", [_change("f.py", "diff-a")],
-        ))
-        await orch.handle_subtask_result(_result_with_files(
-            "st-b", [_change("f.py", "diff-b")],
-        ))
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-a",
+                [_change("f.py", "diff-a")],
+            )
+        )
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-b",
+                [_change("f.py", "diff-b")],
+            )
+        )
 
         assert task.status == TaskStatus.COMPLETED
         orch._schedule_aggregation.assert_called_once_with(task)
@@ -371,12 +377,18 @@ class TestAggregationAdvisoryBehavior:
         )
         orch.aggregator.aggregate = AsyncMock(return_value=mock_result)
 
-        await orch.handle_subtask_result(_result_with_files(
-            "st-a", [_change("f.py", "diff-a")],
-        ))
-        await orch.handle_subtask_result(_result_with_files(
-            "st-b", [_change("g.py", "diff-b")],
-        ))
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-a",
+                [_change("f.py", "diff-a")],
+            )
+        )
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-b",
+                [_change("g.py", "diff-b")],
+            )
+        )
 
         # Wait for the fire-and-forget task to complete.
         await asyncio.sleep(0.05)
@@ -402,12 +414,18 @@ class TestAggregationAdvisoryBehavior:
         )
         orch.aggregator.aggregate = AsyncMock(return_value=conflict_result)
 
-        await orch.handle_subtask_result(_result_with_files(
-            "st-a", [_change("f.py", "diff-a")],
-        ))
-        await orch.handle_subtask_result(_result_with_files(
-            "st-b", [_change("f.py", "diff-b")],
-        ))
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-a",
+                [_change("f.py", "diff-a")],
+            )
+        )
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-b",
+                [_change("f.py", "diff-b")],
+            )
+        )
 
         # Task should still be COMPLETED despite conflict.
         assert task.status == TaskStatus.COMPLETED
@@ -421,9 +439,12 @@ class TestAggregationAdvisoryBehavior:
 
         orch.aggregator.aggregate = AsyncMock(side_effect=RuntimeError("boom"))
 
-        await orch.handle_subtask_result(_result_with_files(
-            "st-a", [_change("f.py", "diff-a")],
-        ))
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-a",
+                [_change("f.py", "diff-a")],
+            )
+        )
 
         # Wait for fire-and-forget to complete.
         await asyncio.sleep(0.05)
@@ -451,19 +472,28 @@ class TestAggregationAdvisoryBehavior:
             merged_content = "MERGED CONTENT THAT SHOULD NOT BE WRITTEN"
             mock_result = AggregatedResult(
                 status=AggregationStatus.SUCCESS,
-                merged_files=[FileChange(
-                    file_path="f.py", diff=merged_content,
-                )],
+                merged_files=[
+                    FileChange(
+                        file_path="f.py",
+                        diff=merged_content,
+                    )
+                ],
                 conflict_files=[],
             )
             orch.aggregator.aggregate = AsyncMock(return_value=mock_result)
 
-            await orch.handle_subtask_result(_result_with_files(
-                "st-a", [_change("f.py", "diff-a")],
-            ))
-            await orch.handle_subtask_result(_result_with_files(
-                "st-b", [_change("f.py", "diff-b")],
-            ))
+            await orch.handle_subtask_result(
+                _result_with_files(
+                    "st-a",
+                    [_change("f.py", "diff-a")],
+                )
+            )
+            await orch.handle_subtask_result(
+                _result_with_files(
+                    "st-b",
+                    [_change("f.py", "diff-b")],
+                )
+            )
 
             await asyncio.sleep(0.05)
 
@@ -549,9 +579,12 @@ class TestAggregationFireAndForget:
 
         orch.aggregator.aggregate = AsyncMock(return_value=AggregatedResult())
 
-        await orch.handle_subtask_result(_result_with_files(
-            "st-a", [_change("f.py", "diff")],
-        ))
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-a",
+                [_change("f.py", "diff")],
+            )
+        )
 
         # Wait for the fire-and-forget task to complete.
         await asyncio.sleep(0.05)
@@ -573,9 +606,12 @@ class TestAggregationFireAndForget:
 
         orch.aggregator.aggregate = slow_aggregate
 
-        await orch.handle_subtask_result(_result_with_files(
-            "st-a", [_change("f.py", "diff")],
-        ))
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-a",
+                [_change("f.py", "diff")],
+            )
+        )
 
         # Task is already COMPLETED — aggregation is fire-and-forget.
         assert task.status == TaskStatus.COMPLETED
@@ -620,9 +656,12 @@ class TestVerifyCommandThreading:
         )
         orch.aggregator.aggregate = AsyncMock(return_value=mock_result)
 
-        await orch.handle_subtask_result(_result_with_files(
-            "st-a", [_change("f.py", "diff")],
-        ))
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-a",
+                [_change("f.py", "diff")],
+            )
+        )
         await asyncio.sleep(0.05)
 
         orch.aggregator.aggregate.assert_called_once()
@@ -639,9 +678,12 @@ class TestVerifyCommandThreading:
         mock_result = AggregatedResult(status=AggregationStatus.SUCCESS)
         orch.aggregator.aggregate = AsyncMock(return_value=mock_result)
 
-        await orch.handle_subtask_result(_result_with_files(
-            "st-a", [_change("f.py", "diff")],
-        ))
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-a",
+                [_change("f.py", "diff")],
+            )
+        )
         await asyncio.sleep(0.05)
 
         orch.aggregator.aggregate.assert_called_once()
@@ -663,11 +705,13 @@ class TestVerifyCommandThreading:
         )
         orch.aggregator.aggregate = AsyncMock(return_value=mock_result)
 
-        await orch.handle_subtask_result(_result_with_files(
-            "st-a", [_change("f.py", "diff")],
-        ))
+        await orch.handle_subtask_result(
+            _result_with_files(
+                "st-a",
+                [_change("f.py", "diff")],
+            )
+        )
         await asyncio.sleep(0.05)
 
         # Task completed, no crash.
         assert task.status == TaskStatus.COMPLETED
-

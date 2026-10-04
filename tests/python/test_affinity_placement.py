@@ -42,9 +42,7 @@ def _make_worker(mode: str = "worker") -> _NatsWorker:
 def _make_js(pull_subs: list[MagicMock] | None = None) -> MagicMock:
     js = MagicMock()
     js.add_consumer = AsyncMock()
-    js.pull_subscribe = AsyncMock(
-        side_effect=pull_subs if pull_subs is not None else [MagicMock()]
-    )
+    js.pull_subscribe = AsyncMock(side_effect=pull_subs if pull_subs is not None else [MagicMock()])
     return js
 
 
@@ -56,15 +54,10 @@ def test_per_worker_subject_matches_the_rust_golden():
     bind. A drift here would silently send every targeted node into a subject
     nobody reads — pinned on both sides."""
     assert _NatsWorker._per_worker_subject("worker-7") == "uc.subtask.execute.w.worker-7"
-    assert (
-        _NatsWorker._SUBTASK_PER_WORKER_SUBJECT_PREFIX == "uc.subtask.execute.w."
-    )
+    assert _NatsWorker._SUBTASK_PER_WORKER_SUBJECT_PREFIX == "uc.subtask.execute.w."
     # The wildcard is a strict EXTENSION: NATS `>` needs one more token, so
     # `.w.>` never captures the shared subject. The gateway stream lists both.
-    assert (
-        _NatsWorker._per_worker_subject("w1")
-        == "uc.subtask.execute" + ".w.w1"
-    )
+    assert _NatsWorker._per_worker_subject("w1") == "uc.subtask.execute" + ".w.w1"
 
 
 def test_per_worker_durable_is_stable_and_sanitized():
@@ -469,9 +462,7 @@ def test_execute_in_sandbox_records_nothing_when_there_is_nothing_to_record():
         out = AgentOutput(summary="ok", success=True, file_changes=[])
         w._sandbox_manager = MagicMock()
         w._sandbox_manager.execute = AsyncMock(return_value=out)
-        await w._execute_in_sandbox(
-            Subtask(id="st-1", parent_id="t-1", description="d")
-        )
+        await w._execute_in_sandbox(Subtask(id="st-1", parent_id="t-1", description="d"))
         return w
 
     assert asyncio.run(_run()).recent_files() == []

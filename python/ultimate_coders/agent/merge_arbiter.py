@@ -114,14 +114,14 @@ class MergeArbiter:
             if result["exit_code"] != 0:
                 logger.error(
                     "MergeArbiter.ensure_clone: clone of %s failed: %s",
-                    self._remote_url, result["stderr"][:300],
+                    self._remote_url,
+                    result["stderr"][:300],
                 )
-                raise RuntimeError(
-                    f"git clone failed: {result['stderr'][:200]}"
-                )
+                raise RuntimeError(f"git clone failed: {result['stderr'][:200]}")
             logger.info(
                 "MergeArbiter.ensure_clone: cloned %s into %s",
-                self._remote_url, self._project_path,
+                self._remote_url,
+                self._project_path,
             )
             await self._ensure_local_identity()
             return
@@ -130,21 +130,18 @@ class MergeArbiter:
         cur = await self._git(["remote", "get-url", self._remote_name])
         if cur["exit_code"] != 0 or cur["stdout"].strip() != self._remote_url:
             if cur["exit_code"] != 0:
-                add = await self._git(
-                    ["remote", "add", self._remote_name, self._remote_url]
-                )
+                add = await self._git(["remote", "add", self._remote_name, self._remote_url])
                 if add["exit_code"] != 0:
                     logger.warning(
                         "MergeArbiter.ensure_clone: add remote failed: %s",
                         add["stderr"][:200],
                     )
             else:
-                await self._git(
-                    ["remote", "set-url", self._remote_name, self._remote_url]
-                )
+                await self._git(["remote", "set-url", self._remote_name, self._remote_url])
             logger.info(
                 "MergeArbiter.ensure_clone: remote %s set to %s",
-                self._remote_name, self._remote_url,
+                self._remote_name,
+                self._remote_url,
             )
 
         # (Re)assert the repo-level identity — idempotent. A pre-existing
@@ -171,7 +168,8 @@ class MergeArbiter:
             if res["exit_code"] != 0:
                 logger.debug(
                     "MergeArbiter: git config %s failed (non-fatal): %s",
-                    key, res["stderr"][:200],
+                    key,
+                    res["stderr"][:200],
                 )
 
     async def arbitrate(self, subtask_branches: list[str]) -> dict[str, Any]:
@@ -248,7 +246,9 @@ class MergeArbiter:
             # Branch may not exist locally yet — create it tracking origin.
             co = await self._git(
                 [
-                    "checkout", "-b", self._base_branch,
+                    "checkout",
+                    "-b",
+                    self._base_branch,
                     f"{self._remote_name}/{self._base_branch}",
                 ],
                 cwd=self._project_path,
@@ -277,7 +277,8 @@ class MergeArbiter:
             # stale local ref of the same name is updated, not rejected.
             fetch_res = await self._git(
                 [
-                    "fetch", self._remote_name,
+                    "fetch",
+                    self._remote_name,
                     f"+refs/heads/{branch}:refs/heads/{branch}",
                 ],
                 cwd=self._project_path,
@@ -289,7 +290,8 @@ class MergeArbiter:
                 conflicts.append(branch)
                 logger.warning(
                     "MergeArbiter: fetch of %s failed (missing on remote?): %s",
-                    branch, fetch_res["stderr"][:200],
+                    branch,
+                    fetch_res["stderr"][:200],
                 )
                 continue
 
@@ -309,16 +311,11 @@ class MergeArbiter:
                 ["diff", "--name-only", "--diff-filter=U"],
                 cwd=self._project_path,
             )
-            has_unmerged = (
-                unmerged_res["exit_code"] == 0
-                and bool(unmerged_res["stdout"].strip())
-            )
+            has_unmerged = unmerged_res["exit_code"] == 0 and bool(unmerged_res["stdout"].strip())
             if not has_unmerged:
                 # Infra error, not a conflict. Abort any partial merge
                 # state and record; do NOT call ConflictResolver.
-                abort_res = await self._git(
-                    ["merge", "--abort"], cwd=self._project_path
-                )
+                abort_res = await self._git(["merge", "--abort"], cwd=self._project_path)
                 if abort_res["exit_code"] != 0:
                     # abort failed — hard reset so the next branch's merge
                     # doesn't hit "merge in progress" (mirrors conflict path).
@@ -329,7 +326,8 @@ class MergeArbiter:
                 conflicts.append(branch)
                 logger.error(
                     "MergeArbiter: merge of %s failed (non-conflict): %s",
-                    branch, merge_res["stderr"][:200],
+                    branch,
+                    merge_res["stderr"][:200],
                 )
                 continue
 
@@ -351,9 +349,7 @@ class MergeArbiter:
                     continue
 
             # Could not resolve — abort the merge, record the branch.
-            abort_res = await self._git(
-                ["merge", "--abort"], cwd=self._project_path
-            )
+            abort_res = await self._git(["merge", "--abort"], cwd=self._project_path)
             if abort_res["exit_code"] != 0:
                 # abort failed — hard reset to clean state so the next
                 # branch's merge doesn't hit "merge in progress".
@@ -396,7 +392,8 @@ class MergeArbiter:
             result["push_status"] = "pushed"
             logger.info(
                 "MergeArbiter: pushed %s (%d branches merged)",
-                self._base_branch, len(merged),
+                self._base_branch,
+                len(merged),
             )
         else:
             result["status"] = "failed"
@@ -423,9 +420,7 @@ class MergeArbiter:
         if files_res["exit_code"] != 0:
             return False
 
-        files = [
-            f for f in files_res["stdout"].splitlines() if f.strip()
-        ]
+        files = [f for f in files_res["stdout"].splitlines() if f.strip()]
         if not files:
             return False
 
@@ -451,13 +446,16 @@ class MergeArbiter:
         working tree + ``git add`` the file.
         """
         base = await self._git(
-            ["show", f":1:{fpath}"], cwd=self._project_path,
+            ["show", f":1:{fpath}"],
+            cwd=self._project_path,
         )
         ours = await self._git(
-            ["show", f":2:{fpath}"], cwd=self._project_path,
+            ["show", f":2:{fpath}"],
+            cwd=self._project_path,
         )
         theirs = await self._git(
-            ["show", f":3:{fpath}"], cwd=self._project_path,
+            ["show", f":3:{fpath}"],
+            cwd=self._project_path,
         )
 
         # If any stage is missing (e.g. add/add conflict with no base),
@@ -467,19 +465,24 @@ class MergeArbiter:
         theirs_text = theirs["stdout"] if theirs["exit_code"] == 0 else ""
 
         merge_result = self._resolver.resolve(
-            base_text, ours_text, theirs_text,
+            base_text,
+            ours_text,
+            theirs_text,
         )
 
         # Escalate to LLM-assisted if auto-merge failed and a client exists.
         if not merge_result.success:
             merge_result = self._resolver.resolve(
-                base_text, ours_text, theirs_text,
+                base_text,
+                ours_text,
+                theirs_text,
                 tier=ResolutionTier.LLM_ASSISTED,
             )
 
         if not merge_result.success or merge_result.merged is None:
             logger.warning(
-                "MergeArbiter: could not resolve conflict in %s", fpath,
+                "MergeArbiter: could not resolve conflict in %s",
+                fpath,
             )
             return False
 
@@ -494,7 +497,9 @@ class MergeArbiter:
                 fh.write(merge_result.merged)
         except OSError as exc:
             logger.warning(
-                "MergeArbiter: failed to write resolved %s: %s", fpath, exc,
+                "MergeArbiter: failed to write resolved %s: %s",
+                fpath,
+                exc,
             )
             return False
 
@@ -503,7 +508,8 @@ class MergeArbiter:
         if add_res["exit_code"] != 0:
             logger.warning(
                 "MergeArbiter: git add %s failed: %s",
-                fpath, add_res["stderr"][:200],
+                fpath,
+                add_res["stderr"][:200],
             )
             return False
 
@@ -518,7 +524,8 @@ class MergeArbiter:
         # MergeArbiter decoupled from WorkspaceManager (different lifecycle).
         """
         proc = await asyncio.create_subprocess_exec(
-            "git", *args,
+            "git",
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd or self._project_path,

@@ -19,23 +19,31 @@ from ultimate_coders.agent.state_sync import (
 class TestFileChangeEvent:
     def test_post_init_auto_generates_timestamp_and_message_id(self):
         ev = FileChangeEvent(
-            task_id="t1", subtask_id="s1", worker_id="w1",
-            file_path="a.py", change_type=FileChangeEventType.MODIFIED,
+            task_id="t1",
+            subtask_id="s1",
+            worker_id="w1",
+            file_path="a.py",
+            change_type=FileChangeEventType.MODIFIED,
         )
         assert ev.timestamp > 0
         assert ev.message_id == f"t1:s1:a.py:{int(ev.timestamp) // 5000}"
 
     def test_explicit_timestamp_and_message_id_preserved(self):
         ev = FileChangeEvent(
-            task_id="t1", subtask_id="s1", file_path="a.py",
-            timestamp=12345.0, message_id="custom-id",
+            task_id="t1",
+            subtask_id="s1",
+            file_path="a.py",
+            timestamp=12345.0,
+            message_id="custom-id",
         )
         assert ev.timestamp == 12345.0
         assert ev.message_id == "custom-id"
 
     def test_to_dict_truncates_diff_summary_to_200(self):
         ev = FileChangeEvent(
-            task_id="t1", subtask_id="s1", file_path="a.py",
+            task_id="t1",
+            subtask_id="s1",
+            file_path="a.py",
             diff_summary="x" * 500,
         )
         d = ev.to_dict()
@@ -44,8 +52,12 @@ class TestFileChangeEvent:
 
     def test_from_dict_round_trips(self):
         ev = FileChangeEvent(
-            task_id="t1", subtask_id="s1", worker_id="w1", file_path="a.py",
-            change_type=FileChangeEventType.CREATED, diff_summary="hi",
+            task_id="t1",
+            subtask_id="s1",
+            worker_id="w1",
+            file_path="a.py",
+            change_type=FileChangeEventType.CREATED,
+            diff_summary="hi",
         )
         d = ev.to_dict()
         restored = FileChangeEvent.from_dict(d)
@@ -79,7 +91,8 @@ class TestContextInjector:
     def test_build_context_includes_summary_files_findings(self):
         inj = ContextInjector()
         inj.add_result(
-            "st-1", summary="Fixed auth bug",
+            "st-1",
+            summary="Fixed auth bug",
             modified_files=["login.py", "auth.py"],
             key_findings=["token rotation needed"],
             success=True,
@@ -135,8 +148,12 @@ class TestWorkspaceStateMachine:
     def test_valid_transition_chain_to_merged(self):
         m = WorkspaceStateMachine()
         m.create("ws-1", "st-1", "br")
-        for new_state in (WorkspaceState.BRANCHED, WorkspaceState.COMMITTED,
-                          WorkspaceState.MERGING, WorkspaceState.MERGED):
+        for new_state in (
+            WorkspaceState.BRANCHED,
+            WorkspaceState.COMMITTED,
+            WorkspaceState.MERGING,
+            WorkspaceState.MERGED,
+        ):
             entry = m.transition("ws-1", new_state)
             assert entry is not None
             assert entry.state is new_state
@@ -167,7 +184,9 @@ class TestWorkspaceStateMachine:
         for s in (WorkspaceState.BRANCHED, WorkspaceState.COMMITTED, WorkspaceState.MERGING):
             m.transition("ws-1", s)
         entry = m.transition(
-            "ws-1", WorkspaceState.CONFLICT, merge_conflict_files=["a.py", "b.py"],
+            "ws-1",
+            WorkspaceState.CONFLICT,
+            merge_conflict_files=["a.py", "b.py"],
         )
         assert entry.state is WorkspaceState.CONFLICT
         assert entry.merge_conflict_files == ["a.py", "b.py"]

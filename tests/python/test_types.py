@@ -140,8 +140,14 @@ class TestWorkflowStepToDict:
         """to_dict must produce a stable shape — no extra/missing keys."""
         d = _make_step().to_dict()
         assert set(d.keys()) == {
-            "agent", "prompt", "agent_config", "abort_on_failure",
-            "retry_count", "retry_delay_ms", "condition", "parallel_group",
+            "agent",
+            "prompt",
+            "agent_config",
+            "abort_on_failure",
+            "retry_count",
+            "retry_delay_ms",
+            "condition",
+            "parallel_group",
         }
 
     def test_defaults(self):
@@ -542,8 +548,12 @@ class TestEdgeCases:
     def test_multiple_subtasks_roundtrip(self):
         st1 = _make_subtask(id="st-1", description="first")
         st2 = _make_subtask(
-            id="st-2", description="second", status=SubtaskStatus.PENDING,
-            assigned_worker=None, result=None, depends_on=["st-1"],
+            id="st-2",
+            description="second",
+            status=SubtaskStatus.PENDING,
+            assigned_worker=None,
+            result=None,
+            depends_on=["st-1"],
         )
         task = _make_task(subtasks=[st1, st2])
         restored = Task.from_dict(task.to_dict())
@@ -566,9 +576,15 @@ class TestEdgeCases:
     def test_all_change_types_roundtrip(self):
         """Every ChangeType enum value survives the roundtrip."""
         for ct in ChangeType:
-            task = _make_task(subtasks=[_make_subtask(result=_make_result(
-                modified_files=[_make_file_change(change_type=ct)],
-            ))])
+            task = _make_task(
+                subtasks=[
+                    _make_subtask(
+                        result=_make_result(
+                            modified_files=[_make_file_change(change_type=ct)],
+                        )
+                    )
+                ]
+            )
             restored = Task.from_dict(task.to_dict())
             assert restored.subtasks[0].result.modified_files[0].change_type == ct
 
@@ -598,9 +614,15 @@ class TestEdgeCases:
     def test_all_adaptation_strategies_roundtrip(self):
         """Every AdaptationStrategy enum value survives the roundtrip."""
         for strat in AdaptationStrategy:
-            task = _make_task(subtasks=[_make_subtask(result=_make_result(
-                adaptation_strategy=strat,
-            ))])
+            task = _make_task(
+                subtasks=[
+                    _make_subtask(
+                        result=_make_result(
+                            adaptation_strategy=strat,
+                        )
+                    )
+                ]
+            )
             restored = Task.from_dict(task.to_dict())
             assert restored.subtasks[0].result.adaptation_strategy == strat
 
@@ -640,9 +662,15 @@ class TestEdgeCases:
             _make_file_change(file_path="b.py", change_type=ChangeType.MODIFIED),
             _make_file_change(file_path="c.py", change_type=ChangeType.DELETED),
         ]
-        task = _make_task(subtasks=[_make_subtask(result=_make_result(
-            modified_files=files,
-        ))])
+        task = _make_task(
+            subtasks=[
+                _make_subtask(
+                    result=_make_result(
+                        modified_files=files,
+                    )
+                )
+            ]
+        )
         restored = Task.from_dict(task.to_dict())
         rfs = restored.subtasks[0].result.modified_files
         assert len(rfs) == 3
@@ -672,9 +700,15 @@ class TestEdgeCases:
         NOT survive the roundtrip intact.
         """
         long_diff = "A" * 500
-        task = _make_task(subtasks=[_make_subtask(result=_make_result(
-            modified_files=[_make_file_change(diff=long_diff)],
-        ))])
+        task = _make_task(
+            subtasks=[
+                _make_subtask(
+                    result=_make_result(
+                        modified_files=[_make_file_change(diff=long_diff)],
+                    )
+                )
+            ]
+        )
         restored = Task.from_dict(task.to_dict())
         fc = restored.subtasks[0].result.modified_files[0]
         assert len(fc.diff) == 200  # truncated, not 500
@@ -688,6 +722,7 @@ class TestJsonSerializable:
     def test_task_to_dict_is_json_serializable(self):
         """The whole point of to_dict is JSON checkpoint persistence."""
         import json
+
         d = _make_task().to_dict()
         # Must not raise — every value is JSON-native
         s = json.dumps(d)
@@ -697,6 +732,7 @@ class TestJsonSerializable:
 
     def test_workflow_step_to_dict_is_json_serializable(self):
         import json
+
         d = _make_step().to_dict()
         s = json.dumps(d)
         assert json.loads(s) == d
@@ -704,16 +740,21 @@ class TestJsonSerializable:
     def test_task_with_failed_result_is_json_serializable(self):
         """A failed subtask result (error, stderr_tail populated) serializes."""
         import json
-        task = _make_task(subtasks=[_make_subtask(
-            status=SubtaskStatus.FAILED,
-            result=_make_result(
-                success=False,
-                error="Compilation failed",
-                stderr_tail="error: expected `;`",
-                adaptation_strategy=AdaptationStrategy.SHRINK_SCOPE,
-                retry_count=3,
-            ),
-        )])
+
+        task = _make_task(
+            subtasks=[
+                _make_subtask(
+                    status=SubtaskStatus.FAILED,
+                    result=_make_result(
+                        success=False,
+                        error="Compilation failed",
+                        stderr_tail="error: expected `;`",
+                        adaptation_strategy=AdaptationStrategy.SHRINK_SCOPE,
+                        retry_count=3,
+                    ),
+                )
+            ]
+        )
         d = task.to_dict()
         s = json.dumps(d)
         restored_data = json.loads(s)
@@ -775,9 +816,7 @@ def test_subtask_usage_from_dict_tolerates_garbage():
             "total_cost_usd": 0.25,
             "source": "grok-build",
         }
-    ) == SubtaskUsage(
-        input_tokens=1, output_tokens=2, total_cost_usd=0.25, source="grok-build"
-    )
+    ) == SubtaskUsage(input_tokens=1, output_tokens=2, total_cost_usd=0.25, source="grok-build")
 
 
 def test_checkpoint_roundtrip_preserves_usage():
@@ -831,9 +870,7 @@ def test_subtask_review_round_trips_and_absent_is_not_rejected() -> None:
     The UI renders a ✗ for `approved=False`, so turning a parse failure or an
     absent key into that would accuse a subtask nobody reviewed.
     """
-    r = SubtaskReview(
-        approved=True, issues=["missing tests"], suggestions=["add fixture"]
-    )
+    r = SubtaskReview(approved=True, issues=["missing tests"], suggestions=["add fixture"])
     assert r.to_dict() == {
         "approved": True,
         "issues": ["missing tests"],
@@ -928,9 +965,7 @@ def test_step_usage_from_dict_tolerates_garbage() -> None:
     assert StepUsage.from_dict({}) == StepUsage()
     assert StepUsage.from_dict({"step_index": "3"}) == StepUsage(step_index=3)
     assert StepUsage.from_dict({"step_index": "abc"}) == StepUsage()
-    assert StepUsage.from_dict({"parallel_group": "cr"}) == StepUsage(
-        parallel_group="cr"
-    )
+    assert StepUsage.from_dict({"parallel_group": "cr"}) == StepUsage(parallel_group="cr")
     assert StepUsage.from_dict({"source": ""}) == StepUsage()
     assert StepUsage.from_dict({"usage": "not-a-dict"}) == StepUsage()
     full = StepUsage(

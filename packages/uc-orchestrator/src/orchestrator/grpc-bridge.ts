@@ -19,6 +19,7 @@ import {
 	GetTaskRequestSchema,
 	ListTasksRequestSchema,
 	UpdateTaskRequestSchema,
+	RetrySubtaskRequestSchema,
 	PauseTaskRequestSchema,
 	ResumeTaskRequestSchema,
 	CancelTaskRequestSchema,
@@ -81,6 +82,7 @@ export interface TaskSync {
 		assignedWorker?: string;
 		result?: string;
 		retryCount?: number;
+	dispatchRetryCount?: number;
 		/** T6 #642 C4 — dispatch metadata for claim gating (dispatchMode)
 		 *  and upsert fidelity (files/caps) on adopted tasks. */
 		files?: string[];
@@ -575,6 +577,7 @@ export class GrpcBridge {
 						expectedOutput: "",
 						fileConstraints: st.files ?? [],
 						dispatchMode: st.dispatchMode,
+						dispatchRetryCount: st.dispatchRetryCount ?? 0,
 						requiredCapabilities: st.requiredCapabilities ?? [],
 						// ponytail: map SubtaskDef.steps (snake_case) → proto camelCase fields
 						steps: (st.steps ?? []).map((s) => ({
@@ -595,6 +598,15 @@ export class GrpcBridge {
 	}
 
 	// ── Task Control ────────────────────────────────────────────
+
+	async retrySubtask(taskId: string, subtaskId: string, expectedAttempt: number): Promise<TaskSync | null> {
+		return this.withReconnect(async () => {
+			const resp = await this.taskClient.retrySubtask(create(RetrySubtaskRequestSchema, {
+				taskId, subtaskId, expectedAttempt,
+			}));
+			return resp.success && resp.task ? this.parseTaskFromProto(resp.task) : null;
+		}, null);
+	}
 
 	async pauseTask(taskId: string): Promise<boolean> {
 		return this.withReconnect(async () => {
@@ -1066,7 +1078,7 @@ export class GrpcBridge {
 		}
 	}
 
-	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; retryCount?: number; fileConstraints?: string[]; dispatchMode?: string; requiredCapabilities?: string[]; reviewJson?: string; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }> }> }): TaskSync {
+	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; retryCount?: number; dispatchRetryCount?: number; fileConstraints?: string[]; dispatchMode?: string; requiredCapabilities?: string[]; reviewJson?: string; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }> }> }): TaskSync {
 		return {
 			taskId: task.id,
 			description: task.description,
@@ -1084,8 +1096,9 @@ export class GrpcBridge {
 				assignedWorker: st.assignedWorker,
 				result: st.result,
 				// T16 #661: no verdict key ⇒ the UI shows no verdict line.
-				review: parseReviewJson((st as { reviewJson?: unknown }).reviewJson),
+				review: this.parseReviewJson((st as { reviewJson?: unknown }).reviewJson),
 				retryCount: st.retryCount,
+				dispatchRetryCount: st.dispatchRetryCount,
 				files: st.fileConstraints,
 				dispatchMode: st.dispatchMode,
 				requiredCapabilities: st.requiredCapabilities,
@@ -1123,8 +1136,9 @@ export class GrpcBridge {
 				assignedWorker: st.assignedWorker,
 				result: st.result,
 				// T16 #661: no verdict key ⇒ the UI shows no verdict line.
-				review: parseReviewJson((st as { reviewJson?: unknown }).reviewJson),
+				review: this.parseReviewJson((st as { reviewJson?: unknown }).reviewJson),
 				retryCount: st.retryCount,
+				dispatchRetryCount: st.dispatchRetryCount,
 				files: st.fileConstraints,
 				dispatchMode: st.dispatchMode,
 				requiredCapabilities: st.requiredCapabilities,

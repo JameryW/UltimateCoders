@@ -20,6 +20,7 @@ def engine():
 
 # ── health_async ────────────────────────────────────────────────
 
+
 class TestHealthAsync:
     """Tests for the health_async method."""
 
@@ -49,12 +50,14 @@ class TestHealthAsync:
 
 # ── search_async ────────────────────────────────────────────────
 
+
 class TestSearchAsync:
     """Tests for the search_async method."""
 
     def test_search_async_returns_awaitable(self, engine):
         """search_async() should return a coroutine."""
         from ultimate_coders._uc_core import PySearchQuery
+
         query = PySearchQuery(query="test")
         coro = engine.search_async(query)
         assert asyncio.iscoroutine(coro)
@@ -64,6 +67,7 @@ class TestSearchAsync:
     async def test_search_async_returns_search_result(self, engine):
         """await search_async() should return a SearchResult or raise."""
         from ultimate_coders._uc_core import PySearchQuery
+
         query = PySearchQuery(query="test query")
         try:
             result = await engine.search_async(query)
@@ -75,6 +79,7 @@ class TestSearchAsync:
 
 # ── write_memory_async / read_memory_async ──────────────────────
 
+
 class TestMemoryAsyncRoundtrip:
     """Tests for write_memory_async + read_memory_async roundtrip."""
 
@@ -82,7 +87,9 @@ class TestMemoryAsyncRoundtrip:
     async def test_write_and_read_global_memory(self, engine):
         """write_memory_async + read_memory_async should roundtrip."""
         await engine.write_memory_async(
-            "global", "test_key", "hello world",
+            "global",
+            "test_key",
+            "hello world",
             content_type="text",
             source_agent="test",
             importance=0.8,
@@ -100,11 +107,15 @@ class TestMemoryAsyncRoundtrip:
     async def test_write_and_read_task_memory(self, engine):
         """write_memory_async + read_memory_async with task scope."""
         await engine.write_memory_async(
-            "task", "decisions", "Use PostgreSQL for storage",
+            "task",
+            "decisions",
+            "Use PostgreSQL for storage",
             task_id="t-001",
         )
         result = await engine.read_memory_async(
-            "task", "decisions", task_id="t-001",
+            "task",
+            "decisions",
+            task_id="t-001",
         )
         assert result is not None
         assert "PostgreSQL" in result.content
@@ -113,11 +124,15 @@ class TestMemoryAsyncRoundtrip:
     async def test_write_and_read_project_memory(self, engine):
         """write_memory_async + read_memory_async with project scope."""
         await engine.write_memory_async(
-            "project", "architecture", "Microservices",
+            "project",
+            "architecture",
+            "Microservices",
             project_id="p-001",
         )
         result = await engine.read_memory_async(
-            "project", "architecture", project_id="p-001",
+            "project",
+            "architecture",
+            project_id="p-001",
         )
         assert result is not None
         assert result.content == "Microservices"
@@ -132,7 +147,9 @@ class TestMemoryAsyncRoundtrip:
     async def test_write_code_content(self, engine):
         """write_memory_async with content_type='code'."""
         await engine.write_memory_async(
-            "global", "code_snippet", 'fn main() { println!("hi"); }',
+            "global",
+            "code_snippet",
+            'fn main() { println!("hi"); }',
             content_type="code",
             language="rust",
         )
@@ -145,7 +162,9 @@ class TestMemoryAsyncRoundtrip:
     async def test_write_diff_content(self, engine):
         """write_memory_async with content_type='diff'."""
         await engine.write_memory_async(
-            "global", "patch", "--- a/file.rs\n+++ b/file.rs",
+            "global",
+            "patch",
+            "--- a/file.rs\n+++ b/file.rs",
             content_type="diff",
             file_path="src/file.rs",
         )
@@ -158,7 +177,9 @@ class TestMemoryAsyncRoundtrip:
     async def test_write_reference_content(self, engine):
         """write_memory_async with content_type='reference'."""
         await engine.write_memory_async(
-            "global", "ref", "",
+            "global",
+            "ref",
+            "",
             content_type="reference",
             uri="https://docs.rs/tokio",
             description="Tokio docs",
@@ -171,6 +192,7 @@ class TestMemoryAsyncRoundtrip:
 
 
 # ── delete_memory_async ─────────────────────────────────────────
+
 
 class TestDeleteMemoryAsync:
     """Tests for delete_memory_async."""
@@ -190,7 +212,10 @@ class TestDeleteMemoryAsync:
     async def test_delete_memory_async_task_scope(self, engine):
         """delete_memory_async with task scope."""
         await engine.write_memory_async(
-            "task", "temp", "data", task_id="t-del",
+            "task",
+            "temp",
+            "data",
+            task_id="t-del",
         )
         await engine.delete_memory_async("task", "temp", task_id="t-del")
         result = await engine.read_memory_async("task", "temp", task_id="t-del")
@@ -198,6 +223,7 @@ class TestDeleteMemoryAsync:
 
 
 # ── search_memory_async ─────────────────────────────────────────
+
 
 class TestSearchMemoryAsync:
     """Tests for search_memory_async."""
@@ -212,12 +238,14 @@ class TestSearchMemoryAsync:
     async def test_search_memory_async_with_scope(self, engine):
         """search_memory_async with scope_type='global'."""
         results = await engine.search_memory_async(
-            "test", scope_type="global",
+            "test",
+            scope_type="global",
         )
         assert isinstance(results, list)
 
 
 # ── index_repo_async / get_index_state_async / remove_index_async ─
+
 
 class TestIndexAsync:
     """Tests for index_repo_async, get_index_state_async, remove_index_async."""
@@ -226,7 +254,8 @@ class TestIndexAsync:
     async def test_index_repo_async(self, engine):
         """index_repo_async should return an IndexResponse."""
         result = await engine.index_repo_async(
-            "test-repo", "/tmp/nonexistent",
+            "test-repo",
+            "/tmp/nonexistent",
         )
         assert hasattr(result, "repo_id")
         assert result.repo_id == "test-repo"
@@ -245,6 +274,7 @@ class TestIndexAsync:
 
 
 # ── Sync/async parity ──────────────────────────────────────────
+
 
 class TestSyncAsyncParity:
     """Verify async methods produce the same results as sync methods."""
@@ -277,6 +307,7 @@ class TestSyncAsyncParity:
 
 
 # ── search cache invalidation ──────────────────────────────────
+
 
 class TestSearchCacheInvalidation:
     """Memory/index mutations must drop the stale search cache.

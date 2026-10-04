@@ -529,5 +529,3 @@ class TestSanitizeFts5:
     def test_only_special_chars(self):
         result = _sanitize_fts5("!!!@@@###")
         assert result == ""
-
-
