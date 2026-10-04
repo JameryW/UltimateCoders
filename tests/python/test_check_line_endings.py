@@ -218,9 +218,24 @@ def test_real_repo_is_reconciled() -> None:
 def test_no_tracked_file_mixes_line_endings() -> None:
     """The five files T40 normalised stay normalised, checked at the byte level.
 
-    Pinned as "these paths are LF-only in the working tree", which is the property
-    that was violated -- not as "these paths have these sizes", which would break
-    on any unrelated edit.
+    T40's violation was **mixed** endings within a file. That is the property
+    pinned here, and it is the property `check-line_endings.py` itself judges --
+    its module docstring is explicit that it "judges only 'mixed', never 'which
+    ending'", because "this machine checks out CRLF while CI checks out LF, so a
+    'must be LF' rule would be wrong here and would have to be relaxed there".
+
+    An earlier version of this test additionally required the *working tree*
+    copy to be LF-only. That contradicted the guard beside it and was fragile in
+    exactly the way the guard warns about: with `core.autocrlf = true` and no
+    `.gitattributes`, any `git checkout` re-materialises these files as CRLF and
+    the assertion fires on a clean tree with a clean index -- measured on
+    2026-10-04 after switching branches, four of the five were CRLF in the work
+    tree while every index blob stayed LF. A test that goes red on the machine's
+    normal git behaviour is not evidence.
+
+    So the two halves now state two different, both real, properties:
+    the working tree must not MIX endings (the ticket), and the committed form
+    must be CR-free (what travels, and what CI checks out).
     """
     targets = [
         "dashboard/index.html",
@@ -231,17 +246,16 @@ def test_no_tracked_file_mixes_line_endings() -> None:
     ]
     for rel in targets:
         data = (REPO / rel).read_bytes()
-        assert b"\r" not in data, f"{rel}: a CR came back"
-    # Generated protobuf files legitimately differ from the checked-in baseline
-    # after a schema change; their invariant here is LF-only.
-    #
-    # The committed form is held to the SAME invariant, and that is the whole of
-    # what the index half is for: `core.autocrlf` normalises CRLF on `git add`,
-    # so a working-tree assertion alone cannot see a CRLF blob. Asserting that
-    # property on the blob was previously written as full blob identity, which
-    # over-approximated it into "this file never changes" -- exactly the fragility
-    # the docstring rejects for sizes. Both halves now state the same byte-level
-    # property, on both sides of the index.
+        crlf = data.count(b"\r\n")
+        lone_lf = data.count(b"\n") - crlf
+        bare_cr = data.count(b"\r") - crlf
+        assert not (crlf and lone_lf), f"{rel}: mixed endings ({crlf} CRLF, {lone_lf} lone LF)"
+        assert bare_cr == 0, f"{rel}: {bare_cr} bare CR(s) that are no line ending at all"
+    # The committed form is the platform-independent half: `core.autocrlf`
+    # normalises CRLF on `git add`, so a working-tree assertion alone cannot see
+    # a CRLF blob. Generated protobuf files legitimately differ from their
+    # checked-in content after a schema change; their invariant here is that the
+    # BLOB is CR-free, which holds for all five.
     for rel in targets:
         blob = subprocess.run(
             ["git", "-C", str(REPO), "cat-file", "blob", f":{rel}"], capture_output=True, check=True

@@ -71,7 +71,27 @@ the property the ticket actually normalized.
 ## Out of scope, still out of scope
 
 No MetaInfer fork, no automatic clearing of uncertain writers, no Oracle
-threshold change, `UC_GRAPH_SHADOW` still default off. R8 stays **unclaimed**:
-the pinned gate workflow and `scripts/verify-metainfer-release.py` exist, but no
-real MetaInfer/GPU execution has produced evidence, and the CPU fixtures do not
-substitute for it.
+threshold change, `UC_GRAPH_SHADOW` still default off.
+
+## R7 closed on real hardware; R8 is not
+
+After the merge, R7's identity acceptance was exercised against the **actual**
+device rather than a fixture. The host has a real NVIDIA GPU and
+`capture_environment` read it through `nvidia-smi` unmocked -- RTX 4060 Laptop,
+UUID `GPU-0e9353b0-7678-a5ab-eb56-083ecede327f`, driver 617.14, 8188 MiB,
+nvcc 12.6. Two acceptance points closed there: a mismatched `gpu_uuid` /
+`gpu_model` / `gpu_driver` is rejected, and `require_gpu=true` with no
+observable device is rejected. Full table in
+`docs/metainfer-reliability-verification.md`.
+
+R8 stays **unclaimed**, and the reason is now precise rather than general:
+`nvidia-smi` is present, `metainfer` is not. No MetaInfer process, package or
+checkout exists on the host, so `scripts/verify-metainfer-release.py` could not
+be run at all. Worse, pointing it at stock upstream would *correctly* fail: the
+gate requires UC's service extension endpoints (`/api/uc/contract`,
+`/api/uc/workspaces/verify`, `/api/uc/hardware`), which upstream does not carry.
+
+The remaining input is therefore a MetaInfer deployment carrying the UC service
+extension at pinned revision `b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890`. Until
+that exists, no MetaInfer acceptance, cancellation, recovery or artifact
+delivery result is claimed, and the CPU fixtures are not a substitute.

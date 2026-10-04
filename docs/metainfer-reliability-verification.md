@@ -91,3 +91,56 @@ Cross-host artifact sharing and operator reconciliation of uncertain remote writ
 remain deployment responsibilities. A memory-only Gateway intentionally cannot
 certify durable delivery. Failed Gateway event writes retain the outbox until
 storage is fixed and the Gateway restarts.
+
+## Real GPU identity evidence (2026-10-04)
+
+R7's acceptance requires *actual* device identity, not a declared one. The host
+this runs on does carry a real NVIDIA device, so this section records what
+`ultimate_coders.inference.hardware.capture_environment` observed through
+`nvidia-smi`, unmocked:
+
+| Field | Observed |
+|-------|----------|
+| UUID | `GPU-0e9353b0-7678-a5ab-eb56-083ecede327f` |
+| Model | NVIDIA GeForce RTX 4060 Laptop GPU |
+| Driver | 617.14 |
+| Memory | 8188 MiB |
+| CUDA compiler | nvcc 12.6 (`V12.6.85`, `cuda_12.6.r12.6`) |
+| Temperature / SM clock / utilization | 54 C / 210 MHz / 0 % |
+
+Conditions were sampled while the device was idle, which is the correct baseline
+for a measurement run. `dependencies` is empty: no `torch`, `triton`, `sglang`
+or `vllm` is installed in the measurement environment, so no ML-stack version is
+part of this fingerprint and none is claimed.
+
+Two acceptance points were then exercised **against this device**, not against
+a fixture:
+
+- A declaration matching the observed UUID, model and driver is accepted and the
+  device is recorded.
+- A mismatched `gpu_uuid`, `gpu_model` or `gpu_driver` is each rejected with
+  `Declared <field> differs from actual hardware`.
+- A workload declaring `require_gpu=true` with no observable device
+  (`CUDA_VISIBLE_DEVICES` empty) is rejected with `Declared GPU workload has no
+  observable GPU`.
+
+This closes R7's "declared hardware must match actual hardware" and "a missing
+observable GPU must fail" acceptance points with real hardware evidence. It does
+**not** close R8.
+
+### Still absent: the pinned MetaInfer service
+
+`nvidia-smi` is present; `metainfer` is not. No MetaInfer process, package or
+checkout was found on the host. `scripts/verify-metainfer-release.py` therefore
+could not be run and no service-side evidence exists.
+
+That script stops before creating a remote job by design, and it requires a
+service exposing UC's extension endpoints -- `/api/uc/contract`,
+`/api/uc/workspaces/verify` and `/api/uc/hardware`. Stock upstream MetaInfer does
+not carry those, so pointing the gate at an unmodified upstream would correctly
+fail the contract check rather than produce evidence. The remaining input is a
+MetaInfer deployment that carries the UC service extension at pinned revision
+`b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890`.
+
+Until that exists, no MetaInfer acceptance, cancellation, recovery or artifact
+delivery result is claimed, and the CPU fixtures are not a substitute for one.
