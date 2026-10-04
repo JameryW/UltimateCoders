@@ -43,11 +43,34 @@ Measured on the live tree, 2026-10-04 (`rg -o` over the `python/` tree):
 
 > **Warning** Do not "fix" annotations into `Optional[X]` / `List[X]` /
 > `Dict[str, Any]`. This document previously claimed the opposite; the
-> measurement above is what the code does. The two surviving `Optional[...]`
-> sites in `python/ultimate_coders/dashboard/app.py` and `python/ultimate_coders/agent/event_emitter.py` carry
-> `# noqa: UP045` precisely because ruff's own PEP 604 rule wants to rewrite
-> them. Rewriting the 405 to match those 3 would fight the linter and churn
-> every module.
+> measurement above is what the code does. Rewriting the 405 to match the 3
+> would fight the linter and churn every module.
+>
+> **But the 3 are load-bearing, not legacy.** Two `Optional[X]` sites carry
+> `# noqa: UP045`, and they are the exception for a reason that has nothing to
+> do with taste: FastAPI evaluates endpoint annotations at *runtime* through
+> `typing.get_type_hints`, and `X | None` does not survive that on Python 3.9,
+> which this project still supports (`requires-python = ">=3.9"`, CI matrix
+> `["3.9", "3.12"]`). `from __future__ import annotations` only defers the
+> annotation at definition time; it does not help once something evaluates it.
+>
+> Measured on CPython 3.9.22 (2026-10-04), `from __future__ import annotations`
+> at the top of the probe file:
+>
+> ```
+> opt   get_type_hints -> typing.Optional[str]
+> pep   get_type_hints -> TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'
+> ```
+>
+> **Rule: never put a PEP 604 union in a signature that a framework evaluates
+> at runtime while Python 3.9 is supported.** That means FastAPI route
+> parameters and Pydantic model fields. Everywhere else -- ordinary methods,
+> helpers, `->` returns -- `X | None` is correct and preferred. All 21 routes
+> in `python/ultimate_coders/dashboard/app.py` were scanned on 2026-10-04 and
+> none carries a PEP 604 union; the tree is currently safe on 3.9 *because*
+> `events_api`'s `task_id` kept the `Optional[str]` spelling and suppressed the
+> lint that would "fix" it. Removing that suppression is a Python 3.9
+> regression, not a cleanup.
 
 ```python
 from __future__ import annotations
@@ -182,8 +205,14 @@ def _to_entry(self, raw: Any) -> MemoryEntry:
    rejected spellings here, not the required ones. The codebase is
    consistently PEP 585/604 (measured 2026-10-04: 405 `X | None` against
    3 `Optional[X]`, 306 `list[` against 0 `List[`, 148 `dict` against 0
-   `Dict[`). ruff's UP006/UP045 rules rewrite toward the builtin form; the
-   two `Optional[...]` sites that remain are `# noqa: UP045` opt-outs.
+   `Dict[`). ruff's UP006/UP045 rules rewrite toward the builtin form.
+
+   **The one place `Optional[X]` is still required** is a signature a
+   framework evaluates at runtime -- a FastAPI route parameter, a Pydantic
+   field -- while Python 3.9 is supported. `X | None` raises
+   `TypeError: unsupported operand type(s) for |` there on 3.9 even under
+   `from __future__ import annotations`. The two `# noqa: UP045` sites are
+   that exception. Do not "clean them up"; see the warning above.
 
 2. **Dropping the element/key type entirely** -- the distinction that
    matters is bare `list` / `dict` in place of `list[X]` / `dict[str, Any]`,

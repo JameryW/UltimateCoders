@@ -1482,5 +1482,10 @@ opposite of the tree, and delivered the branch as `d96f1ca7`.
   the CPU fixtures.
 - The `# noqa: UP045` opt-outs in `python/ultimate_coders/dashboard/app.py` and
   `python/ultimate_coders/agent/event_emitter.py` are the only `Optional[...]`
-  left. Either drop them and take PEP 604, or keep the opt-outs; do not widen
-  the older spelling.
+  left. Resolved 2026-10-04: **keep them**. They are not legacy. FastAPI
+  evaluates endpoint annotations at runtime and `X | None` raises
+  `TypeError: unsupported operand type(s) for |` on CPython 3.9.22, which
+  `requires-python = ">=3.9"` and the CI matrix still support. Measured both
+  spellings on a real 3.9.22 interpreter; the rule and the evidence are in
+  `.trellis/spec/frontend/type-safety.md`. Removing the suppression would be a
+  3.9 regression, not a cleanup.

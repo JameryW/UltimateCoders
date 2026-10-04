@@ -20,6 +20,25 @@ in the working tree; this pass is the closing gate named by implement.md.
 | `check-line-endings`, `check-tasks-refs`, `check-readme-ci-table`, `check-workflow-inputs`, `check-journal-ledger` | pass |
 | `check-spec-refs --audit` | pass, 112 ok / 9 stale / 9 ambiguous / 0 structural |
 
+### The integration suites the PR's own checks skip
+
+`ci-rust.yml`'s `storage-integration` job is `main`-push-only, so it was
+**skipped** on PR #702 and none of the `#[ignore]` integration tests ran against
+the branch there. They did run on the merge to `main` (Rust CI run
+`37174488192`), which is where the live-fixture half of the verification comes
+from:
+
+- `storage integration tests` -- success, 8 ignored tests executed over the
+  workspace (live NATS replay, deployed-Gateway contracts, TiKV), every
+  `test result: ok`.
+- `postgres integration tests` -- success, the `--ignored` PostgreSQL suite
+  (`cargo test -p uc-engine --features storage -- --ignored --test-threads=1 postgres`).
+
+That covers the "cargo test with messaging/storage fixtures" and "live
+PostgreSQL" lines of the task's verification commands. It is still worth
+re-running them on any branch that touches `crates/**` before merging, because
+a PR cannot see them.
+
 ## Independent two-axis review
 
 Ran as two parallel sub-agents on the baseline diff plus the 12 untracked files.
