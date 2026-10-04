@@ -656,15 +656,17 @@ def test_real_corpus_unanchored_census_is_reported():
     # Architecture refresh removes three duplicate backticked launcher paths
     # (run-omp.sh, run-gateway.sh, run-cluster.sh) from docs/architecture.md:
     # 275 -> 272; the launch commands remain documented in both READMEs.
-    # 278 -> 285 (measured on the MetaInfer architecture branch): the closing
-    # spec pass added backticked path mentions in exactly two files. The
-    # corrected typing table in type-safety.md names the two surviving
-    # `Optional[...]` sites and the two sibling specs it points at, and the new
-    # gotcha/convention sections 7a/7b in inference-infra-spec.md name
-    # service_contract.py, runner.py, resources.py, crates/uc-types/src/error.rs
-    # and the component-guidelines path. Every one is MENTION_RESOLVED (the
-    # guard reports 0 unclassified), so the unclassified count is untouched.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 285
+    # 278 -> 285 -> 290 (measured on the MetaInfer architecture branch): two
+    # closing passes added backticked path mentions. The corrected typing table
+    # in type-safety.md names the two surviving `Optional[...]` sites and the
+    # two sibling specs it points at. The gotcha/convention sections 7a/7b in
+    # inference-infra-spec.md name service_contract.py, runner.py,
+    # resources.py, crates/uc-types/src/error.rs and the component-guidelines
+    # path. The "Toolchain Lockstep With CI" section in quality-guidelines.md
+    # names ci-rust.yml and the two files holding the tonic::Status rule.
+    # Every one is MENTION_RESOLVED (the guard reports 0 unclassified), so the
+    # unclassified count is untouched.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 290
 
 
 def test_real_corpus_has_no_false_content_mismatch():

@@ -272,6 +272,87 @@ assert call_kwargs[1]["key_scope"] == "task"
 - [ ] Feature-gated code has both `#[cfg(feature = "...")]` and `#[cfg(not(feature = "..."))]` paths
 - [ ] No `unwrap()` in production code paths (test code is acceptable)
 - [ ] Logging uses the correct level (info/warn/debug) per the logging guidelines
+- [ ] `cargo fmt` and `cargo clippy` were run **after** the last Rust edit, on the
+  same `stable` toolchain CI uses -- see "Toolchain Lockstep With CI" below
+
+---
+
+## Toolchain Lockstep With CI
+
+### 1. Scope / Trigger
+
+`ci-rust.yml` installs `dtolnay/rust-toolchain@stable` with no pin, so CI always
+runs the **newest** stable. Local verification that uses a slightly older stable
+does not reproduce CI's verdict, and the gap looks exactly like a clean local run
+followed by a red PR. This is not hypothetical: see the measurement below.
+
+### 2. Signatures
+
+```
+rustup update stable                       # land on the same stable CI has
+cargo fmt --all -- --check                 # rustfmt is per-version too
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+### 3. Contracts
+
+- `ci-rust.yml` pins no toolchain: the repository deliberately ships no
+  toolchain pin file and the workflow carries no version, so the only contract
+  is "whatever `stable` is today". Do not go looking for a pin to edit.
+- `cargo check` and `cargo test` are **not** substitutes for the two commands
+  above: they do not run rustfmt, and they do not deny warnings.
+- `cargo clippy --all-targets` covers test code as well as the library. A lint
+  that only reaches a free function will not fire on trait impls.
+
+### 4. Validation & Error Matrix
+
+| Condition | Error |
+|-----------|-------|
+| Rust edited after the last `cargo fmt --check` | rustfmt diff, `cargo fmt` job red |
+| Local stable older than CI's stable | lint fires in CI and never locally |
+| `cargo check` run instead of `cargo clippy` | warnings stay warnings; `-D warnings` never applied |
+| `clippy` run without `--all-targets` | test-only lints missed |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `rustup update stable`, then `cargo fmt --all -- --check` and
+  `cargo clippy --workspace --all-targets -- -D warnings`, both after the final
+  Rust edit.
+- Base: toolchain current, but only `cargo check` and `cargo test` run.
+- Bad: `cargo fmt --check` run once before a later Rust edit, and clippy never
+  run locally at all.
+
+### 6. Tests Required
+
+CI is the test. Assertion points: the `cargo clippy` and `cargo fmt` jobs in
+`.github/workflows/ci-rust.yml` both `SUCCESS` on the PR head.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+Run `cargo fmt --all -- --check` before editing `server.rs`, then run only
+`cargo test --workspace` afterwards and call the change verified.
+
+#### Correct
+
+Re-run `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets
+-- -D warnings` after the last Rust edit. If either disagrees with CI, check
+`rustc --version` against the CI runner before assuming the lint is wrong.
+
+### Measured: the 1.97 / 1.99 gap
+
+2026-10-04, on `flush_task_state` (`crates/uc-grpc/src/server.rs`, added by the
+MetaInfer architecture work):
+
+- clippy **1.97.0** -- clean, locally and silently.
+- clippy **1.99.0** -- `clippy::result_large_err`, the `Err`-variant at least
+  176 bytes. CI was red on a run that looked green locally.
+
+The lint is a real signal, not a false positive, and the fix was to apply the
+rule the repo already records (`tonic::Status` is returned by value as the gRPC
+error contract -- see the module doc comment in `crates/uc-grpc/src/lib.rs`) and
+to say so on the item. Not to silence the lint blindly.
 
 ---
 

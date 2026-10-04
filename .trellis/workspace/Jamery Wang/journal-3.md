@@ -1426,13 +1426,15 @@ opposite of the tree, and delivered the branch as `d96f1ca7`.
 | Hash | Message |
 |------|---------|
 | `d96f1ca7` | feat(inference): deliver MetaInfer architecture reliability and operations |
+| `c26db822` | chore: record journal |
+| `3f7148a6` | chore(task): record delivery and the open R8 input |
+| `e1f6ef72` | fix(ci): satisfy clippy 1.99 and rustfmt on the new helper |
 
 ### Testing
 
 - Rust `cargo test --workspace`: 357 passed, 0 failed. Feature combos
-  (`--no-default-features`, `--features indexing`, `--all-features`) and
-  `cargo fmt --all -- --check` all clean. Infra-gated tests stay ignored by
-  design (NATS broker / PostgreSQL).
+  (`--no-default-features`, `--features indexing`, `--all-features`) all clean.
+  Infra-gated tests stay ignored by design (NATS broker / PostgreSQL).
 - Python `pytest tests/python`: 1384 passed, 11 skipped. Started at 14 failures
   and each one is understood, not suppressed -- 6 were the `release_slot` defect,
   1 a mis-layered integrity assertion, and 7 were corpus pins that the new
@@ -1444,6 +1446,19 @@ opposite of the tree, and delivered the branch as `d96f1ca7`.
   21 run-step refs), journal-ledger, spec-refs (112 ok / 9 stale / 9 ambiguous,
   0 structural). Every pin that moved was moved in the same change with the
   movement named.
+- **Correction after the first push.** PR #702's `cargo clippy` and `cargo fmt`
+  jobs were red and both were mine to catch. `cargo fmt --check` had last been
+  run before the `full_snapshot_is_stale` edit, and `cargo clippy` had never
+  been run locally at all. The clippy failure was not reproducible until the
+  toolchain moved: CI takes `dtolnay/rust-toolchain@stable` with no pin, so it
+  was on clippy 1.99.0 while this machine sat on 1.97.0, where
+  `clippy::result_large_err` never reached the new `flush_task_state`. Fixed at
+  `e1f6ef72` by applying the rule the repo already records for `tonic::Status`
+  and re-verifying on clippy 1.99.0: clippy and fmt both clean.
+  The process lesson is now a section in
+  `.trellis/spec/backend/quality-guidelines.md` ("Toolchain Lockstep With CI"),
+  with the 1.97/1.99 measurement recorded so the next agent checks the local
+  toolchain before assuming CI is wrong.
 
 ### Status
 
