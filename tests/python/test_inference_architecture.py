@@ -2,9 +2,16 @@
 
 import asyncio
 import base64
+import json
+import os
 import sqlite3
+import subprocess
+import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import httpx
 import pytest
@@ -246,3 +253,99 @@ async def test_remote_gpu_contract_requires_identity_and_model():
             client, "http://service", "backend", expected_revision="rev", expected_model="4060"
         )
     assert evidence["devices"][0]["uuid"] == "GPU-1"
+
+
+class _StockUpstreamHandler(BaseHTTPRequestHandler):
+    """Only the routes stock MetaInfer has -- no `/api/uc/*` at all.
+
+    Verified against the pinned upstream revision `b3f6505a11ab`, which
+    contains zero occurrences of `/api/uc`, `quiescence`, `workspace_probe`,
+    `contract_version` or `uc-metainfer`. This stub is that shape.
+    """
+
+    def log_message(self, *args):  # keep test output clean
+        pass
+
+    def _send(self, code, payload=None):
+        body = json.dumps(payload).encode() if payload is not None else b""
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path.startswith("/api/sys-shell/task-types"):
+            self._send(200, {"fields": []})
+        else:
+            self._send(404, {"detail": "Not Found"})
+
+
+def _run_release_gate(url: str, workspace: Path, output: Path):
+    """Run the real gate script the way the release workflow does."""
+    env = dict(os.environ)
+    pythonpath = str(Path(__file__).resolve().parents[2] / "python")
+    env["PYTHONPATH"] = pythonpath + os.pathsep + env.get("PYTHONPATH", "")
+    return subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[2] / "scripts" / "verify-metainfer-release.py"),
+            "--url", url,
+            "--workspace", str(workspace),
+            "--output", str(output),
+            "--require-gpu",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def test_release_gate_rejects_a_contractless_service_with_a_reason_not_a_traceback(tmp_path):
+    """R8: the rejection path is evidence too.
+
+    Pointing the gate at stock upstream MetaInfer is the situation an operator
+    faces today. It must answer with the contract it is missing, not with a
+    stack trace -- measured before the fix as a bare
+    `httpx.HTTPStatusError: Client error '404 Not Found' ... /api/uc/contract`,
+    because the script fetched the contract itself with `raise_for_status()`
+    before delegating to the one function that knows how to say it properly.
+    """
+    server = HTTPServer(("127.0.0.1", 0), _StockUpstreamHandler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        workspace = tmp_path / "shared-workspace"
+        workspace.mkdir()
+        (workspace / "probe-target.txt").write_text("shared workspace probe target")
+        output = tmp_path / "evidence.json"
+        result = _run_release_gate(f"http://127.0.0.1:{port}", workspace, output)
+    finally:
+        server.shutdown()
+
+    # A refusal, not a crash: no interpreter traceback anywhere in the output.
+    assert "Traceback (most recent call last)" not in result.stderr
+    assert "httpx.HTTPStatusError" not in result.stderr
+    assert result.returncode != 0, "a service without the contract must not pass the gate"
+
+    # And the reason names the contract, so the release log says what was missing.
+    assert "REJECTED" in result.stderr, result.stderr
+    assert "UC workspace/stop contract" in result.stderr, result.stderr
+
+    # No partial evidence is written for a rejected deployment.
+    assert not output.exists(), "a rejected gate must not leave an evidence file"
+
+
+def test_release_gate_names_an_unreachable_service_separately(tmp_path):
+    """Transport failure is not a contract verdict; it says so and exits apart."""
+    workspace = tmp_path / "shared-workspace"
+    workspace.mkdir()
+    output = tmp_path / "evidence.json"
+    # 127.0.0.1 on a port nothing is listening on: connection refused.
+    result = _run_release_gate("http://127.0.0.1:9", workspace, output)
+
+    assert "Traceback (most recent call last)" not in result.stderr
+    assert result.returncode != 0
+    assert "REJECTED" in result.stderr, result.stderr
+    assert "unreachable or unhealthy" in result.stderr, result.stderr
+    assert not output.exists()

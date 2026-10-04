@@ -13,19 +13,28 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 
 import httpx
-from ultimate_coders.inference.service_contract import verify_hardware, verify_workspace
+from ultimate_coders.inference.service_contract import (
+    DeploymentContractError,
+    verify_hardware,
+    verify_workspace,
+)
 
 
 async def verify(args: argparse.Namespace) -> dict:
     expected_revision = args.revision or os.environ.get("UC_METAINFER_REVISION")
     url = args.url.rstrip("/")
     async with httpx.AsyncClient(follow_redirects=False) as client:
-        contract_response = await client.get(url + "/api/uc/contract", timeout=5)
-        contract_response.raise_for_status()
-        contract = contract_response.json()
+        # `verify_workspace` owns the contract fetch, and it is the only place
+        # that turns "the service has no UC contract" into a sentence an
+        # operator can act on. Do not fetch the contract again here: the
+        # duplicate `raise_for_status()` used to run first and surface a bare
+        # `httpx.HTTPStatusError` traceback instead, which is exactly what
+        # someone pointing this at stock upstream MetaInfer sees -- measured
+        # 2026-10-04 against a service answering 404 for /api/uc/*.
         workspace = await verify_workspace(
             client, url, args.workspace, expected_revision=expected_revision
         )
@@ -34,16 +43,16 @@ async def verify(args: argparse.Namespace) -> dict:
             hardware = await verify_hardware(
                 client,
                 url,
-                contract["backend_id"],
+                workspace["backend_id"],
                 expected_revision=expected_revision,
                 expected_model=args.model,
             )
     return {
         "contract": {
-            "version": contract.get("contract_version"),
-            "revision": contract.get("revision"),
-            "backend_id": contract.get("backend_id"),
-            "capabilities": contract.get("capabilities", []),
+            "version": workspace.get("contract_version"),
+            "revision": workspace.get("revision"),
+            "backend_id": workspace.get("backend_id"),
+            "capabilities": workspace.get("capabilities", []),
         },
         "workspace": workspace["workspace_receipt"],
         "hardware": hardware,
@@ -63,7 +72,18 @@ def main() -> int:
     args = parser.parse_args()
     if not args.url:
         parser.error("--url or UC_METAINFER_URL is required")
-    evidence = asyncio.run(verify(args))
+    try:
+        evidence = asyncio.run(verify(args))
+    except DeploymentContractError as exc:
+        # A service that lacks the contract, has the wrong revision, or cannot
+        # prove it shares the workspace is an answer, not a crash. Exit non-zero
+        # with the reason on one line so a release gate log records what was
+        # rejected and why.
+        print(f"REJECTED: {exc}", file=sys.stderr)
+        return 2
+    except httpx.HTTPError as exc:
+        print(f"REJECTED: MetaInfer service is unreachable or unhealthy: {exc}", file=sys.stderr)
+        return 3
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
     print(json.dumps(evidence, indent=2))
