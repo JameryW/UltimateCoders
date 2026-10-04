@@ -12,15 +12,15 @@
   "assignee": "Jamery Wang",
   "createdAt": "2026-10-02",
   "completedAt": null,
-  "branch": "codex/metainfer-architecture",
+  "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": "d96f1ca7eb3bbc179a97f872c08f41cc7f47178f",
+  "commit": "ddf14214",
   "pr_url": "https://github.com/JameryW/UltimateCoders/pull/702",
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "R1-R8 delivered and reviewed; see verification.md for the two-axis review evidence and the measurements behind the two corrected specs. DELIVERY: PR #702 (d96f1ca7 implementation + c26db822 journal). STILL OPEN, and the reason this task is not archived: R8's acceptance requires a real MetaInfer/GPU run and no such evidence exists. The pinned gate .github/workflows/metainfer-release-gate.yml and scripts/verify-metainfer-release.py are in place and must be run on the self-hosted GPU runner against MetaInfer b3f6505a once the service is reachable. CPU HTTP fixtures establish integration mechanics only and do not substitute for it. Do not close this task on the strength of the CPU suite alone.",
+  "notes": "R1-R8 delivered, independently reviewed, and MERGED to main as PR #702 (merge commit ddf14214, 2026-10-04). Branch codex/metainfer-architecture deleted after merge. See verification.md for the two-axis review evidence and the measurements behind the two corrected specs. STILL OPEN, and the reason this task is NOT archived: R8's acceptance requires a real MetaInfer/GPU run and no such evidence exists. The pinned gate .github/workflows/metainfer-release-gate.yml and scripts/verify-metainfer-release.py are on main and must be run on the self-hosted GPU runner against MetaInfer b3f6505a once the service is reachable. CPU HTTP fixtures establish integration mechanics only and do not substitute for it. Do not close this task on the strength of the CPU suite alone -- that would claim a verification that has not happened.",
   "meta": {}
 }

@@ -1429,6 +1429,9 @@ opposite of the tree, and delivered the branch as `d96f1ca7`.
 | `c26db822` | chore: record journal |
 | `3f7148a6` | chore(task): record delivery and the open R8 input |
 | `e1f6ef72` | fix(ci): satisfy clippy 1.99 and rustfmt on the new helper |
+| `a08f48b1` | docs(spec): record toolchain lockstep with CI |
+| `66c7d653` | chore(task): archive 09-29-add-opencode-oh-my-pi-mimo-code |
+| `ddf14214` | Merge pull request #702 -- merged to main, branch deleted |
 
 ### Testing
 
@@ -1466,6 +1469,11 @@ opposite of the tree, and delivered the branch as `d96f1ca7`.
 
 ### Next Steps
 
+- **Delivered and merged.** PR #702 went green (32 checks, 0 failures,
+  `mergeStateStatus: CLEAN`) and was merged to `main` as `ddf14214` on
+  2026-10-04. The branch was deleted on merge. `cargo fmt` and `cargo clippy`
+  both went green on the fix at `e1f6ef72` after the toolchain was aligned to
+  CI's.
 - R8 stays deliberately unclaimed. The pinned contract gate
   (`.github/workflows/metainfer-release-gate.yml`) and
   `scripts/verify-metainfer-release.py` are in place, but no real MetaInfer/GPU
