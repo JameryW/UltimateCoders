@@ -51,7 +51,7 @@ DEFAULT_PROFILE = "headless"
 #: string-to-string map. The top-level ``version: 1`` parses as an int,
 #: hence "must be a string". dsh >= 0.2.0-rc.2 (the pinned version) accepts
 #: both shapes, so this signature means the installed dsh is outdated.
-CREDENTIALS_FORMAT_SIGNATURE = 'must be a string'
+CREDENTIALS_FORMAT_SIGNATURE = "must be a string"
 
 CREDENTIALS_FORMAT_HINT = (
     "dsh cannot boot: $DSH_HOME/.credentials.yaml is in the structured "
@@ -103,18 +103,19 @@ def preflight_check(
     """
     which_dsh = shutil.which("dsh")
     if which_dsh is None:
-        return False, (
-            "dsh not found on PATH; install it with: "
-            "npm install -g @deepseek-ai/dsh"
-        )
+        return False, ("dsh not found on PATH; install it with: npm install -g @deepseek-ai/dsh")
     argv = [which_dsh, "--profile", profile, "--dump-config"]
     if os.name == "nt" and which_dsh.lower().endswith((".cmd", ".bat", ".ps1")):
         # Windows: npm installs a .CMD shim, which CreateProcess cannot spawn
         # directly — route through the command interpreter.
         argv = [
             os.environ.get("COMSPEC", "cmd.exe"),
-            "/d", "/c", which_dsh,
-            "--profile", profile, "--dump-config",
+            "/d",
+            "/c",
+            which_dsh,
+            "--profile",
+            profile,
+            "--dump-config",
         ]
     try:
         proc = subprocess.run(
@@ -146,17 +147,19 @@ def register(reg: Any) -> None:
     """Register this harness into a plugin registry (idempotent)."""
     from ultimate_coders.agent.registry import AgentPluginSpec
 
-    reg.register(AgentPluginSpec(
-        name=AGENT_NAME,
-        aliases=AGENT_ALIASES,
-        factory=DeepSeekHarnessAdapter,
-        api_key_env="DEEPSEEK_API_KEY",
-        cli_probe="dsh",
-        description=(
-            "Official DeepSeek Harness CLI (dsh --profile headless); "
-            "needs DEEPSEEK_API_KEY, installed via npm i -g @deepseek-ai/dsh"
-        ),
-    ))
+    reg.register(
+        AgentPluginSpec(
+            name=AGENT_NAME,
+            aliases=AGENT_ALIASES,
+            factory=DeepSeekHarnessAdapter,
+            api_key_env="DEEPSEEK_API_KEY",
+            cli_probe="dsh",
+            description=(
+                "Official DeepSeek Harness CLI (dsh --profile headless); "
+                "needs DEEPSEEK_API_KEY, installed via npm i -g @deepseek-ai/dsh"
+            ),
+        )
+    )
 
 
 class DeepSeekHarnessAdapter(AgentAdapter):
@@ -208,10 +211,7 @@ class DeepSeekHarnessAdapter(AgentAdapter):
         # Contract: final assistant text on stdout (may be multi-line).
         summary = result.stdout.strip()
         if not summary:
-            summary = (
-                f"DeepSeek Harness exited with code {result.exit_code} "
-                "and no output"
-            )
+            summary = f"DeepSeek Harness exited with code {result.exit_code} and no output"
         elif len(summary) > 2000:
             summary = summary[:2000] + "…"
 

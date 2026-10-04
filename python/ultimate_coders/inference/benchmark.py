@@ -5,13 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
-import platform
 import statistics
-import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from .hardware import capture_environment
 from .models import BenchmarkResult, nonnegative_number
 from .process import spawn_command
 
@@ -140,6 +138,7 @@ class BenchmarkRunner:
 
     async def measure(self, root: str, *, baseline: bool = False) -> BenchmarkResult:
         self.verify_harness()
+        environment = await asyncio.to_thread(capture_environment, self.spec.environment)
         if self.spec.compile_command:
             await run_command(self.spec.compile_command, root, self.spec.timeout_seconds)
         command = (
@@ -175,12 +174,11 @@ class BenchmarkRunner:
             )
             for key, series in values.items()
         }
+        after = await asyncio.to_thread(capture_environment, self.spec.environment)
+        if after["identity"] != environment["identity"]:
+            raise ValueError("Benchmark hardware/runtime identity changed during measurement")
         identity = {
-            "declared": self.spec.environment,
-            "platform": platform.platform(),
-            "python": sys.version,
-            "executable": sys.executable,
-            "devices": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+            **environment["identity"],
             "harness": sorted((path.name, digest) for path, digest in self._fingerprints.items()),
         }
         result = replace(
@@ -196,6 +194,8 @@ class BenchmarkRunner:
                 "warmup_runs": self.spec.warmup_runs,
                 "samples": values,
                 "dispersion_pct": dispersion,
+                "environment": environment,
+                "conditions_after": after["conditions"],
             },
             environment_id=hashlib.sha256(
                 json.dumps(identity, sort_keys=True).encode()

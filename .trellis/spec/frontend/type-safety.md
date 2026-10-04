@@ -20,7 +20,7 @@ from __future__ import annotations
 
 This is mandatory because:
 - It allows forward references without string quoting
-- It enables `X | Y` union syntax (though the codebase currently uses `Optional[X]`)
+- It enables `X | Y` union syntax, which is the form this codebase actually uses
 - It prevents circular import issues with type hints
 
 **Real examples**: `python/ultimate_coders/agent/types.py`, `python/ultimate_coders/memory/memory.py`, `python/ultimate_coders/search/query.py`, `python/ultimate_coders/config.py`
@@ -29,19 +29,35 @@ This is mandatory because:
 
 ## Type Import Conventions
 
-The codebase uses `typing` module imports (not `builtins`):
+Annotations use the **PEP 585/604 builtins**, not the `typing` spellings.
+`typing` is still imported where a builtin has no equivalent (`Any`,
+`Callable`, `TypeVar`).
+
+Measured on the live tree, 2026-10-04 (`rg -o` over the `python/` tree):
+
+- Optional values: `X | None` (405 uses) -- NOT `Optional[X]` (3 uses).
+- Lists: `list[X]` (306 uses) -- NOT `List[X]` (0 uses).
+- Dicts: `dict[str, Any]` (148 uses of bare `dict`) -- NOT `Dict[...]` (0 uses).
+- Tuples: `tuple[...]` -- NOT `Tuple[...]` (0 uses).
+- `Any` for engine handles and unstructured payloads (see below).
+
+> **Warning** Do not "fix" annotations into `Optional[X]` / `List[X]` /
+> `Dict[str, Any]`. This document previously claimed the opposite; the
+> measurement above is what the code does. The two surviving `Optional[...]`
+> sites in `python/ultimate_coders/dashboard/app.py` and `python/ultimate_coders/agent/event_emitter.py` carry
+> `# noqa: UP045` precisely because ruff's own PEP 604 rule wants to rewrite
+> them. Rewriting the 405 to match those 3 would fight the linter and churn
+> every module.
 
 ```python
-from typing import Any, Dict, List, Optional
-```
+from __future__ import annotations
 
-| Type | Import | Usage |
-|------|--------|-------|
-| Optional values | `Optional[X]` | `Optional[str] = None`, `Optional[datetime] = None` |
-| Lists | `List[X]` | `List[Subtask]`, `List[str]`, `List[SearchResultItem]` |
-| Dicts | `Dict[str, Any]` | `Dict[str, Any]` for unstructured data |
-| Any | `Any` | Engine instances (see below) |
-| Union | `Optional[X]` (not `X | None`) | Consistent with existing codebase |
+from typing import Any, Callable
+
+
+async def read(key: str, task_id: str, *, limit: int | None = None) -> dict[str, Any] | None:
+    ...
+```
 
 ---
 
@@ -162,11 +178,23 @@ def _to_entry(self, raw: Any) -> MemoryEntry:
 
 ## Common Mistakes
 
-1. **Using `X | None` instead of `Optional[X]`** -- The codebase consistently uses `Optional[X]`. While PEP 604 allows `X | None`, mixing styles creates inconsistency.
+1. **Using `Optional[X]` / `List[X]` / `Dict[...]`** -- these are the
+   rejected spellings here, not the required ones. The codebase is
+   consistently PEP 585/604 (measured 2026-10-04: 405 `X | None` against
+   3 `Optional[X]`, 306 `list[` against 0 `List[`, 148 `dict` against 0
+   `Dict[`). ruff's UP006/UP045 rules rewrite toward the builtin form; the
+   two `Optional[...]` sites that remain are `# noqa: UP045` opt-outs.
 
-2. **Using `dict` instead of `Dict[str, Any]`** -- Always specify the key and value types for dicts used as data structures.
+2. **Dropping the element/key type entirely** -- the distinction that
+   matters is bare `list` / `dict` in place of `list[X]` / `dict[str, Any]`,
+   not `list` in place of `List`. Annotate the parameters even when you use
+   the builtin spelling.
 
-3. **Using `list` instead of `List[X]`** -- Always specify the element type for lists used as data structures.
+3. **Typing a decoded third-party wire payload as a `@dataclass`** -- see
+   the gotcha in `.trellis/spec/backend/inference-infra-spec.md`. The
+   dataclass rule in `component-guidelines.md` governs UC's own domain and
+   config types, not JSON decoded from an external service, which is probed
+   defensively with `.get()` against a versioned contract.
 
 4. **Forgetting `from __future__ import annotations`** -- This import is required at the top of every Python file. Without it, forward references and deferred evaluation will fail.
 

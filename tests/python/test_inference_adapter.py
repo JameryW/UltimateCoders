@@ -8,6 +8,8 @@ import pytest
 from ultimate_coders.inference import MetaInferTask
 from ultimate_coders.inference.adapter import MetaInferAdapter, MetaInferError
 
+from .metainfer_fixture import contract_response
+
 
 @pytest.mark.asyncio
 async def test_port_model_submits_live_schema_and_keeps_artifacts(tmp_path):
@@ -15,6 +17,11 @@ async def test_port_model_submits_live_schema_and_keeps_artifacts(tmp_path):
 
     def service(request):
         seen.append((request.method, request.url.path))
+        contract = contract_response(
+            request.url.path, json.loads(request.content) if request.content else None
+        )
+        if contract is not None:
+            return httpx.Response(200, json=contract)
         if request.url.path.endswith("/schema"):
             return httpx.Response(
                 200,
@@ -58,25 +65,29 @@ async def test_port_model_submits_live_schema_and_keeps_artifacts(tmp_path):
     assert result.status == "completed"
     assert result.artifacts["workspace_dir"] == "/nfs/p1"
     assert "iterations" in result.evidence
-    assert seen[0][1] == "/api/sys-shell/task-types/port-model/schema"
+    assert ("GET", "/api/sys-shell/task-types/port-model/schema") in seen
 
 
 @pytest.mark.asyncio
-async def test_missing_parameter_never_starts_a_gpu_job():
+async def test_missing_parameter_never_starts_a_gpu_job(tmp_path):
     requests = []
 
     def service(request):
         requests.append(request)
+        contract = contract_response(
+            request.url.path, json.loads(request.content) if request.content else None
+        )
+        if contract is not None:
+            return httpx.Response(200, json=contract)
         return httpx.Response(200, json={"fields": [{"key": "kernel_file_path", "required": True}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(service)) as client:
         with pytest.raises(ValueError, match="kernel_file_path"):
             await MetaInferAdapter("http://service", client=client).optimize_kernel(
-                repository="repo",
+                repository=str(tmp_path),
                 objective="faster",
             )
-    assert len(requests) == 1
-    assert requests[0].method == "GET"
+    assert not any(request.url.path == "/api/sys-shell/tasks" for request in requests)
 
 
 @pytest.mark.asyncio
@@ -86,6 +97,15 @@ async def test_failure_and_cancellation_terminate_remote_jobs(mode):
     killed = []
 
     async def service(request):
+        if request.url.path.endswith("/quiescence"):
+            import hashlib
+
+            return httpx.Response(
+                200,
+                json=contract_response(
+                    request.url.path, backend_id=hashlib.sha256(b"http://service").hexdigest()
+                ),
+            )
         if request.url.path.endswith("schema"):
             return httpx.Response(200, json={"fields": []})
         if request.url.path.endswith("/control"):

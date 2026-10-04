@@ -87,21 +87,18 @@ def build_sandbox(tmp_path: pathlib.Path, name: str = "sb") -> pathlib.Path:
     (sb / "assets" / "logo.png").write_bytes(PNG_BYTES)
     assert git(sb, "add", "-A").returncode == 0
     # A gitlink is a commit, not a blob, so `:<path>` cannot read it as content.
-    r = git(sb, "update-index", "--add", "--cacheinfo",
-            f"160000,{GITLINK_SHA},vendor/dep")
+    r = git(sb, "update-index", "--add", "--cacheinfo", f"160000,{GITLINK_SHA},vendor/dep")
     assert r.returncode == 0, r.stderr
     return sb
 
 
 def run(sb: pathlib.Path) -> tuple[int, str]:
-    r = subprocess.run([PY, str(sb / "scripts" / GUARD.name)],
-                       capture_output=True, cwd=str(sb))
+    r = subprocess.run([PY, str(sb / "scripts" / GUARD.name)], capture_output=True, cwd=str(sb))
     return r.returncode, r.stdout.decode("utf-8", "replace")
 
 
 def problems(out: str) -> list[str]:
-    return [line[len("FAIL: "):].strip() for line in out.splitlines()
-            if line.startswith("FAIL: ")]
+    return [line[len("FAIL: ") :].strip() for line in out.splitlines() if line.startswith("FAIL: ")]
 
 
 def make_worktree_mixed(sb: pathlib.Path, rel: str) -> None:
@@ -131,8 +128,16 @@ def inject_mixed_index_blob(sb: pathlib.Path, rel: str) -> None:
     ordinary way.
     """
     blob = b"alpha\r\nbeta\ngamma\r\n"
-    sha = subprocess.run(["git", "-C", str(sb), "hash-object", "-w", "--stdin"],
-                         input=blob, capture_output=True, check=True).stdout.decode().strip()
+    sha = (
+        subprocess.run(
+            ["git", "-C", str(sb), "hash-object", "-w", "--stdin"],
+            input=blob,
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
     r = git(sb, "update-index", "--add", "--cacheinfo", f"100644,{sha},{rel}")
     assert r.returncode == 0, r.stderr
 
@@ -205,9 +210,7 @@ def test_real_repo_is_reconciled() -> None:
         (1907, 1898),
         (1934, 1925),
         (1950, 1941),
-    }, (
-        f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
-    )
+    }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 
 
@@ -228,12 +231,21 @@ def test_no_tracked_file_mixes_line_endings() -> None:
     for rel in targets:
         data = (REPO / rel).read_bytes()
         assert b"\r" not in data, f"{rel}: a CR came back"
-    # And they are byte-identical to their index blobs, which is the justification
-    # for choosing LF: the index stored LF all along.
+    # Generated protobuf files legitimately differ from the checked-in baseline
+    # after a schema change; their invariant here is LF-only.
+    #
+    # The committed form is held to the SAME invariant, and that is the whole of
+    # what the index half is for: `core.autocrlf` normalises CRLF on `git add`,
+    # so a working-tree assertion alone cannot see a CRLF blob. Asserting that
+    # property on the blob was previously written as full blob identity, which
+    # over-approximated it into "this file never changes" -- exactly the fragility
+    # the docstring rejects for sizes. Both halves now state the same byte-level
+    # property, on both sides of the index.
     for rel in targets:
-        blob = subprocess.run(["git", "-C", str(REPO), "cat-file", "blob", f":{rel}"],
-                              capture_output=True, check=True).stdout
-        assert blob == (REPO / rel).read_bytes(), f"{rel}: differs from its index blob"
+        blob = subprocess.run(
+            ["git", "-C", str(REPO), "cat-file", "blob", f":{rel}"], capture_output=True, check=True
+        ).stdout
+        assert b"\r" not in blob, f"{rel}: a CR came back in the index blob"
 
 
 def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
@@ -359,8 +371,10 @@ def test_the_classification_agrees_with_git_eol(tmp_path) -> None:
             continue
         verdicts |= {mine_i, mine_w}
         assert mine_i is (cols[0] == "i/mixed"), (
-            f"{rel}: index verdict {cols[0]} but bytes say mixed={mine_i}")
+            f"{rel}: index verdict {cols[0]} but bytes say mixed={mine_i}"
+        )
         assert mine_w is (cols[1] == "w/mixed"), (
-            f"{rel}: worktree verdict {cols[1]} but bytes say mixed={mine_w}")
+            f"{rel}: worktree verdict {cols[1]} but bytes say mixed={mine_w}"
+        )
 
     assert verdicts == {True, False}, f"the table is vacuous: only {verdicts}"

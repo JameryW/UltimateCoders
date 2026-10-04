@@ -93,9 +93,7 @@ def mock_ls() -> MagicMock:
 class TestPathSafety:
     def test_safe_path_inside_workspace(self, tmp_path: object) -> None:
         ws = str(tmp_path)
-        assert _safe_path(ws, "src/main.py") == os.path.realpath(
-            os.path.join(ws, "src/main.py")
-        )
+        assert _safe_path(ws, "src/main.py") == os.path.realpath(os.path.join(ws, "src/main.py"))
 
     def test_safe_path_rejects_escape(self, tmp_path: object) -> None:
         ws = str(tmp_path)
@@ -154,9 +152,7 @@ class TestLspTools:
             f.write("def foo(): pass\n")
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=mock_ls):
-            result = asyncio.run(
-                _go_to_definition(ws, {"path": "f.py", "line": 1, "character": 5})
-            )
+            result = asyncio.run(_go_to_definition(ws, {"path": "f.py", "line": 1, "character": 5}))
         assert isinstance(result[0], TextContent)
         assert "Definition:" in result[0].text
         # Verify 1-based → 0-based conversion: line=1 → 0, char=5 → 4
@@ -174,9 +170,7 @@ class TestLspTools:
         mock_ls.request_definition.return_value = []
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=mock_ls):
-            result = asyncio.run(
-                _go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "No definitions found" in result[0].text
 
     def test_find_references_returns_count(self, mock_ls: MagicMock, tmp_path: object) -> None:
@@ -186,9 +180,7 @@ class TestLspTools:
             f.write("foo()\n")
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=mock_ls):
-            result = asyncio.run(
-                _find_references(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_find_references(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "References (2):" in result[0].text
         # Verify line/char conversion: 1,1 → 0,0
         call_args = mock_ls.request_references.call_args
@@ -203,9 +195,7 @@ class TestLspTools:
         mock_ls.request_references.return_value = []
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=mock_ls):
-            result = asyncio.run(
-                _find_references(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_find_references(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "No references found" in result[0].text
 
     def test_hover_returns_contents(self, mock_ls: MagicMock, tmp_path: object) -> None:
@@ -215,9 +205,7 @@ class TestLspTools:
             f.write("foo\n")
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=mock_ls):
-            result = asyncio.run(
-                _hover(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_hover(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "def foo(x: int) -> str" in result[0].text
         call_args = mock_ls.request_hover.call_args
         assert call_args[0][1] == 0
@@ -231,9 +219,7 @@ class TestLspTools:
         mock_ls.request_hover.return_value = None
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=mock_ls):
-            result = asyncio.run(
-                _hover(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_hover(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "No hover information" in result[0].text
 
     def test_document_symbols_returns_tree(self, mock_ls: MagicMock, tmp_path: object) -> None:
@@ -243,9 +229,7 @@ class TestLspTools:
             f.write("def foo(): pass\nclass Bar: pass\n")
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=mock_ls):
-            result = asyncio.run(
-                _document_symbols(ws, {"path": "f.py"})
-            )
+            result = asyncio.run(_document_symbols(ws, {"path": "f.py"}))
         assert "foo" in result[0].text
         assert "Bar" in result[0].text
 
@@ -257,18 +241,14 @@ class TestLspTools:
         mock_ls.request_document_symbols.return_value = ([], "")
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=mock_ls):
-            result = asyncio.run(
-                _document_symbols(ws, {"path": "f.py"})
-            )
+            result = asyncio.run(_document_symbols(ws, {"path": "f.py"}))
         assert "No symbols found" in result[0].text
 
     def test_workspace_symbol_returns_matches(self, mock_ls: MagicMock, tmp_path: object) -> None:
         ws = str(tmp_path)
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=mock_ls):
-            result = asyncio.run(
-                _workspace_symbol(ws, {"query": "foo"})
-            )
+            result = asyncio.run(_workspace_symbol(ws, {"query": "foo"}))
         assert "Symbols (1):" in result[0].text
         assert "foo" in result[0].text
         mock_ls.request_workspace_symbol.assert_called_once_with("foo")
@@ -278,9 +258,7 @@ class TestLspTools:
         mock_ls.request_workspace_symbol.return_value = []
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=mock_ls):
-            result = asyncio.run(
-                _workspace_symbol(ws, {"query": "nonexistent"})
-            )
+            result = asyncio.run(_workspace_symbol(ws, {"query": "nonexistent"}))
         assert "No symbols matching" in result[0].text
 
 
@@ -293,9 +271,7 @@ class TestRustTsMultilspyPath:
     when multilspy is available. The language string passed to
     _get_language_server must match multilspy's Language enum values."""
 
-    def test_rust_definition_uses_multilspy(
-        self, mock_ls: MagicMock, tmp_path: object
-    ) -> None:
+    def test_rust_definition_uses_multilspy(self, mock_ls: MagicMock, tmp_path: object) -> None:
         ws = str(tmp_path)
         os.makedirs(ws, exist_ok=True)
         with open(os.path.join(ws, "lib.rs"), "w") as f:
@@ -316,9 +292,7 @@ class TestRustTsMultilspyPath:
         # The language server was requested with language="rust"
         mock_get_ls.assert_called_once_with(ws, "rust")
 
-    def test_ts_definition_uses_multilspy(
-        self, mock_ls: MagicMock, tmp_path: object
-    ) -> None:
+    def test_ts_definition_uses_multilspy(self, mock_ls: MagicMock, tmp_path: object) -> None:
         ws = str(tmp_path)
         os.makedirs(ws, exist_ok=True)
         with open(os.path.join(ws, "mod.ts"), "w") as f:
@@ -336,9 +310,7 @@ class TestRustTsMultilspyPath:
         mock_ls.request_definition.assert_called_once()
         mock_get_ls.assert_called_once_with(ws, "typescript")
 
-    def test_tsx_definition_uses_multilspy(
-        self, mock_ls: MagicMock, tmp_path: object
-    ) -> None:
+    def test_tsx_definition_uses_multilspy(self, mock_ls: MagicMock, tmp_path: object) -> None:
         ws = str(tmp_path)
         os.makedirs(ws, exist_ok=True)
         with open(os.path.join(ws, "comp.tsx"), "w") as f:
@@ -385,15 +357,11 @@ class TestRustTsMultilspyPath:
             "ultimate_coders.agent.lsp_mcp._get_language_server",
             return_value=mock_ls,
         ):
-            result = asyncio.run(
-                _hover(ws, {"path": "lib.rs", "line": 1, "character": 9})
-            )
+            result = asyncio.run(_hover(ws, {"path": "lib.rs", "line": 1, "character": 9}))
         assert "[codegraph fallback]" not in result[0].text
         assert "def foo(x: int) -> str" in result[0].text
 
-    def test_rust_doc_symbols_uses_multilspy(
-        self, mock_ls: MagicMock, tmp_path: object
-    ) -> None:
+    def test_rust_doc_symbols_uses_multilspy(self, mock_ls: MagicMock, tmp_path: object) -> None:
         ws = str(tmp_path)
         os.makedirs(ws, exist_ok=True)
         with open(os.path.join(ws, "lib.rs"), "w") as f:
@@ -403,9 +371,7 @@ class TestRustTsMultilspyPath:
             "ultimate_coders.agent.lsp_mcp._get_language_server",
             return_value=mock_ls,
         ):
-            result = asyncio.run(
-                _document_symbols(ws, {"path": "lib.rs"})
-            )
+            result = asyncio.run(_document_symbols(ws, {"path": "lib.rs"}))
         assert "[codegraph fallback]" not in result[0].text
         assert "foo" in result[0].text
 
@@ -420,8 +386,10 @@ class TestRustTsMultilspyPath:
                 {"name": "foo", "kind": "function", "file_path": "def.rs", "start_line": 5}
             ]
         )
-        with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=None), \
-             patch("ultimate_coders.agent.lsp_mcp._get_codegraph", return_value=cg):
+        with (
+            patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=None),
+            patch("ultimate_coders.agent.lsp_mcp._get_codegraph", return_value=cg),
+        ):
             result = asyncio.run(
                 _go_to_definition(ws, {"path": "lib.rs", "line": 1, "character": 1})
             )
@@ -442,9 +410,7 @@ class TestGracefulDegradation:
             f.write("x\n")
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=None):
-            result = asyncio.run(
-                _go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "LSP unavailable" in result[0].text
         assert "multilspy not installed" in result[0].text
 
@@ -455,9 +421,7 @@ class TestGracefulDegradation:
             f.write("x\n")
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=None):
-            result = asyncio.run(
-                _find_references(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_find_references(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "LSP unavailable" in result[0].text
 
     def test_hover_multilspy_unavailable(self, tmp_path: object) -> None:
@@ -467,9 +431,7 @@ class TestGracefulDegradation:
             f.write("x\n")
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=None):
-            result = asyncio.run(
-                _hover(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_hover(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "LSP unavailable" in result[0].text
 
     def test_document_symbols_multilspy_unavailable(self, tmp_path: object) -> None:
@@ -479,18 +441,14 @@ class TestGracefulDegradation:
             f.write("x\n")
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=None):
-            result = asyncio.run(
-                _document_symbols(ws, {"path": "f.py"})
-            )
+            result = asyncio.run(_document_symbols(ws, {"path": "f.py"}))
         assert "LSP unavailable" in result[0].text
 
     def test_workspace_symbol_multilspy_unavailable(self, tmp_path: object) -> None:
         ws = str(tmp_path)
 
         with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=None):
-            result = asyncio.run(
-                _workspace_symbol(ws, {"query": "foo"})
-            )
+            result = asyncio.run(_workspace_symbol(ws, {"query": "foo"}))
         assert "LSP unavailable" in result[0].text
 
     def test_unsupported_language_returns_hint(self, tmp_path: object) -> None:
@@ -500,9 +458,7 @@ class TestGracefulDegradation:
         with open(os.path.join(ws, "f.go"), "w") as f:
             f.write("func main() {}\n")
 
-        result = asyncio.run(
-            _go_to_definition(ws, {"path": "f.go", "line": 1, "character": 1})
-        )
+        result = asyncio.run(_go_to_definition(ws, {"path": "f.go", "line": 1, "character": 1}))
         assert "LSP unavailable" in result[0].text
         assert "language not supported" in result[0].text
         assert "f.go" in result[0].text
@@ -528,9 +484,7 @@ class TestWorkerLspRegistration:
 
     def test_uc_lsp_registered_with_custom_mcp_configs(self, stub_engine: object) -> None:
         """uc-lsp is added even when caller supplies custom mcp_configs."""
-        custom_cfg = SandboxConfig(
-            mcp_configs=[{"my-tool": {"command": "echo", "args": ["hi"]}}]
-        )
+        custom_cfg = SandboxConfig(mcp_configs=[{"my-tool": {"command": "echo", "args": ["hi"]}}])
         worker = Worker(engine=stub_engine, sandbox_config=custom_cfg)
         names = set()
         for entry in worker._sandbox_config.mcp_configs or []:
@@ -607,9 +561,7 @@ class TestCodegraphFallback:
         )
         p1, p2 = _fallback_patches(cg)
         with p1, p2:
-            result = asyncio.run(
-                _go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "[codegraph fallback]" in result[0].text
         assert "foo" in result[0].text
         assert "def.py:5" in result[0].text
@@ -623,15 +575,11 @@ class TestCodegraphFallback:
             search_results=[
                 {"name": "foo", "kind": "function", "file_path": "def.py", "start_line": 5}
             ],
-            callers=[
-                {"name": "bar", "kind": "function", "file_path": "bar.py", "start_line": 12}
-            ],
+            callers=[{"name": "bar", "kind": "function", "file_path": "bar.py", "start_line": 12}],
         )
         p1, p2 = _fallback_patches(cg)
         with p1, p2:
-            result = asyncio.run(
-                _find_references(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_find_references(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "[codegraph fallback]" in result[0].text
         assert "References (2):" in result[0].text
         assert "bar" in result[0].text
@@ -649,9 +597,7 @@ class TestCodegraphFallback:
         )
         p1, p2 = _fallback_patches(cg)
         with p1, p2:
-            result = asyncio.run(
-                _hover(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_hover(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "[codegraph fallback]" in result[0].text
         assert "不可用" in result[0].text
         assert "foo" in result[0].text
@@ -678,9 +624,7 @@ class TestCodegraphFallback:
         cg = _make_codegraph_mock(search_results=[])
         p1, p2 = _fallback_patches(cg)
         with p1, p2:
-            result = asyncio.run(
-                _go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "[codegraph fallback]" in result[0].text
         assert "Could not extract" in result[0].text
 
@@ -703,9 +647,7 @@ class TestCodegraphUnavailableFallback:
             f.write("foo()\n")
         p1, p2 = _fallback_patches(None)
         with p1, p2:
-            result = asyncio.run(
-                _go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "[codegraph fallback]" not in result[0].text
         assert "LSP unavailable" in result[0].text
 
@@ -716,9 +658,7 @@ class TestCodegraphUnavailableFallback:
             f.write("foo\n")
         p1, p2 = _fallback_patches(None)
         with p1, p2:
-            result = asyncio.run(
-                _hover(ws, {"path": "f.py", "line": 1, "character": 1})
-            )
+            result = asyncio.run(_hover(ws, {"path": "f.py", "line": 1, "character": 1}))
         assert "[codegraph fallback]" not in result[0].text
         assert "LSP unavailable" in result[0].text
 

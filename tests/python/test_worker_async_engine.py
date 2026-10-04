@@ -70,7 +70,10 @@ async def test_checkpoint_save_load_use_async_variants():
     w = _make_worker(engine)
     st = Subtask(id="s1", parent_id="t1", description="implement auth")
     result = SubtaskResult(
-        subtask_id="s1", worker_id="w-test", summary="done", success=True,
+        subtask_id="s1",
+        worker_id="w-test",
+        summary="done",
+        success=True,
     )
     await w._save_checkpoint(st, result)
     assert calls.count("write_memory_async") == 1
@@ -157,4 +160,3 @@ async def test_final_failure_event_error_is_truncated():
     failed = [e for e in events if e[0] == "subtask_failed"]
     assert failed, "expected a subtask_failed event"
     assert len(failed[-1][1]["error"]) == 200  # capped, not 500
-

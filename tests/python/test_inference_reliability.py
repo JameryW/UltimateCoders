@@ -164,14 +164,31 @@ async def test_coordinator_restart_recovers_current_gateway_attempt(state):
 def test_gateway_recovery_preserves_python_plan_and_normalizes_chrono_dates():
     from ultimate_coders.agent.types import Task
 
-    task = Task(id="graph", verify_command="pytest", subtasks=[
-        Subtask(id="node", project_id="scope", user_request="retain constraints",
-                required_capabilities=["kernel_optimization"])
-    ])
-    raw = {"id": "graph", "status": "InProgress", "subtasks": [
-        {"id": "node", "status": "Completed", "result": {
-            "completed_at": "2026-10-02T01:02:03.123456789Z", "modified_files": []}}
-    ], "created_at": "2026-10-02T01:02:03Z", "updated_at": "2026-10-02T01:02:03.1Z"}
+    task = Task(
+        id="graph",
+        verify_command="pytest",
+        subtasks=[
+            Subtask(
+                id="node",
+                project_id="scope",
+                user_request="retain constraints",
+                required_capabilities=["kernel_optimization"],
+            )
+        ],
+    )
+    raw = {
+        "id": "graph",
+        "status": "InProgress",
+        "subtasks": [
+            {
+                "id": "node",
+                "status": "Completed",
+                "result": {"completed_at": "2026-10-02T01:02:03.123456789Z", "modified_files": []},
+            }
+        ],
+        "created_at": "2026-10-02T01:02:03Z",
+        "updated_at": "2026-10-02T01:02:03.1Z",
+    }
     recovered = NatsWorker._coordinator_task_from_gateway(raw, NatsWorker._coordinator_plan(task))
     assert recovered.verify_command == "pytest"
     assert recovered.subtasks[0].project_id == "scope"
@@ -258,7 +275,7 @@ async def test_restart_adopts_saved_remote_id_without_submission(state):
 
 
 @pytest.mark.asyncio
-async def test_result_outbox_survives_disconnect_and_worker_restart(state):
+async def test_result_outbox_survives_disconnect_and_worker_restart(state, monkeypatch):
     execute = AsyncMock(
         return_value=SubtaskResult(subtask_id="node", summary="accepted", success=True)
     )
@@ -271,6 +288,8 @@ async def test_result_outbox_survives_disconnect_and_worker_restart(state):
     message.ack.assert_awaited_once()
     assert state.get("result_outbox", "graph:node:0")["delivered"] is False
 
+    replay_time = time.time() + 10
+    monkeypatch.setattr("ultimate_coders.outbox.time.time", lambda: replay_time)
     restarted = NatsWorker(mode="worker")
     restarted._worker = SimpleNamespace(worker_id="w2", execute_subtask=execute)
     restarted._publisher = SimpleNamespace(publish_terminal=AsyncMock(return_value=True))

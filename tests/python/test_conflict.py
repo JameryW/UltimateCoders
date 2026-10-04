@@ -30,41 +30,59 @@ class TestConflictDetector:
 
     def test_conflict_overlapping_regions(self):
         detector = ConflictDetector()
-        detector.declare_intent(EditIntent(
-            worker_id="w1", file_path="main.rs",
-            regions=[LineRange(start=1, end=20)],
-        ))
-        result, info = detector.declare_intent(EditIntent(
-            worker_id="w2", file_path="main.rs",
-            regions=[LineRange(start=10, end=30)],
-        ))
+        detector.declare_intent(
+            EditIntent(
+                worker_id="w1",
+                file_path="main.rs",
+                regions=[LineRange(start=1, end=20)],
+            )
+        )
+        result, info = detector.declare_intent(
+            EditIntent(
+                worker_id="w2",
+                file_path="main.rs",
+                regions=[LineRange(start=10, end=30)],
+            )
+        )
         assert result == ConflictResult.CONFLICTING
         assert info is not None
         assert "w1" in info.conflicting_workers
 
     def test_no_conflict_different_regions(self):
         detector = ConflictDetector()
-        detector.declare_intent(EditIntent(
-            worker_id="w1", file_path="main.rs",
-            regions=[LineRange(start=1, end=10)],
-        ))
-        result, info = detector.declare_intent(EditIntent(
-            worker_id="w2", file_path="main.rs",
-            regions=[LineRange(start=20, end=30)],
-        ))
+        detector.declare_intent(
+            EditIntent(
+                worker_id="w1",
+                file_path="main.rs",
+                regions=[LineRange(start=1, end=10)],
+            )
+        )
+        result, info = detector.declare_intent(
+            EditIntent(
+                worker_id="w2",
+                file_path="main.rs",
+                regions=[LineRange(start=20, end=30)],
+            )
+        )
         assert result == ConflictResult.POTENTIAL_CONFLICT
 
     def test_remove_intent(self):
         detector = ConflictDetector()
-        detector.declare_intent(EditIntent(
-            worker_id="w1", file_path="main.rs",
-            regions=[LineRange(start=1, end=20)],
-        ))
+        detector.declare_intent(
+            EditIntent(
+                worker_id="w1",
+                file_path="main.rs",
+                regions=[LineRange(start=1, end=20)],
+            )
+        )
         detector.remove_intent("main.rs", "w1")
-        result, info = detector.declare_intent(EditIntent(
-            worker_id="w2", file_path="main.rs",
-            regions=[LineRange(start=1, end=20)],
-        ))
+        result, info = detector.declare_intent(
+            EditIntent(
+                worker_id="w2",
+                file_path="main.rs",
+                regions=[LineRange(start=1, end=20)],
+            )
+        )
         assert result == ConflictResult.NO_CONFLICT
 
 
@@ -146,6 +164,7 @@ class TestLlmAssistedMerge:
 
     def test_with_mock_llm_client(self):
         from unittest.mock import MagicMock
+
         mock_client = MagicMock()
         mock_response = MagicMock()
         mock_response.text = "merged content"

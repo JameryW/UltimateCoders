@@ -79,6 +79,10 @@ reproducible Spec P1/P2 findings; see the task review artifact.
 
 CPU fixture latency numbers verify acceptance and delivery mechanics, not GPU
 performance. External MetaInfer/GPU optimization is still unconfigured locally.
+The pinned stock service was inspected through its public source, but its `kill`
+response, `finished` flag and PID status do not satisfy UC's all-writer
+quiescence contract; therefore no real MetaInfer acceptance, cancellation or
+GPU result is claimed.
 The previous [Ollama deployment verification](local-deployment-verification.md)
 remains separate evidence for real local-model coding/benchmark execution.
 Native WSL Docker requires a running WSL session; Ollama and its forwarding helper

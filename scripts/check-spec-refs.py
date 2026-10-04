@@ -397,6 +397,11 @@ def _repo_index() -> dict[str, list[str]]:
     which is why the fix is the index itself, not a longer EXCLUDE_DIRS list.
     """
     try:
+        checkout = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=str(ROOT),
+            capture_output=True, check=True).stdout.decode("utf-8", "replace").strip()
+        if pathlib.Path(checkout).resolve() != ROOT.resolve():
+            return _walk_index()
         listed = subprocess.run(
             ["git", "ls-files", "-z"], cwd=str(ROOT),
             capture_output=True, check=True).stdout.decode("utf-8", "replace")

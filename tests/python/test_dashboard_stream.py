@@ -33,8 +33,7 @@ def _make_app(nats_client: object | None = None) -> DashboardApp:
 
 def _stream_route(app: DashboardApp) -> object:
     return next(
-        r for r in app._app.router.routes
-        if getattr(r, "path", "") == "/dashboard/api/stream"
+        r for r in app._app.router.routes if getattr(r, "path", "") == "/dashboard/api/stream"
     )
 
 
@@ -99,9 +98,7 @@ def test_stream_emits_snapshot_after_interval(monkeypatch: pytest.MonkeyPatch) -
         def time(self) -> float:
             return next(times)
 
-    monkeypatch.setattr(
-        asyncio, "get_running_loop", lambda: _FakeLoop()
-    )
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: _FakeLoop())
 
     out, err = asyncio.run(_drive(app, max_iters=3))
     assert err is None, f"stream crashed: {err!r}"
@@ -246,4 +243,3 @@ def test_events_recorded_with_zero_sse_clients() -> None:
     asyncio.run(run())
     assert len(app._event_log) == 1
     assert app._metrics.record_event.call_count == 1
-

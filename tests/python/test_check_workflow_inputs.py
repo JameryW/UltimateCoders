@@ -84,8 +84,7 @@ def build_sandbox(tmp_path: pathlib.Path) -> pathlib.Path:
     return sb
 
 
-def synthetic_sandbox(tmp_path: pathlib.Path, name: str,
-                      files: dict[str, str]) -> pathlib.Path:
+def synthetic_sandbox(tmp_path: pathlib.Path, name: str, files: dict[str, str]) -> pathlib.Path:
     """A sandbox whose workflows directory holds only the given files."""
     sb = tmp_path / name
     (sb / WORKFLOWS).mkdir(parents=True)
@@ -106,12 +105,16 @@ def run(sb: pathlib.Path) -> tuple[int, str]:
 
 
 def problems(out: str) -> list[str]:
-    return [line.strip().lstrip("- ").strip() for line in out.splitlines()
-            if line.strip().startswith("- ")]
+    return [
+        line.strip().lstrip("- ").strip()
+        for line in out.splitlines()
+        if line.strip().startswith("- ")
+    ]
 
 
-def mutate(sb: pathlib.Path, rel: str, old: str, new: str, expect: int,
-           how: str = "first") -> bytes:
+def mutate(
+    sb: pathlib.Path, rel: str, old: str, new: str, expect: int, how: str = "first"
+) -> bytes:
     """Apply one mutation, asserting the anchor occurs exactly `expect` times.
 
     `how` is "first", "last", or "all". "last" exists because the two `paths`
@@ -133,7 +136,7 @@ def mutate(sb: pathlib.Path, rel: str, old: str, new: str, expect: int,
         assert expect >= 1
         idx = b.find(o) if how == "first" else b.rfind(o)
         assert idx >= 0, f"{rel}: {how} occurrence not found"
-        out = b[:idx] + n + b[idx + len(o):]
+        out = b[:idx] + n + b[idx + len(o) :]
     p.write_bytes(out)
     return b
 
@@ -155,11 +158,9 @@ def test_real_repo_is_reconciled() -> None:
     out = r.stdout.decode("utf-8", "replace")
     assert r.returncode == 0, f"guard failed on the real repo:\n{out}"
     n = len(list((REPO / WORKFLOWS).glob("*.yml")))
-    assert f"{n} workflow(s), " in out, (
-        f"the guard must report how much it looked at; got:\n{out}"
-    )
+    assert f"{n} workflow(s), " in out, f"the guard must report how much it looked at; got:\n{out}"
     expected = (
-        "workflows: 10 workflow(s), 9 path-filtered, 20 run-step reference(s), "
+        "workflows: 11 workflow(s), 9 path-filtered, 21 run-step reference(s), "
         "13 subject to coverage"
     )
     assert expected in out, f"the reported summary has moved; got:\n{out}"
@@ -174,28 +175,46 @@ def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
     dashboard = f"{WORKFLOWS}/ci-dashboard.yml"
     py_paths_item = ITEM.format(path="crates/uc-python/**")
     dash_block = (
-        "    paths:\n"
-        '      - "dashboard/**"\n'
-        '      - ".github/workflows/ci-dashboard.yml"\n'
+        '    paths:\n      - "dashboard/**"\n      - ".github/workflows/ci-dashboard.yml"\n'
     )
 
     # (label, judgment it pins, file, old, new, expected occurrences, how)
     cases = [
         (
             "A push paths lose a file a run step names (the T36 shape)",
-            "push-coverage", python_wf, py_paths_item, "", 2, "first",
+            "push-coverage",
+            python_wf,
+            py_paths_item,
+            "",
+            2,
+            "first",
         ),
         (
             "B pull_request paths lose the same file",
-            "pr-coverage", python_wf, py_paths_item, "", 2, "last",
+            "pr-coverage",
+            python_wf,
+            py_paths_item,
+            "",
+            2,
+            "last",
         ),
         (
             "C push paths become an empty filter",
-            "dead-filter-push", dashboard, dash_block, "    paths: []\n", 2, "first",
+            "dead-filter-push",
+            dashboard,
+            dash_block,
+            "    paths: []\n",
+            2,
+            "first",
         ),
         (
             "D pull_request paths become an empty filter",
-            "dead-filter-pr", dashboard, dash_block, "    paths: []\n", 2, "last",
+            "dead-filter-pr",
+            dashboard,
+            dash_block,
+            "    paths: []\n",
+            2,
+            "last",
         ),
     ]
 
@@ -222,23 +241,30 @@ def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
     assert JUDGMENTS["non-vacuity-workflows"] in out, out
     covered["non-vacuity-workflows"] = "an empty workflows directory"
 
-    unfiltered = synthetic_sandbox(tmp_path, "unfiltered", {
-        "x.yml": (
-            "on:\n  push:\n\njobs:\n  j:\n    steps:\n"
-            "      - run: python scripts/x.py\n"
-        ),
-    })
+    unfiltered = synthetic_sandbox(
+        tmp_path,
+        "unfiltered",
+        {
+            "x.yml": (
+                "on:\n  push:\n\njobs:\n  j:\n    steps:\n      - run: python scripts/x.py\n"
+            ),
+        },
+    )
     rc, out = run(unfiltered)
     assert rc != 0, out
     assert JUDGMENTS["non-vacuity-filtered"] in out, out
     covered["non-vacuity-filtered"] = "no workflow carries a paths filter"
 
-    no_refs = synthetic_sandbox(tmp_path, "norefs", {
-        "x.yml": (
-            "on:\n  push:\n    paths:\n      - \"scripts/**\"\n\n"
-            "jobs:\n  j:\n    steps:\n      - run: echo hello\n"
-        ),
-    })
+    no_refs = synthetic_sandbox(
+        tmp_path,
+        "norefs",
+        {
+            "x.yml": (
+                'on:\n  push:\n    paths:\n      - "scripts/**"\n\n'
+                "jobs:\n  j:\n    steps:\n      - run: echo hello\n"
+            ),
+        },
+    )
     rc, out = run(no_refs)
     assert rc != 0, out
     assert JUDGMENTS["non-vacuity-references"] in out, out
@@ -333,8 +359,10 @@ def test_parsers_are_pinned_both_ways() -> None:
     refs = [
         ("python scripts/check-x.py", {"scripts/check-x.py"}),
         ("./tests/python/test_a.py", {"tests/python/test_a.py"}),
-        ("maturin build --manifest-path crates/uc-python/Cargo.toml",
-         {"crates/uc-python/Cargo.toml"}),
+        (
+            "maturin build --manifest-path crates/uc-python/Cargo.toml",
+            {"crates/uc-python/Cargo.toml"},
+        ),
         ("curl https://example.com/scripts/x.py", set()),
         ("node tools/build.js", set()),
         ("echo 'no file here'", set()),
@@ -346,11 +374,19 @@ def test_parsers_are_pinned_both_ways() -> None:
     # The extractor runs only over `run:` steps, with shell comments dropped. This
     # is the half that a repo-wide token scan gets wrong: a path in a comment is
     # not an input (T39's own header comments name `.trellis/.template-hashes.json`).
-    bodies = guard.run_texts({"jobs": {"j": {"steps": [
-        {"run": "# see scripts/ghost.py\necho ok"},
-        {"uses": "actions/checkout@v4"},
-        {"run": "python -m pytest tests/python/real.py"},
-    ]}}})
+    bodies = guard.run_texts(
+        {
+            "jobs": {
+                "j": {
+                    "steps": [
+                        {"run": "# see scripts/ghost.py\necho ok"},
+                        {"uses": "actions/checkout@v4"},
+                        {"run": "python -m pytest tests/python/real.py"},
+                    ]
+                }
+            }
+        }
+    )
     assert bodies == ["echo ok", "python -m pytest tests/python/real.py"], bodies
     assert guard.references(bodies) == {"tests/python/real.py"}
 
@@ -395,8 +431,9 @@ def test_mutations_are_independent(tmp_path) -> None:
     sb = build_sandbox(tmp_path)
     assert run(sb)[0] == 0
     original = (sb / WORKFLOWS / "ci-python.yml").read_bytes()
-    mutate(sb, f"{WORKFLOWS}/ci-python.yml",
-           ITEM.format(path="crates/uc-python/**"), "", 2, "first")
+    mutate(
+        sb, f"{WORKFLOWS}/ci-python.yml", ITEM.format(path="crates/uc-python/**"), "", 2, "first"
+    )
     assert run(sb)[0] != 0
     restore(sb, f"{WORKFLOWS}/ci-python.yml", original)
     assert run(sb)[0] == 0

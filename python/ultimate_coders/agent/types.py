@@ -13,6 +13,7 @@ from typing import Any
 
 class TaskStatus(Enum):
     """Status of a top-level task."""
+
     CREATED = "created"
     PLANNING = "planning"
     IN_PROGRESS = "in_progress"
@@ -23,6 +24,7 @@ class TaskStatus(Enum):
 
 class SubtaskStatus(Enum):
     """Status of a subtask."""
+
     PENDING = "pending"
     ASSIGNED = "assigned"
     IN_PROGRESS = "in_progress"
@@ -33,6 +35,7 @@ class SubtaskStatus(Enum):
 
 class ChangeType(Enum):
     """Type of file change."""
+
     CREATED = "created"
     MODIFIED = "modified"
     DELETED = "deleted"
@@ -40,7 +43,8 @@ class ChangeType(Enum):
 
 class DispatchMode(Enum):
     """How a subtask should be dispatched to workers."""
-    REMOTE = "remote"          # Must execute on remote worker, fail after 3 retries
+
+    REMOTE = "remote"  # Must execute on remote worker, fail after 3 retries
     PREFER_REMOTE = "prefer_remote"  # Prefer remote, fallback to Pending (default)
     # T5 #641 / D4 #633 Q1: DispatchMode.Local was removed (Rust deleted the
     # variant first; legacy "local" wire values parse back to PREFER_REMOTE).
@@ -49,6 +53,7 @@ class DispatchMode(Enum):
 @dataclass
 class FileChange:
     """A file change produced by a worker."""
+
     file_path: str = ""
     change_type: ChangeType = ChangeType.MODIFIED
     diff: str = ""
@@ -56,6 +61,7 @@ class FileChange:
 
 class AdaptationStrategy(Enum):
     """How a Worker adapted after a failure."""
+
     NONE = "none"  # no adaptation needed
     SHRINK_SCOPE = "shrink_scope"  # timeout → reduce scope/timeout
     FALLBACK_TOOL = "fallback_tool"  # tool_not_found → use alternative tool
@@ -96,9 +102,7 @@ class SubtaskUsage:
         ``usage_reported`` over two NULL columns.
         """
         return (
-            self.input_tokens is None
-            and self.output_tokens is None
-            and self.total_cost_usd is None
+            self.input_tokens is None and self.output_tokens is None and self.total_cost_usd is None
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -122,6 +126,7 @@ class SubtaskUsage:
         Tolerant by design: one malformed optional field degrades to ``None``
         ("unknown") rather than aborting the whole task snapshot.
         """
+
         def _int(key: str) -> int | None:
             value = data.get(key)
             if value is None:
@@ -235,11 +240,7 @@ class StepUsage:
         return cls(
             step_index=index,
             parallel_group=str(group) if group is not None else "",
-            usage=(
-                SubtaskUsage.from_dict(raw_usage)
-                if isinstance(raw_usage, dict)
-                else None
-            ),
+            usage=(SubtaskUsage.from_dict(raw_usage) if isinstance(raw_usage, dict) else None),
             source=str(source) if source else None,
         )
 
@@ -287,15 +288,14 @@ class SubtaskReview:
         return cls(
             approved=approved,
             issues=[str(i) for i in issues] if isinstance(issues, list) else [],
-            suggestions=(
-                [str(s) for s in suggestions] if isinstance(suggestions, list) else []
-            ),
+            suggestions=([str(s) for s in suggestions] if isinstance(suggestions, list) else []),
         )
 
 
 @dataclass
 class SubtaskResult:
     """Result from a completed subtask."""
+
     subtask_id: str = ""
     worker_id: str = ""
     modified_files: list[FileChange] = field(default_factory=list)
@@ -340,6 +340,7 @@ class SubtaskResult:
 @dataclass
 class Subtask:
     """A subtask assigned to a worker."""
+
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     parent_id: str = ""
     description: str = ""
@@ -476,6 +477,7 @@ class WorkflowStep:
 @dataclass
 class Task:
     """A top-level task submitted by the user."""
+
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     description: str = ""
     project_id: str = ""
@@ -549,24 +551,20 @@ class Task:
                         # restarts and re-publishes a full snapshot (`partial=
                         # False`) would report the same subtask with its usage
                         # silently gone.
-                        "usage": (
-                            st.result.usage.to_dict() if st.result.usage else None
-                        ),
+                        "usage": (st.result.usage.to_dict() if st.result.usage else None),
                         # T18 #668: the same hop, for the same reason — a
                         # checkpoint is one more place the per-step detail can
                         # die. Without this, a worker that restarts and
                         # re-publishes a full snapshot would report the node's
                         # terminal event with `steps` gone, i.e. back to the
                         # silent under-report this ticket exists to remove.
-                        "step_usages": [
-                            s.to_dict() for s in st.result.step_usages
-                        ],
+                        "step_usages": [s.to_dict() for s in st.result.step_usages],
                         # T16 #661: same hop, same reason as the block above —
                         # a checkpoint is a place a collected verdict can die.
-                        "review": (
-                            st.result.review.to_dict() if st.result.review else None
-                        ),
-                    } if st.result else None,
+                        "review": (st.result.review.to_dict() if st.result.review else None),
+                    }
+                    if st.result
+                    else None,
                 }
                 for st in self.subtasks
             ],
@@ -636,19 +634,14 @@ class Task:
                     # Absent key (every checkpoint written before T15, and any
                     # publisher that omits it) stays `None` — "not reported".
                     usage=(
-                        SubtaskUsage.from_dict(rd["usage"])
-                        if rd.get("usage") is not None
-                        else None
+                        SubtaskUsage.from_dict(rd["usage"]) if rd.get("usage") is not None else None
                     ),
                     # T18 #668: absent key (every checkpoint written before
                     # T18) stays an empty list — "this result carries no
                     # per-step record", never a fabricated one-entry list.
                     step_usages=[
                         parsed
-                        for parsed in (
-                            StepUsage.from_dict(s)
-                            for s in rd.get("step_usages") or []
-                        )
+                        for parsed in (StepUsage.from_dict(s) for s in rd.get("step_usages") or [])
                         if parsed is not None
                     ],
                     review=(
@@ -659,11 +652,13 @@ class Task:
                 )
                 if "modified_files" in rd:
                     for fc in rd["modified_files"]:
-                        st.result.modified_files.append(FileChange(
-                            file_path=fc.get("path", ""),
-                            change_type=ChangeType(fc.get("change_type", "modified")),
-                            diff=fc.get("diff_stats", ""),
-                        ))
+                        st.result.modified_files.append(
+                            FileChange(
+                                file_path=fc.get("path", ""),
+                                change_type=ChangeType(fc.get("change_type", "modified")),
+                                diff=fc.get("diff_stats", ""),
+                            )
+                        )
                 if "completed_at" in rd:
                     st.result.completed_at = datetime.fromisoformat(rd["completed_at"])
             task.subtasks.append(st)
@@ -672,10 +667,7 @@ class Task:
     @property
     def is_complete(self) -> bool:
         """Whether all subtasks have completed successfully."""
-        return (
-            len(self.subtasks) > 0
-            and all(st.is_complete for st in self.subtasks)
-        )
+        return len(self.subtasks) > 0 and all(st.is_complete for st in self.subtasks)
 
     @property
     def has_failed(self) -> bool:
@@ -687,7 +679,8 @@ class Task:
         """Subtasks that are pending and have all dependencies met."""
         completed_ids = {st.id for st in self.subtasks if st.is_complete}
         return [
-            st for st in self.subtasks
+            st
+            for st in self.subtasks
             if st.is_ready and all(dep in completed_ids for dep in st.depends_on)
         ]
 
@@ -695,6 +688,7 @@ class Task:
 @dataclass
 class WorkerInfo:
     """Information about a registered worker."""
+
     id: str = ""
     capabilities: list[str] = field(default_factory=list)
     current_load: int = 0
@@ -710,6 +704,7 @@ class WorkerInfo:
 @dataclass
 class OrchestratorConfig:
     """Configuration for the Orchestrator."""
+
     max_subtasks: int = 10
     max_retries: int = 3
     heartbeat_timeout_seconds: int = 60
@@ -728,6 +723,7 @@ class OrchestratorConfig:
 
 class AgentEventType(Enum):
     """Event types emitted by the Orchestrator's agent loop."""
+
     AGENT_START = "agent_start"
     AGENT_END = "agent_end"
     TURN_START = "turn_start"
@@ -740,6 +736,7 @@ class AgentEventType(Enum):
 @dataclass
 class AgentEvent:
     """A single event from the agent loop."""
+
     type: AgentEventType
     turn: int = 0
     data: dict[str, Any] = field(default_factory=dict)
@@ -748,6 +745,7 @@ class AgentEvent:
 @dataclass
 class AgentRunConfig:
     """Configuration for a single agent loop run."""
+
     max_turns: int = 5
     token_budget: int = 50000
     abort_event: asyncio.Event | None = None
@@ -761,6 +759,7 @@ class ExecutionSpec:
     Every choice is pre-made so an implementer can execute top-to-bottom
     with ZERO design decisions.
     """
+
     context: str = ""
     approach: list[str] = field(default_factory=list)
     critical_files: list[str] = field(default_factory=list)

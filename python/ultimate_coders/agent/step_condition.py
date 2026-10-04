@@ -110,7 +110,7 @@ def _tokenize(text: str) -> list[_Token]:
                     # Expect "("
                     if k >= len(rest) or rest[k] != "(":
                         raise ConditionError(
-                            f"Expected '(' after '{word}', got: {rest[k:k+20]!r}"
+                            f"Expected '(' after '{word}', got: {rest[k : k + 20]!r}"
                         )
                     k += 1
                     # Skip whitespace.
@@ -119,7 +119,8 @@ def _tokenize(text: str) -> list[_Token]:
                     # Expect a double-quoted string.
                     if k >= len(rest) or rest[k] != '"':
                         raise ConditionError(
-                            f"Expected a double-quoted string in {word}(), got: {rest[k:k+20]!r}"
+                            f"Expected a double-quoted string in {word}(), got: "
+                            f"{rest[k : k + 20]!r}"
                         )
                     k += 1
                     str_start = k
@@ -136,7 +137,7 @@ def _tokenize(text: str) -> list[_Token]:
                     # Expect ")"
                     if k >= len(rest) or rest[k] != ")":
                         raise ConditionError(
-                            f"Expected ')' to close {word}(), got: {rest[k:k+20]!r}"
+                            f"Expected ')' to close {word}(), got: {rest[k : k + 20]!r}"
                         )
                     k += 1
                     # Advance i past this whole construct.

@@ -100,7 +100,9 @@ class WorkspaceManager:
                 "workspace_leases",
                 handle.lease_key,
                 lambda old: {
-                    **old, "handle": asdict(handle), "status": handle.status,
+                    **old,
+                    "handle": asdict(handle),
+                    "status": handle.status,
                     **({"delivery": delivery} if delivery is not None else {}),
                 },
             )
@@ -111,8 +113,10 @@ class WorkspaceManager:
 
     def bind_runtime_state(self, state) -> None:
         """Worker checkpoints and workspace leases must share one state store."""
-        if (self._state is not None
-                and (self._state.url, self._state.path) != (state.url, state.path)):
+        if self._state is not None and (self._state.url, self._state.path) != (
+            state.url,
+            state.path,
+        ):
             raise RuntimeError("Workspace and Worker runtime state stores differ")
         self._state = state
 
@@ -120,8 +124,14 @@ class WorkspaceManager:
         """Give the runner the current lease token, outside stable experiment identity."""
         if self._state is None:
             return None
-        handle = next((item for item in self._active.values()
-                       if item.lease_key and item.worktree_path == working_dir), None)
+        handle = next(
+            (
+                item
+                for item in self._active.values()
+                if item.lease_key and item.worktree_path == working_dir
+            ),
+            None,
+        )
         if handle is None:
             return None
         lease = await asyncio.to_thread(self._state.get, "workspace_leases", handle.lease_key)
@@ -164,14 +174,14 @@ class WorkspaceManager:
             if result["exit_code"] != 0:
                 logger.error(
                     "ensure_clone: clone of %s failed: %s",
-                    self._remote_url, result["stderr"][:300],
+                    self._remote_url,
+                    result["stderr"][:300],
                 )
-                raise RuntimeError(
-                    f"git clone failed: {result['stderr'][:200]}"
-                )
+                raise RuntimeError(f"git clone failed: {result['stderr'][:200]}")
             logger.info(
                 "ensure_clone: cloned %s into %s",
-                self._remote_url, self._project_path,
+                self._remote_url,
+                self._project_path,
             )
             await self._ensure_local_identity()
             return
@@ -181,15 +191,11 @@ class WorkspaceManager:
         if cur["exit_code"] != 0 or cur["stdout"].strip() != self._remote_url:
             # Remote missing or mismatched: (re)set it.
             if cur["exit_code"] != 0:
-                add = await self._git(
-                    ["remote", "add", self._remote_name, self._remote_url]
-                )
+                add = await self._git(["remote", "add", self._remote_name, self._remote_url])
                 if add["exit_code"] != 0:
                     logger.warning("ensure_clone: add remote failed: %s", add["stderr"][:200])
             else:
-                await self._git(
-                    ["remote", "set-url", self._remote_name, self._remote_url]
-                )
+                await self._git(["remote", "set-url", self._remote_name, self._remote_url])
             logger.info("ensure_clone: remote %s set to %s", self._remote_name, self._remote_url)
 
         # (Re)assert the repo-level identity — idempotent. A pre-existing
@@ -216,7 +222,8 @@ class WorkspaceManager:
             if res["exit_code"] != 0:
                 logger.debug(
                     "ensure_clone: git config %s failed (non-fatal): %s",
-                    key, res["stderr"][:200],
+                    key,
+                    res["stderr"][:200],
                 )
 
     async def acquire(
@@ -250,14 +257,27 @@ class WorkspaceManager:
             if self._state is None:
                 self._state = await asyncio.to_thread(
                     RuntimeState,
-                    Path(os.environ.get("UC_RUNTIME_STATE_DIR") or
-                         Path(self._project_path).resolve() / ".uc/runtime") / "state.sqlite3",
+                    Path(
+                        os.environ.get("UC_RUNTIME_STATE_DIR")
+                        or Path(self._project_path).resolve() / ".uc/runtime"
+                    )
+                    / "state.sqlite3",
                 )
             lease_key = hashlib.sha256(
                 (str(Path(self._project_path).resolve()) + ":" + subtask_id).encode()
             ).hexdigest()
             claim = uuid.uuid4().hex
-            experiments = await asyncio.to_thread(self._state.records, "experiments")
+            prior = await asyncio.to_thread(self._state.get, "workspace_leases", lease_key)
+            experiments, after = [], ""
+            workspace = (prior or {}).get("handle", {}).get("worktree_path")
+            while workspace:
+                page = await asyncio.to_thread(
+                    self._state.query, "experiments", workspace=workspace, after=after
+                )
+                experiments.extend(page)
+                if len(page) < 100:
+                    break
+                after = page[-1]["key"]
 
             def claim_lease(old):
                 if old and old.get("status") != "completed":
@@ -274,11 +294,15 @@ class WorkspaceManager:
                     if process_matches(old.get("pid", os.getpid()), old.get("process_identity")):
                         return old
                     for experiment in experiments:
-                        if (experiment.get("workspace")
-                                == old.get("handle", {}).get("worktree_path")):
-                            if (experiment.get("owner_host") != socket.gethostname()
-                                or process_matches(experiment.get("owner_pid", os.getpid()),
-                                                   experiment.get("owner_process_identity"))):
+                        if experiment.get("workspace") == old.get("handle", {}).get(
+                            "worktree_path"
+                        ):
+                            if experiment.get(
+                                "owner_host"
+                            ) != socket.gethostname() or process_matches(
+                                experiment.get("owner_pid", os.getpid()),
+                                experiment.get("owner_process_identity"),
+                            ):
                                 return old
                 return {
                     **old,
@@ -566,8 +590,11 @@ class WorkspaceManager:
 
             self._state = await asyncio.to_thread(
                 RuntimeState,
-                Path(os.environ.get("UC_RUNTIME_STATE_DIR") or
-                     Path(self._project_path).resolve() / ".uc/runtime") / "state.sqlite3",
+                Path(
+                    os.environ.get("UC_RUNTIME_STATE_DIR")
+                    or Path(self._project_path).resolve() / ".uc/runtime"
+                )
+                / "state.sqlite3",
             )
         leases = await asyncio.to_thread(self._state.records, "workspace_leases")
 
@@ -602,7 +629,8 @@ class WorkspaceManager:
     async def _git(self, args: list[str], cwd: str = "") -> dict[str, Any]:
         """Run a git command and return stdout/stderr/exit_code."""
         proc = await asyncio.create_subprocess_exec(
-            "git", *args,
+            "git",
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd or self._project_path,

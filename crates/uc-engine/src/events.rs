@@ -148,6 +148,11 @@ pub enum AgentEventType {
         task_id: TaskId,
         status: String,
     },
+    SubtaskRetried {
+        task_id: TaskId,
+        subtask_id: TaskId,
+        attempt_id: u32,
+    },
 }
 
 /// A recorded event with metadata.

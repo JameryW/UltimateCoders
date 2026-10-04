@@ -55,9 +55,7 @@ class TestClassifyLlmError:
         assert cls.kind == "permanent"
 
     def test_classify_cli_not_signed_in_as_permanent(self) -> None:
-        cls = _classify_llm_error(
-            Exception("Error: Not signed in. Run grok login --device-code")
-        )
+        cls = _classify_llm_error(Exception("Error: Not signed in. Run grok login --device-code"))
         assert cls.kind == "permanent"
 
     def test_classify_unknown_error(self) -> None:
@@ -101,7 +99,9 @@ class TestBuildFriendlyError:
     def test_transient_llm_error_summary(self) -> None:
         original = Exception("503 The system is busy, try again later")
         cls = LLMErrorClassification(
-            kind="transient", retry_count=5, message="503 The system is busy, try again later",
+            kind="transient",
+            retry_count=5,
+            message="503 The system is busy, try again later",
         )
         wrapped = LLMRetryExhaustedError(original, cls)
         summary, error = _build_friendly_error(wrapped)
@@ -156,6 +156,7 @@ class TestWorkerSetsErrorField:
 
     def _make_worker(self, stub_engine) -> Worker:
         from ultimate_coders.agent.sandbox import SandboxConfig
+
         # engine=None to avoid auto-MCP registration (faster, no deps)
         return Worker(engine=None, sandbox_config=SandboxConfig())
 
@@ -174,7 +175,9 @@ class TestWorkerSetsErrorField:
         # Patch _execute_in_sandbox to raise LLMRetryExhaustedError (transient, exhausted)
         original_err = Exception("503 The system is busy, try again later")
         cls = LLMErrorClassification(
-            kind="transient", retry_count=3, message="503 The system is busy, try again later",
+            kind="transient",
+            retry_count=3,
+            message="503 The system is busy, try again later",
         )
         llm_err = LLMRetryExhaustedError(original_err, cls)
 
@@ -185,6 +188,7 @@ class TestWorkerSetsErrorField:
             # Also patch _publish_event to avoid needing NATS/event_emitter
             async def _noop_pub(*args, **kwargs):
                 pass
+
             worker._publish_event = _noop_pub  # type: ignore[assignment]
 
             # Patch sleep to make retry delays instant
@@ -192,8 +196,10 @@ class TestWorkerSetsErrorField:
                 "ultimate_coders.agent.worker.asyncio.sleep",
                 new_callable=MagicMock,
             ) as mock_sleep:
+
                 async def _instant_sleep(*a, **kw):
                     pass
+
                 mock_sleep.side_effect = _instant_sleep
 
                 result = asyncio.run(worker.execute_subtask(subtask))
@@ -219,16 +225,20 @@ class TestWorkerSetsErrorField:
             raise llm_err
 
         with patch.object(worker, "_execute_in_sandbox", side_effect=_raise):
+
             async def _noop_pub(*args, **kwargs):
                 pass
+
             worker._publish_event = _noop_pub  # type: ignore[assignment]
 
             with patch(
                 "ultimate_coders.agent.worker.asyncio.sleep",
                 new_callable=MagicMock,
             ) as mock_sleep:
+
                 async def _instant_sleep(*a, **kw):
                     pass
+
                 mock_sleep.side_effect = _instant_sleep
 
                 result = asyncio.run(worker.execute_subtask(subtask))
@@ -255,16 +265,20 @@ class TestWorkerSetsErrorField:
             )
 
         with patch.object(worker, "_execute_in_sandbox", side_effect=_fail_sandbox):
+
             async def _noop_pub(*args, **kwargs):
                 pass
+
             worker._publish_event = _noop_pub  # type: ignore[assignment]
 
             with patch(
                 "ultimate_coders.agent.worker.asyncio.sleep",
                 new_callable=MagicMock,
             ) as mock_sleep:
+
                 async def _instant_sleep(*a, **kw):
                     pass
+
                 mock_sleep.side_effect = _instant_sleep
 
                 result = asyncio.run(worker.execute_subtask(subtask))
@@ -292,8 +306,10 @@ class TestWorkerSetsErrorField:
             )
 
         with patch.object(worker, "_execute_in_sandbox", side_effect=_fail_auth):
+
             async def _noop_pub(*args, **kwargs):
                 pass
+
             worker._publish_event = _noop_pub  # type: ignore[assignment]
 
             result = asyncio.run(worker.execute_subtask(subtask))
@@ -320,8 +336,10 @@ class TestWorkerSetsErrorField:
             )
 
         with patch.object(worker, "_execute_in_sandbox", side_effect=_slow_sandbox):
+
             async def _noop_pub(*args, **kwargs):
                 pass
+
             worker._publish_event = _noop_pub  # type: ignore[assignment]
 
             result = asyncio.run(worker.execute_subtask(subtask))
@@ -344,8 +362,10 @@ class TestWorkerSetsErrorField:
             )
 
         with patch.object(worker, "_execute_in_sandbox", side_effect=_success_sandbox):
+
             async def _noop_pub(*args, **kwargs):
                 pass
+
             worker._publish_event = _noop_pub  # type: ignore[assignment]
 
             result = asyncio.run(worker.execute_subtask(subtask))
@@ -385,4 +405,3 @@ class TestParseLitellmEmptyChoices:
 
         out = client._parse_litellm_response(resp)
         assert out.stop_reason == "empty_choices"
-

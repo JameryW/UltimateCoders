@@ -32,8 +32,9 @@ async def test_live_terminal_outbox_is_durable_and_restart_safe(monkeypatch):
         # rather than interpreting a cold service as a protocol failure.
         for _ in range(100):
             try:
-                await nc.request("uc.task.gateway-snapshot.request", b'{"task_id":"ready"}',
-                                 timeout=1)
+                await nc.request(
+                    "uc.task.gateway-snapshot.request", b'{"task_id":"ready"}', timeout=1
+                )
                 break
             except (nats.errors.NoRespondersError, nats.errors.TimeoutError):
                 await asyncio.sleep(0.2)

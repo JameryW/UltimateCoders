@@ -141,8 +141,7 @@ def _create_server(workspace: str) -> object:
                         "old_string": {
                             "type": "string",
                             "description": (
-                                "Exact text to replace"
-                                " (must match file including indentation)"
+                                "Exact text to replace (must match file including indentation)"
                             ),
                         },
                         "new_string": {
@@ -153,8 +152,7 @@ def _create_server(workspace: str) -> object:
                             "type": "boolean",
                             "default": False,
                             "description": (
-                                "Replace all occurrences instead of"
-                                " requiring a unique match"
+                                "Replace all occurrences instead of requiring a unique match"
                             ),
                         },
                     },

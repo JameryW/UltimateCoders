@@ -16,14 +16,16 @@ from ultimate_coders.dashboard.app import DashboardApp
 
 def _make_request(host: str = "10.0.0.1", query: bytes = b"") -> Request:
     """Non-localhost request (localhost bypasses auth by design)."""
-    return Request({
-        "type": "http",
-        "method": "GET",
-        "path": "/metrics",
-        "query_string": query,
-        "headers": [],
-        "client": (host, 12345),
-    })
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/metrics",
+            "query_string": query,
+            "headers": [],
+            "client": (host, 12345),
+        }
+    )
 
 
 def _metrics_endpoint(app: DashboardApp):

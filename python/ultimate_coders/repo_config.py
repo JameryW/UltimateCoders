@@ -122,13 +122,15 @@ def _parse_repos_yaml(path: Path) -> RepoConfig:
     repos: list[RepoEntry] = []
     for r in data.get("repos", []):
         repo_id = _safe_id(r.get("repo_id", ""), "repo_id")
-        repos.append(RepoEntry(
-            repo_id=repo_id,
-            local_path=r.get("local_path", ""),
-            remote_url=r.get("remote_url", ""),
-            default_branch=r.get("default_branch", "main"),
-            tags=r.get("tags", []),
-        ))
+        repos.append(
+            RepoEntry(
+                repo_id=repo_id,
+                local_path=r.get("local_path", ""),
+                remote_url=r.get("remote_url", ""),
+                default_branch=r.get("default_branch", "main"),
+                tags=r.get("tags", []),
+            )
+        )
 
     # Validate: repo_id required; at least one of local_path/remote_url required.
     # Remote-only entries (no local_path) are cloned on demand by RepoScanner.
@@ -139,7 +141,8 @@ def _parse_repos_yaml(path: Path) -> RepoConfig:
             continue
         if not (r.local_path or r.remote_url):
             logger.warning(
-                "Dropping repos entry %s: needs local_path or remote_url", r.repo_id,
+                "Dropping repos entry %s: needs local_path or remote_url",
+                r.repo_id,
             )
             continue
         kept.append(r)
@@ -161,11 +164,22 @@ class RepoScanner:
     """Scan directories for git repositories."""
 
     # Directories to skip during scan
-    _SKIP_DIRS = frozenset({
-        "node_modules", "__pycache__", ".tox", ".venv", "venv",
-        "env", ".mypy_cache", ".pytest_cache", "dist", "build",
-        ".cargo", "target",
-    })
+    _SKIP_DIRS = frozenset(
+        {
+            "node_modules",
+            "__pycache__",
+            ".tox",
+            ".venv",
+            "venv",
+            "env",
+            ".mypy_cache",
+            ".pytest_cache",
+            "dist",
+            "build",
+            ".cargo",
+            "target",
+        }
+    )
 
     def __init__(self, engine: object | None = None) -> None:
         """Initialize scanner.
@@ -223,7 +237,8 @@ class RepoScanner:
         # Exclude repos already declared in the repos section
         declared_ids = {r.repo_id for r in config.repos}
         discovered = self.discover(
-            config.scan_dirs, config.scan_depth,
+            config.scan_dirs,
+            config.scan_depth,
             exclude_repo_ids=declared_ids,
         )
         indexed: list[RepoEntry] = []
@@ -246,7 +261,8 @@ class RepoScanner:
                 except Exception:
                     logger.warning(
                         "Failed to index discovered repo %s",
-                        entry.repo_id, exc_info=True,
+                        entry.repo_id,
+                        exc_info=True,
                     )
             else:
                 indexed.append(entry)
@@ -275,7 +291,8 @@ class RepoScanner:
         if cache_root.exists() and (cache_root / ".git").is_dir():
             logger.info(
                 "Reusing cached clone for repo %s at %s",
-                entry.repo_id, cache_root,
+                entry.repo_id,
+                cache_root,
             )
             return str(cache_root)
 
@@ -283,9 +300,14 @@ class RepoScanner:
         try:
             subprocess.run(
                 [
-                    "git", "clone", "--depth", "1",
-                    "-b", entry.default_branch,
-                    entry.remote_url, str(cache_root),
+                    "git",
+                    "clone",
+                    "--depth",
+                    "1",
+                    "-b",
+                    entry.default_branch,
+                    entry.remote_url,
+                    str(cache_root),
                 ],
                 capture_output=True,
                 text=True,
@@ -294,13 +316,16 @@ class RepoScanner:
             )
             logger.info(
                 "Cloned remote repo %s to %s",
-                entry.repo_id, cache_root,
+                entry.repo_id,
+                cache_root,
             )
             return str(cache_root)
         except Exception:
             logger.warning(
                 "Failed to clone remote repo %s from %s",
-                entry.repo_id, entry.remote_url, exc_info=True,
+                entry.repo_id,
+                entry.remote_url,
+                exc_info=True,
             )
             return None
 
@@ -469,6 +494,7 @@ class RepoConfigWatcher:
 
                 def on_modified(self, event: object) -> None:  # noqa: N805
                     from watchdog.events import FileModifiedEvent  # type: ignore[import-untyped]
+
                     if isinstance(event, FileModifiedEvent) and event.src_path.endswith(filename):
                         self._watcher._schedule_reload()  # type: ignore[attr-defined]
 

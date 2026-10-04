@@ -173,9 +173,7 @@ async def test_handle_attempt_cancelled_event_routes_to_node_cancel():
     nw._worker = _fake_worker(kills)
     nw._orchestrator = MagicMock()
 
-    await nw._handle_task_event(
-        _event_msg("attempt_cancelled", "t-1", subtask_id="st-a")
-    )
+    await nw._handle_task_event(_event_msg("attempt_cancelled", "t-1", subtask_id="st-a"))
 
     assert kills == [("t-1", "st-a")]
 

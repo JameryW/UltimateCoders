@@ -314,6 +314,7 @@ def _sync_file(ls: LanguageServer, abs_path: str) -> None:
 
 def _format_location(loc: object) -> str:
     """Format a multilspy Location-like object as a concise string."""
+
     # multilspy Location: {uri, range: {start: {line, character}, end: ...}}
     def _get(obj: object, attr: str) -> object:
         if isinstance(obj, dict):
@@ -601,8 +602,7 @@ def _fallback_hover(
             loc = f"{r.get('file_path', '?')}:{r.get('start_line', '?')}"
             location_hint = f" Symbol '{symbol}' found at {loc}."
     return _fallback_text(
-        "hover 语义不可用（codegraph 无类型/文档信息），"
-        f"建议 read_file 查看上下文。{location_hint}"
+        f"hover 语义不可用（codegraph 无类型/文档信息），建议 read_file 查看上下文。{location_hint}"
     )
 
 

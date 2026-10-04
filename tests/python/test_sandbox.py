@@ -32,6 +32,7 @@ from ultimate_coders.agent.types import ChangeType, FileChange, Subtask, Subtask
 
 # ── SandboxConfig tests ─────────────────────────────────────────
 
+
 class TestSandboxConfig:
     """Tests for SandboxConfig."""
 
@@ -114,6 +115,7 @@ class TestSandboxConfig:
 
 # ── ExecResult tests ────────────────────────────────────────────
 
+
 class TestExecResult:
     """Tests for ExecResult."""
 
@@ -131,6 +133,7 @@ class TestExecResult:
 
 
 # ── AgentOutput tests ────────────────────────────────────────────
+
 
 class TestAgentOutput:
     """Tests for AgentOutput."""
@@ -154,6 +157,7 @@ class TestAgentOutput:
 
 
 # ── ClaudeCodeAdapter tests ─────────────────────────────────────
+
 
 class TestClaudeCodeAdapter:
     """Tests for ClaudeCodeAdapter."""
@@ -195,7 +199,7 @@ class TestClaudeCodeAdapter:
 
     def test_parse_output_failure(self):
         adapter = ClaudeCodeAdapter()
-        result = ExecResult(exit_code=1, stdout="{\"error\":\"authentication_failed\"}")
+        result = ExecResult(exit_code=1, stdout='{"error":"authentication_failed"}')
         output = adapter.parse_output(result)
         assert not output.success
         assert "exited with code 1" in output.summary
@@ -213,6 +217,7 @@ class TestClaudeCodeAdapter:
 
 
 # ── GrokBuildAdapter tests ──────────────────────────────────────
+
 
 class TestGrokBuildAdapter:
     """Tests for the default xAI Grok Build adapter."""
@@ -237,7 +242,9 @@ class TestGrokBuildAdapter:
         adapter = GrokBuildAdapter()
         config = SandboxConfig(project_path="/tmp/project")
         request = adapter.build_request(
-            "Fix bug", "/tmp/project", config,
+            "Fix bug",
+            "/tmp/project",
+            config,
             subtask_config={
                 "tools": ["default", "mcp__codegraph__*"],
                 "allowed_tools": ["Bash(git *)"],
@@ -257,16 +264,20 @@ class TestGrokBuildAdapter:
 
     def test_parse_streaming_json(self):
         adapter = GrokBuildAdapter()
-        stdout = "\n".join([
-            json.dumps({"type": "tool_call", "name": "shell"}),
-            json.dumps({"type": "agent_message_chunk", "text": "Fixed "}),
-            json.dumps({"type": "agent_message_chunk", "text": "the bug."}),
-            json.dumps({
-                "type": "result",
-                "result": "Fixed the bug.",
-                "usage": {"input_tokens": 12, "output_tokens": 8},
-            }),
-        ])
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "tool_call", "name": "shell"}),
+                json.dumps({"type": "agent_message_chunk", "text": "Fixed "}),
+                json.dumps({"type": "agent_message_chunk", "text": "the bug."}),
+                json.dumps(
+                    {
+                        "type": "result",
+                        "result": "Fixed the bug.",
+                        "usage": {"input_tokens": 12, "output_tokens": 8},
+                    }
+                ),
+            ]
+        )
         output = adapter.parse_output(ExecResult(exit_code=0, stdout=stdout))
         assert output.success
         assert output.summary == "Fixed the bug."
@@ -276,10 +287,12 @@ class TestGrokBuildAdapter:
 
     def test_parse_plain_output_and_failures(self):
         adapter = GrokBuildAdapter()
-        output = adapter.parse_output(ExecResult(
-            exit_code=0,
-            stdout="Implemented feature.\nCreated: src/feature.rs",
-        ))
+        output = adapter.parse_output(
+            ExecResult(
+                exit_code=0,
+                stdout="Implemented feature.\nCreated: src/feature.rs",
+            )
+        )
         assert output.success
         assert "Implemented feature" in output.summary
         assert output.file_changes[0].file_path == "src/feature.rs"
@@ -292,15 +305,19 @@ class TestGrokBuildAdapter:
         adapter = GrokBuildAdapter()
         config = SandboxConfig(project_path="/tmp/project")
         request = adapter.build_request(
-            "Fix bug", "/tmp/project", config,
+            "Fix bug",
+            "/tmp/project",
+            config,
             subtask_config={
-                "mcp_configs": [{
-                    "codegraph": {
-                        "command": "python3",
-                        "args": ["-m", "codegraph"],
-                        "env": {"MODE": "test"},
-                    },
-                }],
+                "mcp_configs": [
+                    {
+                        "codegraph": {
+                            "command": "python3",
+                            "args": ["-m", "codegraph"],
+                            "env": {"MODE": "test"},
+                        },
+                    }
+                ],
             },
         )
         grok_home = request["env_vars"]["GROK_HOME"]
@@ -313,6 +330,7 @@ class TestGrokBuildAdapter:
 
 
 # ── CodexAdapter tests ──────────────────────────────────────────
+
 
 class TestCodexAdapter:
     """Tests for CodexAdapter."""
@@ -350,25 +368,33 @@ class TestCodexAdapter:
         adapter = CodexAdapter()
         result = ExecResult(
             exit_code=0,
-            stdout="\n".join([
-                json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
-                json.dumps({
-                    "type": "item.completed",
-                    "item": {"type": "error", "message": "metadata warning"},
-                }),
-                json.dumps({
-                    "type": "item.completed",
-                    "item": {"type": "agent_message", "text": "First draft"},
-                }),
-                json.dumps({
-                    "type": "item.completed",
-                    "item": {
-                        "type": "agent_message",
-                        "text": "Gateway and Worker communicate over NATS and gRPC.",
-                    },
-                }),
-                json.dumps({"type": "turn.completed", "usage": {"input_tokens": 10}}),
-            ]),
+            stdout="\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {"type": "error", "message": "metadata warning"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {"type": "agent_message", "text": "First draft"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "agent_message",
+                                "text": "Gateway and Worker communicate over NATS and gRPC.",
+                            },
+                        }
+                    ),
+                    json.dumps({"type": "turn.completed", "usage": {"input_tokens": 10}}),
+                ]
+            ),
             stderr="Codex progress goes to stderr",
         )
         output = adapter.parse_output(result)
@@ -379,10 +405,14 @@ class TestCodexAdapter:
         adapter = CodexAdapter()
         result = ExecResult(
             exit_code=0,
-            stdout="\n".join([
-                json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
-                json.dumps({"type": "turn.failed", "error": {"message": "provider unavailable"}}),
-            ]),
+            stdout="\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+                    json.dumps(
+                        {"type": "turn.failed", "error": {"message": "provider unavailable"}}
+                    ),
+                ]
+            ),
         )
         output = adapter.parse_output(result)
         assert not output.success
@@ -403,6 +433,7 @@ class TestCodexAdapter:
 
 
 # ── DecomposeAdapter tests ──────────────────────────────────────
+
 
 class TestDecomposeAdapter:
     """Tests for DecomposeAdapter."""
@@ -454,6 +485,7 @@ class TestDecomposeAdapter:
 
 # ── parse_decomposition_output tests ─────────────────────────────
 
+
 class TestParseDecompositionOutput:
     """Tests for parse_decomposition_output()."""
 
@@ -487,6 +519,7 @@ class TestParseDecompositionOutput:
         """Claude Code wraps output in {"result": "..."} envelope."""
         inner = '[{"description": "Fix bug", "depends_on": []}]'
         import json as _json
+
         raw = _json.dumps({"type": "result", "result": inner})
         items = parse_decomposition_output(raw)
         assert len(items) == 1
@@ -507,6 +540,7 @@ class TestParseDecompositionOutput:
 
 
 # ── truncate_str tests ──────────────────────────────────────────
+
 
 class TestTruncateStr:
     """Tests for truncate_str()."""
@@ -667,6 +701,7 @@ class TestSandboxSubprocessCancellation:
 
 # ── create_adapter and available_agents tests ───────────────────
 
+
 class TestAdapterFactory:
     """Tests for adapter factory functions."""
 
@@ -701,11 +736,13 @@ class TestAdapterFactory:
 
 # ── Worker sandbox mode integration test ─────────────────────────
 
+
 class TestWorkerSandboxMode:
     """Tests for Worker sandbox execution (always sandbox)."""
 
     def test_worker_init_with_sandbox_config(self):
         from ultimate_coders.agent.worker import Worker
+
         config = SandboxConfig(
             agent="claude-code",
             project_path="/tmp/project",
@@ -718,6 +755,7 @@ class TestWorkerSandboxMode:
 
     def test_worker_init_default_sandbox(self):
         from ultimate_coders.agent.worker import Worker
+
         worker = Worker(worker_id="w-default")
         assert worker._sandbox_manager is not None
         assert worker._sandbox_config.agent == "grok-build"
@@ -725,6 +763,7 @@ class TestWorkerSandboxMode:
 
 
 # ── Worker capability derivation tests ──────────────────────────────
+
 
 class TestWorkerDeriveCapabilitiesLegacy:
     """Tests for Worker._derive_capabilities from SandboxConfig (legacy baseline)."""
@@ -755,36 +794,42 @@ class TestWorkerDeriveCapabilitiesLegacy:
 
     def test_mcp_capability_when_mcp_configs_set(self):
         from ultimate_coders.agent.worker import Worker
+
         config = SandboxConfig(mcp_configs=["/etc/mcp/codegraph.json"])
         worker = Worker(worker_id="w-caps-mcp", sandbox_config=config)
         assert "mcp" in worker.capabilities
 
     def test_no_mcp_capability_without_mcp_configs(self):
         from ultimate_coders.agent.worker import Worker
+
         config = SandboxConfig()
         worker = Worker(worker_id="w-caps-no-mcp", sandbox_config=config)
         assert "mcp" not in worker.capabilities
 
     def test_codegraph_capability_when_tool_present(self):
         from ultimate_coders.agent.worker import Worker
+
         config = SandboxConfig(tools=["default", "mcp__codegraph__*"])
         worker = Worker(worker_id="w-caps-cg", sandbox_config=config)
         assert "codegraph" in worker.capabilities
 
     def test_no_codegraph_capability_without_tool(self):
         from ultimate_coders.agent.worker import Worker
+
         config = SandboxConfig(tools=["default"])
         worker = Worker(worker_id="w-caps-no-cg", sandbox_config=config)
         assert "codegraph" not in worker.capabilities
 
     def test_agent_name_capability(self):
         from ultimate_coders.agent.worker import Worker
+
         config = SandboxConfig(agent_name="reviewer")
         worker = Worker(worker_id="w-caps-agent", sandbox_config=config)
         assert "agent:reviewer" in worker.capabilities
 
     def test_explicit_capabilities_override_derived(self):
         from ultimate_coders.agent.worker import Worker
+
         config = SandboxConfig(mcp_configs=["/a.json"])
         worker = Worker(
             worker_id="w-caps-override",
@@ -797,6 +842,7 @@ class TestWorkerDeriveCapabilitiesLegacy:
 
 # ── NetworkMode tests ────────────────────────────────────────────
 
+
 class TestNetworkMode:
     """Tests for NetworkMode."""
 
@@ -807,6 +853,7 @@ class TestNetworkMode:
 
 
 # ── Agent tool/skill/mcp config tests ──────────────────────────────
+
 
 class TestSandboxConfigAgentFields:
     """Tests for SandboxConfig tool/skill/mcp fields."""
@@ -975,7 +1022,9 @@ class TestClaudeCodeAdapterAgentFlags:
             tools=["default"],
         )
         request = adapter.build_request(
-            "Fix", "/tmp/project", config,
+            "Fix",
+            "/tmp/project",
+            config,
             subtask_config={"tools": ["mcp__codegraph__*"], "agent_name": "reviewer"},
         )
         args = request["args"]
@@ -1033,6 +1082,7 @@ class TestSubtaskAgentConfig:
 
 
 # ── NATS dispatch agent_config round-trip tests ──────────────────
+
 
 class TestNatsDispatchAgentConfig:
     """Tests for agent_config surviving NATS subtask dispatch round-trip."""
@@ -1183,6 +1233,7 @@ class TestOrchestratorAgentConfig:
 
 # ── Inline MCP config resolution tests ──────────────────────────
 
+
 class TestResolveMcpConfigs:
     """Tests for _resolve_mcp_configs helper."""
 
@@ -1198,6 +1249,7 @@ class TestResolveMcpConfigs:
         assert len(temps) == 1
         # Verify temp file content
         import os
+
         with open(temps[0]) as f:
             data = json.load(f)
         assert "mcpServers" in data
@@ -1212,6 +1264,7 @@ class TestResolveMcpConfigs:
         assert resolved[0] == "/a.json"
         assert len(temps) == 1
         import os
+
         for p in temps:
             os.unlink(p)
 
@@ -1273,7 +1326,9 @@ class TestCodexAdapterBuildRequest:
         monkeypatch.setenv("CODEX_HOME", str(codex_home))
         mcp_inline = {"codegraph": {"command": "npx", "args": ["-y", "mcp-codegraph"]}}
         request = adapter.build_request(
-            "Fix bug", "/tmp/project", config,
+            "Fix bug",
+            "/tmp/project",
+            config,
             subtask_config={"mcp_configs": [mcp_inline]},
         )
         assert "_temp_files" in request
@@ -1281,6 +1336,7 @@ class TestCodexAdapterBuildRequest:
         assert len(temps) >= 1
         # Verify the temp config.toml content and naming
         import os
+
         for p in temps:
             if p.endswith(".config.toml"):
                 # Profile file must be named <name>.config.toml
@@ -1312,7 +1368,9 @@ class TestClaudeCodeAdapterInlineMcp:
         config = SandboxConfig(project_path="/tmp/project")
         mcp_inline = {"codegraph": {"command": "npx", "args": ["-y", "mcp-codegraph"]}}
         request = adapter.build_request(
-            "Fix bug", "/tmp/project", config,
+            "Fix bug",
+            "/tmp/project",
+            config,
             subtask_config={"mcp_configs": [mcp_inline]},
         )
         args = request["args"]
@@ -1320,6 +1378,7 @@ class TestClaudeCodeAdapterInlineMcp:
         mcp_path = args[idx + 1]
         # Verify temp file exists and has correct content
         import os
+
         with open(mcp_path) as f:
             data = json.load(f)
         assert "mcpServers" in data
@@ -1336,7 +1395,9 @@ class TestClaudeCodeAdapterInlineMcp:
         )
         mcp_inline = {"pencil": {"url": "https://example.com/mcp"}}
         request = adapter.build_request(
-            "Fix", "/tmp/project", config,
+            "Fix",
+            "/tmp/project",
+            config,
             subtask_config={"mcp_configs": ["/existing/config.json", mcp_inline]},
         )
         args = request["args"]
@@ -1344,17 +1405,20 @@ class TestClaudeCodeAdapterInlineMcp:
         # First is file path, second is temp file
         assert args[idx + 1] == "/existing/config.json"
         import os
+
         for p in request.get("_temp_files", []):
             os.unlink(p)
 
 
 # ── Worker agent_config auto-derivation tests ──────────────────
 
+
 class TestWorkerDeriveCapabilities:
     """Tests for Worker._derive_capabilities enhancement."""
 
     def test_base_capabilities(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         caps = w.capabilities
         assert "code" in caps
@@ -1363,6 +1427,7 @@ class TestWorkerDeriveCapabilities:
 
     def test_mcp_configs_add_per_server_caps(self):
         from ultimate_coders.agent.worker import Worker
+
         mcp_inline = {"codegraph": {"command": "npx"}, "pencil": {"url": "https://x.com"}}
         cfg = SandboxConfig(mcp_configs=[mcp_inline])
         w = Worker(sandbox_config=cfg)
@@ -1371,12 +1436,14 @@ class TestWorkerDeriveCapabilities:
 
     def test_mcp_file_path_extracts_name(self):
         from ultimate_coders.agent.worker import Worker
+
         cfg = SandboxConfig(mcp_configs=["/etc/mcp/codegraph.json"])
         w = Worker(sandbox_config=cfg)
         assert "mcp:codegraph" in w.capabilities
 
     def test_tools_mcp_prefix_extracts_server(self):
         from ultimate_coders.agent.worker import Worker
+
         cfg = SandboxConfig(tools=["default", "mcp__codegraph__*", "mcp__pencil__*"])
         w = Worker(sandbox_config=cfg)
         assert "mcp:codegraph" in w.capabilities
@@ -1384,10 +1451,13 @@ class TestWorkerDeriveCapabilities:
 
     def test_agents_json_parses_names(self):
         from ultimate_coders.agent.worker import Worker
-        agents_json = json.dumps({
-            "reviewer": {"description": "Reviews"},
-            "writer": {"description": "Writes"},
-        })
+
+        agents_json = json.dumps(
+            {
+                "reviewer": {"description": "Reviews"},
+                "writer": {"description": "Writes"},
+            }
+        )
         cfg = SandboxConfig(agents_json=agents_json)
         w = Worker(sandbox_config=cfg)
         assert "agent:reviewer" in w.capabilities
@@ -1395,6 +1465,7 @@ class TestWorkerDeriveCapabilities:
 
     def test_no_duplicate_caps(self):
         from ultimate_coders.agent.worker import Worker
+
         cfg = SandboxConfig(
             tools=["default", "mcp__codegraph__*"],
             mcp_configs=["/etc/mcp/codegraph.json"],
@@ -1413,6 +1484,7 @@ class TestWorkerResolveAgentConfig:
 
     def test_explicit_agent_config_preserved(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(
             description="Fix bug",
@@ -1423,6 +1495,7 @@ class TestWorkerResolveAgentConfig:
 
     def test_capability_match_review(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(
             description="Check code quality",
@@ -1434,6 +1507,7 @@ class TestWorkerResolveAgentConfig:
 
     def test_description_heuristic_review(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(description="Review the auth module for security issues")
         result = w._resolve_agent_config(st)
@@ -1441,6 +1515,7 @@ class TestWorkerResolveAgentConfig:
 
     def test_description_heuristic_search(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(description="Find all usages of deprecated API")
         result = w._resolve_agent_config(st)
@@ -1449,6 +1524,7 @@ class TestWorkerResolveAgentConfig:
 
     def test_capability_overrides_template(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         # "review" capability + "search" in description → capability wins
         st = Subtask(
@@ -1461,6 +1537,7 @@ class TestWorkerResolveAgentConfig:
 
     def test_no_match_returns_empty(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(description="Implement the new feature")
         result = w._resolve_agent_config(st)
@@ -1468,6 +1545,7 @@ class TestWorkerResolveAgentConfig:
 
     def test_empty_agent_config_treated_as_not_set(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(
             description="Review code",
@@ -1480,6 +1558,7 @@ class TestWorkerResolveAgentConfig:
 
 # ── End-to-end pipeline tests ──────────────────────────────────
 
+
 class TestAgentConfigPipeline:
     """End-to-end: required_capabilities → _resolve_agent_config → build_request.
 
@@ -1488,6 +1567,7 @@ class TestAgentConfigPipeline:
 
     def test_review_subtask_produces_disallowed_tools_flag(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(
             description="Review the auth module",
@@ -1504,6 +1584,7 @@ class TestAgentConfigPipeline:
 
     def test_codegraph_search_subtask_produces_tools_flag(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(
             description="Find all usages of deprecated API",
@@ -1515,10 +1596,11 @@ class TestAgentConfigPipeline:
         request = adapter.build_request("Search", "/tmp/project", config, subtask_config=agent_cfg)
         args = request["args"]
         idx = args.index("--tools")
-        assert "mcp__codegraph__*" in args[idx + 1:]
+        assert "mcp__codegraph__*" in args[idx + 1 :]
 
     def test_codex_adapter_with_review_subtask(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(
             description="Review code quality",
@@ -1531,12 +1613,14 @@ class TestAgentConfigPipeline:
         # Codex uses config.profile, not CLI flags for tool restrictions
         # Review profile has disallowed_tools which Codex logs as unsupported
         import os
+
         temps = request.get("_temp_files", [])
         for p in temps:
             os.unlink(p)
 
     def test_explicit_config_bypasses_derivation(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         # User explicitly sets tools — should NOT be overridden by review template
         st = Subtask(
@@ -1566,6 +1650,7 @@ class TestWorkerRetry:
         w = Worker()
 
         call_count = 0
+
         async def mock_execute(prompt, **kwargs):
             nonlocal call_count
             call_count += 1
@@ -1590,6 +1675,7 @@ class TestWorkerRetry:
 
         w = Worker()
         call_count = 0
+
         async def mock_execute(prompt, **kwargs):
             nonlocal call_count
             call_count += 1
@@ -1616,6 +1702,7 @@ class TestWorkerRetry:
 
         w = Worker()
         call_count = 0
+
         async def mock_execute(prompt, **kwargs):
             nonlocal call_count
             call_count += 1
@@ -1668,6 +1755,7 @@ class TestNewTemplates:
 
     def test_fix_template(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(description="Fix the null pointer exception in auth")
         result = w._resolve_agent_config(st)
@@ -1676,6 +1764,7 @@ class TestNewTemplates:
 
     def test_test_template(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(description="Write unit tests for the parser")
         result = w._resolve_agent_config(st)
@@ -1683,6 +1772,7 @@ class TestNewTemplates:
 
     def test_refactor_template(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(description="Refactor the database connection pool")
         result = w._resolve_agent_config(st)
@@ -1692,6 +1782,7 @@ class TestNewTemplates:
 
     def test_deploy_template(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(description="Deploy to staging environment")
         result = w._resolve_agent_config(st)
@@ -1699,6 +1790,7 @@ class TestNewTemplates:
 
     def test_docs_template(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(description="Document the API endpoints")
         result = w._resolve_agent_config(st)
@@ -1706,6 +1798,7 @@ class TestNewTemplates:
 
     def test_fix_capability_profile(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(required_capabilities=["fix"])
         result = w._resolve_agent_config(st)
@@ -1713,6 +1806,7 @@ class TestNewTemplates:
 
     def test_test_capability_profile(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(required_capabilities=["test"])
         result = w._resolve_agent_config(st)
@@ -1720,6 +1814,7 @@ class TestNewTemplates:
 
     def test_refactor_capability_profile(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(required_capabilities=["refactor"])
         result = w._resolve_agent_config(st)
@@ -1727,6 +1822,7 @@ class TestNewTemplates:
 
     def test_deploy_capability_profile(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(required_capabilities=["deploy"])
         result = w._resolve_agent_config(st)
@@ -1734,6 +1830,7 @@ class TestNewTemplates:
 
     def test_docs_capability_profile(self):
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(required_capabilities=["docs"])
         result = w._resolve_agent_config(st)
@@ -1747,6 +1844,7 @@ class TestProjectIdPropagation:
     async def test_subtask_project_id_reaches_orchestrator(self):
         """Orchestrator passes project_id to created Subtask objects."""
         from ultimate_coders.agent.orchestrator import Orchestrator
+
         orch = Orchestrator()
         task = await orch.submit_task("fix auth\nadd tests", project_id="my-project")
         assert task.project_id == "my-project"
@@ -1814,29 +1912,34 @@ class TestSearchCache:
 
     def test_cache_miss_returns_none(self):
         from ultimate_coders.agent.search_cache import WorkerLocalCache
+
         cache = WorkerLocalCache()
         assert cache.get_search("nonexistent") is None
 
     def test_cache_put_and_get(self):
         from ultimate_coders.agent.search_cache import WorkerLocalCache
+
         cache = WorkerLocalCache()
         cache.put_search("key1", ["result1"])
         assert cache.get_search("key1") == ["result1"]
 
     def test_cache_key_deterministic(self):
         from ultimate_coders.agent.search_cache import WorkerLocalCache
+
         key1 = WorkerLocalCache.search_key("auth", ["backend"], ["hybrid"], 10)
         key2 = WorkerLocalCache.search_key("auth", ["backend"], ["hybrid"], 10)
         assert key1 == key2
 
     def test_cache_key_different_queries(self):
         from ultimate_coders.agent.search_cache import WorkerLocalCache
+
         key1 = WorkerLocalCache.search_key("auth", ["backend"], ["hybrid"], 10)
         key2 = WorkerLocalCache.search_key("search", ["backend"], ["hybrid"], 10)
         assert key1 != key2
 
     def test_repo_cache(self):
         from ultimate_coders.agent.search_cache import WorkerLocalCache
+
         cache = WorkerLocalCache()
         assert cache.get_repos() is None
         cache.put_repos([{"repo_id": "backend"}])
@@ -1846,6 +1949,7 @@ class TestSearchCache:
 
     def test_cache_invalidate(self):
         from ultimate_coders.agent.search_cache import WorkerLocalCache
+
         cache = WorkerLocalCache()
         cache.put_search("key1", "val1")
         cache.put_search("key2", "val2")
@@ -1855,6 +1959,7 @@ class TestSearchCache:
 
     def test_cache_lru_eviction(self):
         from ultimate_coders.agent.search_cache import WorkerLocalCache
+
         cache = WorkerLocalCache(max_search_entries=3)
         cache.put_search("a", 1)
         cache.put_search("b", 2)
@@ -1880,6 +1985,7 @@ class TestCrossRepoSearchAndMemorySharing:
     async def test_search_across_repos_no_engine(self):
         """search_across_repos returns None when engine is unavailable."""
         from ultimate_coders.agent.worker import Worker
+
         w = Worker(engine=None)
         result = await w.search_across_repos("authentication")
         assert result is None
@@ -1887,6 +1993,7 @@ class TestCrossRepoSearchAndMemorySharing:
     async def test_build_search_context_no_engine(self):
         """_build_search_context returns None when engine is unavailable."""
         from ultimate_coders.agent.worker import Worker
+
         w = Worker(engine=None)
         st = Subtask(id="s1", description="fix auth")
         result = await w._build_search_context(st)
@@ -1895,6 +2002,7 @@ class TestCrossRepoSearchAndMemorySharing:
     async def test_build_search_context_no_description(self):
         """_build_search_context returns None for empty description."""
         from ultimate_coders.agent.worker import Worker
+
         w = Worker()
         st = Subtask(id="s1", description="")
         result = await w._build_search_context(st)
@@ -1903,6 +2011,7 @@ class TestCrossRepoSearchAndMemorySharing:
     async def test_read_shared_memory_no_engine(self):
         """read_shared_memory returns None when engine is unavailable."""
         from ultimate_coders.agent.worker import Worker
+
         w = Worker(engine=None)
         result = await w.read_shared_memory("architecture")
         assert result is None
@@ -1910,6 +2019,7 @@ class TestCrossRepoSearchAndMemorySharing:
     async def test_write_shared_memory_no_engine(self):
         """write_shared_memory returns None when engine is unavailable."""
         from ultimate_coders.agent.worker import Worker
+
         w = Worker(engine=None)
         result = await w.write_shared_memory("architecture", "Use microservices")
         assert result is None
@@ -1917,6 +2027,7 @@ class TestCrossRepoSearchAndMemorySharing:
     async def test_delete_shared_memory_no_engine(self):
         """delete_shared_memory returns False when engine is unavailable."""
         from ultimate_coders.agent.worker import Worker
+
         w = Worker(engine=None)
         assert await w.delete_shared_memory("architecture") is False
 
@@ -2045,7 +2156,10 @@ class TestCrossRepoSearchAndSharedMemory:
         assert result is not None
         engine.write_memory.assert_called_once()
         publisher.publish_memory_changed.assert_awaited_once_with(
-            project_id="proj-1", key="k", action="write", source_worker="worker-A",
+            project_id="proj-1",
+            key="k",
+            action="write",
+            source_worker="worker-A",
         )
 
     async def test_broadcast_task_kept_alive_until_complete(self):
@@ -2135,10 +2249,15 @@ class TestCrossRepoSearchAndSharedMemory:
 
         assert ok is True
         engine.delete_memory.assert_called_once_with(
-            key_scope="project", key="k", project_id="proj-1",
+            key_scope="project",
+            key="k",
+            project_id="proj-1",
         )
         publisher.publish_memory_changed.assert_awaited_once_with(
-            project_id="proj-1", key="k", action="delete", source_worker="worker-A",
+            project_id="proj-1",
+            key="k",
+            action="delete",
+            source_worker="worker-A",
         )
 
     async def test_delete_shared_memory_failure_skips_broadcast(self):
@@ -2181,10 +2300,16 @@ class TestCrossRepoSearchAndSharedMemory:
         worker._search_cache = cache
         nw._worker = worker
 
-        msg = SimpleNamespace(data=json.dumps({
-            "project_id": "proj-1", "key": "k",
-            "action": "write", "source_worker": "worker-B",
-        }).encode())
+        msg = SimpleNamespace(
+            data=json.dumps(
+                {
+                    "project_id": "proj-1",
+                    "key": "k",
+                    "action": "write",
+                    "source_worker": "worker-B",
+                }
+            ).encode()
+        )
 
         asyncio.run(nw._handle_memory_changed(msg))
 
@@ -2206,10 +2331,16 @@ class TestCrossRepoSearchAndSharedMemory:
         worker._search_cache = cache
         nw._worker = worker
 
-        msg = SimpleNamespace(data=json.dumps({
-            "project_id": "proj-1", "key": "k",
-            "action": "write", "source_worker": "worker-A",  # same as worker
-        }).encode())
+        msg = SimpleNamespace(
+            data=json.dumps(
+                {
+                    "project_id": "proj-1",
+                    "key": "k",
+                    "action": "write",
+                    "source_worker": "worker-A",  # same as worker
+                }
+            ).encode()
+        )
 
         asyncio.run(nw._handle_memory_changed(msg))
 
@@ -2358,12 +2489,16 @@ class TestNatsWorkerRemoteResults:
             st.assigned_worker = "remote"
             st.status = SubtaskStatus.IN_PROGRESS
 
-            event = SimpleNamespace(data=json.dumps({
-                "type": "subtask_completed",
-                "task_id": task.id,
-                "subtask_id": st.id,
-                "summary": "done remotely",
-            }).encode())
+            event = SimpleNamespace(
+                data=json.dumps(
+                    {
+                        "type": "subtask_completed",
+                        "task_id": task.id,
+                        "subtask_id": st.id,
+                        "summary": "done remotely",
+                    }
+                ).encode()
+            )
 
             await nw._handle_task_event(event)
 
@@ -2556,11 +2691,19 @@ class TestNatsWorkerExecuteSubtasksLoop:
                     nw._dispatch_event.set()
                     await asyncio.sleep(0.01)
                     nw._dispatch_event.clear()
-                await handle_result(SubtaskResult(
-                    subtask_id=subtask.id, worker_id="w-1", summary="ok", success=True,
-                ))
+                await handle_result(
+                    SubtaskResult(
+                        subtask_id=subtask.id,
+                        worker_id="w-1",
+                        summary="ok",
+                        success=True,
+                    )
+                )
                 return SubtaskResult(
-                    subtask_id=subtask.id, worker_id="w-1", summary="ok", success=True,
+                    subtask_id=subtask.id,
+                    worker_id="w-1",
+                    summary="ok",
+                    success=True,
                 )
 
             worker.execute_subtask = execute_subtask
@@ -2580,7 +2723,6 @@ class TestNatsWorkerExecuteSubtasksLoop:
             )
 
         asyncio.run(run())
-
 
 
 class TestOrchestratorTaskEviction:
@@ -2604,9 +2746,14 @@ class TestOrchestratorTaskEviction:
                 # Mark the single subtask completed via handle_subtask_result,
                 # which triggers _update_task_status -> COMPLETED -> evict.
                 st = task.subtasks[0]
-                await orch.handle_subtask_result(SubtaskResult(
-                    subtask_id=st.id, worker_id="w-1", summary="ok", success=True,
-                ))
+                await orch.handle_subtask_result(
+                    SubtaskResult(
+                        subtask_id=st.id,
+                        worker_id="w-1",
+                        summary="ok",
+                        success=True,
+                    )
+                )
 
         asyncio.run(run())
 
@@ -2673,8 +2820,10 @@ class TestNatsWorkerSubtaskConcurrency:
                 await asyncio.sleep(0.05)
                 current["n"] -= 1
                 return SubtaskResult(
-                    subtask_id=subtask.id, worker_id="w-cap",
-                    summary="ok", success=True,
+                    subtask_id=subtask.id,
+                    worker_id="w-cap",
+                    summary="ok",
+                    success=True,
                 )
 
             worker.execute_subtask = execute_subtask
@@ -2684,16 +2833,18 @@ class TestNatsWorkerSubtaskConcurrency:
             msgs = []
             for i in range(6):
                 msg = MagicMock()
-                msg.data = json.dumps({
-                    # T4 #640 execution envelope (identity source).
-                    "description": f"task {i}",
-                    "timeout_seconds": 60,
-                    "graph_id": "t-1",
-                    "node_id": f"st-{i}",
-                    "attempt_id": 0,
-                    "idempotency_key": f"t-1:st-{i}:0",
-                    "contract_version": "v1",
-                }).encode()
+                msg.data = json.dumps(
+                    {
+                        # T4 #640 execution envelope (identity source).
+                        "description": f"task {i}",
+                        "timeout_seconds": 60,
+                        "graph_id": "t-1",
+                        "node_id": f"st-{i}",
+                        "attempt_id": 0,
+                        "idempotency_key": f"t-1:st-{i}:0",
+                        "contract_version": "v1",
+                    }
+                ).encode()
                 msg.metadata.num_delivered = 1
                 msg.ack = AsyncMock()
                 msg.nak = AsyncMock()
@@ -2724,7 +2875,6 @@ class TestNatsWorkerSubtaskConcurrency:
         asyncio.run(run())
 
 
-
 class TestNatsWorkerGatewayRegistrationRetry:
     """Regression: if gateway registration failed at startup (gRPC unreachable
     during slow start), _grpc_reg_engine was set to None and NEVER retried —
@@ -2749,9 +2899,14 @@ class TestNatsWorkerGatewayRegistrationRetry:
             nw._orchestrator.tasks = {}
             worker = MagicMock()
             worker.worker_id = "w-1"
-            worker.get_info = MagicMock(return_value=MagicMock(
-                id="w-1", capabilities=[], current_load=0, max_capacity=3,
-            ))
+            worker.get_info = MagicMock(
+                return_value=MagicMock(
+                    id="w-1",
+                    capabilities=[],
+                    current_load=0,
+                    max_capacity=3,
+                )
+            )
             # F52: the heartbeat tick now awaits Worker.send_heartbeat()
             # (liveness refresh) — must be awaitable on the mock.
             worker.refresh_inference_capabilities = AsyncMock(return_value=False)
@@ -2817,10 +2972,7 @@ def test_subtask_usage_from_token_usage_carries_numbers_and_source():
         source="grok-build",
     )
     # An explicit argument overrides whatever the parse site stamped.
-    assert (
-        subtask_usage_from_token_usage(usage, source="claude-code").source
-        == "claude-code"
-    )
+    assert subtask_usage_from_token_usage(usage, source="claude-code").source == "claude-code"
 
 
 def test_subtask_usage_from_token_usage_keeps_reported_zeroes():

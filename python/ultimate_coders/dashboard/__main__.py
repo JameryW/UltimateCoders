@@ -77,8 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     app.start(host=args.host, port=args.port)
 
     nats_banner = (
-        "enabled (connects on server start — see log)"
-        if nats_url else "disabled (snapshot-only)"
+        "enabled (connects on server start — see log)" if nats_url else "disabled (snapshot-only)"
     )
     print(
         f"Dashboard API: http://localhost:{args.port}/dashboard/\n"

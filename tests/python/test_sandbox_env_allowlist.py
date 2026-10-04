@@ -169,9 +169,9 @@ class TestAllowlistConstruction:
         assert "XAI_API_KEY" in names
 
     def test_canonical_and_alias_agree(self):
-        assert set(
-            SandboxConfig(agent="grok").child_env_allowlist()
-        ) == set(SandboxConfig(agent="grok-build").child_env_allowlist())
+        assert set(SandboxConfig(agent="grok").child_env_allowlist()) == set(
+            SandboxConfig(agent="grok-build").child_env_allowlist()
+        )
 
     def test_every_allowlisted_adapter_is_swept(self):
         """The sweep must stay *derived* (T32 #682).
@@ -204,9 +204,7 @@ class TestAllowlistConstruction:
         """A plugin's api_key_env is added without core-code changes."""
         import ultimate_coders.agent.registry as registry_mod
 
-        monkeypatch.setattr(
-            registry_mod, "api_key_env_for", lambda _agent: "PLUGIN_API_KEY"
-        )
+        monkeypatch.setattr(registry_mod, "api_key_env_for", lambda _agent: "PLUGIN_API_KEY")
         names = SandboxConfig(agent=UNKNOWN_AGENT).child_env_allowlist()
         assert "PLUGIN_API_KEY" in names
 
@@ -233,9 +231,7 @@ class TestBuildChildEnv:
     @pytest.mark.parametrize(("agent", "credential"), CREDENTIAL_CASES)
     def test_allowlisted_credentials_pass(self, agent, credential, monkeypatch):
         monkeypatch.setenv(credential, "test-credential")
-        env = SandboxConfig(agent=agent).build_child_env(
-            os.environ, {}, agent=agent
-        )
+        env = SandboxConfig(agent=agent).build_child_env(os.environ, {}, agent=agent)
         assert env[credential] == "test-credential"
 
     def test_local_harness_inherits_litellm_endpoint_only_for_its_agent(self):
@@ -289,9 +285,7 @@ class TestBuildChildEnv:
 
     def test_overlay_is_not_a_bypass(self, decoy_host):
         """A populated overlay must not drag the rest of the host env along."""
-        env = SandboxConfig(agent="claude-code").build_child_env(
-            os.environ, {"INJECTED": "1"}
-        )
+        env = SandboxConfig(agent="claude-code").build_child_env(os.environ, {"INJECTED": "1"})
         assert env["INJECTED"] == "1"
         assert DECOY not in env
         assert DECOY_CLOUD not in env
@@ -304,9 +298,7 @@ class TestBuildChildEnv:
         assert env["ANTHROPIC_API_KEY"] == "from-overlay"
 
     def test_empty_overlay_is_fine(self):
-        env = SandboxConfig(agent="grok-build").build_child_env(
-            {"PATH": "/bin"}, None
-        )
+        env = SandboxConfig(agent="grok-build").build_child_env({"PATH": "/bin"}, None)
         assert env == {"PATH": "/bin"}
 
     def test_host_env_is_not_mutated(self):
@@ -362,9 +354,9 @@ class TestEscapeHatch:
         monkeypatch.delenv(ENV_EXTRA_ENV_VAR, raising=False)
         with caplog.at_level("INFO"):
             SandboxManager(SandboxConfig(project_path="/tmp"))
-        assert not any(
-            ENV_EXTRA_ENV_VAR in record.message for record in caplog.records
-        ), caplog.text
+        assert not any(ENV_EXTRA_ENV_VAR in record.message for record in caplog.records), (
+            caplog.text
+        )
 
 
 # ── real subprocess (the choke point itself) ─────────────────────
@@ -377,17 +369,13 @@ class TestSubprocessEnv:
     async def test_decoy_absent_from_real_subprocess(self, agent, decoy_host):
         config = SandboxConfig(agent=agent, project_path=tempfile.gettempdir())
         manager = SandboxManager(config)
-        child_env = await _run_env_probe(
-            manager, _probe_request(), agent=agent
-        )
+        child_env = await _run_env_probe(manager, _probe_request(), agent=agent)
         assert DECOY not in child_env
         assert DECOY_CLOUD not in child_env
         assert child_env.get("PATH")
 
     @pytest.mark.parametrize(("agent", "credential"), CREDENTIAL_CASES)
-    async def test_credential_reaches_real_subprocess(
-        self, agent, credential, monkeypatch
-    ):
+    async def test_credential_reaches_real_subprocess(self, agent, credential, monkeypatch):
         monkeypatch.setenv(credential, "cli-credential")
         monkeypatch.setenv(DECOY, DECOY_VALUE)
         config = SandboxConfig(agent=agent, project_path=tempfile.gettempdir())
@@ -407,9 +395,7 @@ class TestSubprocessEnv:
         # ...and the configured agent's own credential is NOT added.
         assert "XAI_API_KEY" not in child_env
 
-    async def test_request_agent_absent_falls_back_to_config(
-        self, decoy_host, monkeypatch
-    ):
+    async def test_request_agent_absent_falls_back_to_config(self, decoy_host, monkeypatch):
         monkeypatch.setenv("XAI_API_KEY", "xai-host")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-host")
         config = SandboxConfig(agent="grok-build", project_path=tempfile.gettempdir())
@@ -437,9 +423,7 @@ class TestSubprocessEnv:
     async def test_streaming_path_is_filtered_too(self, decoy_host, monkeypatch):
         """The on_stdout_line branch shares the choke point — same filter."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "stream-credential")
-        config = SandboxConfig(
-            agent="claude-code", project_path=tempfile.gettempdir()
-        )
+        config = SandboxConfig(agent="claude-code", project_path=tempfile.gettempdir())
         manager = SandboxManager(config)
         lines: list[str] = []
 
@@ -468,9 +452,7 @@ class TestDecomposePath:
         request = adapter.build_request("Decompose", "/tmp", config)
         assert request["agent"] == "claude-code-decompose"
 
-    async def test_decompose_subprocess_gets_anthropic_not_grok(
-        self, decoy_host, monkeypatch
-    ):
+    async def test_decompose_subprocess_gets_anthropic_not_grok(self, decoy_host, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "decompose-credential")
         monkeypatch.setenv("XAI_API_KEY", "coding-agent-credential")
         config = SandboxConfig(
@@ -479,17 +461,13 @@ class TestDecomposePath:
         )
         manager = SandboxManager(config)
 
-        request = DecomposeAdapter().build_request(
-            "Decompose", tempfile.gettempdir(), config
-        )
+        request = DecomposeAdapter().build_request("Decompose", tempfile.gettempdir(), config)
         # The real CLI is not installed on the test host — keep the request's
         # agent/env_vars (the part under test) but run a Python probe.
         request["command"] = sys.executable
         request["args"] = _child_env_command()
 
-        child_env = await _run_env_probe(
-            manager, request, agent="claude-code-decompose"
-        )
+        child_env = await _run_env_probe(manager, request, agent="claude-code-decompose")
         assert child_env["ANTHROPIC_API_KEY"] == "decompose-credential"
         assert "XAI_API_KEY" not in child_env
         assert DECOY not in child_env
@@ -500,13 +478,9 @@ class TestDecomposePath:
         """The resolution order: request["agent"] covers adapter-less calls."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "decompose-credential")
         monkeypatch.setenv("XAI_API_KEY", "coding-agent-credential")
-        config = SandboxConfig(
-            agent="grok-build", project_path=tempfile.gettempdir()
-        )
+        config = SandboxConfig(agent="grok-build", project_path=tempfile.gettempdir())
         manager = SandboxManager(config)
-        request = DecomposeAdapter().build_request(
-            "Decompose", tempfile.gettempdir(), config
-        )
+        request = DecomposeAdapter().build_request("Decompose", tempfile.gettempdir(), config)
         request["command"] = sys.executable
         request["args"] = _child_env_command()
 

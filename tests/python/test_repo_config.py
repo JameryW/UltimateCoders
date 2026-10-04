@@ -16,6 +16,7 @@ from ultimate_coders.repo_config import (
 
 # ── RepoEntry ──────────────────────────────────────────────────
 
+
 class TestRepoEntry:
     def test_defaults(self):
         e = RepoEntry(repo_id="r1", local_path="/tmp/r1")
@@ -30,6 +31,7 @@ class TestRepoEntry:
 
 # ── load_repos_config ──────────────────────────────────────────
 
+
 class TestLoadReposConfig:
     def test_no_file_returns_defaults(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -42,11 +44,7 @@ class TestLoadReposConfig:
     def test_env_var_path(self, tmp_path, monkeypatch):
         yaml_file = tmp_path / "my_repos.yaml"
         yaml_file.write_text(
-            "repos:\n"
-            "  - repo_id: test-repo\n"
-            "    local_path: /tmp/test\n"
-            "scan_dirs:\n"
-            "  - /tmp\n"
+            "repos:\n  - repo_id: test-repo\n    local_path: /tmp/test\nscan_dirs:\n  - /tmp\n"
         )
         monkeypatch.setenv("UC_REPOS_CONFIG", str(yaml_file))
         config = load_repos_config()
@@ -70,11 +68,7 @@ class TestLoadReposConfig:
 
     def test_cwd_auto_discover(self, tmp_path, monkeypatch):
         yaml_file = tmp_path / "uc.repos.yaml"
-        yaml_file.write_text(
-            "repos:\n"
-            "  - repo_id: cwd-repo\n"
-            "    local_path: /cwd/path\n"
-        )
+        yaml_file.write_text("repos:\n  - repo_id: cwd-repo\n    local_path: /cwd/path\n")
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("UC_REPOS_CONFIG", raising=False)
         config = load_repos_config()
@@ -99,6 +93,7 @@ class TestLoadReposConfig:
 
 
 # ── _parse_repos_yaml ──────────────────────────────────────────
+
 
 class TestParseReposYaml:
     def test_full_config(self, tmp_path):
@@ -153,17 +148,14 @@ class TestParseReposYaml:
     def test_workspace_id_path_traversal_rejected(self, tmp_path):
         """workspace_id is also a path segment; reject traversal there too."""
         yaml_file = tmp_path / "uc.repos.yaml"
-        yaml_file.write_text(
-            "workspace_id: '../../escape'\n"
-            "repos: []\n"
-        )
+        yaml_file.write_text("workspace_id: '../../escape'\nrepos: []\n")
         config = _parse_repos_yaml(yaml_file)
         # Unsafe workspace_id falls back to the default, not the traversal string.
         assert config.workspace_id == "default"
 
 
-
 # ── RepoScanner ────────────────────────────────────────────────
+
 
 class TestRepoScanner:
     def _make_git_repo(self, path: Path, remote_url: str = "") -> None:
@@ -241,7 +233,9 @@ class TestRepoScanner:
         self._make_git_repo(repo_dir, remote_url="https://github.com/org/cool-project.git")
 
         # Mock git command to return remote URL
-        with patch.object(RepoScanner, "_get_remote_url", return_value="https://github.com/org/cool-project.git"):
+        with patch.object(
+            RepoScanner, "_get_remote_url", return_value="https://github.com/org/cool-project.git"
+        ):
             scanner = RepoScanner()
             results = scanner.discover([str(tmp_path)], scan_depth=3)
             assert len(results) == 1
@@ -292,7 +286,8 @@ class TestRepoScanner:
 
         scanner = RepoScanner()
         results = scanner.discover(
-            [str(tmp_path)], scan_depth=3,
+            [str(tmp_path)],
+            scan_depth=3,
             exclude_repo_ids={"declared-repo"},
         )
         assert len(results) == 0
@@ -304,21 +299,19 @@ class TestRepoScanner:
 
         scanner = RepoScanner()
         results = scanner.discover(
-            [str(tmp_path), str(tmp_path)], scan_depth=3,
+            [str(tmp_path), str(tmp_path)],
+            scan_depth=3,
         )
         assert len(results) == 1
 
 
 # ── RepoConfigWatcher ──────────────────────────────────────────
 
+
 class TestRepoConfigWatcher:
     def test_reload_calls_callback(self, tmp_path):
         yaml_file = tmp_path / "repos.yaml"
-        yaml_file.write_text(
-            "repos:\n"
-            "  - repo_id: watched\n"
-            "    local_path: /watched/path\n"
-        )
+        yaml_file.write_text("repos:\n  - repo_id: watched\n    local_path: /watched/path\n")
 
         callback = MagicMock()
         watcher = RepoConfigWatcher(yaml_file, on_change=callback)

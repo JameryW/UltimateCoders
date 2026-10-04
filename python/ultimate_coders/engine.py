@@ -26,6 +26,7 @@ def _now_version_ms() -> int:
     """Current wall-clock time in milliseconds — used as the LWW version
     for replay writes. Upgradable to HLC without changing callers."""
     import time as _time
+
     return int(_time.time() * 1000)
 
 
@@ -77,9 +78,7 @@ class Engine:
                 back to gRPC mode after a fallback.
         """
         if PyEngine is None:
-            raise ImportError(
-                "Rust extension not built. Run `maturin develop` first."
-            )
+            raise ImportError("Rust extension not built. Run `maturin develop` first.")
         self._mode = mode
         self._fallback_mode = fallback_mode
         self._fallback_active = False
@@ -154,9 +153,7 @@ class Engine:
             try:
                 return getattr(self._engine, method_name)(*args, **kwargs)
             except AttributeError:
-                raise AttributeError(
-                    f"Engine has no method '{method_name}'"
-                ) from None
+                raise AttributeError(f"Engine has no method '{method_name}'") from None
 
         if self._fallback_active:
             # Already in fallback — check for recovery opportunity
@@ -165,18 +162,14 @@ class Engine:
                 try:
                     return getattr(self._local_engine, method_name)(*args, **kwargs)
                 except AttributeError:
-                    raise AttributeError(
-                        f"Local engine has no method '{method_name}'"
-                    ) from None
+                    raise AttributeError(f"Local engine has no method '{method_name}'") from None
 
         # Try gRPC first
         try:
             result = getattr(self._grpc_engine, method_name)(*args, **kwargs)
             return result
         except AttributeError:
-            raise AttributeError(
-                f"gRPC engine has no method '{method_name}'"
-            ) from None
+            raise AttributeError(f"gRPC engine has no method '{method_name}'") from None
         except (ConnectionError, TimeoutError, OSError) as exc:
             logger.warning(
                 "gRPC %s failed (%s), falling back to local engine",
@@ -203,9 +196,7 @@ class Engine:
             try:
                 return await getattr(self._engine, method_name)(*args, **kwargs)
             except AttributeError:
-                raise AttributeError(
-                    f"Engine has no async method '{method_name}'"
-                ) from None
+                raise AttributeError(f"Engine has no async method '{method_name}'") from None
 
         if self._fallback_active:
             self._check_grpc_recovery()
@@ -221,9 +212,7 @@ class Engine:
             result = await getattr(self._grpc_engine, method_name)(*args, **kwargs)
             return result
         except AttributeError:
-            raise AttributeError(
-                f"gRPC engine has no async method '{method_name}'"
-            ) from None
+            raise AttributeError(f"gRPC engine has no async method '{method_name}'") from None
         except (ConnectionError, TimeoutError, OSError) as exc:
             logger.warning(
                 "gRPC %s failed (%s), falling back to local engine",
@@ -387,7 +376,11 @@ class Engine:
         """
         result = self._try_grpc_with_fallback(
             "index_repo",
-            repo_id, local_path, remote_url, default_branch, force_full,
+            repo_id,
+            local_path,
+            remote_url,
+            default_branch,
+            force_full,
             workspace_id,
         )
         # New indexed content changes search results — drop stale cache.
@@ -437,7 +430,11 @@ class Engine:
         """
         return self._try_grpc_with_fallback(
             "read_memory",
-            key_scope, key, task_id, project_id, include_semantic,
+            key_scope,
+            key,
+            task_id,
+            project_id,
+            include_semantic,
         )
 
     def write_memory(
@@ -478,18 +475,42 @@ class Engine:
         """
         result = self._try_grpc_with_fallback(
             "write_memory",
-            key_scope, key, content, content_type, source_agent,
-            importance, tags, task_id, project_id,
-            language, file_path, uri, description,
+            key_scope,
+            key,
+            content,
+            content_type,
+            source_agent,
+            importance,
+            tags,
+            task_id,
+            project_id,
+            language,
+            file_path,
+            uri,
+            description,
         )
         # If the write landed in the local fallback engine, record it in the
         # WAL so it can be replayed to the gateway on recovery.
         if self._fallback_active:
             self._fallback_write_log.append(
-                ((key_scope, key, content, content_type, source_agent,
-                  importance, tags, task_id, project_id,
-                  language, file_path, uri, description),
-                 _now_version_ms())
+                (
+                    (
+                        key_scope,
+                        key,
+                        content,
+                        content_type,
+                        source_agent,
+                        importance,
+                        tags,
+                        task_id,
+                        project_id,
+                        language,
+                        file_path,
+                        uri,
+                        description,
+                    ),
+                    _now_version_ms(),
+                )
             )
         # Memory writes can affect semantic search results — drop stale
         # search cache so the next search reflects the new data.
@@ -512,7 +533,11 @@ class Engine:
             project_id: Project ID (required if key_scope="project").
         """
         result = self._try_grpc_with_fallback(
-            "delete_memory", key_scope, key, task_id, project_id,
+            "delete_memory",
+            key_scope,
+            key,
+            task_id,
+            project_id,
         )
         # ponytail: deletes during fallback are NOT replayed — replay_write
         # only handles writes (LWW). A delete-then-recover window can resurrect
@@ -548,9 +573,20 @@ class Engine:
         meaningful once the engine has recovered.
         """
         return self._engine.replay_memory_write(
-            key_scope, key, content, content_type, source_agent,
-            importance, version, tags, task_id, project_id,
-            language, file_path, uri, description,
+            key_scope,
+            key,
+            content,
+            content_type,
+            source_agent,
+            importance,
+            version,
+            tags,
+            task_id,
+            project_id,
+            language,
+            file_path,
+            uri,
+            description,
         )
 
     def _drain_fallback_writes(self) -> None:
@@ -576,8 +612,7 @@ class Engine:
                     skipped += 1
             except Exception:
                 logger.warning(
-                    "Failed to replay fallback memory write (key=%s), "
-                    "re-queuing",
+                    "Failed to replay fallback memory write (key=%s), re-queuing",
                     args[1] if len(args) > 1 else "?",
                     exc_info=True,
                 )
@@ -585,7 +620,9 @@ class Engine:
                 self._fallback_write_log.append((args, version))
         logger.info(
             "Drained fallback writes: %d applied, %d skipped, %d re-queued",
-            applied, skipped, len(self._fallback_write_log),
+            applied,
+            skipped,
+            len(self._fallback_write_log),
         )
 
     def search_memory(
@@ -610,7 +647,11 @@ class Engine:
         """
         return self._try_grpc_with_fallback(
             "search_memory",
-            query, scope_type, project_id, max_results, min_score,
+            query,
+            scope_type,
+            project_id,
+            max_results,
+            min_score,
         )
 
     def watch_task(
@@ -647,7 +688,10 @@ class Engine:
             logger.debug("watch_task requires gRPC mode; returning empty list")
             return []
         return self._try_grpc_with_fallback(
-            "watch_task", task_id, max_events, timeout_secs,
+            "watch_task",
+            task_id,
+            max_events,
+            timeout_secs,
         )
 
     # ── Batch / List / Stream ──────────────────────────────────
@@ -702,9 +746,7 @@ class Engine:
         Returns:
             Task object with id, description, status, etc.
         """
-        return self._try_grpc_with_fallback(
-            "submit_task", description, project_id or ""
-        )
+        return self._try_grpc_with_fallback("submit_task", description, project_id or "")
 
     def get_task(self, task_id: str) -> object:
         """Get a task by ID.
@@ -794,7 +836,11 @@ class Engine:
         """
         result = await self._try_grpc_with_fallback_async(
             "index_repo_async",
-            repo_id, local_path, remote_url, default_branch, force_full,
+            repo_id,
+            local_path,
+            remote_url,
+            default_branch,
+            force_full,
             workspace_id,
         )
         # New indexed content changes search results — drop stale cache.
@@ -823,7 +869,11 @@ class Engine:
         """
         return await self._try_grpc_with_fallback_async(
             "read_memory_async",
-            key_scope, key, task_id, project_id, include_semantic,
+            key_scope,
+            key,
+            task_id,
+            project_id,
+            include_semantic,
         )
 
     async def write_memory_async(
@@ -866,9 +916,19 @@ class Engine:
         """
         result = await self._try_grpc_with_fallback_async(
             "write_memory_async",
-            key_scope, key, content, content_type, source_agent,
-            importance, tags, task_id, project_id,
-            language, file_path, uri, description,
+            key_scope,
+            key,
+            content,
+            content_type,
+            source_agent,
+            importance,
+            tags,
+            task_id,
+            project_id,
+            language,
+            file_path,
+            uri,
+            description,
         )
         # Memory writes can affect semantic search results — drop stale
         # search cache so the next search reflects the new data.
@@ -894,7 +954,11 @@ class Engine:
             await engine.delete_memory_async("task", "decisions", task_id="t1")
         """
         result = await self._try_grpc_with_fallback_async(
-            "delete_memory_async", key_scope, key, task_id, project_id,
+            "delete_memory_async",
+            key_scope,
+            key,
+            task_id,
+            project_id,
         )
         self._search_cache.clear()
         return result
@@ -921,7 +985,11 @@ class Engine:
         """
         return await self._try_grpc_with_fallback_async(
             "search_memory_async",
-            query, scope_type, project_id, max_results, min_score,
+            query,
+            scope_type,
+            project_id,
+            max_results,
+            min_score,
         )
 
     async def get_index_state_async(self, repo_id: str) -> object:
@@ -934,7 +1002,8 @@ class Engine:
             state = await engine.get_index_state_async("my-repo")
         """
         return await self._try_grpc_with_fallback_async(
-            "get_index_state_async", repo_id,
+            "get_index_state_async",
+            repo_id,
         )
 
     async def get_detailed_index_state_async(self, repo_id: str) -> dict:
@@ -944,7 +1013,8 @@ class Engine:
             repo_id: The repository identifier.
         """
         return await self._try_grpc_with_fallback_async(
-            "get_detailed_index_state_async", repo_id,
+            "get_detailed_index_state_async",
+            repo_id,
         )
 
     async def remove_index_async(self, repo_id: str) -> None:
@@ -957,7 +1027,8 @@ class Engine:
             await engine.remove_index_async("my-repo")
         """
         await self._try_grpc_with_fallback_async(
-            "remove_index_async", repo_id,
+            "remove_index_async",
+            repo_id,
         )
 
     async def watch_task_async(
@@ -983,7 +1054,10 @@ class Engine:
             events = await engine.watch_task_async("task-123", max_events=20)
         """
         return await self._try_grpc_with_fallback_async(
-            "watch_task_async", task_id, max_events, timeout_secs,
+            "watch_task_async",
+            task_id,
+            max_events,
+            timeout_secs,
         )
 
     # ── Async Batch / List / Stream ────────────────────────────
@@ -997,9 +1071,7 @@ class Engine:
         Returns:
             List of MemoryEntry objects.
         """
-        return await self._try_grpc_with_fallback_async(
-            "batch_write_memory_async", requests
-        )
+        return await self._try_grpc_with_fallback_async("batch_write_memory_async", requests)
 
     async def list_repos_async(self, workspace_id: str | None = None) -> list:
         """Async version of list_repos().
@@ -1012,7 +1084,8 @@ class Engine:
             List of RepoIndexState objects.
         """
         return await self._try_grpc_with_fallback_async(
-            "list_repos_async", workspace_id=workspace_id,
+            "list_repos_async",
+            workspace_id=workspace_id,
         )
 
     async def search_stream_async(self, query) -> list:
@@ -1025,15 +1098,11 @@ class Engine:
             List of SearchResultItem objects.
         """
         py_query = self._convert_search_query(query)
-        return await self._try_grpc_with_fallback_async(
-            "search_stream_async", py_query
-        )
+        return await self._try_grpc_with_fallback_async("search_stream_async", py_query)
 
     # ── Async Task Orchestration ───────────────────────────────
 
-    async def submit_task_async(
-        self, description: str, project_id: str | None = None
-    ) -> object:
+    async def submit_task_async(self, description: str, project_id: str | None = None) -> object:
         """Async version of submit_task().
 
         Args:
@@ -1050,9 +1119,7 @@ class Engine:
         Args:
             task_id: The task ID.
         """
-        return await self._try_grpc_with_fallback_async(
-            "get_task_async", task_id
-        )
+        return await self._try_grpc_with_fallback_async("get_task_async", task_id)
 
     async def list_tasks_async(self) -> list:
         """Async version of list_tasks()."""
@@ -1064,9 +1131,7 @@ class Engine:
         Args:
             task_id: The task ID.
         """
-        return await self._try_grpc_with_fallback_async(
-            "pause_task_async", task_id
-        )
+        return await self._try_grpc_with_fallback_async("pause_task_async", task_id)
 
     async def resume_task_async(self, task_id: str) -> object:
         """Async version of resume_task().
@@ -1074,9 +1139,7 @@ class Engine:
         Args:
             task_id: The task ID.
         """
-        return await self._try_grpc_with_fallback_async(
-            "resume_task_async", task_id
-        )
+        return await self._try_grpc_with_fallback_async("resume_task_async", task_id)
 
     # ── WorkerService methods (gRPC mode only) ─────────────────────
 
@@ -1251,7 +1314,6 @@ class Engine:
             logger.warning("report_merge_outcome failed: %s", exc)
             return {"accepted": False, "idempotent_replay": False}
 
-
     # ── Multi-Repo Configuration ─────────────────────────────────
 
     def load_repos_config(
@@ -1293,9 +1355,13 @@ class Engine:
                     local_path = entry.local_path
                     if not local_path and entry.remote_url:
                         # Remote-only entry — clone to cache first.
-                        local_path = RepoScanner.clone_remote_entry(
-                            entry, config.workspace_id,
-                        ) or ""
+                        local_path = (
+                            RepoScanner.clone_remote_entry(
+                                entry,
+                                config.workspace_id,
+                            )
+                            or ""
+                        )
                     if not local_path:
                         logger.warning(
                             "Skipping repo %s: no local_path and clone failed",
@@ -1376,9 +1442,13 @@ class Engine:
                 try:
                     local_path = entry.local_path
                     if not local_path and entry.remote_url:
-                        local_path = RepoScanner.clone_remote_entry(
-                            entry, config.workspace_id,
-                        ) or ""
+                        local_path = (
+                            RepoScanner.clone_remote_entry(
+                                entry,
+                                config.workspace_id,
+                            )
+                            or ""
+                        )
                     if not local_path:
                         logger.warning(
                             "Skipping repo %s: no local_path and clone failed",
@@ -1397,7 +1467,8 @@ class Engine:
                 except Exception:
                     logger.warning(
                         "Failed to index hot-loaded repo %s",
-                        entry.repo_id, exc_info=True,
+                        entry.repo_id,
+                        exc_info=True,
                     )
 
         # Re-scan for newly discovered repos

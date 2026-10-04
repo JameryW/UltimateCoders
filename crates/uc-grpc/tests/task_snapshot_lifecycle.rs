@@ -8,7 +8,7 @@ use uc_grpc::server::GrpcServer;
 use uc_grpc::ultimate_coders::task_service_server::TaskService;
 use uc_grpc::ultimate_coders::worker_service_server::WorkerService;
 use uc_grpc::ultimate_coders::{
-    ListTasksRequest, RecoverTaskRequest, RegisterWorkerRequest, SubtaskProto, UpdateTaskRequest,
+    ListTasksRequest, RecoverTaskRequest, RegisterWorkerRequest, RetrySubtaskRequest,
     WatchTaskRequest,
 };
 
@@ -268,15 +268,10 @@ async fn explicit_retry_snapshot_reopens_durable_parent_state() {
             // Only an explicit Gateway command can reopen terminal control state.
             // The following coordinator snapshot advances this reset node to Assigned.
             let retry = server
-                .update_task(Request::new(UpdateTaskRequest {
+                .retry_subtask(Request::new(RetrySubtaskRequest {
                     task_id: id.clone(),
-                    status: "InProgress".into(),
-                    subtasks: vec![SubtaskProto {
-                        id: node.clone(),
-                        status: "Pending".into(),
-                        ..Default::default()
-                    }],
-                    ..Default::default()
+                    subtask_id: node.clone(),
+                    expected_attempt: 0,
                 }))
                 .await
                 .unwrap()
@@ -287,7 +282,8 @@ async fn explicit_retry_snapshot_reopens_durable_parent_state() {
             "task_id": id, "description": "Retry lifecycle fixture",
             "project_id": "verification", "status": parent, "partial": false,
             "message_id": format!("{id}-{parent}"),
-            "subtasks": [{"subtask_id": node, "status": child}]
+            "subtasks": [{"subtask_id": node, "status": child,
+                "attempt_id": if parent == "Failed" { 0 } else { 1 }}]
         });
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {

@@ -73,10 +73,12 @@ class TestAggregatorFileMerge:
     async def test_disjoint_files_no_merge_needed(self):
         agg = ResultAggregator()
         a, b = _change("a.py", "da"), _change("b.py", "db")
-        result = await agg.aggregate([
-            _result("s1", [a], "a"),
-            _result("s2", [b], "b"),
-        ])
+        result = await agg.aggregate(
+            [
+                _result("s1", [a], "a"),
+                _result("s2", [b], "b"),
+            ]
+        )
         assert result.status is AggregationStatus.SUCCESS
         assert len(result.merged_files) == 2
         assert {fc.file_path for fc in result.merged_files} == {"a.py", "b.py"}
@@ -85,8 +87,8 @@ class TestAggregatorFileMerge:
         # Two workers edit different regions of the same base → auto-merge ok.
         base = "line1\nline2\nline3\nline4\n"
         agg = ResultAggregator()
-        ours = "line1\nLINE2\nline3\nline4\n"      # changed line 2
-        theirs = "line1\nline2\nline3\nLINE4\n"    # changed line 4
+        ours = "line1\nLINE2\nline3\nline4\n"  # changed line 2
+        theirs = "line1\nline2\nline3\nLINE4\n"  # changed line 4
         result = await agg.aggregate(
             [
                 _result("s1", [_change("f.py", ours)], "s1"),
@@ -193,11 +195,13 @@ class TestAggregatorPartialAndVerify:
     async def test_partial_failure_under_threshold(self):
         # 1 of 3 failed → 0.33 < 0.5 → PARTIAL
         agg = ResultAggregator(max_failure_ratio=0.5)
-        result = await agg.aggregate([
-            _result("s1", [_change("a.py", "x")], "ok"),
-            _result("s2", [_change("b.py", "y")], "ok"),
-            _result("s3", success=False, summary="nope"),
-        ])
+        result = await agg.aggregate(
+            [
+                _result("s1", [_change("a.py", "x")], "ok"),
+                _result("s2", [_change("b.py", "y")], "ok"),
+                _result("s3", success=False, summary="nope"),
+            ]
+        )
         assert result.status is AggregationStatus.PARTIAL
         assert result.failed_subtasks == ["s3"]
 
@@ -239,10 +243,12 @@ class TestAggregatorLLMSynthesis:
                 return "SYNTHESIS"
 
         agg = ResultAggregator(llm_client=_StubLLM())
-        result = await agg.aggregate([
-            _result("s1", [_change("a.py", "x")], "did A"),
-            _result("s2", [_change("b.py", "y")], "did B"),
-        ])
+        result = await agg.aggregate(
+            [
+                _result("s1", [_change("a.py", "x")], "did A"),
+                _result("s2", [_change("b.py", "y")], "did B"),
+            ]
+        )
         assert result.llm_synthesis == "SYNTHESIS"
         # Must be called with messages= (NOT prompt=), mirroring the
         # LLMClient.complete(messages, ...) signature.  The old bug passed

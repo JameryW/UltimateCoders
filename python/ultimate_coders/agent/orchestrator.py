@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class OrchestratorConfig:
     """Minimal config — matches what nats_worker access."""
+
     max_retries: int = 3
     heartbeat_timeout_seconds: int = 90
     # ponytail: remaining fields are stubs that workers check but don't functionally use
@@ -61,6 +62,7 @@ class OrchestratorConfig:
 @dataclass
 class WorkerEntry:
     """Tracks a registered worker's state."""
+
     id: str
     capabilities: list[str] = field(default_factory=list)
     current_load: int = 0
@@ -396,31 +398,36 @@ class Orchestrator:
                     except (ValueError, TypeError):
                         logger.debug(
                             "Ignoring invalid depends_on entry %r in subtask %d",
-                            dep, i,
+                            dep,
+                            i,
                         )
-            subtasks.append(Subtask(
-                id=f"{task_id}-s{i}",
-                parent_id=task_id,
-                description=desc,
-                user_request=description,
-                status=SubtaskStatus.PENDING,
-                depends_on=depends_on,
-                file_constraints=item.get("file_constraints", []) or [],
-                expected_output=item.get("expected_output", "") or "",
-                agent_config=agent_config or {},
-                project_id=project_id,
-            ))
+            subtasks.append(
+                Subtask(
+                    id=f"{task_id}-s{i}",
+                    parent_id=task_id,
+                    description=desc,
+                    user_request=description,
+                    status=SubtaskStatus.PENDING,
+                    depends_on=depends_on,
+                    file_constraints=item.get("file_constraints", []) or [],
+                    expected_output=item.get("expected_output", "") or "",
+                    agent_config=agent_config or {},
+                    project_id=project_id,
+                )
+            )
 
         if not subtasks:
             logger.warning(
                 "LLM decomposition produced no valid subtasks for task %s "
-                "(all items missing description)", task_id,
+                "(all items missing description)",
+                task_id,
             )
             return None
 
         logger.info(
             "LLM decomposition for task %s: %d subtasks",
-            task_id, len(subtasks),
+            task_id,
+            len(subtasks),
         )
         return subtasks
 
@@ -481,12 +488,13 @@ class Orchestrator:
                     # retries are unaffected because the subtask is reset to
                     # PENDING before re-execution (status leaves terminal).
                     if st.status in (
-                        SubtaskStatus.COMPLETED, SubtaskStatus.FAILED,
+                        SubtaskStatus.COMPLETED,
+                        SubtaskStatus.FAILED,
                     ):
                         logger.debug(
-                            "Subtask %s result already applied (%s); "
-                            "ignoring duplicate",
-                            st.id[:8], st.status.value,
+                            "Subtask %s result already applied (%s); ignoring duplicate",
+                            st.id[:8],
+                            st.status.value,
                         )
                         return
                     st.status = SubtaskStatus.COMPLETED if result.success else SubtaskStatus.FAILED
@@ -629,21 +637,16 @@ class Orchestrator:
         not blocked.
         """
         # Collect results from subtasks that have one (completed subtasks).
-        subtask_results = [
-            st.result for st in task.subtasks
-            if st.result is not None
-        ]
+        subtask_results = [st.result for st in task.subtasks if st.result is not None]
         if not subtask_results:
             return
         try:
-            agg_task = asyncio.create_task(
-                self._aggregate_results(task.id, subtask_results)
-            )
+            agg_task = asyncio.create_task(self._aggregate_results(task.id, subtask_results))
         except RuntimeError:
             # No running event loop — cannot schedule. Log and skip.
             logger.warning(
-                "Cannot schedule result aggregation for task %s "
-                "(no running event loop)", task.id,
+                "Cannot schedule result aggregation for task %s (no running event loop)",
+                task.id,
             )
             return
         # Hold a strong reference so the task is not GC'd mid-flight.
@@ -674,14 +677,16 @@ class Orchestrator:
             task = self.tasks.get(task_id)
             verify_command = task.verify_command if task is not None else None
             result = await self.aggregator.aggregate(
-                subtask_results, base_files,
+                subtask_results,
+                base_files,
                 verify_command=verify_command,
             )
             if result.conflict_files:
                 logger.warning(
                     "Result aggregation for task %s: status=%s, "
                     "conflicts=%d (%s), merged=%d, verification=%s",
-                    task_id, result.status.value,
+                    task_id,
+                    result.status.value,
                     len(result.conflict_files),
                     ", ".join(result.conflict_files),
                     len(result.merged_files),
@@ -689,9 +694,9 @@ class Orchestrator:
                 )
             else:
                 logger.info(
-                    "Result aggregation for task %s: status=%s, "
-                    "merged=%d files, verification=%s",
-                    task_id, result.status.value,
+                    "Result aggregation for task %s: status=%s, merged=%d files, verification=%s",
+                    task_id,
+                    result.status.value,
                     len(result.merged_files),
                     result.verification_passed,
                 )
@@ -702,7 +707,8 @@ class Orchestrator:
             )
 
     def _collect_base_files(
-        self, subtask_results: list[SubtaskResult],
+        self,
+        subtask_results: list[SubtaskResult],
     ) -> dict[str, str]:
         """Source original file contents for the three-way merge base.
 
@@ -736,7 +742,8 @@ class Orchestrator:
                 # (first-modifier-wins).
                 logger.debug(
                     "Could not read base for %s (skipping): %s",
-                    fpath, full_path,
+                    fpath,
+                    full_path,
                 )
         return base_files
 
@@ -753,8 +760,13 @@ class Orchestrator:
         """
         from ultimate_coders.agent.workspace import subtask_branch
         from ultimate_coders.inference.agent import InferenceInfraAgent
-        branches = [subtask_branch(st.id, inference=InferenceInfraAgent.requires_workspace(
-            st.agent_config, st.steps)) for st in task.subtasks]
+
+        branches = [
+            subtask_branch(
+                st.id, inference=InferenceInfraAgent.requires_workspace(st.agent_config, st.steps)
+            )
+            for st in task.subtasks
+        ]
         try:
             arb_task = asyncio.create_task(self._arbitrate_task(task.id, branches))
         except RuntimeError:
@@ -769,7 +781,9 @@ class Orchestrator:
         arb_task.add_done_callback(self._pending_arbitration.discard)
 
     async def _arbitrate_task(
-        self, task_id: str, branches: list[str],
+        self,
+        task_id: str,
+        branches: list[str],
     ) -> None:
         """Run merge arbitration for a completed task (non-fatal).
 
@@ -794,24 +808,27 @@ class Orchestrator:
                     logger.warning(
                         "Merge grant refused for task %s: %s — merge skipped "
                         "(graph not quiescent or gate error)",
-                        task_id, grant.get("error") or "unspecified",
+                        task_id,
+                        grant.get("error") or "unspecified",
                     )
                     return
                 if grant.get("idempotent_replay", False):
                     logger.info(
                         "Merge grant already consumed for task %s (replay) "
-                        "— merge skipped, no-op report", task_id,
+                        "— merge skipped, no-op report",
+                        task_id,
                     )
                     return
             logger.info(
                 "Starting merge arbitration for task %s (%d branches)",
-                task_id, len(branches),
+                task_id,
+                len(branches),
             )
             result = await self.merge_arbiter.arbitrate(branches)
             logger.info(
-                "Merge arbitration for task %s: status=%s, merged=%d, "
-                "conflicts=%d, push=%s",
-                task_id, result.get("status"),
+                "Merge arbitration for task %s: status=%s, merged=%d, conflicts=%d, push=%s",
+                task_id,
+                result.get("status"),
                 len(result.get("merged_branches", [])),
                 len(result.get("conflict_branches", [])),
                 result.get("push_status"),
@@ -823,10 +840,8 @@ class Orchestrator:
                     key,
                     {
                         "status": str(result.get("status", "")),
-                        "merged_branches": list(
-                            result.get("merged_branches", [])),
-                        "conflict_branches": list(
-                            result.get("conflict_branches", [])),
+                        "merged_branches": list(result.get("merged_branches", [])),
+                        "conflict_branches": list(result.get("conflict_branches", [])),
                         "push_status": str(result.get("push_status", "")),
                     },
                 )
@@ -834,11 +849,13 @@ class Orchestrator:
                     logger.warning(
                         "Merge report rejected for task %s (key=%s…): "
                         "unknown/superseded key — stale aggregation loses",
-                        task_id, key[:8],
+                        task_id,
+                        key[:8],
                     )
         except Exception:
             logger.exception(
-                "Merge arbitration failed for task %s (non-fatal)", task_id,
+                "Merge arbitration failed for task %s (non-fatal)",
+                task_id,
             )
 
     # ── Task queries ───────────────────────────────────────────

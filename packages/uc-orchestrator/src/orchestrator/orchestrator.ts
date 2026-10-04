@@ -118,6 +118,7 @@ export interface SubtaskResult {
 	stderrTail?: string;
 	/** How many retries this subtask has used. */
 	retryCount?: number;
+	dispatchRetryCount?: number;
 	/** Dispatch mode: "local" | "remote" | "prefer_remote" | "auto" */
 	dispatchMode?: DispatchMode;
 	/** File-overlap parallelism grade (C5) — decomposition-time derived data,
@@ -1364,7 +1365,18 @@ export class UCOrchestrator {
 			return false;
 		}
 
-		// Reset target → pending.
+		// Gateway owns the attempt identity; do not modify local state on rejection.
+		const remote = await this.bridge.getTask(taskId);
+		const remoteNode = remote?.subtasks.find((node) => node.id === subtaskId);
+		if (!remoteNode) return false;
+		const retried = await this.bridge.retrySubtask(taskId, subtaskId, remoteNode.dispatchRetryCount ?? 0);
+		const retriedNode = retried?.subtasks.find((node) => node.id === subtaskId);
+		if (!retriedNode) {
+			ctx?.ui.notify(`Task ${taskId}: Gateway rejected retry`, "warning");
+			return false;
+		}
+		target.dispatchRetryCount = retriedNode.dispatchRetryCount;
+		// Reset target → pending after the authoritative command succeeds.
 		this.resetToPending(target);
 
 		task.controlState = "running";
@@ -1380,10 +1392,6 @@ export class UCOrchestrator {
 		// T6 #642 C4 — authority handoff: push the updated snapshot so the
 		// server's publish path re-dispatches, then let the claim loop run
 		// whatever no worker took.
-		const upserted = await this.bridge.upsertTask(this.toPersisted(task));
-		if (!upserted) {
-			this.pi.logger.warn(`Task ${taskId}: retry upsert rejected — claim loop will retry via per-subtask reports`);
-		}
 		this.ensureClaimLoop();
 		this.kickClaimLoop();
 		return true;
@@ -1819,6 +1827,7 @@ export class UCOrchestrator {
 				recentToolCalls: s.recentToolCalls,
 				stderrTail: s.stderrTail,
 				retryCount: s.retryCount,
+				dispatchRetryCount: s.dispatchRetryCount,
 				dispatchMode: s.dispatchMode,
 				conflictRisk: s.conflictRisk,
 				requiredCapabilities: s.requiredCapabilities,
@@ -1856,6 +1865,7 @@ export class UCOrchestrator {
 				recentToolCalls: s.recentToolCalls,
 				stderrTail: s.stderrTail,
 				retryCount: s.retryCount,
+				dispatchRetryCount: s.dispatchRetryCount,
 				dispatchMode: s.dispatchMode,
 				conflictRisk: s.conflictRisk,
 				requiredCapabilities: s.requiredCapabilities,
@@ -1899,6 +1909,7 @@ export class UCOrchestrator {
 				files: s.files ?? [],
 				result: s.result || undefined,
 				retryCount: s.retryCount,
+				dispatchRetryCount: s.dispatchRetryCount,
 				dispatchMode: normalizeServerDispatchMode(s.dispatchMode),
 				requiredCapabilities: s.requiredCapabilities?.length ? [...s.requiredCapabilities] : undefined,
 				steps: s.steps?.length ? s.steps.map((st) => ({

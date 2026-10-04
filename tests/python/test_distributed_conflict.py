@@ -95,10 +95,14 @@ class TestDistributedLocking:
 class TestRemoteIntents:
     async def test_receive_remote_intent_then_local_detects_overlap(self):
         d = DistributedConflictDetector(worker_id="w1")
-        d.receive_remote_intent({
-            "worker_id": "wX", "file_path": "a.rs",
-            "edit_type": "modify", "timestamp": 1.0,
-        })
+        d.receive_remote_intent(
+            {
+                "worker_id": "wX",
+                "file_path": "a.rs",
+                "edit_type": "modify",
+                "timestamp": 1.0,
+            }
+        )
         assert "a.rs" in d._remote_intents
         # Local declare for the same file+region now conflicts with the remote one.
         result, info = await d.declare_intent(_intent("w1", "a.rs", start=1, end=10))
@@ -106,9 +110,13 @@ class TestRemoteIntents:
 
     async def test_receive_remote_release_removes_intent(self):
         d = DistributedConflictDetector(worker_id="w1")
-        d.receive_remote_intent({
-            "worker_id": "wX", "file_path": "a.rs", "edit_type": "modify",
-        })
+        d.receive_remote_intent(
+            {
+                "worker_id": "wX",
+                "file_path": "a.rs",
+                "edit_type": "modify",
+            }
+        )
         d.receive_remote_release({"worker_id": "wX", "file_path": "a.rs"})
         assert d._remote_intents["a.rs"] == []
 
@@ -125,7 +133,8 @@ class TestNATSPathsAreOptional:
                 raise RuntimeError("nats down")
 
         d = DistributedConflictDetector(
-            worker_id="w1", nats_publisher=_BoomPublisher(),
+            worker_id="w1",
+            nats_publisher=_BoomPublisher(),
         )
         # Must not raise despite the publisher throwing.
         result, _ = await d.declare_intent(_intent("w1", "a.rs"))
@@ -137,7 +146,8 @@ class TestNATSPathsAreOptional:
                 raise RuntimeError("nats down")
 
         d = DistributedConflictDetector(
-            worker_id="w1", nats_publisher=_BoomPublisher(),
+            worker_id="w1",
+            nats_publisher=_BoomPublisher(),
         )
         await d.declare_intent(_intent("w1", "a.rs"))
         await d.release_intent("a.rs")  # must not raise

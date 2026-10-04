@@ -435,6 +435,7 @@ class TestCheckAlerts:
             EventMetrics,
             MetricsSnapshot,
         )
+
         snap = MetricsSnapshot(
             event=EventMetrics(error_spike=True),
         )
@@ -447,6 +448,7 @@ class TestCheckAlerts:
         cfg = AlertConfig(error_spike_alert=False)
         agg = _make_aggregator(tmp_path, alert_config=cfg)
         from ultimate_coders.dashboard.metrics import EventMetrics, MetricsSnapshot
+
         snap = MetricsSnapshot(event=EventMetrics(error_spike=True))
         new_alerts, _ = agg.check_alerts(snap)
         assert len(new_alerts) == 0
@@ -454,6 +456,7 @@ class TestCheckAlerts:
     def test_slow_tasks_alert(self, tmp_path):
         agg = _make_aggregator(tmp_path)
         from ultimate_coders.dashboard.metrics import MetricsSnapshot, TaskMetrics
+
         snap = MetricsSnapshot(task=TaskMetrics(slow_tasks_count=3))
         new_alerts, _ = agg.check_alerts(snap)
         assert len(new_alerts) == 1
@@ -463,6 +466,7 @@ class TestCheckAlerts:
     def test_high_latency_alert(self, tmp_path):
         agg = _make_aggregator(tmp_path)
         from ultimate_coders.dashboard.metrics import MetricsSnapshot, TaskMetrics
+
         snap = MetricsSnapshot(task=TaskMetrics(p95_duration_ms=400_000))
         new_alerts, _ = agg.check_alerts(snap)
         assert len(new_alerts) == 1
@@ -471,6 +475,7 @@ class TestCheckAlerts:
     def test_high_latency_below_threshold(self, tmp_path):
         agg = _make_aggregator(tmp_path)
         from ultimate_coders.dashboard.metrics import MetricsSnapshot, TaskMetrics
+
         snap = MetricsSnapshot(task=TaskMetrics(p95_duration_ms=200_000))
         new_alerts, _ = agg.check_alerts(snap)
         # No high_latency alert (200s < 300s threshold)
@@ -480,6 +485,7 @@ class TestCheckAlerts:
     def test_rate_limiter_high_alert(self, tmp_path):
         agg = _make_aggregator(tmp_path)
         from ultimate_coders.dashboard.metrics import MetricsSnapshot, SystemMetrics
+
         snap = MetricsSnapshot(system=SystemMetrics(rate_limiter_remaining_ratio=0.1))
         new_alerts, _ = agg.check_alerts(snap)
         assert len(new_alerts) == 1
@@ -488,6 +494,7 @@ class TestCheckAlerts:
     def test_stale_workers_alert(self, tmp_path):
         agg = _make_aggregator(tmp_path)
         from ultimate_coders.dashboard.metrics import MetricsSnapshot, WorkerMetrics
+
         snap = MetricsSnapshot(worker=WorkerMetrics(avg_heartbeat_age_seconds=200.0))
         new_alerts, _ = agg.check_alerts(snap)
         assert len(new_alerts) == 1
@@ -497,6 +504,7 @@ class TestCheckAlerts:
         """Recent failures alert uses window-based count, not cumulative."""
         agg = _make_aggregator(tmp_path)
         from ultimate_coders.dashboard.metrics import MetricsSnapshot, TaskMetrics
+
         snap = MetricsSnapshot(task=TaskMetrics(recent_failed=5))
         new_alerts, _ = agg.check_alerts(snap)
         assert len(new_alerts) == 1
@@ -507,6 +515,7 @@ class TestCheckAlerts:
         """Recent failures below threshold does not trigger alert."""
         agg = _make_aggregator(tmp_path)
         from ultimate_coders.dashboard.metrics import MetricsSnapshot, TaskMetrics
+
         snap = MetricsSnapshot(task=TaskMetrics(recent_failed=3))
         # 3 < 5 threshold, but recent_failed > 0 means type is "current"
         new_alerts, _ = agg.check_alerts(snap)
@@ -518,6 +527,7 @@ class TestCheckAlerts:
         """Same alert type is not triggered twice in a row."""
         agg = _make_aggregator(tmp_path)
         from ultimate_coders.dashboard.metrics import EventMetrics, MetricsSnapshot
+
         snap = MetricsSnapshot(event=EventMetrics(error_spike=True))
 
         new1, _ = agg.check_alerts(snap)
@@ -548,6 +558,7 @@ class TestCheckAlerts:
         """Triggered alerts are persisted to the AlertStore."""
         agg = _make_aggregator(tmp_path)
         from ultimate_coders.dashboard.metrics import EventMetrics, MetricsSnapshot
+
         snap = MetricsSnapshot(event=EventMetrics(error_spike=True))
         agg.check_alerts(snap)
 
@@ -575,6 +586,7 @@ class TestCheckAlerts:
         cfg = AlertConfig(failure_count_threshold=2)
         agg = _make_aggregator(tmp_path, alert_config=cfg)
         from ultimate_coders.dashboard.metrics import MetricsSnapshot, TaskMetrics
+
         snap = MetricsSnapshot(task=TaskMetrics(recent_failed=2))
         new_alerts, _ = agg.check_alerts(snap)
         assert len(new_alerts) == 1
@@ -585,6 +597,7 @@ class TestCheckAlerts:
         cfg = AlertConfig(high_latency_ms=100_000.0)  # 100s
         agg = _make_aggregator(tmp_path, alert_config=cfg)
         from ultimate_coders.dashboard.metrics import MetricsSnapshot, TaskMetrics
+
         # 150s > 100s custom threshold
         snap = MetricsSnapshot(task=TaskMetrics(p95_duration_ms=150_000))
         new_alerts, _ = agg.check_alerts(snap)

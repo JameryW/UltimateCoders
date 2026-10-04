@@ -46,10 +46,7 @@ class SearchQuery:
         """
         try:
             repos = engine.list_repos()
-            self._repo_ids = [
-                r.repo_id if hasattr(r, "repo_id") else str(r)
-                for r in repos
-            ]
+            self._repo_ids = [r.repo_id if hasattr(r, "repo_id") else str(r) for r in repos]
         except Exception:
             # ponytail: F66 — failing silently widened the search to ALL repos
             # (empty repo_ids = unscoped); surface it so a broken repo list is
@@ -75,10 +72,7 @@ class SearchQuery:
         """
         try:
             repos = engine.list_repos(workspace_id=workspace_id)
-            self._repo_ids = [
-                r.repo_id if hasattr(r, "repo_id") else str(r)
-                for r in repos
-            ]
+            self._repo_ids = [r.repo_id if hasattr(r, "repo_id") else str(r) for r in repos]
         except Exception:
             # ponytail: F66 — failing silently widened the search to ALL repos
             # (empty repo_ids = unscoped); surface it so a broken repo list is

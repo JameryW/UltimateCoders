@@ -23,6 +23,7 @@ LLM_PROVIDER_KEY_ENV: dict[str, str] = {
 @dataclass
 class EngineConfig:
     """Engine configuration."""
+
     mode: str = "local"  # "local" or "grpc"
     grpc_endpoint: str | None = None
     grpc_timeout_seconds: int = 30
@@ -31,6 +32,7 @@ class EngineConfig:
 @dataclass
 class StorageConfig:
     """Storage configuration."""
+
     tikv_endpoints: list[str] = field(default_factory=lambda: ["127.0.0.1:2379"])
     qdrant_url: str = "http://127.0.0.1:6333"
     postgres_url: str = "postgresql://localhost:5432/ultimatecoders"
@@ -39,6 +41,7 @@ class StorageConfig:
 @dataclass
 class NatsConfig:
     """NATS configuration."""
+
     url: str = "nats://127.0.0.1:4222"
     cluster_name: str = "ultimatecoders"
 
@@ -46,6 +49,7 @@ class NatsConfig:
 @dataclass
 class LlmConfig:
     """LLM API configuration."""
+
     provider: str = "mimo"
     api_key: str | None = None
     model: str = "mimo-v2.6-flash"
@@ -59,6 +63,7 @@ class LlmConfig:
 @dataclass
 class Config:
     """Top-level configuration."""
+
     engine: EngineConfig = field(default_factory=EngineConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     nats: NatsConfig = field(default_factory=NatsConfig)
@@ -109,6 +114,7 @@ def load_config(path: str | None = None) -> Config:
                 data = tomllib.loads(raw)
             elif path.endswith((".yaml", ".yml")):
                 import yaml  # ponytail: soft dep, ImportError if missing
+
                 data = yaml.safe_load(raw)
             else:
                 logger.warning("Unknown config file format: %s (expected .toml/.yaml/.yml)", path)
@@ -128,25 +134,15 @@ def load_config(path: str | None = None) -> Config:
     # ponytail: resolve API key from provider-specific env var, then fallback
     env_key = LLM_PROVIDER_KEY_ENV.get(config.llm.provider, "ANTHROPIC_API_KEY")
     anthropic_key_fallback = (
-        os.environ.get("ANTHROPIC_API_KEY")
-        if config.llm.provider == "anthropic"
-        else None
+        os.environ.get("ANTHROPIC_API_KEY") if config.llm.provider == "anthropic" else None
     )
-    config.llm.api_key = (
-        os.environ.get(env_key)
-        or anthropic_key_fallback
-        or config.llm.api_key
-    )
+    config.llm.api_key = os.environ.get(env_key) or anthropic_key_fallback or config.llm.api_key
     config.engine.mode = os.environ.get("UC_ENGINE_MODE", config.engine.mode)
-    config.engine.grpc_endpoint = os.environ.get(
-        "UC_GRPC_ENDPOINT", config.engine.grpc_endpoint or ""
-    ) or None
-    config.storage.postgres_url = os.environ.get(
-        "UC_POSTGRES_URL", config.storage.postgres_url
+    config.engine.grpc_endpoint = (
+        os.environ.get("UC_GRPC_ENDPOINT", config.engine.grpc_endpoint or "") or None
     )
-    config.storage.qdrant_url = os.environ.get(
-        "UC_QDRANT_URL", config.storage.qdrant_url
-    )
+    config.storage.postgres_url = os.environ.get("UC_POSTGRES_URL", config.storage.postgres_url)
+    config.storage.qdrant_url = os.environ.get("UC_QDRANT_URL", config.storage.qdrant_url)
     config.nats.url = os.environ.get("UC_NATS_URL", config.nats.url)
 
     # Additional LLM env var overrides

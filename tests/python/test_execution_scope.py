@@ -41,9 +41,7 @@ def _st(desc: str) -> dict:
 
 def _make_orchestrator() -> Orchestrator:
     llm = MagicMock()
-    llm.complete = AsyncMock(
-        return_value=_llm_response(_subtask_json_list([_st("Do the thing")]))
-    )
+    llm.complete = AsyncMock(return_value=_llm_response(_subtask_json_list([_st("Do the thing")])))
     return Orchestrator(llm_client=llm)
 
 
@@ -52,6 +50,7 @@ def _make_handle_submit_worker() -> MagicMock:
     the pattern in test_night_window_exclusive.py)."""
     worker = MagicMock()
     from ultimate_coders.runtime_state import RuntimeState
+
     worker._state_store = AsyncMock(return_value=RuntimeState(database_url=""))
     worker._orchestrator = _make_orchestrator()
     worker._cancelled_task_ids = set()

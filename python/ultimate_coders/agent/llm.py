@@ -117,6 +117,7 @@ class LLMRetryExhaustedError(RuntimeError):
         self.classification = classification
         super().__init__(str(original))
 
+
 # ponytail: env vars for default model per provider (proxy deployments often use custom model names)
 _PROVIDER_MODEL_ENV: dict[str, str] = {
     "anthropic": "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -290,12 +291,18 @@ class LLMClient:
         """
         if self.provider == "anthropic":
             return await self._complete_anthropic(
-                messages, system=system, max_tokens=max_tokens,
-                temperature=temperature, **kwargs,
+                messages,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                **kwargs,
             )
         return await self._complete_litellm(
-            messages, system=system, max_tokens=max_tokens,
-            temperature=temperature, **kwargs,
+            messages,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            **kwargs,
         )
 
     async def _complete_anthropic(
@@ -391,14 +398,26 @@ class LLMClient:
 
         if self.provider == "anthropic":
             return await self._complete_with_tools_anthropic(
-                working_messages, tools, system=system, max_tokens=max_tokens,
-                max_tool_rounds=max_tool_rounds, tool_executor=tool_executor,
-                on_tool_call=on_tool_call, tool_calls_log=tool_calls_log, **kwargs,
+                working_messages,
+                tools,
+                system=system,
+                max_tokens=max_tokens,
+                max_tool_rounds=max_tool_rounds,
+                tool_executor=tool_executor,
+                on_tool_call=on_tool_call,
+                tool_calls_log=tool_calls_log,
+                **kwargs,
             )
         return await self._complete_with_tools_litellm(
-            working_messages, tools, system=system, max_tokens=max_tokens,
-            max_tool_rounds=max_tool_rounds, tool_executor=tool_executor,
-            on_tool_call=on_tool_call, tool_calls_log=tool_calls_log, **kwargs,
+            working_messages,
+            tools,
+            system=system,
+            max_tokens=max_tokens,
+            max_tool_rounds=max_tool_rounds,
+            tool_executor=tool_executor,
+            on_tool_call=on_tool_call,
+            tool_calls_log=tool_calls_log,
+            **kwargs,
         )
 
     async def complete_stream(
@@ -422,12 +441,18 @@ class LLMClient:
 
         if self.provider == "anthropic":
             async for chunk in self._stream_anthropic(
-                messages, system=system, max_tokens=max_tokens, **kwargs,
+                messages,
+                system=system,
+                max_tokens=max_tokens,
+                **kwargs,
             ):
                 yield chunk
         else:
             async for chunk in self._stream_litellm(
-                messages, system=system, max_tokens=max_tokens, **kwargs,
+                messages,
+                system=system,
+                max_tokens=max_tokens,
+                **kwargs,
             ):
                 yield chunk
 
@@ -511,9 +536,7 @@ class LLMClient:
                         "input_tokens": getattr(chunk.usage, "prompt_tokens", 0),
                         "output_tokens": getattr(chunk.usage, "completion_tokens", 0),
                     }
-                stream_started = (
-                    stream_started or bool(text_delta) or finish_reason is not None
-                )
+                stream_started = stream_started or bool(text_delta) or finish_reason is not None
                 yield GenericStreamingChunk(
                     text_delta=text_delta,
                     finish_reason=finish_reason,
@@ -755,13 +778,15 @@ class LLMClient:
                 if not _is_transient_api_error(error_str):
                     # Permanent error — classify and wrap so Worker can read kind.
                     raise LLMRetryExhaustedError(
-                        e, _classify_llm_error(e, 0),
+                        e,
+                        _classify_llm_error(e, 0),
                     ) from e
 
                 if attempt >= self.max_retries - 1:
                     # Transient error, retries exhausted — wrap with retry count.
                     raise LLMRetryExhaustedError(
-                        e, _classify_llm_error(e, self.max_retries),
+                        e,
+                        _classify_llm_error(e, self.max_retries),
                     ) from e
 
                 # Exponential backoff with jitter
@@ -893,12 +918,14 @@ class LLMClient:
 
                 if not _is_transient_api_error(error_str):
                     raise LLMRetryExhaustedError(
-                        e, _classify_llm_error(e, 0),
+                        e,
+                        _classify_llm_error(e, 0),
                     ) from e
 
                 if attempt >= self.max_retries - 1:
                     raise LLMRetryExhaustedError(
-                        e, _classify_llm_error(e, self.max_retries),
+                        e,
+                        _classify_llm_error(e, self.max_retries),
                     ) from e
 
                 exp_delay = base_delay * (2**attempt)
@@ -972,9 +999,7 @@ class LLMClient:
                     args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                 except (json.JSONDecodeError, TypeError):
                     args = {}
-                tool_calls.append(
-                    ToolCall(id=tc.id, name=tc.function.name, input=args)
-                )
+                tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, input=args))
 
         usage = {}
         if hasattr(response, "usage") and response.usage:

@@ -22,10 +22,15 @@ from ultimate_coders.nats_worker import NatsWorker as _NatsWorker
 
 def _terminal_sender(publisher):
     async def send(event, update):
-        await publisher.publish_event(event["type"], task_id=event["task_id"],
-                                      subtask_id=event["subtask_id"], data=event["data"])
+        await publisher.publish_event(
+            event["type"],
+            task_id=event["task_id"],
+            subtask_id=event["subtask_id"],
+            data=event["data"],
+        )
         await publisher.publish_update(update, partial=True)
         return True
+
     return send
 
 
@@ -98,7 +103,9 @@ async def test_original_request_survives_remote_dispatch():
     receiver = _make_worker()
     receiver._worker = MagicMock()
     restored = receiver._build_subtask_from_data(
-        "t-original", "t-original-s0", payload,
+        "t-original",
+        "t-original-s0",
+        payload,
     )
     assert restored is not None
     assert restored.user_request == original
