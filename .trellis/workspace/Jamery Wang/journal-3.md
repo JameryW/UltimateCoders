@@ -1375,3 +1375,89 @@ Completed the accepted execution, recovery, delivery and evidence repair; verifi
 ### Next Steps
 
 - No further action is required for this completed repair.
+
+## Session 60: MetaInfer architecture close-out -- verification and two-axis review
+
+### Summary
+
+Continued the in-flight `10-02-metainfer-architecture` task to its closing gate.
+R1-R8 were already implemented in the working tree; this session ran the test
+suites, ran an independent two-axis review, fixed every hard finding, measured
+the judgement calls instead of arguing them, corrected two specs that stated the
+opposite of the tree, and delivered the branch as `d96f1ca7`.
+
+### Main Changes
+
+- Fixed a real defect the review found: `MetaInferAdapter`'s `release_slot()`
+  called `self.state.mutate` unconditionally, so with no state store every error
+  path raised `AttributeError` and masked the original failure. Six tests were
+  red on exactly this. Now guarded.
+- Removed the dead `_confirmed` parameter from `TaskStore::full_snapshot_is_stale`.
+  The tests asserted `true` and `false` give the same answer, so the parameter
+  carried no meaning, and its doc comment was a leftover from a de-dedup
+  function. Replaced with the real control-state fencing rule.
+- `dashboard/app.py`: five `except Exception` sites returned 503 without logging,
+  contradicting `error-handling.md` Forbidden Pattern #3. Added `_unavailable()`,
+  which logs with `exc_info=True` and collapses the copy-pasted 503 shape.
+- `InferencePanel.tsx`: extracted `authHeaders()` so `request()` and `download()`
+  stop rebuilding the Authorization header.
+- Pinned both artifact rejection layers in `test_inference_architecture.py`
+  instead of conflating them: a self-contradictory descriptor is "Invalid artifact
+  metadata", bytes that fail the hash are "Artifact integrity check failed".
+- Narrowed one guard assertion to its stated property. `test_check_line_endings.py`
+  compared whole index blobs against the working tree, which over-approximates
+  "these files are LF-only" into "these files never change" -- the fragility its
+  own docstring rejects. Both halves now assert CR-free bytes.
+
+**Specs corrected (measured, not argued)**
+
+- `.trellis/spec/frontend/type-safety.md` claimed "the codebase consistently uses
+  `Optional[X]`". Measured: 405 `X | None` against 3 `Optional[X]`, 306 `list[`
+  against 0 `List[`, 148 `dict` against 0 `Dict[`, and two of the three surviving
+  `Optional` sites carry `# noqa: UP045`. The spec was inverted; it now carries
+  the counts so nobody "fixes" 405 annotations to match 3.
+- `.trellis/spec/backend/inference-infra-spec.md` gained gotcha 7a (the dataclass
+  rule governs UC's own domain types, not JSON decoded from a third-party service
+  whose schema moves under `contract_version`) and convention 7b (the `retryable`
+  exception channel that keeps a resource wait from spending an execution retry).
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d96f1ca7` | feat(inference): deliver MetaInfer architecture reliability and operations |
+
+### Testing
+
+- Rust `cargo test --workspace`: 357 passed, 0 failed. Feature combos
+  (`--no-default-features`, `--features indexing`, `--all-features`) and
+  `cargo fmt --all -- --check` all clean. Infra-gated tests stay ignored by
+  design (NATS broker / PostgreSQL).
+- Python `pytest tests/python`: 1384 passed, 11 skipped. Started at 14 failures
+  and each one is understood, not suppressed -- 6 were the `release_slot` defect,
+  1 a mis-layered integrity assertion, and 7 were corpus pins that the new
+  workflow and the spec edits legitimately moved.
+- `ruff check scripts/ python/ tests/python/`: clean.
+- Dashboard `tsc` (app + node) and `vite build`: clean.
+- Guards: line-endings, tasks-refs (853 refs, 0 dangling), readme-ci-table
+  (11 workflows reconciled in 2 files), workflow-inputs (11 workflows,
+  21 run-step refs), journal-ledger, spec-refs (112 ok / 9 stale / 9 ambiguous,
+  0 structural). Every pin that moved was moved in the same change with the
+  movement named.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- R8 stays deliberately unclaimed. The pinned contract gate
+  (`.github/workflows/metainfer-release-gate.yml`) and
+  `scripts/verify-metainfer-release.py` are in place, but no real MetaInfer/GPU
+  execution has produced evidence. Run the gate on the self-hosted GPU runner
+  when the pinned service is reachable, and record the evidence separately from
+  the CPU fixtures.
+- The `# noqa: UP045` opt-outs in `python/ultimate_coders/dashboard/app.py` and
+  `python/ultimate_coders/agent/event_emitter.py` are the only `Optional[...]`
+  left. Either drop them and take PEP 604, or keep the opt-outs; do not widen
+  the older spelling.
