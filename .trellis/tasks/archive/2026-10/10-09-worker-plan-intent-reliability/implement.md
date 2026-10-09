@@ -7,7 +7,7 @@
   concurrent-cancellation regressions.
 - [x] Full Python suite, lint and repository guards.
 - [x] Sync executable contracts and independent Spec/Standards review.
-- [ ] Commit, PR and CI-gated merge; confirm clean workspace and remote main.
+- [x] Commit, PR and CI-gated merge; confirm clean workspace and remote main.
 
 Final validation: 1429 passed, 11 skipped in the full Python suite; focused
 worker regressions plus repository guards: 187 passed.
@@ -43,3 +43,10 @@ All 865 resolve; no dangling/malformed reference exists. Update the explicit
 census pin: all 14 guard tests pass; the six-mutation self-check passes with
 distinct failing-test sets and byte-exact script restoration certified by a
 separate process. No guard rule was weakened.
+
+## Delivery
+
+PR #703 merged on 2026-10-09 as d47272038665b4224e58ac9682286a015d068580.
+All 11 checks passed on final head ee6c0beb, including Python 3.9/3.12 and
+real NATS dispatch. Local main was fast-forwarded to the merge and the working
+tree was clean. This completed task is archived; R8 stays open separately.
