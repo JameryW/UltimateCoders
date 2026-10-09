@@ -34,3 +34,12 @@ example explicitly distinguishes existing behavior from the traceback rule
 for new handlers; a redundant two-file exception test was removed while
 declaration-failure and concurrent-cancellation coverage remain. Independent
 follow-up confirmed no Standards blocker.
+
+## CI corpus follow-up
+
+PR #703's first run exposed the task-reference census after both curated
+context files were tracked: six references in each file move 853 to 865.
+All 865 resolve; no dangling/malformed reference exists. Update the explicit
+census pin: all 14 guard tests pass; the six-mutation self-check passes with
+distinct failing-test sets and byte-exact script restoration certified by a
+separate process. No guard rule was weakened.
