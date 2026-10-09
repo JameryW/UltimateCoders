@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/event-pipeline-spec.md","reason":"Verify bounded retry and exact intent ownership"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Full tests, lint and distinct failure regressions"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"No silent failure or lost cancellation"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Review exception diagnostics"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Keep live callback reference anchored to actual persistence"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Check factory return annotations"}

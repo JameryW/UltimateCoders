@@ -2153,25 +2153,10 @@ class NatsWorker:
                             success=False,
                         )
                     await NatsWorker._publish_task_snapshot(self, task)
-                    # Declare edit intent for conflict tracking
-                    if st.file_constraints:
-                        from ultimate_coders.agent.conflict import EditIntent
-
-                        for fp in st.file_constraints:
-                            self._orchestrator.conflict_detector.declare_intent(
-                                EditIntent(
-                                    worker_id=self._worker.worker_id,
-                                    file_path=fp,
-                                )
-                            )
-                    result = await self._worker.execute_subtask(st)
-                    # Remove edit intent after execution
-                    if st.file_constraints:
-                        for fp in st.file_constraints:
-                            self._orchestrator.conflict_detector.remove_intent(
-                                fp,
-                                self._worker.worker_id,
-                            )
+                    # Edit intents are declared and released inside
+                    # _execute_subtask_with_context, so every execution path
+                    # gets them and the release survives an exception.
+                    result = await self._execute_subtask_with_context(st)
                     await self._orchestrator.handle_subtask_result(result)
                     return result
 
@@ -2856,16 +2841,44 @@ class NatsWorker:
         """Run one subtask, forwarding the gateway-composed context block
         when the dispatch carried one (T10 #652 / D10 #647).
 
-        With no block the call is byte-identical to the pre-T10 path
-        (``execute_subtask(subtask)``) — worker implementations that do not
+        Declares the subtask's edit intents around the sandbox run and releases
+        them on every exit path. The release used to be a straight-line call
+        after ``execute_subtask``, so an exception leaked the intent and left a
+        file pinned as in-edit indefinitely; and the JetStream path did not
+        declare at all. Both call sites now go through here, so "declare before,
+        release after" holds for whoever executes.
+
+        With no context block the dispatch is byte-identical to the pre-T10 path
+        (``execute_subtask(subtask)``) -- worker implementations that do not
         know the new keyword keep working unchanged.
         """
-        if gateway_context_block is None:
-            return await self._worker.execute_subtask(subtask)
-        return await self._worker.execute_subtask(
-            subtask,
-            gateway_context_block=gateway_context_block,
-        )
+        detector = getattr(self._orchestrator, "conflict_detector", None)
+        paths = list(dict.fromkeys(fp for fp in (subtask.file_constraints or []) if fp))
+
+        async def dispatch() -> SubtaskResult:
+            if gateway_context_block is None:
+                return await self._worker.execute_subtask(subtask)
+            return await self._worker.execute_subtask(
+                subtask,
+                gateway_context_block=gateway_context_block,
+            )
+
+        if detector is None or not paths:
+            return await dispatch()
+
+        from ultimate_coders.agent.conflict import EditIntent
+
+        worker_id = self._worker.worker_id
+        declared: list[EditIntent] = []
+        try:
+            for fp in paths:
+                intent = EditIntent(worker_id=worker_id, file_path=fp)
+                detector.declare_intent(intent)
+                declared.append(intent)
+            return await dispatch()
+        finally:
+            for intent in declared:
+                detector.remove_intent(intent.file_path, worker_id, intent=intent)
 
     async def _execute_and_report(
         self,

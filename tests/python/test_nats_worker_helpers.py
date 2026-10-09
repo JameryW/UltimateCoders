@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.types import (
     StepUsage,
     Subtask,
@@ -1875,3 +1876,147 @@ def test_task_update_payload_emits_review_only_when_a_verdict_exists() -> None:
         subtasks=[Subtask(id="s1", result=SubtaskResult(subtask_id="s1"))],
     )
     assert "review" not in _make_task_update_payload(unreviewed, partial=True)["subtasks"][0]
+
+
+class TestEditIntentLifecycle:
+    """Declare before the sandbox run, release on every exit path.
+
+    The release used to be a straight-line call after ``execute_subtask``, so an
+    exception leaked the intent and left the file pinned as in-edit forever.
+    The JetStream dispatch path did not declare at all. Both now go through
+    ``_execute_subtask_with_context``, which is what these pin.
+    """
+
+    def _make_harness(self, execute) -> tuple[_NatsWorker, Orchestrator]:
+        nw = _make_worker()
+        worker = MagicMock()
+        worker.worker_id = "w-1"
+        worker.execute_subtask = execute
+        nw._worker = worker
+        orch = Orchestrator()
+        nw._orchestrator = orch
+        return nw, orch
+
+    def _make_subtask(self, paths: list[str]) -> Subtask:
+        return Subtask(
+            id="t-s0",
+            parent_id="t",
+            description="edit a file",
+            user_request="edit a file",
+            status=SubtaskStatus.PENDING,
+            file_constraints=list(paths),
+        )
+
+    async def test_intents_are_released_when_execution_raises(self):
+        """The leak: an exception must not leave an intent behind."""
+        boom = AsyncMock(side_effect=RuntimeError("sandbox exploded"))
+        nw, orch = self._make_harness(boom)
+        st = self._make_subtask(["src/main.rs", "src/lib.rs"])
+
+        with pytest.raises(RuntimeError):
+            await nw._execute_subtask_with_context(st)
+
+        assert orch.conflict_detector._active_intents == {}, (
+            "an exception must not leave edit intents pinned"
+        )
+
+    async def test_intents_are_present_during_execution_and_gone_after(self):
+        observed = {}
+
+        async def execute(subtask, **kwargs):
+            observed["intents"] = {
+                path: [i.worker_id for i in intents]
+                for path, intents in nw._orchestrator.conflict_detector._active_intents.items()
+            }
+            return SubtaskResult(subtask_id=subtask.id, success=True, summary="ok")
+
+        nw, _ = self._make_harness(execute)
+        st = self._make_subtask(["src/main.rs"])
+
+        await nw._execute_subtask_with_context(st)
+
+        assert observed["intents"] == {"src/main.rs": ["w-1"]}
+        assert nw._orchestrator.conflict_detector._active_intents == {}
+
+    async def test_context_dispatch_path_declares_too(self):
+        """The JetStream path never declared at all; it does now."""
+        execute = AsyncMock(
+            return_value=SubtaskResult(subtask_id="t-s0", success=True, summary="ok")
+        )
+        nw, orch = self._make_harness(execute)
+        st = self._make_subtask(["src/main.rs"])
+
+        await nw._execute_subtask_with_context(st, gateway_context_block={"k": "v"})
+
+        assert execute.await_args.kwargs.get("gateway_context_block") == {"k": "v"}
+        assert orch.conflict_detector._active_intents == {}
+
+    async def test_no_intents_without_file_constraints(self):
+        execute = AsyncMock(
+            return_value=SubtaskResult(subtask_id="t-s0", success=True, summary="ok")
+        )
+        nw, orch = self._make_harness(execute)
+        st = self._make_subtask([])
+
+        await nw._execute_subtask_with_context(st)
+
+        assert orch.conflict_detector._active_intents == {}
+        assert execute.await_count == 1
+
+    async def test_mid_declaration_failure_releases_prior_intents(self):
+        execute = AsyncMock()
+        nw, orch = self._make_harness(execute)
+        declare = orch.conflict_detector.declare_intent
+
+        def fail_second(intent):
+            if intent.file_path == "b.rs":
+                raise RuntimeError("cannot declare b")
+            return declare(intent)
+
+        with patch.object(orch.conflict_detector, "declare_intent", side_effect=fail_second):
+            with pytest.raises(RuntimeError, match="cannot declare b"):
+                await nw._execute_subtask_with_context(self._make_subtask(["a.rs", "b.rs"]))
+
+        assert orch.conflict_detector._active_intents == {}
+        execute.assert_not_awaited()
+
+    async def test_cancellation_releases_only_its_own_intent(self):
+        entered = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def execute(subtask, **kwargs):
+            entered.set()
+            await finish.wait()
+            return SubtaskResult(subtask_id=subtask.id, success=True)
+
+        nw, orch = self._make_harness(execute)
+        first = self._make_subtask(["shared.rs"])
+        second = self._make_subtask(["shared.rs"])
+        second.id = "t-s1"
+        running = asyncio.create_task(nw._execute_subtask_with_context(first))
+        sibling = None
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            entered.clear()
+            sibling = asyncio.create_task(nw._execute_subtask_with_context(second))
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            assert len(orch.conflict_detector._active_intents["shared.rs"]) == 2
+            sibling_intent = orch.conflict_detector._active_intents["shared.rs"][1]
+
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await running
+            remaining = orch.conflict_detector._active_intents["shared.rs"]
+            assert len(remaining) == 1 and remaining[0] is sibling_intent
+
+            finish.set()
+            await sibling
+            assert orch.conflict_detector._active_intents == {}
+        finally:
+            finish.set()
+            running.cancel()
+            if sibling is not None:
+                sibling.cancel()
+            await asyncio.gather(
+                *[task for task in (running, sibling) if task is not None], return_exceptions=True
+            )

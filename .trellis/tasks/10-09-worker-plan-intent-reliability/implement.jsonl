@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/event-pipeline-spec.md","reason":"Plan validation and scoped execution intent contracts"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Regression coverage and test factory conventions"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Reason-bearing fallback and exception propagation"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Failure diagnostics and existing logging examples"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Deferred Python annotations and helper return types"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Centralize both worker execution paths"}

@@ -270,12 +270,26 @@ class ConflictDetector:
             overlapping_regions=overlapping_regions,
         )
 
-    def remove_intent(self, file_path: str, worker_id: str) -> None:
-        """Remove an intent after the edit is completed or abandoned."""
+    def remove_intent(
+        self, file_path: str, worker_id: str, *, intent: EditIntent | None = None
+    ) -> None:
+        """Remove an intent after the edit is completed or abandoned.
+
+        With ``intent``, remove only that declaration by object identity so a
+        concurrent subtask on the same worker retains its own intent. Without
+        it, preserve the legacy worker-wide release. Remove empty path entries
+        to bound memory on long-lived workers.
+        """
         if file_path in self._active_intents:
-            self._active_intents[file_path] = [
-                i for i in self._active_intents[file_path] if i.worker_id != worker_id
+            remaining = [
+                i
+                for i in self._active_intents[file_path]
+                if i.worker_id != worker_id or (intent is not None and i is not intent)
             ]
+            if remaining:
+                self._active_intents[file_path] = remaining
+            else:
+                del self._active_intents[file_path]
 
     def clear_intents(self) -> None:
         """Clear all intents (e.g., when a task completes)."""

@@ -337,3 +337,64 @@ if (DEDUP_STATUS_EVENTS.has(event.type) && seenEvents.current.has(key)) return;
 ```
 
 **Why**: Prevents visual glitches (duplicate log entries, state flicker) without requiring exactly-once semantics from NATS.
+
+## Scenario: validated plans and scoped execution intents
+
+### 1. Scope / Trigger
+
+Python LLM decomposition and local/JetStream worker execution. Invalid model
+output must not produce a partial plan or a permanently blocked dependency graph.
+An execution ending must not release another concurrent execution's advisory intent.
+
+### 2. Signatures
+
+`validate_decomposition(items: Any) -> str | None` returns a rejection reason.
+`Orchestrator._decompose_task(...) -> list[Subtask] | None` makes at most two model calls.
+`ConflictDetector.remove_intent(file_path, worker_id, *, intent=None)` supports
+exact-declaration release by object identity; omitting intent keeps worker-wide release.
+`NatsWorker._execute_subtask_with_context(subtask, gateway_context_block=None)`
+owns declaration and release for both sandbox execution paths.
+
+### 3. Contracts
+
+A plan is a nonempty array of objects with nonempty string descriptions,
+optional string-array file constraints and string expected output. Null/empty
+optional fields preserve their previous empty defaults. Dependencies are 1-based
+integers or legacy integer strings; booleans and floats are rejected. Dependencies
+must be in range, non-self and acyclic; duplicate edges are deduplicated on mapping.
+All-identical multi-item descriptions are rejected. No item/dependency is dropped.
+Malformed JSON or invalid plans trigger exactly one retry carrying the reason;
+a second invalid output uses newline fallback. Transport errors fall back immediately.
+Explicit inference-domain routing still bypasses generic decomposition.
+
+Intents are declared before dispatch, retained while execution awaits, and
+released in finally on every exit. Each execution releases only its own object;
+identical declarations by the same worker remain distinct. Empty path buckets
+are removed. This is in-process advisory tracking, not a distributed lock.
+
+### 4. Validation & Error Matrix
+
+Invalid JSON/shape, missing description, invalid optional field or dependency,
+cycle, empty output or all-identical work -> reason-bearing retry, then fallback.
+Valid deep chain -> accepted without recursion. Sandbox/declaration exception or
+cancellation -> release declarations already owned by this execution and propagate.
+
+### 5. Good/Base/Bad Cases
+
+Good: bad JSON followed by a valid plan yields that plan after two calls.
+Base: one valid plan requires one call; no LLM keeps newline fallback.
+Bad: truncating a float dependency changes ordering; removing all intents for
+the worker on one task's completion erases its still-running sibling.
+
+### 6. Tests Required
+
+Decomposition regression tests pin corrected/repeated invalid output, reason
+propagation, legacy dependency strings, strict field types and a 1500-node chain.
+Conflict and worker helper tests pin exact object release, idempotent release,
+mid-declaration failure, execution error, cancellation and overlapping same-worker tasks.
+
+### 7. Wrong vs Correct
+
+Wrong: skip malformed items/dependencies, or perform worker-wide cleanup after
+each local execution. Correct: validate the whole plan before mapping and use
+the declared intent object as the release token inside finally.

@@ -106,17 +106,20 @@ The Orchestrator uses internal method callbacks rather than external callback re
 
 ### Error Handling in Callbacks
 
-Memory persistence failures are logged but do not fail the operation (`python/ultimate_coders/agent/orchestrator.py:149-161`, `refresh_heartbeat`):
+Memory persistence failures are logged but do not fail the operation (`python/ultimate_coders/agent/worker.py:1318-1371`, `_save_checkpoint`):
 
 ```python
-if self.engine is not None:
-    try:
-        self.engine.write_memory(...)
-    except Exception:
-        logger.warning("Failed to write task to memory", exc_info=True)
+if self.engine is None:
+    return
+try:
+    await _engine_call(self.engine, "write_memory", "write_memory_async", ...)
+except Exception:
+    logger.debug("Failed to save checkpoint for subtask %s", subtask.id[:8])
 ```
 
-This follows the same best-effort pattern as the Rust core.
+This describes existing checkpoint logging. New exception-handler logs include
+`exc_info=True` as required by the backend logging guidelines; the excerpt is
+not a template for new handlers.
 
 ---
 
@@ -125,7 +128,8 @@ This follows the same best-effort pattern as the Rust core.
 The `EditIntent` event type enables conflict detection. Workers declare their intent to edit a file/region before making changes:
 
 ```python
-# Python-side: orchestrator.py registers edit intents
+# Python-side: ultimate_coders.agent.conflict owns the detector, and
+# nats_worker._execute_subtask_with_context declares/releases around each run
 from ultimate_coders.agent.conflict import ConflictDetector, EditIntent, EditType, LineRange
 
 detector = ConflictDetector()
