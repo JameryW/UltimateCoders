@@ -17,7 +17,7 @@
 
 ```python
 class DashboardApp:
-    def __init__(self, orchestrator: Any) -> None
+    def __init__(self, orchestrator: Any, nats_publisher: Any = None, nats_client: Any = None, nats_url: str | None = None) -> None
     def start(self, host: str = "0.0.0.0", port: int = 8080) -> None
     def stop(self) -> None
 
@@ -162,10 +162,44 @@ class Scheduler:
 #### SSE Hybrid Push Contract
 
 SSE stream pushes two event types:
-- **`task_event`** — pushed immediately when a TaskEvent is emitted via `event_emitter.wait_for_event()`. Payload is a single `TaskEvent.to_dict()` JSON.
-- **`update`** — pushed every 5 seconds as a fallback (when no event_emitter, or when `wait_for_event()` times out). Payload is the full state snapshot JSON.
+- **`task_event`** — the NATS callback normalizes each uc.task.event message,
+  records it once, and fans it out to one bounded queue per SSE client.
+  The generator awaits its own queue directly and emits each event immediately.
+- **`update`** — a full state snapshot after 5 seconds during idle periods.
+  Events flowing through the stream suppress redundant snapshots. Without a
+  connected NATS client, the generator yields only periodic snapshots.
 
-> **Gotcha**: When `event_emitter` is None (no Orchestrator, or old code path), the SSE loop must still `await asyncio.sleep(5)` after each snapshot to avoid an infinite fast-loop that would consume CPU and bandwidth.
+Each client queue has capacity 1000. A full queue drops that client's event;
+other clients continue receiving their own copies. The generator unregisters
+its queue in finally when disconnected. The idle queue wait is capped by the
+next snapshot deadline, so an ordinary 2-second wait cannot delay it.
+
+> **Gotcha**: The emitter's in-process queue is not the distributed SSE source.
+> Keep NATS connection/subscription on the Uvicorn loop, and retain the
+> cancellable 0.2-second idle sleep when NATS is absent to avoid a hot loop.
+
+#### Live SSE latency acceptance
+
+Run the opt-in [latency gate](../../../scripts/verify-sse-latency.py) against an
+isolated real broker and Dashboard API. It publishes synthetic task events,
+waits until every client receives a warmup probe, and measures publication to
+complete HTTP SSE frame using one monotonic clock. The defaults are 300 events,
+3 clients, a 20ms interval and a strict 200ms maximum for every sample.
+An interval of zero exercises burst delivery. No production API is added.
+
+Complete delivery, zero observed duplicates and all finite non-negative
+samples below the limit are mandatory. Failed measurements write JSON and
+exit 1; invalid arguments exit 2; unavailable services/warmup failures exit 3.
+Missing sequence numbers and individual samples remain in the evidence.
+Connection/completion and async cleanup waits are bounded; duplicate observation continues
+for 250ms after completion. Browser rendering and cross-host latency are
+outside this boundary; never infer their SLA from a localhost result.
+
+[Regression tests](../../../tests/python/test_sse_latency_gate.py) pin loss,
+duplication, slow outliers and nonfinite configuration rejection. The
+[2026-10-09 live report](../../../docs/live-feedback-and-metainfer-verification.md)
+records steady and burst results and actual failure checks. Do not enforce a
+wall-clock latency assertion in ordinary unit CI.
 
 #### Events API Contract
 
@@ -176,7 +210,7 @@ SSE stream pushes two event types:
 
 #### Event Log Contract
 
-- In-memory ring buffer: `deque(maxlen=200)`, newest first (`appendleft`)
+- In-memory ring buffer: `deque(maxlen=500)`, newest first (`appendleft`)
 - Events recorded on every POST operation via `_record_event(event_type, **details)`
 - Event structure: `{"timestamp": "...", "type": "event_type", "details": {...}}`
 - Available via `GET /dashboard/api/events` and in SSE snapshot `events` field
@@ -356,37 +390,25 @@ async def submit_task_api(request):
     self._record_event("task_submitted", task_id=task.id, description=description)  # local log only
 ```
 
-#### Wrong: SSE infinite fast-loop when event_emitter is None
+#### Wrong: One shared NATS queue for every SSE client
 
 ```python
-# BAD: No sleep when event_emitter is None → CPU/bandwidth hot loop
-async def event_generator():
-    while True:
-        if self.event_emitter is not None:
-            event = await self.event_emitter.wait_for_event(timeout=5.0)
-            if event is not None:
-                yield {"event": "task_event", "data": json.dumps(event.to_dict())}
-                continue
-        # No event_emitter and no sleep → infinite tight loop!
-        snapshot = self._get_full_snapshot()
-        yield {"event": "update", "data": json.dumps(snapshot)}
+# BAD: clients race to consume the same event, so each sees a random subset.
+event = await self._shared_nats_queue.get()
+yield {"event": "task_event", "data": json.dumps(event)}
 ```
 
-#### Correct: Always sleep after snapshot when no event received
+#### Correct: Each client owns a queue, released on disconnect
 
 ```python
-# GOOD: asyncio.sleep(5) prevents hot loop when event_emitter is None or on timeout
-async def event_generator():
+# GOOD: per-client copies; the actual generator also handles idle snapshots.
+queue = self._subscribe_sse()
+try:
     while True:
-        if self.event_emitter is not None:
-            event = await self.event_emitter.wait_for_event(timeout=5.0)
-            if event is not None:
-                yield {"event": "task_event", "data": json.dumps(event.to_dict())}
-                continue
-        # Timeout or no emitter: send snapshot + sleep
-        snapshot = self._get_full_snapshot()
-        yield {"event": "update", "data": json.dumps(snapshot)}
-        await asyncio.sleep(5)
+        event = await queue.get()
+        yield {"event": "task_event", "data": json.dumps(event)}
+finally:
+    self._unsubscribe_sse(queue)
 ```
 
 #### Wrong: Mutating cached event objects in frontend
@@ -423,10 +445,11 @@ Browser ──SSE──> FastAPI (/dashboard/api/stream)
           Engine.health()  workers   Scheduler
           (PyO3/Rust)     tasks     jobs/history
 
-Event flow:
-  Worker ──emit()──> TaskEventEmitter ──await──> SSE (task_event)
-  Orchestrator ──emit()──> TaskEventEmitter
-                                        └──timeout──> SSE (update, 5s full snapshot)
+Distributed event flow:
+  Worker/Orchestrator ──NATS uc.task.event──> Dashboard callback
+                                                ├──record once (log/metrics)
+                                                └──per-client queue──> SSE task_event
+  NATS uc.dashboard.snapshot ──> cached snapshot ──idle 5s──> SSE update
 
 ```
 
@@ -434,7 +457,10 @@ Event flow:
 - Orchestrator is **not blocked** by dashboard I/O
 - `stop_dashboard()` sets `server.should_exit = True` and joins the thread
 - **CORS middleware** enabled (`allow_origins=["*"]`, `allow_methods=["GET"]`) for CDN script loading (Tailwind) and cross-origin SSE clients
-- **TaskEventEmitter** is an in-process asyncio.Queue + ring buffer. Workers and Orchestrator `emit()` events; Dashboard SSE `wait_for_event()` consumes them. Events are not persisted — lost on restart.
+- **TaskEventEmitter** is an in-process asyncio.Queue + ring buffer. The
+  distributed Dashboard consumes NATS and copies normalized events into the
+  emitter's recent buffer when embedded. Its local event buffers are lost on
+  restart; durable EventStore/checkpoint replay belongs to the Gateway.
 - **SSE hybrid push**: real-time `task_event` SSE events for Worker/Orchestrator events, plus periodic `update` SSE events (5s full snapshot) as fallback
 - **Backward compatibility**: `event_emitter` and `on_tool_call` are optional. Without them, Worker and LLMClient behave identically to pre-event code paths.
 

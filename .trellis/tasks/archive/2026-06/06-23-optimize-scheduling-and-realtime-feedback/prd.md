@@ -21,10 +21,13 @@
       — 不再适用：`python/ultimate_coders/local_worker.py` 已于 #171
       （a368371，2026-06-27）随手写式 JSON-RPC 桥一并删除，改为 connectrpc
       gRPC-Web。目标模块不存在，此项按「失效」结案，而非「未做」。
-* [x] SSE 事件推送替换轮询（原 < 200ms 时延目标尚未实测）
+* [x] SSE 事件推送替换轮询；本机 NATS → HTTP SSE 实测 < 200ms
       — `dashboard/app.py` `_sse_subscribers: set[asyncio.Queue]` +
-      `_subscribe_sse()`，NATS 回调直推队列，不再 0.5s 轮询。延迟本身未在
-      CI 中测量（无时延基准），此处以「推送机制已替换轮询」结案。
+      `_subscribe_sse()`，NATS 回调直推队列，不再 0.5s 轮询。2026-10-09
+      实测 3 个客户端各 300 事件，持续流最大 6.394ms、突发流最大 55.712ms，
+      零丢失/重复。边界为本机 NATS publish 到完整 HTTP SSE 帧，不含浏览器
+      渲染或跨主机传输；不是 CI 性能 SLA。证据和复现命令见
+      [live verification](../../../../../docs/live-feedback-and-metainfer-verification.md)。
 * [x] decompose 结果验证 + 一次 re-decompose
       — `orchestrator.validate_decomposition()` + `_decompose_task` 内恰好
       一次重拆，携带失败原因。原先静默丢弃缺描述项与越界依赖、且完全不查
