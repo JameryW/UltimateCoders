@@ -103,7 +103,7 @@ nvcc 12.6. Two acceptance points closed there: a mismatched `gpu_uuid` /
 observable device is rejected. Full table in
 `docs/metainfer-reliability-verification.md`.
 
-R8 stays **unclaimed**, and the reason is now precise rather than general:
+At the earlier inspection, R8 stayed **unclaimed** for this reason:
 `nvidia-smi` is present, `metainfer` is not. No MetaInfer process, package or
 checkout exists on the host, so `scripts/verify-metainfer-release.py` could not
 be run at all. Worse, pointing it at stock upstream would *correctly* fail. That
@@ -116,10 +116,69 @@ The other half of the adapter surface *is* compatible -- `/api/sys-shell/
 task-types`, `/api/sys-shell/task-types/{type}/schema` and the sys-shell
 CRUD/control routes exist upstream and are covered there by the upstream
 `test_app_core` server suite. So the gap is narrow: **only the safety contract
-is missing** -- the three `/api/uc/*` endpoints that gate a mutating job behind
+is missing** -- the four `/api/uc/*` endpoints that gate a mutating job behind
 workspace sharing, all-writer quiescence and GPU identity.
 
 The remaining input is therefore a MetaInfer deployment carrying the UC service
 extension at pinned revision `b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890`. Until
 that exists, no MetaInfer acceptance, cancellation, recovery or artifact
 delivery result is claimed, and the CPU fixtures are not a substitute.
+
+## Live continuation (2026-10-09)
+
+The earlier lack of a package/process/checkout is resolved. The unmodified
+pinned upstream now runs in WSL at http://127.0.0.1:48765. Its HTML and plugin
+discovery endpoints returned 200; contract and hardware endpoints returned
+404. The actual release gate returned 2 with the named workspace/stop-contract
+refusal and produced no pass evidence. This proves the deployment blocker
+through live HTTP; R8 optimization and GPU acceptance remain open.
+
+Real NATS-to-HTTP SSE verification closes the historical transport measurement:
+three clients each received 300 events in steady and burst runs, with no loss
+or duplicates. Maximum samples were 6.3938ms and 55.7119ms respectively. All
+1800 samples, actual conditions and the contract refusal are retained in
+[live-verification.json](live-verification.json). Browser rendering and
+cross-host latency were outside the measurement.
+
+The focused gate regressions and real negative checks ensure that missing
+events, duplicates, slow outliers and unreachable APIs cannot become passes.
+
+### Continuation Standards review
+
+Standards: no remaining documented violations or actionable baseline smells
+found. The revised cleanup adds explicit deadlines for consumer cancellation
+and NATS closure. The transport test uses injected HTTP/NATS fixtures and
+verifies fragmented frames, duplicates, closure and stalled-close failure.
+The report preserves the measurement boundary and leaves R8 unverified.
+
+### Continuation Spec review
+
+No remaining Spec findings in the staged continuation. The initial review
+found P2: cancelling consumers and closing the NATS publisher had no deadline,
+so an unavailable Dashboard could leave the gate hanging. Both operations now
+have explicit timeout bounds, and a deterministic stalled-close regression
+verifies the gate itself finishes and closes HTTP streams. The strict latency
+verdict, sequence evidence, measurement boundary and deployment refusal remain
+consistent with the specifications. No scope creep found.
+
+R8 remains open: the missing service extension prevents real optimization,
+cancellation, recovery and artifact-delivery acceptance. Stock upstream startup
+and GPU visibility do not satisfy it.
+
+Final review totals: Standards 0 remaining findings; Spec 0 remaining findings
+(1 P2 fixed). The two axes ran independently against the staged continuation
+from baseline 9c70e329f65eef5f1fcda02932abb0efa6836ae6.
+
+### Continuation final checks
+
+- Full Python suite: 1443 passed, 11 skipped, 2 dependency deprecation warnings.
+- Final reference/line-ending guard tests: 64 passed. Census: 2001 tracked
+  files, 1992 text; 130 line references, 297 path mentions, 865 task references.
+- Focused SSE/Dashboard tests: 26 passed, including all 14 latency-gate cases.
+- Ruff and format checks, workflow input coverage and Codex workflow wiring:
+  passed.
+- Final live transport smoke: 30 events to each of 3 clients, zero loss or
+  duplicates, maximum 7.3919ms, exit 0. Unavailable Dashboard/broker checks
+  returned 3 without measurement evidence; strict threshold returned 1.
+- Actual pinned MetaInfer release gate: exit 2, contract refusal, no pass
+  evidence. R8 remains in progress.

@@ -159,6 +159,8 @@ UC and MetaInfer must share the assigned worktree at the same absolute path. Mut
 
 Validation snapshot (2026-09-30): the production Docker app now runs locally. Real Ollama distributed coding, GPU chat benchmarking with an immutable Oracle, storage, task controls and recovery were exercised. External MetaInfer optimization remains unconfigured. See the [local deployment verification report](docs/local-deployment-verification.md) for evidence, reproducible commands and limitations.
 
+Validation update (2026-10-09): the pinned stock MetaInfer server is running locally in WSL; its UI and plugin discovery work, but the UC contract endpoint returns 404, so mutating jobs remain blocked. Real NATS-to-HTTP SSE measurements passed for three clients with 300 events each: maximum 6.394ms in steady traffic and 55.712ms in burst traffic, with no loss or duplicates. These localhost measurements exclude browser rendering and cross-host transport. See [live verification and reproduction](docs/live-feedback-and-metainfer-verification.md).
+
 See [the inference infrastructure guide](docs/inference-infra.md) for a complete task example, live-schema requirements, benchmark output, Oracle policy and deployment/cancellation limits.
 
 ## Product Preview
