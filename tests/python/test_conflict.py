@@ -85,6 +85,23 @@ class TestConflictDetector:
         )
         assert result == ConflictResult.NO_CONFLICT
 
+    def test_scoped_release_preserves_equal_sibling_declarations(self):
+        detector = ConflictDetector()
+        first = EditIntent(worker_id="w1", file_path="main.rs")
+        sibling = EditIntent(worker_id="w1", file_path="main.rs")
+        detector.declare_intent(first)
+        detector.declare_intent(sibling)
+        detector.remove_intent("main.rs", "w1", intent=first)
+        detector.remove_intent("main.rs", "w1", intent=first)  # idempotent
+
+        remaining = detector._active_intents["main.rs"]
+        assert len(remaining) == 1 and remaining[0] is sibling
+        result, _ = detector.check_conflict("main.rs", "w2", [])
+        assert result == ConflictResult.CONFLICTING
+
+        detector.remove_intent("main.rs", "w1", intent=sibling)
+        assert "main.rs" not in detector._active_intents
+
 
 class TestAutoMerge:
     """Tests for ConflictResolver._auto_merge (three-way diff)."""

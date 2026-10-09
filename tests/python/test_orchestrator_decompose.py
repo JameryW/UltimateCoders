@@ -15,7 +15,8 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock
 
-from ultimate_coders.agent.orchestrator import Orchestrator
+import pytest
+from ultimate_coders.agent.orchestrator import Orchestrator, validate_decomposition
 from ultimate_coders.agent.types import SubtaskStatus, TaskStatus
 
 
@@ -223,6 +224,26 @@ class TestNewlineSplitFallback:
 
         assert len(task.subtasks) == 1
         assert task.subtasks[0].description == "Single line task"
+        assert llm.complete.await_count == 2
+
+    @pytest.mark.parametrize(
+        "invalid",
+        ["not json", '{"description": "not an array"}', '[{"description": null}]'],
+    )
+    async def test_invalid_output_is_repaired_once(self, invalid):
+        llm = MagicMock()
+        llm.complete = AsyncMock(
+            side_effect=[
+                _llm_response(invalid),
+                _llm_response(_subtask_json_list([_st("Repaired plan")])),
+            ]
+        )
+
+        task = await Orchestrator(llm_client=llm).submit_task("Original request")
+
+        assert llm.complete.await_count == 2
+        assert [st.description for st in task.subtasks] == ["Repaired plan"]
+        assert "rejected:" in llm.complete.await_args.kwargs["messages"][0]["content"]
 
     async def test_llm_returns_empty_text_falls_back(self):
         """LLM returns empty string → fallback to newline-split."""
@@ -276,7 +297,14 @@ class TestDecompositionEdgeCases:
     """Edge cases in subtask mapping."""
 
     async def test_invalid_depends_on_ignored(self):
-        """Non-integer depends_on entries are silently ignored."""
+        """A non-numeric depends_on entry rejects the plan, not just that entry.
+
+        Silently dropping the entry changed what the plan meant: the subtask was
+        meant to wait for something and now runs immediately. That is
+        "unreasonable", so it costs a re-decompose -- and when the model repeats
+        the defect, the caller falls back to newline-split rather than shipping
+        a plan nobody asked for.
+        """
         llm = MagicMock()
         llm.complete = AsyncMock(
             return_value=_llm_response(
@@ -292,12 +320,21 @@ class TestDecompositionEdgeCases:
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Two steps", task_id="t-14")
 
-        assert len(task.subtasks) == 2
-        # "invalid" is ignored, 1 → s0
-        assert task.subtasks[1].depends_on == ["t-14-s0"]
+        # Asked twice: once, then once more with the defect named.
+        assert llm.complete.await_count == 2
+        corrective = llm.complete.await_args_list[1].kwargs["messages"][0]["content"]
+        assert "non-numeric depends_on entry" in corrective
+        # Still unreasonable -> the newline-split fallback, not the LLM plan.
+        assert [s.description for s in task.subtasks] == ["Two steps"]
 
     async def test_out_of_range_depends_on_ignored(self):
-        """depends_on index out of range (e.g. 5 when only 2 subtasks)."""
+        """A depends_on index outside 1..N rejects the plan.
+
+        Dropping an out-of-range dependency is the worst silent failure here:
+        the subtask is released to run before the step it named. Rejected, so
+        the defect is either repaired by the re-decompose or the plan is not
+        used at all.
+        """
         llm = MagicMock()
         llm.complete = AsyncMock(
             return_value=_llm_response(
@@ -313,8 +350,44 @@ class TestDecompositionEdgeCases:
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Two steps", task_id="t-15")
 
-        assert len(task.subtasks) == 2
-        assert task.subtasks[1].depends_on == []
+        assert llm.complete.await_count == 2
+        corrective = llm.complete.await_args_list[1].kwargs["messages"][0]["content"]
+        assert "outside 1..2" in corrective
+        assert [s.description for s in task.subtasks] == ["Two steps"]
+
+    async def test_redecompose_happens_exactly_once(self):
+        """We ask twice, not until it passes -- and the retry carries the reason.
+
+        A model that cannot produce a sound plan in two tries must not spin: the
+        caller's newline-split fallback is the third and final answer.
+        """
+        llm = MagicMock()
+        llm.complete = AsyncMock(
+            return_value=_llm_response(_subtask_json_list([_st("A"), _st("A")]))
+        )
+
+        orch = Orchestrator(llm_client=llm)
+        await orch.submit_task("Degenerate", task_id="t-degen")
+
+        assert llm.complete.await_count == 2
+        first = llm.complete.await_args_list[0].kwargs["messages"][0]["content"]
+        second = llm.complete.await_args_list[1].kwargs["messages"][0]["content"]
+        assert "rejected:" not in first
+        assert "same work" in second
+
+    async def test_redecompose_repairs_and_stops(self):
+        """A repairable defect costs one extra call and then succeeds."""
+        good = _llm_response(_subtask_json_list([_st("A"), _st("B", [1])]))
+        bad = _llm_response(_subtask_json_list([_st("A"), _st("B", [9])]))
+        llm = MagicMock()
+        llm.complete = AsyncMock(side_effect=[bad, good])
+
+        orch = Orchestrator(llm_client=llm)
+        task = await orch.submit_task("Two steps", task_id="t-repair")
+
+        assert llm.complete.await_count == 2
+        assert [s.description for s in task.subtasks] == ["A", "B"]
+        assert task.subtasks[1].depends_on == ["t-repair-s0"]
 
     async def test_missing_optional_fields_default(self):
         """Subtasks missing file_constraints/expected_output get defaults."""
@@ -333,12 +406,16 @@ class TestDecompositionEdgeCases:
         assert task.subtasks[0].expected_output == ""
         assert task.subtasks[0].depends_on == []
 
-    async def test_subtask_missing_description_skipped(self):
-        """A subtask dict with empty description is skipped.
+    async def test_subtask_missing_description_rejects_plan(self):
+        """An item with no description rejects the plan; nothing is dropped.
 
-        The valid subtask keeps its original enumerate-based index (s1),
-        not a renumbered s0 — this preserves depends_on index consistency
-        (LLM's 1-based indices reference original array positions).
+        The previous contract dropped the item and kept the survivor's original
+        enumerate-based index (s1 rather than a renumbered s0) so that
+        depends_on's 1-based indices still lined up. That index invariant is
+        still the builder's behaviour, but it is no longer load-bearing for this
+        case: a plan is either sound and used whole, or rejected. Dropping items
+        is what made the indices matter, and dropping items is what the quality
+        gate is there to prevent.
         """
         llm = MagicMock()
         llm.complete = AsyncMock(
@@ -355,10 +432,10 @@ class TestDecompositionEdgeCases:
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Skip empty", task_id="t-17")
 
-        # Only the valid subtask is kept, retains original index s1
-        assert len(task.subtasks) == 1
-        assert task.subtasks[0].description == "Valid"
-        assert task.subtasks[0].id == "t-17-s1"
+        assert llm.complete.await_count == 2
+        corrective = llm.complete.await_args_list[1].kwargs["messages"][0]["content"]
+        assert "has no description" in corrective
+        assert [s.description for s in task.subtasks] == ["Skip empty"]
 
     async def test_all_subtasks_empty_description_falls_back(self):
         """All LLM subtasks have empty descriptions → newline-split fallback."""
@@ -380,8 +457,8 @@ class TestDecompositionEdgeCases:
         assert len(task.subtasks) == 1
         assert task.subtasks[0].description == "Fallback me"
 
-    async def test_non_dict_items_skipped(self):
-        """Non-dict items in the JSON array are skipped."""
+    async def test_non_dict_items_reject_plan(self):
+        """A non-object item rejects the plan instead of being skipped."""
         llm = MagicMock()
         llm.complete = AsyncMock(
             return_value=_llm_response(
@@ -392,8 +469,10 @@ class TestDecompositionEdgeCases:
         orch = Orchestrator(llm_client=llm)
         task = await orch.submit_task("Mixed", task_id="t-19")
 
-        assert len(task.subtasks) == 1
-        assert task.subtasks[0].description == "Valid"
+        assert llm.complete.await_count == 2
+        corrective = llm.complete.await_args_list[1].kwargs["messages"][0]["content"]
+        assert "is not an object" in corrective
+        assert [s.description for s in task.subtasks] == ["Mixed"]
 
     async def test_llm_result_is_string(self):
         """If complete() returns a raw string (duck-typed), used as text."""
@@ -430,3 +509,93 @@ class TestDecompositionEdgeCases:
 
         assert "t-21" in orch.tasks
         assert orch.tasks["t-21"] is task
+
+
+class TestValidateDecomposition:
+    """The quality gate itself, apart from the LLM.
+
+    These are the defects the builder used to absorb silently or not see at
+    all. Each one has to name a reason -- the re-decompose prompt echoes it, and
+    an unnamed reason is a useless prompt.
+    """
+
+    def test_sound_plan_passes(self):
+        assert validate_decomposition([_st("A"), _st("B", [1])]) is None
+
+    def test_empty_and_wrong_shapes_name_the_defect(self):
+        assert validate_decomposition([]) == "decomposition produced no subtask items"
+        assert validate_decomposition(None) == "decomposition produced no subtask items"
+        assert validate_decomposition("nope") == "decomposition produced no subtask items"
+
+    def test_non_object_item(self):
+        assert validate_decomposition(["not a dict", _st("B")]) == "item 0 is not an object"
+
+    def test_missing_description(self):
+        assert validate_decomposition([_st(""), _st("B")]) == "item 0 has no description"
+
+    def test_non_numeric_dependency(self):
+        got = validate_decomposition([_st("A"), _st("B", ["first"])])
+        assert got == "item 1 has a non-numeric depends_on entry 'first'"
+
+    def test_non_list_dependency(self):
+        got = validate_decomposition([_st("A"), _st("B", "1")])
+        assert got == "item 1 has a non-list depends_on"
+
+    def test_out_of_range_dependency_names_the_range(self):
+        got = validate_decomposition([_st("A"), _st("B", [9])])
+        assert got == "item 1 depends on index 9, which is outside 1..2"
+
+    def test_self_dependency(self):
+        assert validate_decomposition([_st("A", [1])]) == "item 0 depends on itself"
+
+    def test_two_node_cycle(self):
+        # 1 -> 2 -> 1 in 1-based terms; neither can ever become ready.
+        got = validate_decomposition([_st("A", [2]), _st("B", [1])])
+        assert got is not None and "dependency cycle" in got, got
+
+    def test_long_cycle_is_found_not_just_the_first_edge(self):
+        got = validate_decomposition([_st("A", [3]), _st("B", [1]), _st("C", [2])])
+        assert got is not None and "dependency cycle" in got, got
+
+    def test_acyclic_chain_of_three_is_fine(self):
+        assert validate_decomposition([_st("A"), _st("B", [1]), _st("C", [2])]) is None
+
+    def test_degenerate_all_identical(self):
+        got = validate_decomposition([_st("same"), _st("same")])
+        assert got == "all 2 items describe the same work"
+
+    def test_single_item_is_not_degenerate(self):
+        assert validate_decomposition([_st("only")]) is None
+
+    def test_reason_is_specific_enough_to_prompt_again(self):
+        """The reason goes into the next prompt, so it must name the place."""
+        got = validate_decomposition([_st("A"), _st("B", [5])])
+        assert "item 1" in got and "1..2" in got
+
+    @pytest.mark.parametrize("description", [None, 123, [], {}])
+    def test_non_string_description_is_rejected(self, description):
+        assert validate_decomposition([{"description": description}]) is not None
+
+    @pytest.mark.parametrize("dep", [True, False, 1.5, 1.0, None, {}, []])
+    def test_dependency_cannot_be_lossily_coerced(self, dep):
+        problem = validate_decomposition([_st("A"), _st("B", [dep])])
+        assert problem is not None and "non-integer" in problem
+
+    def test_legacy_integer_string_dependency_still_passes(self):
+        assert validate_decomposition([_st("A"), _st("B", ["1"])]) is None
+
+    @pytest.mark.parametrize("files", ["src/main.rs", [1], {}])
+    def test_invalid_file_constraints_are_rejected(self, files):
+        item = _st("A")
+        item["file_constraints"] = files
+        assert "file_constraints" in validate_decomposition([item])
+
+    def test_invalid_expected_output_is_rejected(self):
+        item = _st("A")
+        item["expected_output"] = ["not text"]
+        assert "expected_output" in validate_decomposition([item])
+
+    def test_long_dependency_chain_does_not_use_recursion(self):
+        count = 1500
+        items = [_st(f"step {i}", [i + 2] if i + 1 < count else []) for i in range(count)]
+        assert validate_decomposition(items) is None

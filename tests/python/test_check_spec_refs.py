@@ -701,11 +701,13 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     the edit meant: a line number that drifts out of the range turns these
     STALE, which is precisely the judgement that did not exist before.
 
-    The `refresh_heartbeat` row carries the only def_line that moves on the
-    architecture branch (158 -> 160): `orchestrator.py` gained the
-    projection/control-state guards above it. The row stays OK because the
-    spec's own anchor is still in range -- what moved is the definition it
-    points at, and that is what this tuple records.
+    The `hook-guidelines.md:109` row is the one that has moved twice, and each
+    move was a real repair rather than a pin bump. It used to name
+    `orchestrator.py:149-161, refresh_heartbeat` for a `write_memory`
+    best-effort pattern that no longer exists in that file at all -- the row had
+    drifted from "slightly late" to "citing code that is not there". It now
+    names the site that actually does it, `worker.py:1318-1371, _save_checkpoint`,
+    and the range covers the definition so the anchor holds.
     """
     guard = _load_guard()
     want = {
@@ -725,9 +727,9 @@ def test_real_corpus_repaired_references_carry_their_symbol():
             35,
         ),
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
-            "python/ultimate_coders/agent/orchestrator.py",
-            "refresh_heartbeat",
-            160,
+            "python/ultimate_coders/agent/worker.py",
+            "_save_checkpoint",
+            1318,
         ),
     }
     rows = [
@@ -1160,6 +1162,13 @@ def test_real_corpus_moves_only_where_predicted():
     #     `steps_payload` (definition 2530 -> 2722)
     #   docs/architecture/durable-runtime-migration-assessment.md:121 ->
     #     types.py `SubtaskResult` (a third target row now resolves)
+    # The contrast matters: those two are left drifted on purpose, but a LIVE
+    # spec citation broken by a change is repaired in the same change. The
+    # hook-guidelines.md:109 row drifted out of range when a helper was added
+    # above `refresh_heartbeat` and was then found to be citing a `write_memory`
+    # pattern that no longer exists in that file at all -- it now names
+    # `worker.py:1318-1371, _save_checkpoint`, which is where the best-effort
+    # persistence actually lives. That repair is what keeps OK at 112.
     assert sum(1 for r in rows if r["verdict"] == "OK") == 112
     assert sum(1 for r in rows if r["verdict"] == "STALE") == 9
     assert sum(1 for r in rows if r["verdict"] == "AMBIGUOUS") == 9

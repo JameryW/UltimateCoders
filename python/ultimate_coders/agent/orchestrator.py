@@ -42,6 +42,87 @@ from ultimate_coders.agent.worker import WorkerInfo
 logger = logging.getLogger(__name__)
 
 
+def validate_decomposition(items: Any) -> str | None:
+    """Say why a parsed decomposition is unusable, or ``None`` if it is sound.
+
+    The builder used to be permissive: an item with no description was dropped,
+    a ``depends_on`` index outside the range was dropped, and nothing at all
+    looked for a dependency cycle. Each of those silently changes what the plan
+    means -- a dropped dependency is a task that runs before the thing it was
+    supposed to wait for, and a cycle is a DAG that never becomes ready. This
+    turns "the LLM produced something shaped wrong" into a named reason so the
+    caller can re-decompose instead of shipping a plan nobody asked for.
+    """
+    if not isinstance(items, list) or not items:
+        return "decomposition produced no subtask items"
+
+    for position, item in enumerate(items):
+        if not isinstance(item, dict):
+            return f"item {position} is not an object"
+        description = item.get("description", "")
+        if not isinstance(description, str) or not description.strip():
+            return f"item {position} has no description"
+        files = item.get("file_constraints", [])
+        if (
+            files is not None
+            and files != ""
+            and (not isinstance(files, list) or any(not isinstance(path, str) for path in files))
+        ):
+            return f"item {position} has invalid file_constraints"
+        expected = item.get("expected_output", "")
+        if expected is not None and not isinstance(expected, str):
+            return f"item {position} has a non-string expected_output"
+
+    count = len(items)
+    edges: dict[int, list[int]] = {}
+    for position, item in enumerate(items):
+        raw_deps = item.get("depends_on", [])
+        if raw_deps in (None, ""):
+            raw_deps = []
+        if not isinstance(raw_deps, list):
+            return f"item {position} has a non-list depends_on"
+        targets: list[int] = []
+        for dep in raw_deps:
+            if isinstance(dep, bool) or not isinstance(dep, (int, str)):
+                return f"item {position} has a non-integer depends_on entry {dep!r}"
+            try:
+                index = int(dep) - 1  # LLM speaks 1-based
+            except (TypeError, ValueError):
+                return f"item {position} has a non-numeric depends_on entry {dep!r}"
+            if not 0 <= index < count:
+                return f"item {position} depends on index {dep!r}, which is outside 1..{count}"
+            if index == position:
+                return f"item {position} depends on itself"
+            targets.append(index)
+        edges[position] = targets
+
+    # Drain the ready nodes without recursion: a long valid chain must not hit
+    # Python's recursion limit and be mistaken for an invalid decomposition.
+    dependents: list[list[int]] = [[] for _ in items]
+    unresolved = [len(edges[node]) for node in range(count)]
+    for node, targets in edges.items():
+        for target in targets:
+            dependents[target].append(node)
+    ready = [node for node in range(count) if not unresolved[node]]
+    visited = 0
+    while ready:
+        node = ready.pop()
+        visited += 1
+        for dependent in dependents[node]:
+            unresolved[dependent] -= 1
+            if not unresolved[dependent]:
+                ready.append(dependent)
+    if visited != count:
+        blocked = next(node for node in range(count) if unresolved[node])
+        return f"items form a dependency cycle blocking item {blocked}"
+
+    descriptions = [str(item.get("description", "")).strip() for item in items]
+    if len(set(descriptions)) == 1 and count > 1:
+        return f"all {count} items describe the same work"
+
+    return None
+
+
 # ── Config ─────────────────────────────────────────────────────
 
 
@@ -344,68 +425,91 @@ class Orchestrator:
         if self.llm_client is None:
             return None
 
-        prompt = (
-            f"Decompose this task into ordered subtasks as a JSON array.\n"
-            f"Output ONLY the JSON array, no prose.\n\n"
-            f"Task: {description}"
-        )
-        # ponytail: thinking-style local models (Qwen3 distills) can burn
-        # 1-3k tokens on reasoning BEFORE the JSON — the old hard 2048 cap
-        # truncated them to empty output. Env-tunable, default 4096.
-        decompose_max_tokens = int(os.environ.get("UC_LLM_DECOMPOSE_MAX_TOKENS", "4096"))
-        result = await self.llm_client.complete(
-            messages=[{"role": "user", "content": prompt}],
-            system=self._DECOMPOSE_SYSTEM,
-            max_tokens=decompose_max_tokens,
-        )
-
-        # LLMClient.complete returns LLMResponse (has .text). Be defensive
-        # — duck-type for .text, fall back to str() for unknown shapes.
-        if hasattr(result, "text"):
-            raw_text = result.text
-        elif isinstance(result, str):
-            raw_text = result
-        else:
-            raw_text = str(result) if result else ""
-
-        if not raw_text.strip():
-            logger.warning("LLM decomposition returned empty text for task %s", task_id)
-            return None
-
         from ultimate_coders.agent.sandbox import parse_decomposition_output
 
-        items = parse_decomposition_output(raw_text)
+        # Validate the plan and, if it is not sound, re-decompose exactly once
+        # with the reason named. A second unreasonable plan falls through to the
+        # caller's newline-split fallback -- we ask twice, not until it passes.
+        problem: str | None = None
+        items: list[dict[str, Any]] = []
+        for attempt in (1, 2):
+            prompt = (
+                f"Decompose this task into ordered subtasks as a JSON array.\n"
+                f"Output ONLY the JSON array, no prose.\n\n"
+                f"Task: {description}"
+            )
+            if problem is not None:
+                prompt += (
+                    f"\n\nYour previous decomposition was rejected: {problem}.\n"
+                    f"Fix that specific defect. Keep the same JSON shape."
+                )
+            # ponytail: thinking-style local models (Qwen3 distills) can burn
+            # 1-3k tokens on reasoning BEFORE the JSON -- the old hard 2048 cap
+            # truncated them to empty output. Env-tunable, default 4096.
+            decompose_max_tokens = int(os.environ.get("UC_LLM_DECOMPOSE_MAX_TOKENS", "4096"))
+            result = await self.llm_client.complete(
+                messages=[{"role": "user", "content": prompt}],
+                system=self._DECOMPOSE_SYSTEM,
+                max_tokens=decompose_max_tokens,
+            )
+
+            # LLMClient.complete returns LLMResponse (has .text). Be defensive
+            # -- duck-type for .text, fall back to str() for unknown shapes.
+            if hasattr(result, "text"):
+                raw_text = result.text
+            elif isinstance(result, str):
+                raw_text = result
+            else:
+                raw_text = str(result) if result else ""
+
+            if not isinstance(raw_text, str) or not raw_text.strip():
+                problem = "the model returned no text"
+                logger.warning(
+                    "LLM decomposition attempt %d returned empty text for task %s",
+                    attempt,
+                    task_id,
+                )
+                continue
+
+            try:
+                parsed = parse_decomposition_output(raw_text)
+            except ValueError as exc:
+                problem = str(exc)
+            else:
+                problem = validate_decomposition(parsed)
+            if problem is None:
+                items = parsed
+                break
+            logger.warning(
+                "LLM decomposition attempt %d rejected for task %s: %s",
+                attempt,
+                task_id,
+                problem,
+            )
+
         if not items:
-            logger.warning("LLM decomposition produced 0 subtasks for task %s", task_id)
+            logger.warning(
+                "LLM decomposition still unreasonable after re-decompose for task %s "
+                "(last problem: %s); falling back",
+                task_id,
+                problem,
+            )
             return None
 
         subtasks: list[Subtask] = []
         for i, item in enumerate(items):
-            if not isinstance(item, dict):
-                continue
-            desc = item.get("description", "").strip()
-            if not desc:
-                continue
-            # Convert 1-based depends_on indices to subtask IDs.
-            raw_deps = item.get("depends_on", [])
-            depends_on: list[str] = []
-            if isinstance(raw_deps, list):
-                for dep in raw_deps:
-                    try:
-                        idx = int(dep) - 1  # 1-based → 0-based
-                        if 0 <= idx < len(items):
-                            depends_on.append(f"{task_id}-s{idx}")
-                    except (ValueError, TypeError):
-                        logger.debug(
-                            "Ignoring invalid depends_on entry %r in subtask %d",
-                            dep,
-                            i,
-                        )
+            # Validation has accepted every item and dependency. Build the whole
+            # plan without dropping entries or changing its dependency meaning.
+            depends_on = list(
+                dict.fromkeys(
+                    f"{task_id}-s{int(dep) - 1}" for dep in (item.get("depends_on") or [])
+                )
+            )
             subtasks.append(
                 Subtask(
                     id=f"{task_id}-s{i}",
                     parent_id=task_id,
-                    description=desc,
+                    description=item["description"].strip(),
                     user_request=description,
                     status=SubtaskStatus.PENDING,
                     depends_on=depends_on,
@@ -415,14 +519,6 @@ class Orchestrator:
                     project_id=project_id,
                 )
             )
-
-        if not subtasks:
-            logger.warning(
-                "LLM decomposition produced no valid subtasks for task %s "
-                "(all items missing description)",
-                task_id,
-            )
-            return None
 
         logger.info(
             "LLM decomposition for task %s: %d subtasks",
