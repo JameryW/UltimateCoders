@@ -7,12 +7,11 @@ It reuses the pinned shell's discovery, create and control routes and runs each
 orchestrator in a new immutable OCI container. The service is an execution API;
 the UC Dashboard remains the product UI.
 
-The current image contains upstream's Python dependencies. Supply a separately
-built image and explicit coding-model environment for specialized GPU tasks.
-The hardware endpoint currently returns 503: GPU/model identity and the full
-optimization release gate remain unverified. Hardware attestation is not yet
-implemented; adding a GPU image or --gpu does not enable it. Passing the CPU containment gate
-does not establish Oracle acceptance, GPU performance or artifact delivery.
+The default image contains upstream's Python dependencies. Supply a CUDA/Triton
+image and the explicit native Ollama profile below to enable contained hardware
+attestation. The default CPU deployment returns HTTP 503 for hardware identity.
+Real GPU/model preflight has passed; complete optimization, protected Oracle
+acceptance and artifact delivery remain unverified under R8.
 
 ## Build and start
 
@@ -124,8 +123,46 @@ job, waits for its stop proof, and verifies the same bytes from UC. Its temporar
 nonce directory is sticky and public to support different Worker/job UIDs;
 probe bytes contain no secrets. A failed probe confirms stop before releasing
 its claim, or retains the claim and reports its probe ID for reconciliation.
-Add --require-gpu to the release command to enforce GPU identity; it currently
-rejects this CPU extension with HTTP 503.
+Add --require-gpu to enforce GPU identity. The default CPU deployment returns
+HTTP 503; the explicit GPU profile below enables contained attestation.
+
+## Explicit local Ollama GPU profile
+
+Deploy matching service and job image code on a CUDA/Triton-capable base.
+UC's optional native Ollama client uses the pinned upstream's Codex event
+interface; it is not the OpenAI Codex CLI. Select it explicitly in --job-env:
+
+```json
+{
+  "METAINFER_AGENT_BACKEND": "codex",
+  "METAINFER_CODEX_BIN": "/opt/uc/ultimate_coders/metainfer_service/coding.py",
+  "UC_OLLAMA_URL": "http://CONTAINER-REACHABLE-OLLAMA:11434",
+  "UC_OLLAMA_MODEL": "YOUR-INSTALLED-MODEL:TAG",
+  "UC_OLLAMA_DIGEST": "EXACT-64-CHARACTER-SHA256-FROM-OLLAMA"
+}
+```
+
+Add --gpu wsl (or nvidia) and --attest-ollama to the service command. If the
+same Ollama instance has a different host-side address, set
+--ollama-observe-url http://HOST-REACHABLE-OLLAMA:11434. Both addresses must
+observe the same model name and digest. This profile supports one physical and
+visible GPU and evolve-kernel jobs. Unsupported environment overrides, changed
+digests and incompatible images fail closed. URLs cannot contain credentials;
+host proxy settings are not inherited. There is no automatic backend fallback.
+
+Before serving, an owned image probe runs real Torch/Triton kernels and a model
+nonce request. It executes no model-generated code. GPU UUID/driver, runtime,
+model digest and image code are recorded after all probe writers stop. The native
+client checks digest before and after requests, accepts actual tool_calls only,
+bounds streams/sessions/commands and kills timed-out command groups. Coding
+quality and optimization acceptance require separate verification.
+
+Private cached evidence binds boot, image, profile, executable code and stopped
+probe. Restart rechecks live identity without another GPU/model inference.
+A changed profile cannot re-attest while any workspace remains owned, including
+legacy ownership records. Start the service before GPU workers initially and
+preserve its control store. Hardware GET and new launches refuse GPU/model drift.
+Unavailable observations or uncertain probe writers cannot advertise hardware.
 
 Measured deployment results are in
 [the live report](live-feedback-and-metainfer-verification.md).

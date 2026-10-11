@@ -239,6 +239,7 @@ class RuntimeState:
         *,
         status: str | None = None,
         task_id: str | None = None,
+        task_id_present: bool = False,
         after: str = "",
         limit: int = 100,
         due: bool = False,
@@ -250,6 +251,8 @@ class RuntimeState:
             raise ValueError("Query limit must be between 1 and 1000")
         p = "%s" if self.url else "?"
         where, args = [f"namespace={p}", f"record_key>{p}"], [namespace, after]
+        if task_id_present:
+            where.append("task_id>''")
         for column, value in (
             ("record_state", status),
             ("task_id", task_id),

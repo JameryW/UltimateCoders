@@ -73,6 +73,7 @@ class ContainedJobs:
         self.evidence = config.control_dir / "evidence"
         self.evidence.mkdir(exist_ok=True)
         self.ownership = RuntimeState(config.control_dir / "ownership.sqlite3", database_url="")
+        self.hardware_attestation = None
 
     def _path(self, task_id: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", task_id):
@@ -113,6 +114,13 @@ class ContainedJobs:
         *,
         extra_mounts: list[tuple[Path, bool]] | None = None,
     ) -> int:
+        if self.hardware_attestation is not None:
+            if any(
+                environment.get(key) != value
+                for key, value in self.hardware_attestation.environment.items()
+            ):
+                raise ValueError("Job environment changed from the attested coding profile")
+            self.hardware()
         workspace = self.config.workspace(str(workspace))
         state_dir, generated = state_dir.resolve(), generated.resolve()
         mounts = [(workspace, True), (state_dir, True), (generated, True)]
@@ -294,7 +302,18 @@ class ContainedJobs:
         return proof
 
     def hardware(self) -> dict:
-        raise RuntimeError("GPU/model runtime evidence has not been configured")
+        if self.hardware_attestation is None:
+            raise RuntimeError("GPU/model runtime evidence has not been configured")
+        return self.hardware_attestation.observe()
+
+    def enable_hardware(
+        self, environment: dict[str, str], *, observe_url: str | None = None
+    ) -> None:
+        from .attestation import HardwareAttestation
+
+        attestation = HardwareAttestation(self, environment, observe_url=observe_url)
+        attestation.initialize()
+        self.hardware_attestation = attestation
 
     def workspace_probe(self, workspace: Path, source: Path, target: Path, token: str) -> dict:
         import uuid
@@ -319,7 +338,7 @@ class ContainedJobs:
                 root / "state",
                 root / "generated",
                 ["python", "-c", script],
-                {},
+                self.hardware_attestation.environment if self.hardware_attestation else {},
             )
             deadline = time.monotonic() + 3
             while not self.quiescence(probe_id)["writers_stopped"]:

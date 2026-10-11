@@ -24,6 +24,14 @@ def main() -> None:
     parser.add_argument("--runtime", choices=("podman", "docker"), default="podman")
     parser.add_argument("--gpu", choices=("none", "wsl", "nvidia"), default="none")
     parser.add_argument(
+        "--attest-ollama",
+        action="store_true",
+        help="Probe the explicit native Ollama profile inside the GPU image before serving",
+    )
+    parser.add_argument(
+        "--ollama-observe-url", help="Explicit host-side address of the same pinned Ollama model"
+    )
+    parser.add_argument(
         "--job-env",
         type=Path,
         help="JSON object of explicit job environment; never inherit host secrets",
@@ -41,7 +49,15 @@ def main() -> None:
         args.control.resolve(), tuple(args.workspace_root), args.backend_id, PINNED_REVISION
     )
     runtime = LocalOCI(args.runtime, args.image, gpu=args.gpu)
-    app = create_service(args.source, args.root, config, runtime, environment)
+    app = create_service(
+        args.source,
+        args.root,
+        config,
+        runtime,
+        environment,
+        attest_ollama=args.attest_ollama,
+        ollama_observe_url=args.ollama_observe_url,
+    )
     # External deployments expose this through an authenticated private proxy.
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 
