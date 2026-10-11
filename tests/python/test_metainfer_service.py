@@ -4,13 +4,16 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from ultimate_coders.metainfer_service import jobs as jobs_module
 from ultimate_coders.metainfer_service.app import ServiceConfig, add_contract_routes
 from ultimate_coders.metainfer_service.jobs import ContainedJobs
 from ultimate_coders.metainfer_service.observations import contain_observations, read_json
@@ -104,6 +107,116 @@ def test_hardware_profile_refuses_an_unbound_coding_client_before_launch(tmp_pat
     add_contract_routes(app, config, jobs)
     with TestClient(app) as client:
         assert client.get("/api/uc/hardware").status_code == 503
+
+
+def test_workspace_probe_identity_binds_stop_receipt_and_refuses_replay(tmp_path, monkeypatch):
+    config, jobs, runtime, workspace = job_fixture(tmp_path)
+    source, target = workspace / "read", workspace / "write"
+    source.write_text("challenge")
+    launch = jobs.launch
+
+    def complete_fixture(task_id, root, state, generated, command, environment):
+        launch(task_id, root, state, generated, command, environment)
+        runtime.running = False
+        target.write_text("nonce")
+        (state / "orchestrator.log").write_text(
+            json.dumps({"read_sha256": "fixture", "writer_identity": "fixture"})
+        )
+
+    monkeypatch.setattr(jobs, "launch", complete_fixture)
+    identity = "probe-" + "a" * 32
+    receipt = jobs.workspace_probe(workspace, source, target, "nonce", probe_id=identity)
+    assert receipt["quiescence"]["task_id"] == identity
+    assert receipt["quiescence"]["writers_stopped"] is True
+    calls = list(runtime.calls)
+    with pytest.raises(FileExistsError):
+        jobs.workspace_probe(workspace, source, target, "nonce", probe_id=identity)
+    assert runtime.calls == calls
+    with pytest.raises(ValueError, match="probe identity"):
+        jobs.workspace_probe(workspace, source, target, "nonce", probe_id="other-task")
+    assert runtime.calls == calls
+    app = FastAPI()
+    add_contract_routes(app, config, jobs)
+    with TestClient(app) as client:
+        assert "workspace_probe_identity" in client.get("/api/uc/contract").json()["capabilities"]
+
+
+def test_unknown_probe_fence_prevents_delayed_submission_but_not_an_active_claim(tmp_path):
+    _, jobs, runtime, workspace = job_fixture(tmp_path)
+    source = workspace / "read"
+    source.write_text("nonce")
+    identity = "probe-" + "a" * 32
+    proof = jobs.quiescence(identity)
+    assert proof["writers_stopped"] and proof["proof_kind"] == "workspace_fenced"
+    with pytest.raises(FileExistsError):
+        jobs.workspace_probe(workspace, source, workspace / "write", "nonce", probe_id=identity)
+    assert runtime.calls == []
+    active = "probe-" + "b" * 32
+    (jobs.probe_claims / (active + ".json")).write_text(
+        json.dumps({"task_id": active, "state": "launching"})
+    )
+    assert jobs.quiescence(active)["writers_stopped"] is False
+
+
+def test_probe_failure_before_create_can_be_reconciled_without_replaying(tmp_path, monkeypatch):
+    _, jobs, runtime, workspace = job_fixture(tmp_path)
+    source = workspace / "read"
+    source.write_text("nonce")
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError("device observation failed before launch intent")
+
+    monkeypatch.setattr(jobs, "launch", refuse)
+    identity = "probe-" + "a" * 32
+    with pytest.raises(RuntimeError, match="before OCI launch"):
+        jobs.workspace_probe(workspace, source, workspace / "write", "nonce", probe_id=identity)
+    assert jobs.quiescence(identity)["writers_stopped"] is True
+    with pytest.raises(FileExistsError):
+        jobs.workspace_probe(workspace, source, workspace / "write", "nonce", probe_id=identity)
+    assert runtime.calls == []
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux directory fsync and /proc fd evidence")
+def test_concurrent_fence_observer_persists_claim_before_publishing_proof(tmp_path, monkeypatch):
+    _, jobs, _, _ = job_fixture(tmp_path)
+    identity = "probe-" + "a" * 32
+    claim = jobs.probe_claims / (identity + ".json")
+    first_id = []
+    first_at_sync, release_first = threading.Event(), threading.Event()
+    second_file, second_directory = threading.Event(), threading.Event()
+    sync, fsync = jobs_module.sync_directory, os.fsync
+
+    def observe_sync(path):
+        if path == jobs.probe_claims:
+            if threading.get_ident() == first_id[0]:
+                first_at_sync.set()
+                assert release_first.wait(5)
+            else:
+                second_directory.set()
+        sync(path)
+
+    def observe_fsync(descriptor):
+        if threading.get_ident() != first_id[0]:
+            if Path(f"/proc/self/fd/{descriptor}").resolve() == claim:
+                second_file.set()
+        fsync(descriptor)
+
+    def first():
+        first_id.append(threading.get_ident())
+        return jobs.quiescence(identity)
+
+    monkeypatch.setattr(jobs_module, "sync_directory", observe_sync)
+    monkeypatch.setattr(jobs_module.os, "fsync", observe_fsync)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(first)
+        try:
+            assert first_at_sync.wait(3)
+            proof = jobs.quiescence(identity)
+            assert proof["writers_stopped"] is True
+            assert second_file.is_set() and second_directory.is_set()
+        finally:
+            release_first.set()
+        assert pending.result(3)["writers_stopped"] is True
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Private Linux OCI metadata")

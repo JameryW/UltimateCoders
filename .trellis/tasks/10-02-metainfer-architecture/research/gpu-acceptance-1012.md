@@ -64,3 +64,32 @@ stopped after repeated harness review failure; direct Git baseline comparison
 confirmed unchanged repository bytes. A new trial uses an explicit input
 contract in its reference kernel, without modifying pinned upstream prompts
 or weakening UC's protected Oracle. R8 and actual two-host delivery remain OPEN.
+
+PR #709 merged at 87abce56 with 13 passing CI checks. The new attested trial
+survived an HTTP daemon restart without changing container/PID/hardware evidence
+or launching another probe. It exceeded 900s during harness review and was
+cancelled with full stop proof; repository bytes matched the Git baseline.
+
+Independent GPU measurements after cancellation correctly rejected unchanged
+code: correctness passed, but candidate dispersion was 17.99%, clocks drifted
+and utilization was elevated. The production Oracle policy was unchanged.
+The timings cannot demonstrate an optimization. Next acceptance needs both a
+model that completes the upstream workflow and stable device conditions; actual
+two-host artifact verification still needs a second host. Evidence is retained
+without declaring R8 complete.
+
+Actual deployment follow-up found a separate cold-start deadline mismatch:
+nvidia-smi occasionally needs more than 2s on WSL, and the contained workspace
+challenge needs more than the client's former 5s allowance. Device observation
+now allows 5s, hardware HTTP 10s and workspace POST 30s; identity checks and stop
+proof requirements remain mandatory. Actual cold/warm reads and the public GPU
+gate passed after the repair. All eleven owned writer scopes are stopped,
+including the earlier timed-out workspace challenge. This improves deployment
+reliability without changing the unsuccessful optimization's verdict.
+
+Review also exposed absolute-deadline and uncertain-preflight lifecycle gaps.
+The final service negotiates probe identity and returns stopped scope evidence.
+The client persists intent, retains nonces on uncertainty and refuses replay;
+operator reconciliation requires a matching receipt. Real client timeout fault
+injection passed retention/recovery and all-writer stop checks. This is contained
+preflight fault validation, separate from successful optimization acceptance.

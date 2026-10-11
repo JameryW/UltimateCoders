@@ -144,7 +144,26 @@ the existing GET tasks and GET task-ID response shapes.
 Use uc-metainfer/1 and the configured stable backend ID/pinned revision.
 Workspace receipts carry read_sha256 and the actual OCI writer identity.
 Nonce directories use mode 1777, source/token files mode 0644, O_EXCL creation
-and no-follow writes; tokens contain no secrets. The image resolves to an
+and no-follow writes; tokens contain no secrets. The client allows 30 seconds
+for the workspace POST's live identity observation, OCI startup and stopped
+writer receipt, retaining nonce files until the HTTP operation completes.
+Apply an absolute asyncio.wait_for deadline around the entire HTTP operation,
+including continuously trickling bodies; an HTTPX idle timeout is insufficient.
+Timeout, cancellation or an invalid response after submission retains nonces,
+is nonretryable/cleanup_pending and requires stopped-scope reconciliation before
+rollback or reuse. Adapter records probe context before POST under
+remote_jobs[operation_id + ":workspace-probe"] and refuses an unresolved replay.
+Completion matches its probe directory before changing the record.
+
+The additive workspace_probe_identity capability accepts a caller-generated
+probe-<32 lowercase hex> ID and returns a matching quiescence receipt. A durable
+exclusive probe claim prevents duplicate requests from stopping another scope.
+For an unknown ID, quiescence durably fences delayed submissions and may return
+workspace_fenced; an active pre-create claim remains unknown. Failed pre-create
+launches become fenced only when no durable launch intent exists. Recorded OCI
+jobs still require kernel scope emptiness. Older services remain compatible,
+but uncertain probes without an ID require service-side identification.
+Timeout cannot establish stopped writers or a passing deployment. The image resolves to an
 immutable content ID. Explicit job environment is string-valued JSON and never
 inherits host secrets. Containers match worktree UID/GID; rootless Podman uses
 keep-id and requires service UID/GID to match.
@@ -312,6 +331,10 @@ revision, image, profile and executable code. Restart validates the stopped
 probe and live GPU/model without another inference or benchmark. A changed
 profile cannot probe while any indexed workspace owner has a nonempty task ID,
 including legacy records without state. Hardware GET and launch detect drift.
+Bound live nvidia-smi observation at five seconds, allowing WSL GPU cold starts;
+provider identity keeps its two-second operation deadline. The UC hardware HTTP
+request allows ten seconds for both observations. Timeout still returns 503
+and prevents a new launch; cached identity cannot substitute for a failed read.
 
 Native chat validates actual alias digest before and after inference. Preserve
 real streamed tools; never derive commands from prose. Bound conversation and

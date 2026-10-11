@@ -7,7 +7,7 @@ import os
 import socket
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, StrictStr
@@ -47,6 +47,8 @@ class WorkspaceProbe(BaseModel):
     read_path: StrictStr
     write_path: StrictStr
     write_token: StrictStr
+    # Pydantic evaluates this annotation at runtime on the supported Python 3.9.
+    probe_id: Optional[StrictStr] = None  # noqa: UP045
 
 
 def kernel_publication_enabled(jobs: Any) -> bool:
@@ -63,6 +65,11 @@ def add_contract_routes(app: FastAPI, config: ServiceConfig, jobs: Any) -> None:
             "revision": config.revision,
             "capabilities": ["workspace_probe"]
             + (["quiescence"] if jobs else [])
+            + (
+                ["workspace_probe_identity"]
+                if getattr(jobs, "workspace_probe_identity", False)
+                else []
+            )
             + (["kernel_publication"] if kernel_publication_enabled(jobs) else [])
             + (["hardware_identity"] if getattr(jobs, "hardware_attestation", None) else []),
         }
@@ -84,7 +91,19 @@ def add_contract_routes(app: FastAPI, config: ServiceConfig, jobs: Any) -> None:
             if not token or len(token) > 4096:
                 raise ValueError("Invalid probe token")
             if jobs is not None:
+                if probe.probe_id is not None:
+                    if not getattr(jobs, "workspace_probe_identity", False):
+                        raise ValueError("Workspace probe identity is unsupported")
+                    return jobs.workspace_probe(
+                        root,
+                        source,
+                        parent / target.name,
+                        probe.write_token,
+                        probe_id=probe.probe_id,
+                    )
                 return jobs.workspace_probe(root, source, parent / target.name, probe.write_token)
+            if probe.probe_id is not None:
+                raise ValueError("Workspace probe identity requires contained execution")
             digest = hashlib.sha256(source.read_bytes()).hexdigest()
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
             descriptor = os.open(parent / target.name, flags, 0o600)

@@ -105,6 +105,42 @@ HTTP still returns 503; attestation, Oracle GPU outcomes and delivery remain ope
   and stopped scope. This is preflight only.
 - [x] Verify active-writer cache reuse, real native CLI, HTTP GPU deployment
   gate, independent Spec/Standards review and regressions.
-- [ ] Deliver the hardware continuation through passing CI and merge.
+- [x] Deliver the hardware continuation through PR #709, 13 passing CI checks
+  and merge 87abce56; synchronize local main.
 - [ ] Complete R8 optimization/Oracle/rollback/artifacts; actual two-host
   verification also requires an available second host.
+
+## Actual GPU recovery and cancellation evidence (2026-10-12)
+
+- [x] Restart the HTTP daemon during the actual attested optimization; preserve
+  its container/PID, hardware evidence and record census with no replay.
+- [x] Cancel the 900s optimization deadline with a full cgroup stop receipt;
+  compare repository bytes directly and preserve the failed terminal outcome.
+- [x] Measure unchanged code with a read-only protected GPU harness and the
+  production Oracle. Correctness passed; noise, clock drift, residual utilization
+  and lack of improvement correctly prevented acceptance.
+- [ ] Complete a successful real optimization and protected whole-workflow
+  acceptance/rollback, accepted patch delivery and actual two-host download.
+
+No accepted candidate exists from this trial. The independent Oracle diagnostic
+ran after cancellation and does not establish the complete remote workflow.
+
+## Cold-start deadline repair (2026-10-12)
+
+- [x] Reproduce actual WSL nvidia-smi timeout at 2.010s; preserve the 503.
+- [x] Bound device observation at 5s, hardware HTTP at 10s and the contained
+  workspace challenge at 30s. Identity failure still prevents launch.
+- [x] Reproduce client failures with real HTTP responses after 5.3s; retain
+  nonce files through the workspace response. Confirm 2.3s device acceptance
+  and refusal of a stalled 6s query at the 5s service deadline.
+- [x] Repeat actual GPU deployment gate successfully. Audit all eleven owned
+  writer scopes as stopped, including the earlier timed-out workspace probe.
+- [x] Repair both independent review findings: absolute HTTP operation deadlines
+  and persistent unknown-probe lifecycle, identity negotiation, exclusive claim,
+  nonce retention, replay refusal and versioned stop reconciliation.
+- [x] Exercise a 0.1s client deadline against real OCI: retain nonce and record,
+  refuse replay, then reconcile with a matching cgroup stop receipt.
+- [x] Complete final full/focused regressions and both independent review axes.
+- [ ] Deliver the deadline repair and recovery evidence through passing CI and merge.
+
+Cold-start success is deployment preflight. Full R8 acceptance remains OPEN.

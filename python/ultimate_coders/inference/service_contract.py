@@ -2,21 +2,46 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import re
+import shutil
 import stat
 import tempfile
 import uuid
+from collections.abc import Awaitable
 from pathlib import Path
+from typing import Callable
 
 import httpx
 
 CONTRACT_VERSION = "uc-metainfer/1"
+HARDWARE_HTTP_SECONDS = 10
+WORKSPACE_HTTP_SECONDS = 30
 
 
 class DeploymentContractError(RuntimeError):
     retryable = False
+
+
+class WorkspaceProbeUncertainError(DeploymentContractError):
+    cleanup_pending = True
+
+    def __init__(self, probe: dict):
+        super().__init__("Workspace probe outcome unknown; confirm its stopped scope before reuse")
+        self.probe = probe
+
+
+async def _bounded_request(client, method: str, url: str, seconds: float, **kwargs):
+    try:
+        return await asyncio.wait_for(
+            client.request(method, url, timeout=seconds, **kwargs), timeout=seconds
+        )
+    except asyncio.TimeoutError as exc:
+        raise httpx.ReadTimeout(
+            "MetaInfer contract request deadline exceeded", request=httpx.Request(method, url)
+        ) from exc
 
 
 def validate_kernel_publication(repository: str, kernel_path: str, run: dict) -> dict:
@@ -80,8 +105,9 @@ async def verify_workspace(
     workspace: str,
     *,
     expected_revision: str | None = None,
+    on_probe: Callable[[dict], Awaitable[None]] | None = None,
 ) -> dict:
-    response = await client.get(url + "/api/uc/contract", timeout=5)
+    response = await _bounded_request(client, "GET", url + "/api/uc/contract", 5)
     if response.status_code == 404:
         raise DeploymentContractError(
             "Mutating MetaInfer jobs require the UC workspace/stop contract"
@@ -97,29 +123,53 @@ async def verify_workspace(
         raise DeploymentContractError("MetaInfer UC service contract is incompatible")
     if expected_revision and contract["revision"] != expected_revision:
         raise DeploymentContractError("MetaInfer service revision is not the configured pin")
-    # Random disposable probes are removed before snapshotting or remote launch.
+    # Remove a successful probe before candidate launch. Unknown remote writes
+    # retain their directory and durable identity for stop reconciliation.
     root = Path(workspace).resolve(strict=True)
-    with tempfile.TemporaryDirectory(prefix=".uc-probe-", dir=root) as directory:
-        source, target = Path(directory) / "read", Path(directory) / "write"
+    directory = Path(tempfile.mkdtemp(prefix=".uc-probe-", dir=root))
+    probe_id = (
+        "probe-" + uuid.uuid4().hex
+        if "workspace_probe_identity" in contract.get("capabilities", [])
+        else None
+    )
+    context = {
+        "backend_id": contract["backend_id"],
+        "remote_id": probe_id,
+        "probe_directory": str(directory),
+        "workspace": str(root),
+    }
+    submitted = False
+    try:
+        source, target = directory / "read", directory / "write"
         # Non-secret nonce challenges must work across Worker/job UIDs. The
         # sticky directory prevents peers from removing another UID's file;
         # random names and O_EXCL on the service still prevent clobbering.
-        Path(directory).chmod(0o1777)
+        directory.chmod(0o1777)
         source.write_bytes(uuid.uuid4().bytes)
         source.chmod(0o644)
         token = uuid.uuid4().hex
-        response = await client.post(
+        if on_probe:
+            await on_probe(context)
+        submitted = True
+        response = await _bounded_request(
+            client,
+            "POST",
             url + "/api/uc/workspaces/verify",
-            timeout=5,
+            # The contained challenge includes live identity observation,
+            # OCI startup and verified stop. Retain its nonce through that work.
+            WORKSPACE_HTTP_SECONDS,
             json={
                 "workspace": str(root),
                 "read_path": str(source),
                 "write_path": str(target),
                 "write_token": token,
+                **({"probe_id": probe_id} if probe_id else {}),
             },
         )
         response.raise_for_status()
         receipt = response.json()
+        if probe_id:
+            validate_quiescence(receipt.get("quiescence", {}), probe_id, contract["backend_id"])
         if (
             receipt.get("read_sha256") != hashlib.sha256(source.read_bytes()).hexdigest()
             or not receipt.get("writer_identity")
@@ -127,7 +177,21 @@ async def verify_workspace(
             or target.read_text() != token
         ):
             raise DeploymentContractError("Worker and MetaInfer do not share a writable workspace")
+        submitted = False
         return {**contract, "workspace_receipt": receipt}
+    except (Exception, asyncio.CancelledError) as exc:
+        if getattr(exc, "cleanup_pending", False):
+            submitted = True
+        if submitted:
+            if isinstance(exc, asyncio.CancelledError):
+                exc.cleanup_pending, exc.retryable, exc.probe = True, False, context
+                raise
+            raise WorkspaceProbeUncertainError(context) from exc
+        raise
+    finally:
+        if not submitted:
+            # This path was resolved under the owned workspace before creation.
+            shutil.rmtree(directory)
 
 
 async def verify_hardware(
@@ -139,7 +203,10 @@ async def verify_hardware(
     expected_model: str | None = None,
 ) -> dict:
     """Require service-owned device/runtime identity before a GPU mutation."""
-    response = await client.get(url + "/api/uc/hardware", timeout=5)
+    # The service bounds device cold starts at 5s and provider observation at 2s.
+    response = await _bounded_request(
+        client, "GET", url + "/api/uc/hardware", HARDWARE_HTTP_SECONDS
+    )
     if response.status_code == 404:
         raise DeploymentContractError("GPU tasks require the UC hardware identity contract")
     response.raise_for_status()

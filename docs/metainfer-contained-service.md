@@ -96,6 +96,23 @@ IDs or delete ownership records to recover an unknown launch; retain the scope
 for operator reconciliation. Completed containers and receipts are retained for
 inspection; this version has no automatic retention cleanup.
 
+Workspace preflight advertises workspace_probe_identity. The caller selects a
+probe-<32 lowercase hex> ID, and a successful contained challenge includes its
+matching quiescence receipt. Exclusive durable claims reject duplicate IDs
+before cleanup can touch another invocation. Querying an unknown probe's
+quiescence fences future delayed submissions; an active pre-create claim remains
+unresolved, while a failed launch without durable OCI intent can be fenced.
+
+UC bounds complete workspace HTTP operations at 30s and hardware GET at 10s;
+live GPU/model observations allow 5s/2s. On uncertain submission the client
+retains nonces and a persistent cleanup_pending probe record, refuses replay,
+and preserves the workspace. Confirm its saved probe ID stopped through the
+versioned reconciliation CLI before recovering the workspace. Timeout alone
+never permits rollback or release. confirm_stop leaves the retained nonce for
+inspection: verify its saved directory is directly beneath the owned workspace,
+remove it after matching stop proof, then recover the workspace lease and
+explicitly retry. CPU/legacy successful probes remain compatible.
+
 The API keeps discovery/schema, create, kill, task listing and fixed-file task
 state. Restart/reset/cluster mutations return 409. Optional plugin evidence and
 agent-log routes return 404. Fixed metadata reads use no-follow directory/file

@@ -262,3 +262,102 @@ preflights; R8 remains OPEN for real optimization, protected Oracle accept/rejec
 rollback, commit/artifact delivery and two-host verification. The older streaming
 trial was stopped after repeated harness rejection; independent Git-byte
 comparison confirmed its repository remained unchanged.
+
+## Actual optimization recovery and negative GPU evidence (2026-10-12)
+
+PR #709 merged at 87abce5661efe4188a967b098b52df624d8453f6 with all 13 CI
+checks passed. Local main was synchronized. The actual attested task
+uc-attested-documented-gpu-optim-b5372b2f survived HTTP daemon termination and
+restart: container 16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974,
+PID 517663 and cached hardware evidence remained unchanged, with no new jobs or
+hardware probe. The observer was paused only during daemon replacement and then
+resumed against the same identity; this is service recovery, not Worker recovery.
+
+The model-generated harness was reviewed and regenerated but did not finish
+within 900s. Cancellation produced stopped scope evidence
+ddeeae66b0188a189bfda1e7683150f298a1db401d5af235ed48b2360faceeee.
+The repository SHA stayed 87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67.
+No optimized candidate, acceptance or delivery is claimed.
+
+An independent read-only harness then measured the unchanged reference and
+repository kernel on the actual GPU using BenchmarkRunner and Oracle:
+
+- Correctness and compilation passed, numerical error 0, five measured samples
+  plus one warmup for each variant; actual image/runtime/device evidence retained.
+- Median latency: reference 0.003317575ms, repository 0.003610400ms.
+- Dispersion: 1.573844% versus 17.992925%. Clock drift and utilization also
+  exceeded the existing policy. Oracle rejected the measurements; thresholds
+  were unchanged. The timing difference is not evidence of an optimization.
+- Harness/reference hashes and the five measured production source hashes are
+  retained. Kernel bytes were preserved. Stopped scope evidence:
+  364abcc54ffb26c67ce107b4d3b5e162a24cd49ee89a8cd2c995107487aa8287.
+
+This diagnostic ran after cancellation, separately from the full remote
+optimization workflow. R8 remains OPEN for successful optimization, stable
+protected whole-workflow acceptance/rollback, accepted patch delivery and actual
+two-host artifact verification. All receipts and raw samples: gpu-verification.json.
+
+## Cold-start deadline repair (2026-10-12)
+
+Actual WSL hardware observation first returned 503 at 2.010491s, followed by
+four successful warm reads. Device observation now allows five seconds while
+preserving rejection on timeout; provider observation remains bounded at 2s.
+The UC hardware GET allows 10s. Five subsequent actual reads passed, including
+a 2.419491s cold read, with the same hardware evidence identity throughout.
+
+The deployment gate also exposed the workspace POST's 5s timeout: its challenge
+includes live identity, OCI launch and verified stop. A real HTTP regression
+failed with ReadTimeout at the old limit; after raising this HTTP budget to
+30s, the caller preserves both nonce files through a delayed valid response and
+removes them after validation. The failed actual probe was subsequently proved
+stopped. The public GPU gate passed again using the repaired client/service.
+All eleven owned scopes, including both failed probes, have cgroup stop receipts.
+
+Windows focused regressions: 45 passed, 14 platform skips in 27.10s. Two existing
+dependency deprecations remain. Linux service, publication and architecture
+regressions: 82 passed in 39.15s, one existing dependency deprecation. Ruff lint
+and changed-code formatting passed; all seven repository guards passed.
+The new Linux service regression accepts a 2.3s
+identity fixture and returns 503 for a stalled 6s fixture within the 5s bound;
+it never launches another GPU probe. Real socket/temporary executable tests
+exercise wall-clock deadlines that async mocks cannot establish.
+
+Portable before/after observations, gate receipt and final stop audit are in
+gpu-verification.json. None establishes successful optimization acceptance.
+
+Both independent axes found a P2 during review: HTTPX idle timeouts do not bound
+continuous trickling, and an uncertain preflight POST previously lacked the
+cleanup_pending lifecycle. Real socket regressions first failed, then passed
+with absolute asyncio deadlines, persistent pre-submit probe context, retained
+nonces and replay refusal. Identity-capable services return a matching stop
+receipt; exclusive probe claims prohibit duplicate or delayed launch. Unknown
+IDs can be durably fenced; active pre-create claims remain unknown. A delayed
+old receipt cannot clear a newer probe owner.
+
+An actual 0.1s client deadline against the final service caused an uncertain
+contained probe. Its nonce and record remained; repeat submission was refused.
+Versioned operator reconciliation obtained cgroup stop proof
+737f777da68852984c026c669d325bf24a63e3925faf7c960869375cb415bb63
+before removing the owned nonce directory. The final deployment gate passed with
+workspace_probe_identity and a matching cgroup receipt. Full Windows Python
+regressions: 1488 passed, 48 skips in 163.67s; supplemental fence cases passed.
+Final Linux/focused results and independent review verdicts are recorded below.
+
+Final Windows full suite: 1491 passed, 49 platform skips in 165.51s; two
+existing dependency deprecations. Final Linux service, Ollama, publication and
+architecture suite: 89 passed in 41.64s; one existing dependency deprecation.
+Both independent Spec and Standards review axes passed after all fixes.
+
+The final Standards review identified concurrent fence publication before the
+creator's synchronization completed. A Linux file/directory durability regression
+first reproduced the race, then passed after each positive fence observer
+synchronized the claim file and directory before publishing the receipt.
+
+The final service was restarted with this code. A real unknown probe received
+workspace_fenced proof
+f5ea3427db1013a2bc3ea9ad2ef18ff08c94902a430aea5667367a8257121bd4.
+Its subsequent delayed POST returned 422, preserved the target and added no OCI
+job records. All eleven previously audited stopped scopes remained unchanged.
+The owned nonce was removed only after the matching fence proof. Portable raw
+result: cold_start_deadline_repair.final_real_probe_fence in gpu-verification.json.
+R8 remains OPEN; these results establish preflight/recovery safety only.

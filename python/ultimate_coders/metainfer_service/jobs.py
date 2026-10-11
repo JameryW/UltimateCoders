@@ -47,6 +47,8 @@ def sync_directory(path: Path) -> None:
 
 
 class ContainedJobs:
+    workspace_probe_identity = True
+
     def __init__(
         self,
         config: ServiceConfig,
@@ -72,6 +74,9 @@ class ContainedJobs:
         self.records.mkdir(exist_ok=True)
         self.evidence = config.control_dir / "evidence"
         self.evidence.mkdir(exist_ok=True)
+        self.probe_claims = config.control_dir / "probe_claims"
+        self.probe_claims.mkdir(exist_ok=True)
+        sync_directory(config.control_dir)
         self.ownership = RuntimeState(config.control_dir / "ownership.sqlite3", database_url="")
         self.hardware_attestation = None
 
@@ -252,6 +257,8 @@ class ContainedJobs:
         return True  # Request acknowledgement; quiescence is a separate observation.
 
     def quiescence(self, task_id: str) -> dict:
+        if re.fullmatch(r"probe-[a-f0-9]{32}", task_id) and not self._path(task_id).exists():
+            return self._probe_fence(task_id)
         record = self._load(task_id)
         observed = self._observe(record)
         if not record.get("cgroup"):
@@ -301,6 +308,43 @@ class ContainedJobs:
                 )
         return proof
 
+    def _probe_fence(self, probe_id: str) -> dict:
+        path = self.probe_claims / (probe_id + ".json")
+        try:
+            with path.open("x", encoding="utf-8") as writer:
+                json.dump({"task_id": probe_id, "state": "fenced"}, writer)
+                writer.flush()
+                os.fsync(writer.fileno())
+            sync_directory(self.probe_claims)
+        except FileExistsError:
+            pass  # The exclusive claim decides whether a launch may still proceed.
+        with path.open("r+", encoding="utf-8") as reader:
+            claim = json.load(reader)
+            # A concurrent observer may read complete JSON before its creator's
+            # fsync. Every receipt publisher makes the fence durable itself.
+            os.fsync(reader.fileno())
+        sync_directory(self.probe_claims)
+        if claim.get("state") != "fenced":
+            return {
+                "task_id": probe_id,
+                "backend_id": self.config.backend_id,
+                "writers_stopped": False,
+            }
+        proof = {
+            "contract_version": CONTRACT_VERSION,
+            "task_id": probe_id,
+            "backend_id": self.config.backend_id,
+            "writers_stopped": True,
+            "proof_kind": "workspace_fenced",
+            "execution_scope": self.boot_id + ":probe-fence:" + probe_id,
+            "observed_at": time.time(),
+        }
+        proof["evidence_id"] = hashlib.sha256(
+            json.dumps(proof, sort_keys=True).encode()
+        ).hexdigest()
+        checkpoint(self.evidence / (proof["evidence_id"] + ".json"), proof)
+        return proof
+
     def hardware(self) -> dict:
         if self.hardware_attestation is None:
             raise RuntimeError("GPU/model runtime evidence has not been configured")
@@ -315,10 +359,32 @@ class ContainedJobs:
         attestation.initialize()
         self.hardware_attestation = attestation
 
-    def workspace_probe(self, workspace: Path, source: Path, target: Path, token: str) -> dict:
+    def workspace_probe(
+        self,
+        workspace: Path,
+        source: Path,
+        target: Path,
+        token: str,
+        *,
+        probe_id: str | None = None,
+    ) -> dict:
         import uuid
 
-        probe_id = "probe-" + uuid.uuid4().hex
+        if probe_id is None:
+            probe_id = "probe-" + uuid.uuid4().hex
+        if not re.fullmatch(r"probe-[a-f0-9]{32}", probe_id):
+            raise ValueError("Invalid workspace probe identity")
+        if self._path(probe_id).exists():
+            raise FileExistsError("Workspace probe identity already exists")
+        # Claim before the cleanup region: a duplicate request must never stop
+        # another invocation's scope, even when create/start is still pending.
+        with (self.probe_claims / (probe_id + ".json")).open("x", encoding="utf-8") as writer:
+            json.dump(
+                {"task_id": probe_id, "workspace": str(workspace), "state": "launching"}, writer
+            )
+            writer.flush()
+            os.fsync(writer.fileno())
+        sync_directory(self.probe_claims)
         root = (
             self.config.control_dir.parent / (self.config.control_dir.name + "-probes") / probe_id
         )
@@ -341,13 +407,24 @@ class ContainedJobs:
                 self.hardware_attestation.environment if self.hardware_attestation else {},
             )
             deadline = time.monotonic() + 3
-            while not self.quiescence(probe_id)["writers_stopped"]:
+            proof = self.quiescence(probe_id)
+            while not proof["writers_stopped"]:
                 if time.monotonic() > deadline:
                     raise RuntimeError("Workspace probe did not become quiescent")
                 time.sleep(0.02)
+                proof = self.quiescence(probe_id)
             result = json.loads((root / "state" / "orchestrator.log").read_text())
-            return result
+            return {**result, "quiescence": proof}
         except (OSError, ValueError, RuntimeError) as exc:
+            if not self._path(probe_id).exists():
+                # Launch intent is durable before OCI create. The exclusive
+                # probe claim also prohibits a delayed/replayed launch.
+                checkpoint(
+                    self.probe_claims / (probe_id + ".json"),
+                    {"task_id": probe_id, "state": "fenced"},
+                )
+                self._probe_fence(probe_id)
+                raise RuntimeError(f"Workspace probe {probe_id} failed before OCI launch") from exc
             try:
                 self.stop(probe_id, force=True)
                 deadline = time.monotonic() + 3

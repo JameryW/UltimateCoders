@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import sqlite3
@@ -15,6 +16,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from ultimate_coders.inference import service_contract
 from ultimate_coders.inference.adapter import MetaInferAdapter, RemoteStateUncertainError
 from ultimate_coders.inference.artifact_store import ArtifactStore
 from ultimate_coders.inference.hardware import capture_environment, condition_drift
@@ -24,6 +26,7 @@ from ultimate_coders.inference.service_contract import (
     DeploymentContractError,
     validate_quiescence,
     verify_hardware,
+    verify_workspace,
 )
 from ultimate_coders.outbox import OutcomeOutbox
 from ultimate_coders.runtime_state import RecordConflictError, RuntimeState
@@ -253,6 +256,259 @@ async def test_remote_gpu_contract_requires_identity_and_model():
             client, "http://service", "backend", expected_revision="rev", expected_model="4060"
         )
     assert evidence["devices"][0]["uuid"] == "GPU-1"
+
+
+@pytest.mark.asyncio
+async def test_hardware_contract_client_allows_bounded_device_and_model_observation():
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):  # noqa: N802 -- HTTP interface
+            # A bounded device query plus provider observation can exceed 5s.
+            # Exercise httpx's real socket deadline; an async mock cannot do so.
+            threading.Event().wait(5.3)
+            body = json.dumps(
+                {
+                    "contract_version": "uc-metainfer/1",
+                    "backend_id": "backend",
+                    "devices": [{"uuid": "GPU-fixture"}],
+                    "runtime": {"cuda": "fixture"},
+                    "model_identity": {"digest": "fixture"},
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        async with httpx.AsyncClient(trust_env=False) as client:
+            evidence = await verify_hardware(
+                client, f"http://127.0.0.1:{server.server_port}", "backend"
+            )
+        assert evidence["devices"][0]["uuid"] == "GPU-fixture"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(1)
+
+
+@pytest.mark.asyncio
+async def test_workspace_contract_client_waits_for_contained_probe_and_stop(tmp_path):
+    nonce_files_present = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def respond(self, payload):
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
+        def do_GET(self):  # noqa: N802 -- HTTP interface
+            self.respond(
+                {
+                    "contract_version": "uc-metainfer/1",
+                    "backend_id": "backend",
+                    "revision": "rev",
+                    "capabilities": ["workspace_probe", "quiescence"],
+                }
+            )
+
+        def do_POST(self):  # noqa: N802 -- HTTP interface
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            source, target = Path(payload["read_path"]), Path(payload["write_path"])
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            target.write_text(payload["write_token"])
+            # Real transport regression: cold device/OCI launch and verified
+            # stop can exceed 5s while the caller must retain the nonce files.
+            threading.Event().wait(5.3)
+            nonce_files_present.append(source.is_file() and target.is_file())
+            self.respond({"read_sha256": digest, "writer_identity": "contained-fixture"})
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        async with httpx.AsyncClient(trust_env=False) as client:
+            receipt = await verify_workspace(
+                client,
+                f"http://127.0.0.1:{server.server_port}",
+                str(tmp_path),
+                expected_revision="rev",
+            )
+        assert receipt["workspace_receipt"]["writer_identity"] == "contained-fixture"
+        assert nonce_files_present == [True]
+        assert not list(tmp_path.glob(".uc-probe-*"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["hardware", "workspace"])
+async def test_contract_deadline_bounds_a_continuously_trickling_peer(
+    tmp_path, monkeypatch, operation
+):
+    budget = "HARDWARE_HTTP_SECONDS" if operation == "hardware" else "WORKSPACE_HTTP_SECONDS"
+    monkeypatch.setattr(service_contract, budget, 0.3, raising=False)
+    observed = {"posts": 0}
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def respond(self, payload, *, trickle=False):
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body) + (10 if trickle else 0)))
+            self.end_headers()
+            try:
+                if trickle:
+                    for _ in range(10):
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                        # Exercise a live socket, keeping every idle read short.
+                        threading.Event().wait(0.1)
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
+        def do_GET(self):  # noqa: N802 -- HTTP interface
+            self.respond(
+                {
+                    "contract_version": "uc-metainfer/1",
+                    "backend_id": "backend",
+                    "revision": "rev",
+                    "capabilities": ["workspace_probe", "quiescence", "workspace_probe_identity"],
+                    "devices": [{"uuid": "fixture"}],
+                    "runtime": {"cuda": "fixture"},
+                    "model_identity": {"digest": "fixture"},
+                },
+                trickle=operation == "hardware",
+            )
+
+        def do_POST(self):  # noqa: N802 -- HTTP interface
+            observed["posts"] += 1
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            observed["probe"] = payload
+            source, target = Path(payload["read_path"]), Path(payload["write_path"])
+            target.write_text(payload["write_token"])
+            self.respond(
+                {
+                    "read_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "writer_identity": "fixture",
+                    "quiescence": _proof(job=payload.get("probe_id", "legacy-probe")),
+                },
+                trickle=True,
+            )
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        async with httpx.AsyncClient(trust_env=False) as client:
+            started = time.monotonic()
+            if operation == "hardware":
+                with pytest.raises(httpx.TimeoutException):
+                    await verify_hardware(client, url, "backend")
+            else:
+                state = RuntimeState(tmp_path / "state.db", database_url="")
+                adapter = MetaInferAdapter(url, client=client, state=state, operation_id="op")
+                from ultimate_coders.inference.models import InferenceTaskType, MetaInferTask
+
+                task = MetaInferTask(
+                    task_type=InferenceTaskType.OPTIMIZE_KERNEL,
+                    repository=str(tmp_path),
+                    objective="fixture optimization",
+                )
+                with pytest.raises(DeploymentContractError) as error:
+                    await adapter.execute(task)
+                assert error.value.cleanup_pending and error.value.retryable is False
+                probe = observed["probe"]
+                assert Path(probe["read_path"]).is_file()
+                assert Path(probe["write_path"]).is_file()
+                record = state.get("remote_jobs", "op:workspace-probe")
+                assert record["state"] == "cleanup_pending"
+                assert record["remote_id"] == probe["probe_id"]
+                assert record["backend_id"] == "backend"
+                with pytest.raises(RemoteStateUncertainError):
+                    await adapter.execute(task)
+                assert observed["posts"] == 1
+                version = RemoteJobs(state, url).get("op:workspace-probe").version
+                async with httpx.AsyncClient(
+                    transport=httpx.MockTransport(
+                        lambda _: httpx.Response(200, json=_proof(job=probe["probe_id"]))
+                    )
+                ) as observer:
+                    await RemoteJobs(state, url).reconcile(
+                        "op:workspace-probe",
+                        version,
+                        "confirm_stop",
+                        actor="operator",
+                        client=observer,
+                    )
+                assert state.get("remote_jobs", "op:workspace-probe")["state"] == "stopped"
+            assert time.monotonic() - started < 2
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(1)
+
+
+@pytest.mark.asyncio
+async def test_old_workspace_receipt_cannot_clear_a_new_probe_owner(state, tmp_path):
+    from ultimate_coders.inference.models import InferenceTaskType, MetaInferTask
+
+    def service(request):
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "contract_version": "uc-metainfer/1",
+                    "backend_id": "backend",
+                    "revision": "rev",
+                    "capabilities": ["workspace_probe", "quiescence"],
+                },
+            )
+        probe = json.loads(request.content)
+        source, target = Path(probe["read_path"]), Path(probe["write_path"])
+        target.write_text(probe["write_token"])
+        state.mutate(
+            "remote_jobs",
+            "op:workspace-probe",
+            lambda old: {**old, "probe_directory": "new-owner", "state": "cleanup_pending"},
+        )
+        return httpx.Response(
+            200,
+            json={
+                "read_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "writer_identity": "fixture",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(service)) as client:
+        adapter = MetaInferAdapter("http://service", state=state, operation_id="op")
+        task = MetaInferTask(InferenceTaskType.OPTIMIZE_KERNEL, str(tmp_path), "fixture")
+        with pytest.raises(RemoteStateUncertainError, match="owner changed"):
+            await adapter._preflight(client, task)
+    record = state.get("remote_jobs", "op:workspace-probe")
+    assert record["probe_directory"] == "new-owner" and record["state"] == "cleanup_pending"
 
 
 class _StockUpstreamHandler(BaseHTTPRequestHandler):
