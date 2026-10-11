@@ -141,7 +141,7 @@ UC_METAINFER_REVISION=b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890
 UC_METAINFER_BACKEND_ID=metainfer-gpu-a
 ```
 
-修改工作区的任务需要 `uc-metainfer/1` 合约。[独立部署的容器服务扩展](docs/metainfer-contained-service.md)提供真实容器工作区预检和持久化 cgroup 停止证明，保留固定版本的上游源码。当前基础镜像仅包含上游 Python 依赖；GPU 和编码模型仍需配置，硬件身份接口返回 503。
+修改工作区的任务需要 `uc-metainfer/1` 合约。[独立部署的容器服务扩展](docs/metainfer-contained-service.md)提供真实容器工作区预检和持久化 cgroup 停止证明，保留固定版本的上游源码。基础镜像仅包含上游 Python 依赖；显式配置 CUDA/Triton 镜像和原生 Ollama profile 后，可在受控容器内验证实际 GPU、运行时和模型身份。默认 CPU 部署的硬件接口返回 503。
 
 Worker 无需 MetaInfer 即可声明本机 `inference_benchmark`。远程任务需要 `inference_infra` 及通过实时插件探测的具体操作能力；心跳会刷新并撤销不可用能力。自动路由要求推理上下文和工程任务意图，显式 Agent 选择优先。
 
@@ -156,6 +156,8 @@ UC 和 MetaInfer 必须以相同绝对路径访问已分配的真实、独占 Gi
 验证更新（2026-10-09）：固定版本的 MetaInfer 上游服务已在本地 WSL 启动，页面和插件发现正常；UC 合约接口返回 404，修改工作区的任务仍被门禁阻止。真实 NATS 到 HTTP SSE 实测中，3 个客户端各接收 300 个事件，持续流最大延迟 6.394ms、突发流最大延迟 55.712ms，均无丢失或重复。这是本机传输结果，不包含浏览器渲染和跨主机延迟。详见[实时链路与 MetaInfer 验证报告](docs/live-feedback-and-metainfer-verification.md)。
 
 验证更新（2026-10-11）：独立服务扩展已通过真实 Podman 隔离、脱离父进程的写入恢复、HTTP 任务创建/取消及跨 UID 工作区预检；越界读取宿主机状态文件会被拒绝。完整 MetaInfer/GPU 优化、Oracle 验收和制品交付仍未完成。
+
+验证更新（2026-10-12）：显式 Ollama GPU profile 已通过真实 CUDA/Triton 计算、原生编码工具、独立代码断言、写入期间的缓存恢复和 HTTP GPU 部署检查。完整优化及跨主机制品验收仍未完成。配置方式见[部署说明](docs/metainfer-contained-service.md)。
 
 完整任务示例、实时 schema 要求、基准输出、Oracle 策略及部署/取消边界见[推理基础设施指南](docs/inference-infra.md)。
 

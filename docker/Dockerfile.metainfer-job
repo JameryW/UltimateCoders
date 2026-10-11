@@ -4,6 +4,7 @@ FROM ${BASE_IMAGE}
 ARG METAINFER_REVISION=b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890
 LABEL uc.metainfer.revision=${METAINFER_REVISION}
 LABEL uc.metainfer.publisher="1"
+LABEL uc.metainfer.ollama="1"
 USER root
 RUN git clone --no-checkout https://github.com/HuangPuStar/MetaInfer.git /opt/metainfer \
     && git -C /opt/metainfer checkout --detach "${METAINFER_REVISION}" \
@@ -11,7 +12,12 @@ RUN git clone --no-checkout https://github.com/HuangPuStar/MetaInfer.git /opt/me
 COPY python/ultimate_coders/metainfer_service/__init__.py \
      python/ultimate_coders/metainfer_service/execution.py \
      python/ultimate_coders/metainfer_service/observations.py \
+     python/ultimate_coders/metainfer_service/coding.py \
+     python/ultimate_coders/metainfer_service/ollama.py \
+     python/ultimate_coders/metainfer_service/gpu_probe.py \
      /opt/uc/ultimate_coders/metainfer_service/
+COPY python/ultimate_coders/inference/process.py /opt/uc/ultimate_coders/inference/
+RUN python -c 'from pathlib import Path; p=Path("/opt/uc/ultimate_coders/metainfer_service/coding.py"); p.write_bytes(p.read_bytes().replace(b"\r\n", b"\n")); p.chmod(0o555)'
 ENV PYTHONPATH=/opt/uc:/opt/metainfer PYTHONDONTWRITEBYTECODE=1
 WORKDIR /tmp
 ENTRYPOINT ["python"]

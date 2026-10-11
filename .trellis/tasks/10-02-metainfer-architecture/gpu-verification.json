@@ -1,5 +1,5 @@
 {
-  "recorded_at": "2026-10-11T17:38:16.465634+00:00",
+  "recorded_at": "2026-10-11T18:43:24.047218+00:00",
   "upstream_revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
   "delivery_baseline": "48410a6e3d70ca4a0365288a70f4124434cb2c38",
   "runtime_preflight": {
@@ -208,16 +208,268 @@
       },
       "repository_changed": false,
       "gpu_release_acceptance": false
+    },
+    {
+      "task_id": "uc-real-local-ollama-gpu-optimiz-4e2c31e6",
+      "state": {
+        "id": "uc-real-local-ollama-gpu-optimiz-4e2c31e6",
+        "type": "evolve-kernel",
+        "label": "UC real local Ollama GPU optimization",
+        "state_dir": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/metainfer-optimization-1012a/service/nodes/uc-contained/.metainfer/tasks/uc-real-local-ollama-gpu-optimiz-4e2c31e6",
+        "created_at": 1791738729.6190217,
+        "launcher": "local",
+        "status": {
+          "running": false,
+          "pid": 431039,
+          "started_at": 1791738729.873079,
+          "finished_at": 1791741572.178173,
+          "exit_hint": "container-stopped"
+        },
+        "requirements": {
+          "task_id": "uc-real-local-ollama-gpu-optimiz-4e2c31e6",
+          "task_type": "evolve-kernel",
+          "raw_request": "{\"task_type\": \"optimize_kernel\", \"repository\": \"/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/metainfer-optimization-1012a/worktrees/job\", \"objective\": \"Optimize the vector-add Triton kernel for this GPU. Preserve kernel and run(x,y) interfaces. Do not commit or change Git metadata.\", \"framework\": \"triton\", \"model\": \"\", \"hardware\": \"RTX 4060 Laptop\", \"constraints\": {}, \"parameters\": {\"kernel_file_path\": \"/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/metainfer-optimization-1012a/worktrees/job/kernel.py\", \"kernel_function_name\": \"kernel\", \"max_iterations\": \"10\", \"extra_notes\": \"Use small vectors of sizes 4096 and 65536 for harnesses to fit 8GiB VRAM shared with the local coding model. Preserve the Python run(x,y) interface and kernel function. Avoid unsafe network or package installation; Torch and Triton are already installed.\"}, \"upstream_type\": \"evolve-kernel\"}",
+          "label": "UC real local Ollama GPU optimization",
+          "kernel_file_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/metainfer-optimization-1012a/worktrees/job/kernel.py",
+          "kernel_function_name": "kernel",
+          "max_iterations": "10",
+          "extra_notes": "Use small vectors of sizes 4096 and 65536 for harnesses to fit 8GiB VRAM shared with the local coding model. Preserve the Python run(x,y) interface and kernel function. Avoid unsafe network or package installation; Torch and Triton are already installed."
+        },
+        "run": {
+          "task_id": "uc-real-local-ollama-gpu-optimiz-4e2c31e6",
+          "current_iteration": 1,
+          "current_phase": "A_gen_correctness_harness",
+          "last_update": 1791741150.2404778,
+          "finished": true,
+          "final_status": "failed",
+          "last_outcome": "logic_fail",
+          "last_transition_label": "harness rejected \u2192 regen",
+          "notes": [],
+          "error": "Contained orchestrator exited without a final outcome"
+        }
+      },
+      "writers_stop_proof": {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "uc-real-local-ollama-gpu-optimiz-4e2c31e6",
+        "backend_id": "uc-native-gpu-1012",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:0a8c713273ba4f61a2322dc6150ef4408891c6a733881de039943bb39fc87d2b:/sys/fs/cgroup/pids/machine.slice/libpod-0a8c713273ba4f61a2322dc6150ef4408891c6a733881de039943bb39fc87d2b.scope/container",
+        "container_id": "0a8c713273ba4f61a2322dc6150ef4408891c6a733881de039943bb39fc87d2b",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-0a8c713273ba4f61a2322dc6150ef4408891c6a733881de039943bb39fc87d2b.scope/container",
+        "observed_at": 1791741587.6895304,
+        "evidence_id": "0affbb71501787a28ca57b0c7e9241bb051a6bf04b0e21622816a4625dad184b"
+      },
+      "failure": null,
+      "repository_changed": false,
+      "gpu_release_acceptance": false,
+      "repository_sha256": "e7901fbe5f12c1e4c4dfa08c6d9ebadefc14f329a8be52bad9ebe616af26ad7b",
+      "baseline_sha256": "e7901fbe5f12c1e4c4dfa08c6d9ebadefc14f329a8be52bad9ebe616af26ad7b"
     }
   ],
-  "hardware_http_attestation_implemented": false,
+  "hardware_http_attestation_implemented": true,
   "gpu_release_acceptance": false,
   "r8_status": "OPEN",
   "remaining": [
-    "contained GPU/model attestation",
     "actual pinned optimization completion",
     "protected GPU benchmarks and Oracle acceptance/rejection",
     "rollback and commit/artifact delivery",
-    "active actual-optimization cancellation/recovery and multi-host artifact download"
-  ]
+    "active actual-optimization cancellation/recovery and two-host artifact download"
+  ],
+  "hardware_continuation_baseline": "6db2189e0214203f23d7823732ab90213c38fdb3",
+  "contained_hardware_and_native_coding": {
+    "hardware": {
+      "devices": [
+        {
+          "uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f",
+          "model": "NVIDIA GeForce RTX 4060 Laptop GPU",
+          "driver": "617.14",
+          "memory_mib": "8188"
+        }
+      ],
+      "runtime": {
+        "torch": "2.6.0+cu124",
+        "cuda": "12.4",
+        "triton": "3.2.0",
+        "image_code": {
+          "coding.py": "f1eb95ab6981e0ebe28ef6bec96a89d7aba4e7f573dd47dcdd2c555ab433d3e7",
+          "ollama.py": "0b5e1546e261a99ff14e373dc060ab6f4062d38e03fb82b9bb082b6b2d331e96",
+          "gpu_probe.py": "fe59a59cd8b88878b539ec4c14aabb60f641c2dcecc38e1e7e4bcb26f5f755b2",
+          "observations.py": "69b5d629b93f27b6b5f8238cbf4cc79b771e7783472e1a4d4b23cae632a4643a",
+          "process.py": "b6bb2d5a6a9a95ad18fd6fbf4810fec62efa9bb3d1cde1b78baa5cf184d3b76d"
+        }
+      },
+      "model_identity": {
+        "provider": "ollama",
+        "model": "uc-metainfer-gemma:1012",
+        "digest": "0979dc60650788ee9dc535e6d808fa5ac9b7790f33f38d0a207bab93caa7291f",
+        "client": "uc-native-ollama/1",
+        "client_sha256": "f1eb95ab6981e0ebe28ef6bec96a89d7aba4e7f573dd47dcdd2c555ab433d3e7"
+      },
+      "gpu_cases": [
+        {
+          "size": 33,
+          "max_error": 0.0
+        },
+        {
+          "size": 4096,
+          "max_error": 0.0
+        },
+        {
+          "size": 65536,
+          "max_error": 0.0
+        }
+      ],
+      "model_probe": {
+        "nonce_sha256": "113940aa20d40cefa444b92d98fc39e15b1fba938df47129f233899ecca87303",
+        "response_sha256": "113940aa20d40cefa444b92d98fc39e15b1fba938df47129f233899ecca87303"
+      },
+      "contract_version": "uc-metainfer/1",
+      "backend_id": "uc-attested-native-aad5e8b5",
+      "revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
+      "image_id": "f2d47104f71e50bd62d8c9910c5e351d3a7ef1db63c2e489f3316f7bdd20d411",
+      "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+      "stop_proof": {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "hardware-48a31dbb29474ead90efcfb0312b1654",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a:/sys/fs/cgroup/pids/machine.slice/libpod-8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a.scope/container",
+        "container_id": "8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a.scope/container",
+        "observed_at": 1791743722.252279,
+        "evidence_id": "08e39ef7663eb78d89bc7db57ad082177265d3ab340c23f603f7634ccc62c8fd"
+      },
+      "profile_sha256": "70d4b7c2527714b8b3130ad6c1485d3df694b81c5b9c6b9a2f2ccd43c51688a8",
+      "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7"
+    },
+    "active_cache_restart_passed": true,
+    "active_writer_stop": {
+      "contract_version": "uc-metainfer/1",
+      "task_id": "active-cache-writer",
+      "backend_id": "uc-attested-native-aad5e8b5",
+      "writers_stopped": true,
+      "proof_kind": "cgroup_empty",
+      "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916:/sys/fs/cgroup/pids/machine.slice/libpod-243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916.scope/container",
+      "container_id": "243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916",
+      "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916.scope/container",
+      "observed_at": 1791743732.2174165,
+      "evidence_id": "774f8ee60ee6e439114fa7e7a5ad60c8d3999e7a2a889eb32449191e9459f306"
+    },
+    "actual_native_tools": 2,
+    "native_coding_stop": {
+      "contract_version": "uc-metainfer/1",
+      "task_id": "native-coding",
+      "backend_id": "uc-attested-native-aad5e8b5",
+      "writers_stopped": true,
+      "proof_kind": "cgroup_empty",
+      "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb:/sys/fs/cgroup/pids/machine.slice/libpod-290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb.scope/container",
+      "container_id": "290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb",
+      "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb.scope/container",
+      "observed_at": 1791743752.7268603,
+      "evidence_id": "f6706ccd3b800d53089b9230e1632965efb457121281b91cf5bfe9d85fab7d6e"
+    },
+    "independent_assertion_passed": true,
+    "assertion_stop": {
+      "contract_version": "uc-metainfer/1",
+      "task_id": "independent-assertion",
+      "backend_id": "uc-attested-native-aad5e8b5",
+      "writers_stopped": true,
+      "proof_kind": "cgroup_empty",
+      "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d:/sys/fs/cgroup/pids/machine.slice/libpod-820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d.scope/container",
+      "container_id": "820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d",
+      "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d.scope/container",
+      "observed_at": 1791743757.9633498,
+      "evidence_id": "41672240f6e10db9406dbc93884e759aa2f9799a51276f79958ec4d3bdbb12ca"
+    },
+    "created_file_sha256": "ba1a531f581d2e6094e978ed6f7aca7a8d92eeb62c6e7ad73ee692f7f18bc772",
+    "gpu_release_acceptance": false,
+    "root": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5"
+  },
+  "http_gpu_deployment_gate": {
+    "contract": {
+      "version": "uc-metainfer/1",
+      "revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
+      "backend_id": "uc-attested-native-aad5e8b5",
+      "capabilities": [
+        "workspace_probe",
+        "quiescence",
+        "kernel_publication",
+        "hardware_identity"
+      ]
+    },
+    "workspace": {
+      "read_sha256": "c50b548a5dcaf0286543d7b63615fe0d2b3f9cb3f9e22862f5577925dc20185a",
+      "writer_identity": "e4f976a9c4a8:1000:1"
+    },
+    "hardware": {
+      "devices": [
+        {
+          "uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f",
+          "model": "NVIDIA GeForce RTX 4060 Laptop GPU",
+          "driver": "617.14",
+          "memory_mib": "8188"
+        }
+      ],
+      "runtime": {
+        "torch": "2.6.0+cu124",
+        "cuda": "12.4",
+        "triton": "3.2.0",
+        "image_code": {
+          "coding.py": "f1eb95ab6981e0ebe28ef6bec96a89d7aba4e7f573dd47dcdd2c555ab433d3e7",
+          "ollama.py": "0b5e1546e261a99ff14e373dc060ab6f4062d38e03fb82b9bb082b6b2d331e96",
+          "gpu_probe.py": "fe59a59cd8b88878b539ec4c14aabb60f641c2dcecc38e1e7e4bcb26f5f755b2",
+          "observations.py": "69b5d629b93f27b6b5f8238cbf4cc79b771e7783472e1a4d4b23cae632a4643a",
+          "process.py": "b6bb2d5a6a9a95ad18fd6fbf4810fec62efa9bb3d1cde1b78baa5cf184d3b76d"
+        }
+      },
+      "model_identity": {
+        "provider": "ollama",
+        "model": "uc-metainfer-gemma:1012",
+        "digest": "0979dc60650788ee9dc535e6d808fa5ac9b7790f33f38d0a207bab93caa7291f",
+        "client": "uc-native-ollama/1",
+        "client_sha256": "f1eb95ab6981e0ebe28ef6bec96a89d7aba4e7f573dd47dcdd2c555ab433d3e7"
+      },
+      "gpu_cases": [
+        {
+          "size": 33,
+          "max_error": 0.0
+        },
+        {
+          "size": 4096,
+          "max_error": 0.0
+        },
+        {
+          "size": 65536,
+          "max_error": 0.0
+        }
+      ],
+      "model_probe": {
+        "nonce_sha256": "113940aa20d40cefa444b92d98fc39e15b1fba938df47129f233899ecca87303",
+        "response_sha256": "113940aa20d40cefa444b92d98fc39e15b1fba938df47129f233899ecca87303"
+      },
+      "contract_version": "uc-metainfer/1",
+      "backend_id": "uc-attested-native-aad5e8b5",
+      "revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
+      "image_id": "f2d47104f71e50bd62d8c9910c5e351d3a7ef1db63c2e489f3316f7bdd20d411",
+      "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+      "stop_proof": {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "hardware-48a31dbb29474ead90efcfb0312b1654",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a:/sys/fs/cgroup/pids/machine.slice/libpod-8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a.scope/container",
+        "container_id": "8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a.scope/container",
+        "observed_at": 1791743722.252279,
+        "evidence_id": "08e39ef7663eb78d89bc7db57ad082177265d3ab340c23f603f7634ccc62c8fd"
+      },
+      "profile_sha256": "70d4b7c2527714b8b3130ad6c1485d3df694b81c5b9c6b9a2f2ccd43c51688a8",
+      "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7"
+    },
+    "gpu_required": true,
+    "service_url": "http://127.0.0.1:48768"
+  }
 }

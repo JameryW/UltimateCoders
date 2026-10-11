@@ -231,3 +231,34 @@ passed. PR #706 is merged at
 GPU image provisioning and local Ollama coding verification continue separately.
 R8 remains OPEN; neither provisioned dependencies nor model-generated claims
 of tool execution constitute optimization acceptance.
+
+## Hardware attestation continuation (2026-10-12)
+
+Review baseline: 6db2189e0214203f23d7823732ab90213c38fdb3 (merged PR #708).
+Both independent axes passed. Spec found a P2 command-batch deadline gap:
+the native client now checks the remaining turn budget before every command.
+Standards found that HTTP idle timeouts allowed continuous trickle responses
+to exceed the operation deadline. Requests now run in a bounded disposable
+process covering DNS, headers and body; real HTTP trickle regressions passed.
+The cache restart/legacy-owner and launch-time identity drift cases were added.
+
+- Windows full Python suite: 1483 passed, 46 platform skips in 174.99s;
+  two dependency deprecation warnings.
+- Linux focused service, native protocol and publication suite: 66 passed
+  in 14.49s. Ruff and changed-file formatting passed (16 Python files).
+- Final immutable OCI image f2d47104f71e50bd62d8c9910c5e351d3a7ef1db63c2e489f3316f7bdd20d411:
+  actual Torch/Triton cases at 33, 4096 and 65536 elements matched exactly;
+  a random model nonce matched under the pinned Ollama digest.
+- A fresh launcher reused the same hardware evidence while an independent
+  writer continued changing its file; no new hardware probe was launched.
+- Production native CLI executed two actual tools and created smoke.py;
+  a second OCI job independently checked positive, negative and fractional sums.
+- Actual HTTP deployment at localhost:48768 passed the public --require-gpu
+  gate with workspace, hardware and model receipts. All probe/code writers
+  stopped with durable cgroup evidence.
+
+Portable identities and receipts: gpu-verification.json. These are deployment
+preflights; R8 remains OPEN for real optimization, protected Oracle accept/reject,
+rollback, commit/artifact delivery and two-host verification. The older streaming
+trial was stopped after repeated harness rejection; independent Git-byte
+comparison confirmed its repository remained unchanged.

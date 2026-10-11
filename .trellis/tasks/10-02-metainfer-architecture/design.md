@@ -68,3 +68,18 @@ libraries, then replace the owned kernel atomically and record its SHA-256.
 The UC protected harness and Oracle still decide correctness, improvement and
 rollback. Image capability and rollout must be explicit; old images must not
 silently claim repository publication.
+
+## Explicit GPU/native Ollama profile (2026-10-12)
+
+Use a trusted image-owned GPU/model probe with no model-generated execution.
+Bind actual device, runtime, provider digest and native client code to an
+immutable OCI image and stopped scope. The optional native client is explicitly
+selected through the upstream event interface, with no automatic replacement
+of other coding backends.
+
+Persist private attestation for active-run restart. Recheck boot/image/profile/
+code, stopped probe and live identity without another GPU/model inference.
+A changed profile requires quiescent indexed ownership, including legacy
+records. Test the HTTP, OCI and native protocol seams already owned by R8.
+Keep Oracle thresholds and separate availability, coding quality and full
+optimization acceptance.

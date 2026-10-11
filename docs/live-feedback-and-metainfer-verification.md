@@ -155,3 +155,27 @@ path and actual optimization, protected benchmark/Oracle accept and reject,
 rollback, commit/artifact delivery and active-run cancellation/recovery still
 need real acceptance evidence. Neither the CPU receipts nor this report claim
 that release criterion has passed.
+
+## Contained hardware and native coding (2026-10-12)
+
+The explicit native Ollama profile now supplies actual hardware attestation.
+The final image f2d47104f71e50bd62d8c9910c5e351d3a7ef1db63c2e489f3316f7bdd20d411
+executed three Torch/Triton vector-add cases (33, 4096, 65536 elements), all with
+maximum error 0, and a random model nonce request. Observed runtime: Torch
+2.6.0+cu124, CUDA 12.4, Triton 3.2.0; the RTX 4060 Laptop UUID and driver match
+the earlier inventory. Ollama model uc-metainfer-gemma:1012 was pinned to digest
+0979dc60650788ee9dc535e6d808fa5ac9b7790f33f38d0a207bab93caa7291f.
+
+A fresh launcher reused cached hardware evidence while a writer's file kept
+changing, then stopped that writer with a cgroup receipt. The production native
+CLI made two genuine tool calls to create/test code; an independent second
+container verified positive, negative and fractional inputs. The actual HTTP
+service passed scripts/verify-metainfer-release.py --require-gpu on port 48768.
+Profile instructions are in [the deployment guide](metainfer-contained-service.md).
+
+This establishes hardware/model and coding preflight, not accepted optimization.
+R8 remains OPEN. The older streaming attempt repeatedly failed harness review
+and was stopped; independent Git comparison confirmed unchanged repository bytes.
+Complete optimization, protected Oracle outcomes, rollback, delivery and actual
+two-host artifact verification still need passing evidence. See
+[portable GPU receipts](../.trellis/tasks/10-02-metainfer-architecture/gpu-verification.json).

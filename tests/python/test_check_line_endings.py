@@ -212,6 +212,7 @@ def test_real_repo_is_reconciled() -> None:
         (2001, 1992),  # Live SSE gate, regression tests, report and raw measurement evidence.
         (2013, 2004),  # Contained service (7), OCI image, gate/test, deployment guide and receipts.
         (2017, 2008),  # Candidate publisher, regressions and portable GPU preflight evidence.
+        (2022, 2013),  # Native Ollama, GPU attestation and tests: five text files.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

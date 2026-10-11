@@ -88,6 +88,49 @@ def job_fixture(tmp_path):
     return config, jobs, runtime, workspace
 
 
+def test_hardware_profile_refuses_an_unbound_coding_client_before_launch(tmp_path):
+    config, jobs, runtime, _ = job_fixture(tmp_path)
+    environment = {
+        "METAINFER_AGENT_BACKEND": "codex",
+        "METAINFER_CODEX_BIN": "/foreign/client",
+        "UC_OLLAMA_URL": "http://localhost:11434",
+        "UC_OLLAMA_MODEL": "coding:test",
+        "UC_OLLAMA_DIGEST": "a" * 64,
+    }
+    with pytest.raises(ValueError, match="image|client"):
+        jobs.enable_hardware(environment)
+    assert runtime.calls == []
+    app = FastAPI()
+    add_contract_routes(app, config, jobs)
+    with TestClient(app) as client:
+        assert client.get("/api/uc/hardware").status_code == 503
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Private Linux OCI metadata")
+def test_new_hardware_probe_cannot_compete_with_an_unresolved_owned_job(tmp_path):
+    _, jobs, runtime, workspace = job_fixture(tmp_path)
+    runtime.image_labels, runtime.gpu = {"uc.metainfer.ollama": "1"}, "wsl"
+    jobs.launch(
+        "active",
+        workspace,
+        tmp_path / "state",
+        tmp_path / "generated",
+        ["python", "-c", "pass"],
+        {},
+    )
+    environment = {
+        "METAINFER_AGENT_BACKEND": "codex",
+        "METAINFER_CODEX_BIN": "/opt/uc/ultimate_coders/metainfer_service/coding.py",
+        "UC_OLLAMA_URL": "http://localhost:11434",
+        "UC_OLLAMA_MODEL": "coding:test",
+        "UC_OLLAMA_DIGEST": "a" * 64,
+    }
+    with pytest.raises(RuntimeError, match="Quiesce"):
+        jobs.enable_hardware(environment)
+    assert runtime.calls == ["create", "start"]
+    assert jobs.quiescence("active")["writers_stopped"] is False
+
+
 def test_quiescence_requires_stopped_container_and_all_descendants_and_survives_restart(tmp_path):
     config, jobs, runtime, workspace = job_fixture(tmp_path)
     state = tmp_path / "state"

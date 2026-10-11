@@ -143,6 +143,13 @@ When the caller passes an expected model, at least one device's `model` must
 contain it case-insensitively. 404 is reported as
 `GPU tasks require the UC hardware identity contract`.
 
+The explicit contained Ollama profile additionally reports immutable image and
+code identities, boot_id, profile_sha256, a full stopped-probe receipt, actual
+GPU cases and model nonce checksums. model_identity contains the observed name,
+digest and native client checksum. hardware_identity is advertised only after
+successful attestation. Default CPU configurations retain HTTP 503. See
+[deployment](metainfer-contained-service.md#explicit-local-ollama-gpu-profile).
+
 ### Environment the UC side reads
 
 | Key | Meaning |

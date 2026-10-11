@@ -275,3 +275,83 @@ Real GPU runtime/model smokes remain separate from full R8 acceptance.
 Wrong: copy or execute generated code on the host after declaring the job done.
 Correct: publish in the already owned OCI scope, prove every writer stopped,
 verify the receipt against repository bytes, then run independent UC validation.
+
+## 11. Contained GPU and native Ollama attestation
+
+### 11.1 Scope / Trigger
+
+Provide R8's service-owned hardware endpoint for an explicitly selected local
+Ollama deployment. Preflight does not close optimization/Oracle/rollback,
+active-run recovery or actual two-host artifact acceptance.
+
+### 11.2 Signatures
+
+ContainedJobs.enable_hardware(environment, *, observe_url=None) -> None.
+ContainedJobs.hardware() -> dict. HardwareAttestation.initialize() -> None.
+OllamaProfile(url, model, digest).identity() -> dict; .chat(messages, tools=list) -> dict.
+Service: --gpu wsl|nvidia --attest-ollama [--ollama-observe-url URL].
+Native client: /opt/uc/ultimate_coders/metainfer_service/coding.py exec
+[resume UUID] --json --sandbox workspace-write -C WORKSPACE - (stdin prompt).
+RuntimeState.query(..., task_id_present=True, limit=1) uses indexed ownership.
+
+### 11.3 Contracts
+
+Require uc.metainfer.ollama=1, the explicit native client path, codex event
+backend and UC_OLLAMA_URL/MODEL/DIGEST. Restrict environment overrides and host
+proxy inheritance. No automatic CLI/provider fallback. This initial profile
+supports one physical/visible GPU and evolve-kernel jobs.
+
+A private owned probe runs trusted image code, real kernels and an actual model
+nonce request without model-generated commands. Require matching image code and
+stopped-writer receipt before evidence. Never accept an operator-authored JSON
+as initial runtime proof. The optional host observation URL must see the same
+pinned model. Model availability and coding quality are distinct checks.
+
+Cache evidence privately after live observation; bind checksum, boot, backend,
+revision, image, profile and executable code. Restart validates the stopped
+probe and live GPU/model without another inference or benchmark. A changed
+profile cannot probe while any indexed workspace owner has a nonempty task ID,
+including legacy records without state. Hardware GET and launch detect drift.
+
+Native chat validates actual alias digest before and after inference. Preserve
+real streamed tools; never derive commands from prose. Bound conversation and
+stream sizes, turns, commands and deadlines. Use the existing ProcessTree for
+tools and a deadline-owned HTTP request process for DNS/headers/body trickling.
+Native execution requires a nonroot read-only capless OCI job. Session
+resume binds model identity. Publication and protected Oracle remain separate.
+
+### 11.4 Validation & Error Matrix
+
+| Condition | Behavior |
+| --- | --- |
+| No profile, foreign client or incompatible image | No hardware/probe launch |
+| Changed digest, wrong model or incomplete stream | Fail closed; no substitute tool |
+| Probe failure, code mismatch or unknown writers | No accepted evidence; retain unknown scope |
+| Matching restart cache | Fresh stop/GPU/model checks; no new GPU/model inference |
+| New profile with active/uncertain ownership | Refuse before OCI create |
+| GPU/driver/model drift | Hardware 503; refuse new launches |
+| Unsupported task/environment override | Refuse before workspace claim |
+
+### 11.5 Good / Base / Bad Cases
+
+Good: kernels agree with Torch, the pinned model answers a nonce, every writer
+stops and restart reuses observed evidence. Base: CPU containment remains usable
+while hardware is 503. Bad: declaring full optimization from GPU inventory or
+prose that describes a tool invocation.
+
+### 11.6 Tests Required
+
+Use real local HTTP peers for digest, streamed tools, wrong models, truncated
+streams, prose and proxy inheritance. Assert rejected profile before create,
+and absolute HTTP deadlines against peers continuously sending no-newline data,
+deadline with a delayed writer, legacy active ownership, stopped cache reuse,
+model drift and code mismatch. Record actual GPU/model, native CLI and HTTP
+deployment checks separately. Keep full R8 acceptance open until measured.
+
+### 11.7 Wrong vs Correct
+
+Wrong: benchmark the GPU on every active-run service restart. Correct: recheck
+private evidence and live identity, and require quiescent ownership before a
+fresh probe. Wrong: let model shell tools write their hardware witness.
+Correct: trusted attestation executes no model-generated commands; test actual
+coding quality separately.

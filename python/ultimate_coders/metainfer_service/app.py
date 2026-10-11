@@ -63,7 +63,8 @@ def add_contract_routes(app: FastAPI, config: ServiceConfig, jobs: Any) -> None:
             "revision": config.revision,
             "capabilities": ["workspace_probe"]
             + (["quiescence"] if jobs else [])
-            + (["kernel_publication"] if kernel_publication_enabled(jobs) else []),
+            + (["kernel_publication"] if kernel_publication_enabled(jobs) else [])
+            + (["hardware_identity"] if getattr(jobs, "hardware_attestation", None) else []),
         }
 
     @app.post("/api/uc/workspaces/verify")

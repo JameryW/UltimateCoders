@@ -51,3 +51,16 @@ bytes. An actual OCI controlled-publication fixture passed on immutable image
 Its receipt leaves Oracle acceptance pending. See gpu-verification.json for
 runtime, model, failure and controlled-fixture evidence; gpu_release_acceptance
 is false throughout.
+
+The hardware continuation supersedes the earlier unimplemented endpoint status.
+The explicit image-owned profile now passes real CUDA/Triton and model nonce
+attestation, production native CLI tools, independent code assertions, cached
+launcher recovery during live writes and the public HTTP GPU deployment gate.
+Default CPU hardware remains unavailable. Neither profile preflight nor a
+successful coding smoke establishes MetaInfer optimization acceptance.
+
+PR #708 merged at 6db2189e with all 11 CI checks. The prior streaming trial was
+stopped after repeated harness review failure; direct Git baseline comparison
+confirmed unchanged repository bytes. A new trial uses an explicit input
+contract in its reference kernel, without modifying pinned upstream prompts
+or weakening UC's protected Oracle. R8 and actual two-host delivery remain OPEN.

@@ -88,9 +88,23 @@ R8. Portable evidence is in gpu-verification.json.
 - [x] Complete independent Spec/Standards reviews and address all findings.
 - [x] Run full Windows Python regressions: 1472 passed, 40 platform skips;
   Linux focused checks: 75 passed; Windows delivery/cancellation checks: 42 passed.
-- [ ] Deliver the candidate-publication continuation through PR and merge.
+- [x] Deliver through PR #708, all 11 CI checks and merge 6db2189e.
 
 Real Qwen optimization failed to produce a harness. The first Gemma attempt
 timed out and was stopped with proof. A streaming Gemma run is generating and
 reviewing its correctness harness. Full optimization has not passed. Hardware
 HTTP still returns 503; attestation, Oracle GPU outcomes and delivery remain open.
+
+## Hardware attestation continuation (2026-10-12)
+
+- [x] Stop the streaming trial after repeated out-of-contract harness reviews;
+  retain the failed outcome and full stopped-writer receipt.
+- [x] Implement explicit image-owned CUDA/Triton and Ollama nonce attestation,
+  native streaming client and before/after digest checks.
+- [x] Measure actual kernels/model in OCI with image/code/runtime identities
+  and stopped scope. This is preflight only.
+- [x] Verify active-writer cache reuse, real native CLI, HTTP GPU deployment
+  gate, independent Spec/Standards review and regressions.
+- [ ] Deliver the hardware continuation through passing CI and merge.
+- [ ] Complete R8 optimization/Oracle/rollback/artifacts; actual two-host
+  verification also requires an available second host.

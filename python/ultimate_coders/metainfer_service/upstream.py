@@ -67,6 +67,11 @@ class UpstreamLauncher:
         ):
             raise ValueError("Upstream task directories do not match the task identity")
         raw = json.loads(requirements["raw_request"])
+        if (
+            getattr(self.jobs, "hardware_attestation", None) is not None
+            and requirements["task_type"] != "evolve-kernel"
+        ):
+            raise ValueError("The attested native coding profile supports evolve-kernel only")
         # The pin also reads legacy form/answers. None may delegate writers
         # beyond the OCI scope proved by this service's cancellation contract.
         for fields in (requirements, requirements.get("form", {}), requirements.get("answers", {})):
@@ -187,7 +192,14 @@ class UpstreamLauncher:
 
 
 def create_service(
-    source: Path, root: Path, config: ServiceConfig, runtime: LocalOCI, environment: dict[str, str]
+    source: Path,
+    root: Path,
+    config: ServiceConfig,
+    runtime: LocalOCI,
+    environment: dict[str, str],
+    *,
+    attest_ollama: bool = False,
+    ollama_observe_url: str | None = None,
 ) -> FastAPI:
     source = source.resolve(strict=True)
     root, control = root.resolve(), config.control_dir.resolve()
@@ -242,6 +254,8 @@ def create_service(
         "HOME": "/tmp",
         "GIT_OPTIONAL_LOCKS": "0",
     }
+    if attest_ollama:
+        jobs.enable_hardware(job_environment, observe_url=ollama_observe_url)
     launcher._DEFAULT = UpstreamLauncher(jobs, job_environment)
     # Reuse only the shell's public route constructor. The stock app factory
     # starts native reapers and plugin janitors outside our writer scope.

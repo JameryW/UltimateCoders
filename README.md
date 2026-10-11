@@ -152,8 +152,9 @@ probes may still be used for capability discovery.
 The [contained service extension](docs/metainfer-contained-service.md) supplies
 workspace probes and durable cgroup stop receipts through local Linux OCI jobs.
 It runs separately from UC and preserves the pinned upstream source. Its CPU
-job image needs additional GPU/model configuration; the hardware endpoint
-returns 503 until genuine GPU/model evidence is available.
+job image needs additional GPU/model configuration. The explicit native Ollama
+profile attests actual GPU/runtime/model identity inside an owned container;
+the default CPU deployment returns HTTP 503 for hardware identity.
 
 Workers advertise local `inference_benchmark` without MetaInfer. Remote tasks require `inference_infra` plus the operation capability confirmed by live plugin probes; heartbeat refresh withdraws unhealthy capabilities. Automatic routing requires inference context and engineering intent, and explicit agent choices take priority.
 
@@ -171,6 +172,11 @@ Validation update (2026-10-11): the separately deployed extension passed real
 Podman containment, detached-writer recovery, HTTP task create/cancel, and
 cross-UID workspace checks. Unsafe host metadata reads are rejected. Complete
 MetaInfer/GPU optimization, Oracle acceptance and artifact delivery remain open.
+
+Validation update (2026-10-12): the explicit Ollama GPU profile passed actual
+CUDA/Triton cases, native coding tools, independent code assertions, active-writer
+cache recovery and the HTTP GPU deployment gate. Full optimization and cross-host
+artifact acceptance remain open. See [deployment and profile configuration](docs/metainfer-contained-service.md).
 
 See [the inference infrastructure guide](docs/inference-infra.md) for a complete task example, live-schema requirements, benchmark output, Oracle policy and deployment/cancellation limits.
 
