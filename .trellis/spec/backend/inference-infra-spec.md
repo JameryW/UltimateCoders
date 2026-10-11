@@ -202,3 +202,76 @@ filter it before include_router, and add bounded no-follow observations.
 Wrong: treat kill success, a missing PID or Path.exists=false as a stop proof.
 Correct: verify immutable OCI state and every owned descendant cgroup; only
 FileNotFoundError establishes a missing scope, while permission errors propagate.
+
+## 10. Contained kernel candidate publication
+
+### 10.1 Scope / Trigger
+
+Pinned evolve-kernel keeps its ranked library in the generated workspace.
+An optimization workflow benchmarks the assigned repository, so the candidate
+must reach that repository before independent Oracle validation.
+
+### 10.2 Signatures
+
+Inside OCI: python -m ultimate_coders.metainfer_service.execution
+--upstream-module metainfer.tasks.evolve_kernel.orchestrator.cli
+--requirements PATH --repository PATH --state-dir PATH --generated-dir PATH.
+publish_kernel(repository: Path, state: Path, generated: Path, kernel: Path) -> dict.
+UC: validate_kernel_publication(repository: str, kernel_path: str, run: dict) -> dict.
+
+### 10.3 Contracts
+
+Only image label uc.metainfer.publisher=1 enables the wrapper and advertises
+kernel_publication. OptimizationWorkflow sets repository_candidate_required=true
+for optimize_kernel. Adapter refuses missing capability before task submission.
+Legacy images retain discovery and lifecycle mechanics without this capability.
+
+After a successful terminal upstream outcome, select the first ranked library
+entry, require a finite positive exec_time_ms, bounded nonempty code and candidate
+ID, and atomically replace the original regular kernel within the owned OCI scope.
+Record run.uc_candidate with kernel_path (repository-relative), candidate_id,
+code_sha256, publication_kind=oci_generated_candidate and oracle_acceptance=pending.
+Preserve file permissions; do not execute code, commit or modify Git metadata.
+
+Upstream's finished flag precedes publication. Adapter waits for quiescence,
+refetches final run state, verifies terminal success and receipt identity, and
+checks the actual stopped worktree bytes against code_sha256. Only then may UC
+run its protected benchmark and Oracle. Publication does not mean acceptance.
+Cached completed results revalidate the saved stop proof and current kernel
+bytes without repeating POST. A missing proof retains quarantine/capacity;
+a valid proof permits budget recovery even if the candidate checksum is invalid.
+Refuse nonempty worker_nodes in flat or legacy form/answers before launch;
+remote cluster writers are outside this service's cancellation proof.
+
+### 10.4 Validation & Error Matrix
+
+| Condition | Behavior |
+| --- | --- |
+| Old image lacks publisher label | No capability; workflow fails before POST |
+| Run failed/running; library absent; metric nonpositive/nonfinite/bool | No publication |
+| Outside repository, Git metadata, parent/leaf symlink, nonregular target | Refuse publication |
+| Publication fails after upstream finished | Persist failed terminal outcome; UC rolls back after stop proof |
+| Receipt missing, final status changed after stop, path or checksum mismatch | Nonretryable contract failure; no completed result |
+| Nonempty remote worker selection | Refuse before workspace claim |
+
+### 10.5 Good / Base / Bad Cases
+
+Good: measured candidate reaches kernel.py, durable receipt matches its bytes,
+then Oracle accepts or rejects independently. Base: an old CPU image still
+serves workspace/lifecycle checks. Bad: accepting the upstream finished flag
+while the publisher has not copied the candidate or has failed.
+
+### 10.6 Tests Required
+
+Public Launcher tests use real linked Git worktrees; assert both old/new image
+commands and HTTP capability discovery. Test successful publication, unsafe
+paths, symlinks, unsuccessful runs and invalid metrics. HTTP adapter tests assert
+refetch after quiescence, missing capability, missing receipt, late failure and
+checksum mismatch. Keep the existing Oracle rollback and protected harness tests.
+Real GPU runtime/model smokes remain separate from full R8 acceptance.
+
+### 10.7 Wrong vs Correct
+
+Wrong: copy or execute generated code on the host after declaring the job done.
+Correct: publish in the already owned OCI scope, prove every writer stopped,
+verify the receipt against repository bytes, then run independent UC validation.

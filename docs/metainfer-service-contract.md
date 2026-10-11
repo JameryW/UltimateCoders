@@ -65,6 +65,15 @@ Any other non-200 is a transport/HTTP error.
 reservations against it, not against the URL. Two URL aliases with the same
 `backend_id` are one budget; two `backend_id`s are two.
 
+Kernel OptimizationWorkflow additionally requires kernel_publication and sets
+constraints.repository_candidate_required=true. Missing capability is a
+DeploymentContractError before task POST. After quiescence, UC refetches the
+terminal state and requires run.uc_candidate containing kernel_path,
+candidate_id, code_sha256, publication_kind=oci_generated_candidate and
+oracle_acceptance=pending. The kernel path and actual repository bytes must
+match the receipt. The independently protected benchmark and Oracle remain
+authoritative; a publication receipt is not an acceptance verdict.
+
 ### `POST /api/uc/workspaces/verify`
 
 Proves the service can see and write the same filesystem UC does, *before* a job

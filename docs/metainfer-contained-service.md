@@ -61,6 +61,22 @@ Triton, a coding CLI or model configuration to the image.
 
 ## Writer ownership and recovery
 
+The job image includes a small UC publisher alongside the unchanged upstream
+source. Image label uc.metainfer.publisher=1 advertises kernel_publication.
+For evolve-kernel, the contained wrapper copies the successful run's first
+ranked, measured library entry into the assigned kernel_file_path and records
+its SHA-256 in run.uc_candidate. The copy is atomic, rejects symlink/Git metadata
+targets, and stays inside the existing OCI writer scope. It does not execute the
+candidate, commit code or claim Oracle acceptance.
+
+UC kernel workflows require this capability, wait for all-writer quiescence,
+refetch the final outcome and verify the repository bytes against the receipt.
+The protected UC benchmark and Oracle then decide acceptance or rollback.
+Upgrade the job image and restart the service together; old images retain
+workspace/lifecycle checks but cannot run these kernel workflows. Remote
+worker_nodes delegation is refused because its writers would fall outside the
+service's stop proof.
+
 Containers run as the worktree's UID/GID with a read-only root filesystem,
 private PID/cgroup namespaces, no capabilities, no new privileges and no
 automatic restart. Only the worktree and the task's state/generated directories

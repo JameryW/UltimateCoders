@@ -17,7 +17,7 @@ from ultimate_coders.runtime_state import atomic_json, atomic_write
 
 from .benchmark import BenchmarkRunner
 from .graph import ExecutionAdaptationGraph
-from .models import BenchmarkResult, MetaInferResult, MetaInferTask
+from .models import BenchmarkResult, InferenceTaskType, MetaInferResult, MetaInferTask
 from .oracle import Oracle
 
 Candidate = Callable[[MetaInferTask], Awaitable[MetaInferResult]]
@@ -225,6 +225,11 @@ class OptimizationWorkflow:
                 task,
                 constraints={
                     **task.constraints,
+                    **(
+                        {"repository_candidate_required": True}
+                        if task.task_type == InferenceTaskType.OPTIMIZE_KERNEL
+                        else {}
+                    ),
                     "uc_iteration": index,
                     "oracle_feedback": {
                         "best": best.to_dict(),

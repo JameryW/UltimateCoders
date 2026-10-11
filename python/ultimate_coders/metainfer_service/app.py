@@ -49,6 +49,11 @@ class WorkspaceProbe(BaseModel):
     write_token: StrictStr
 
 
+def kernel_publication_enabled(jobs: Any) -> bool:
+    runtime = getattr(jobs, "runtime", None)
+    return getattr(runtime, "image_labels", {}).get("uc.metainfer.publisher") == "1"
+
+
 def add_contract_routes(app: FastAPI, config: ServiceConfig, jobs: Any) -> None:
     @app.get("/api/uc/contract")
     def contract():
@@ -56,7 +61,9 @@ def add_contract_routes(app: FastAPI, config: ServiceConfig, jobs: Any) -> None:
             "contract_version": CONTRACT_VERSION,
             "backend_id": config.backend_id,
             "revision": config.revision,
-            "capabilities": ["workspace_probe"] + (["quiescence"] if jobs else []),
+            "capabilities": ["workspace_probe"]
+            + (["quiescence"] if jobs else [])
+            + (["kernel_publication"] if kernel_publication_enabled(jobs) else []),
         }
 
     @app.post("/api/uc/workspaces/verify")

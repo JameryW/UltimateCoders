@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from .app import ServiceConfig, add_contract_routes
+from .app import ServiceConfig, add_contract_routes, kernel_publication_enabled
 from .jobs import ContainedJobs, checkpoint
 from .observations import contain_observations, read_json
 from .oci import LocalOCI
@@ -67,6 +67,12 @@ class UpstreamLauncher:
         ):
             raise ValueError("Upstream task directories do not match the task identity")
         raw = json.loads(requirements["raw_request"])
+        # The pin also reads legacy form/answers. None may delegate writers
+        # beyond the OCI scope proved by this service's cancellation contract.
+        for fields in (requirements, requirements.get("form", {}), requirements.get("answers", {})):
+            workers = fields.get("worker_nodes") if isinstance(fields, dict) else None
+            if workers and (not isinstance(workers, str) or workers.strip()):
+                raise ValueError("Remote workers are outside the owned OCI execution scope")
         repository = self.jobs.config.workspace(raw["repository"])
         if extra_args:
             raise ValueError("Arbitrary orchestrator arguments are disabled")
@@ -112,6 +118,24 @@ class UpstreamLauncher:
             "--workspace-dir",
             str(workspace_dir),
         ]
+        if requirements["task_type"] == "evolve-kernel" and kernel_publication_enabled(self.jobs):
+            if entry.cli_module != "metainfer.tasks.evolve_kernel.orchestrator.cli":
+                raise ValueError("Unsupported kernel publisher module")
+            command = [
+                "python",
+                "-m",
+                "ultimate_coders.metainfer_service.execution",
+                "--upstream-module",
+                entry.cli_module,
+                "--requirements",
+                str(req_path),
+                "--repository",
+                str(repository),
+                "--state-dir",
+                str(state_dir),
+                "--generated-dir",
+                str(workspace_dir),
+            ]
         return self.jobs.launch(
             task_id,
             repository,

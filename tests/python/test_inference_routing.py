@@ -286,6 +286,8 @@ async def test_sandbox_cancellation_stops_remote_job_and_rolls_back(tmp_path, ca
 
             contract = contract_response(self.path)
             if contract is not None:
+                if self.path == "/api/uc/contract":
+                    contract["capabilities"].append("kernel_publication")
                 self.reply(contract)
             elif self.path.endswith("/schema"):
                 self.reply({"fields": [{"key": "kernel_file_path", "required": True}]})

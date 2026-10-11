@@ -66,8 +66,31 @@ GPU image provisioning is in progress. The current hardware endpoint returns
 
 - [x] Reproduce control-store alias retargeting on Linux; freeze its canonical
   startup path and add a regression protecting identity/ownership records.
-- [ ] Recover the locally installed, checksum-verified GPU job image and run
+- [x] Recover the locally installed, checksum-verified GPU job image and run
   actual contained CUDA/Triton probes.
-- [ ] Establish actual Ollama coding tool execution and independent file tests;
+- [x] Establish actual Ollama coding tool execution and independent file tests;
   text describing a tool invocation is a failed coding check.
 - [ ] Complete the R8 GPU/model, optimization and recovery release criteria.
+
+PR #707 merged at 48410a6e with 11 passing CI checks. Runtime preflight ran
+actual CUDA/Triton kernels; the native Ollama streaming probe created code via
+real tools and passed an independent second-container assertion. Neither closes
+R8. Portable evidence is in gpu-verification.json.
+
+## Candidate publication continuation (2026-10-12)
+
+- [x] Reproduce the missing repository publication at the public Launcher seam.
+- [x] Publish ranked measured evolve-kernel code atomically inside owned OCI.
+- [x] Negotiate image capability and validate final receipt/checksum after stop.
+- [x] Refuse remote worker delegation outside the contained writer scope.
+- [x] Verify image packaging and actual publication in a controlled OCI fixture;
+  this fixture does not count as a real MetaInfer optimization.
+- [x] Complete independent Spec/Standards reviews and address all findings.
+- [x] Run full Windows Python regressions: 1472 passed, 40 platform skips;
+  Linux focused checks: 75 passed; Windows delivery/cancellation checks: 42 passed.
+- [ ] Deliver the candidate-publication continuation through PR and merge.
+
+Real Qwen optimization failed to produce a harness. The first Gemma attempt
+timed out and was stopped with proof. A streaming Gemma run is generating and
+reviewing its correctness harness. Full optimization has not passed. Hardware
+HTTP still returns 503; attestation, Oracle GPU outcomes and delivery remain open.
