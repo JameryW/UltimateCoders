@@ -40,3 +40,23 @@ Dashboard typecheck/build/tests; live PostgreSQL and HTTP fault integration.
 
 Evidence and reproducible commands:
 [live verification report](../../../docs/live-feedback-and-metainfer-verification.md).
+
+## Contained service continuation (2026-10-11)
+
+- [x] Implement a separately deployed, revision-pinned OCI launcher extension;
+  retain upstream task code and expose only contained discovery/create/kill.
+- [x] Persist launch intent, immutable container/kernel identity, workspace
+  ownership and stop receipts; recover without replaying create/start.
+- [x] Verify detached-child containment across launcher-process restart,
+  cross-UID workspace challenges and pinned HTTP create/kill with Podman in WSL.
+- [x] Fix launch ownership, early validation, duplicate identity claims, short
+  process/kill races, host-file observations and native startup escape paths.
+- [x] Freeze canonical workspace authorization roots and regress symlink
+  retargeting discovered by independent Standards review.
+- [x] Document deployment, supported runtime boundaries and measured receipts.
+- [ ] Deliver this continuation through PR/CI/merge.
+- [ ] R8: implement contained GPU/model attestation and run the complete real
+  optimization, Oracle, rollback, delivery and active-run recovery acceptance.
+
+GPU image provisioning is in progress. The current hardware endpoint returns
+503; CPU containment passes do not close R8. This task remains in progress.

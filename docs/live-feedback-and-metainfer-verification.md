@@ -99,7 +99,7 @@ git -C .uc/metainfer-pinned checkout --detach b3f6505a11ab704ee1cfb68e9c1b2c13c9
 python3 -m venv .uc/metainfer-venv
 .uc/metainfer-venv/bin/python -m pip install -r .uc/metainfer-pinned/requirements.txt
 cd .uc/metainfer-pinned
-METAINFER_HOME="$PWD/../metainfer-home" ../metainfer-venv/bin/python serve.py --host 127.0.0.1 --port 48765
+METAINFER_ROOT="$PWD/../metainfer-home" METAINFER_NODE_ID=uc-stock ../metainfer-venv/bin/python serve.py --host 127.0.0.1 --port 48765
 ```
 
 R8 remains open. A separately deployed extension must implement all four
@@ -110,3 +110,48 @@ does not prove all descendant writers stopped. The acceptance run must then
 exercise optimization, protected benchmarks, Oracle accept/reject, rollback,
 commit/artifact delivery, cancellation and restart recovery. No such execution
 is claimed by this deployment probe, and the contract gate remains enforced.
+
+## Contained service deployment (2026-10-11)
+
+The separate UC extension reuses the pinned shell/orchestrator without calling
+upstream's native app startup or janitors. Verification used rootful Podman
+4.9.3 inside Ubuntu 24.04 WSL, Python 3.12.3 and local cgroup v1 evidence. The
+immutable CPU job image was
+2ec839ab5cceab141c49a424b1a67d50d43b725717780be5d036ec1e0781b068.
+Deployment commands and supported boundaries are in
+[the service guide](metainfer-contained-service.md).
+
+Measured results:
+
+| Check | Result | Evidence scope |
+| --- | --- | --- |
+| Detached writer recovery | Passed | A fresh launcher process observed the original container and continuing child writes; cancellation stopped writes before a durable cgroup receipt |
+| Cross-UID workspace challenge | Passed | UC probe UID 65534 and OCI job UID 1000 exchanged the same random nonce through the assigned workspace |
+| Pinned HTTP task creation/control | Passed | Create 200, restart denied 409, kill 200, identity-checked stop proof with writers_stopped=true |
+| Unsafe task metadata | Passed | Host-file symlink returned 503 without leaking content; omitted arbitrary agent-log route returned 404 |
+| Failed submission visibility | Passed | Rejected launch remained observable and task listing returned 200 |
+| GPU/model release gate | Open | Hardware endpoint returns 503; no GPU/model attestation or accepted optimization evidence |
+
+The writer recovery command is scripts/verify-metainfer-containment.py from
+the service guide. It starts two separate launcher processes; this proves
+durable launcher recovery rather than an active-job restart of the HTTP daemon.
+The public scripts/verify-metainfer-release.py workspace gate was also run from
+a distinct UID against the actual HTTP service. The HTTP control probe used
+a disposable linked worktree and the pinned evolve-kernel task form, then
+cancelled it; this was a lifecycle check, not a successful kernel optimization.
+
+Sanitized receipts, exact identities and HTTP outcomes are preserved in
+[service-verification.json](../.trellis/tasks/10-02-metainfer-architecture/service-verification.json).
+The local raw runs remain under the ignored .uc verification directories.
+Faults found during these runs included job-directory ownership, short-process
+inspection races, kill racing with natural exit, unsafe host metadata reads and
+upstream native startup escaping the container scope. Their fixes have direct
+regressions. Final Linux service regressions: 25 passed; one upstream dependency
+deprecation warning.
+
+R8 remains OPEN. GPU device visibility inside a contained job and an available
+local Ollama server are provisioning evidence only. The hardware attestation
+path and actual optimization, protected benchmark/Oracle accept and reject,
+rollback, commit/artifact delivery and active-run cancellation/recovery still
+need real acceptance evidence. Neither the CPU receipts nor this report claim
+that release criterion has passed.

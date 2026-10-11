@@ -59,7 +59,12 @@ async def verify_workspace(
     root = Path(workspace).resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix=".uc-probe-", dir=root) as directory:
         source, target = Path(directory) / "read", Path(directory) / "write"
+        # Non-secret nonce challenges must work across Worker/job UIDs. The
+        # sticky directory prevents peers from removing another UID's file;
+        # random names and O_EXCL on the service still prevent clobbering.
+        Path(directory).chmod(0o1777)
         source.write_bytes(uuid.uuid4().bytes)
+        source.chmod(0o644)
         token = uuid.uuid4().hex
         response = await client.post(
             url + "/api/uc/workspaces/verify",

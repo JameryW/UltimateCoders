@@ -149,6 +149,12 @@ at the pinned commit does not expose that contract, so UC refuses mutating
 requests until a compatible companion/extension is deployed. Read-only schema
 probes may still be used for capability discovery.
 
+The [contained service extension](docs/metainfer-contained-service.md) supplies
+workspace probes and durable cgroup stop receipts through local Linux OCI jobs.
+It runs separately from UC and preserves the pinned upstream source. Its CPU
+job image needs additional GPU/model configuration; the hardware endpoint
+returns 503 until genuine GPU/model evidence is available.
+
 Workers advertise local `inference_benchmark` without MetaInfer. Remote tasks require `inference_infra` plus the operation capability confirmed by live plugin probes; heartbeat refresh withdraws unhealthy capabilities. Automatic routing requires inference context and engineering intent, and explicit agent choices take priority.
 
 Submit `agent_config.inference_task` through the Dashboard submit API or Python Orchestrator, or select the `metainfer` adapter in a workflow step. Service tasks need actual plugin parameters; optimization and local measurement also require benchmark configuration. Prose does not supply model paths or GPU availability. Optional `UC_INFERENCE_TASK_JSON` provides defaults for natural-language routing.
@@ -160,6 +166,11 @@ UC and MetaInfer must share the assigned worktree at the same absolute path. Mut
 Validation snapshot (2026-09-30): the production Docker app now runs locally. Real Ollama distributed coding, GPU chat benchmarking with an immutable Oracle, storage, task controls and recovery were exercised. External MetaInfer optimization remains unconfigured. See the [local deployment verification report](docs/local-deployment-verification.md) for evidence, reproducible commands and limitations.
 
 Validation update (2026-10-09): the pinned stock MetaInfer server is running locally in WSL; its UI and plugin discovery work, but the UC contract endpoint returns 404, so mutating jobs remain blocked. Real NATS-to-HTTP SSE measurements passed for three clients with 300 events each: maximum 6.394ms in steady traffic and 55.712ms in burst traffic, with no loss or duplicates. These localhost measurements exclude browser rendering and cross-host transport. See [live verification and reproduction](docs/live-feedback-and-metainfer-verification.md).
+
+Validation update (2026-10-11): the separately deployed extension passed real
+Podman containment, detached-writer recovery, HTTP task create/cancel, and
+cross-UID workspace checks. Unsafe host metadata reads are rejected. Complete
+MetaInfer/GPU optimization, Oracle acceptance and artifact delivery remain open.
 
 See [the inference infrastructure guide](docs/inference-infra.md) for a complete task example, live-schema requirements, benchmark output, Oracle policy and deployment/cancellation limits.
 
