@@ -18,7 +18,13 @@ from ultimate_coders.runtime_state import RuntimeState
 
 from .models import InferenceTaskType, MetaInferResult, MetaInferTask, nonnegative_number
 from .resources import ResourceBudget, ResourceWaitExpiredError
-from .service_contract import validate_quiescence, verify_hardware, verify_workspace
+from .service_contract import (
+    DeploymentContractError,
+    validate_kernel_publication,
+    validate_quiescence,
+    verify_hardware,
+    verify_workspace,
+)
 
 DEFAULT_TASK_TYPES = {
     InferenceTaskType.PORT_MODEL: "port-model",
@@ -146,6 +152,14 @@ class MetaInferAdapter:
             if configured and receipt["backend_id"] != configured:
                 raise ValueError("Configured MetaInfer backend identity differs from service")
             self.backend_id = receipt["backend_id"]
+            if (
+                task.task_type == InferenceTaskType.OPTIMIZE_KERNEL
+                and task.constraints.get("repository_candidate_required") is True
+                and "kernel_publication" not in receipt.get("capabilities", [])
+            ):
+                raise DeploymentContractError(
+                    "Kernel workflow requires kernel_publication capability"
+                )
             declared_hardware = task.hardware.strip()
             if declared_hardware and declared_hardware.casefold() not in {"cpu", "host"}:
                 await verify_hardware(
@@ -195,6 +209,19 @@ class MetaInferAdapter:
             if record.get("state") == "stopped":
                 raise RemoteJobStoppedError("Remote job was stopped; recover the saved transaction")
             if record.get("result"):
+                if task.constraints.get("repository_candidate_required") is True:
+                    saved = record["result"]
+                    saved_evidence = saved.get("evidence", {})
+                    try:
+                        validate_quiescence(
+                            saved_evidence.get("quiescence", {}),
+                            saved.get("task_id"),
+                            self.backend_id,
+                        )
+                    except DeploymentContractError as exc:
+                        raise RemoteStateUncertainError(
+                            "Cached result lacks writer stop evidence"
+                        ) from exc
                 # Completion is persisted before slot release. Recover that
                 # crash window instead of leaking a backend's entire budget.
                 if self.state:
@@ -210,6 +237,12 @@ class MetaInferAdapter:
                                 slot["key"],
                                 lambda old: {} if old.get("operation_id") == key else old,
                             )
+                if task.constraints.get("repository_candidate_required") is True:
+                    validate_kernel_publication(
+                        task.repository,
+                        task.parameters.get("kernel_file_path", ""),
+                        record["result"].get("evidence", {}).get("state", {}).get("run", {}),
+                    )
                 return MetaInferResult(**record["result"])
             remote_id = record.get("remote_id")
             if not remote_id and record.get("state") != "waiting_resource":
@@ -418,6 +451,16 @@ class MetaInferAdapter:
                     evidence = {"state": state}
                     if task.task_type != InferenceTaskType.ANALYZE_TRACE:
                         evidence["quiescence"] = await self.confirm_quiescence(client, remote_id)
+                    if task.constraints.get("repository_candidate_required") is True:
+                        # Upstream finishes before the contained publisher. Read
+                        # its final outcome only after every writer has stopped.
+                        state = await self._request(client, "GET", f"{shell}/{remote_id}")
+                        validate_kernel_publication(
+                            task.repository,
+                            task.parameters.get("kernel_file_path", ""),
+                            state.get("run", {}),
+                        )
+                        evidence["state"] = state
                     for name in ("iterations", "state-graph"):
                         path = f"/api/{task_type}/{remote_id}/{name}"
                         response = await client.get(self.url + path, timeout=15)

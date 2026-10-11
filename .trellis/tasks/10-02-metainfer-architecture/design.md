@@ -52,3 +52,19 @@ the same CLI adapter supports Docker deployments.
 Tests use the agreed HTTP contract and Launcher/OCI lifecycle interfaces.
 Real containment checks include a detached writer, service restart and stop;
 they are recorded separately from unit fixtures and specialized GPU acceptance.
+
+## Repository candidate publication seam (2026-10-12)
+
+The pinned evolve-kernel orchestrator ranks code in its generated workspace;
+UC's independent Oracle measures the assigned repository. An additive execution
+wrapper must publish the ranked candidate inside the same OCI writer scope,
+before that scope stops. The wrapper copies code bytes only; it never executes
+generated code on the service host or commits Git changes. Publication is not
+Oracle acceptance.
+
+Use no-follow directory descriptors for the repository-relative target, reject
+Git metadata, symlink paths, nonterminal upstream runs and unmeasured/invalid
+libraries, then replace the owned kernel atomically and record its SHA-256.
+The UC protected harness and Oracle still decide correctness, improvement and
+rollback. Image capability and rollout must be explicit; old images must not
+silently claim repository publication.

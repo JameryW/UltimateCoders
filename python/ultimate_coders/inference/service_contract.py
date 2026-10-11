@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import re
+import stat
 import tempfile
 import uuid
 from pathlib import Path
@@ -14,6 +17,45 @@ CONTRACT_VERSION = "uc-metainfer/1"
 
 class DeploymentContractError(RuntimeError):
     retryable = False
+
+
+def validate_kernel_publication(repository: str, kernel_path: str, run: dict) -> dict:
+    """Bind terminal publication evidence to the stopped worktree's actual bytes."""
+    try:
+        root, kernel = Path(repository).resolve(strict=True), Path(kernel_path)
+        relative = kernel.relative_to(root)
+        if (
+            not kernel.is_absolute()
+            or kernel.resolve(strict=True) != kernel
+            or any(part in ("..", ".git") for part in relative.parts)
+        ):
+            raise ValueError("Unsafe kernel path")
+        receipt = run.get("uc_candidate", {})
+        if (
+            run.get("finished") is not True
+            or run.get("final_status") not in ("completed", "success", "succeeded")
+            or receipt.get("publication_kind") != "oci_generated_candidate"
+            or receipt.get("oracle_acceptance") != "pending"
+            or receipt.get("kernel_path") != relative.as_posix()
+            or not isinstance(receipt.get("candidate_id"), str)
+            or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", receipt["candidate_id"])
+        ):
+            raise ValueError("Invalid publication receipt")
+        descriptor = os.open(
+            kernel, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
+        with os.fdopen(descriptor, "rb") as reader:
+            if not stat.S_ISREG(os.fstat(reader.fileno()).st_mode):
+                raise ValueError("Kernel must be regular")
+            content = reader.read(4 * 1024 * 1024 + 1)
+        if (
+            len(content) > 4 * 1024 * 1024
+            or receipt.get("code_sha256") != hashlib.sha256(content).hexdigest()
+        ):
+            raise ValueError("Published kernel checksum mismatch")
+        return receipt
+    except (OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
+        raise DeploymentContractError("Kernel publication evidence is incomplete") from exc
 
 
 def validate_quiescence(proof: dict, remote_id: str, backend_id: str) -> dict:

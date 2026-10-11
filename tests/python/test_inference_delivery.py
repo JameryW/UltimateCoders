@@ -1,5 +1,6 @@
 """Inference task delivery across planner, sandbox, Git and remote HTTP seams."""
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -56,11 +57,29 @@ def candidate_service():
         def do_GET(self):  # noqa: N802
             contract = contract_response(self.path)
             if contract is not None:
+                if self.path == "/api/uc/contract":
+                    contract["capabilities"].append("kernel_publication")
                 self.reply(200, contract)
             elif self.path.endswith("/schema"):
                 self.reply(200, {"fields": [{"key": "kernel_file_path", "required": True}]})
             elif self.path == "/api/sys-shell/candidate":
-                self.reply(200, {"run": {"finished": True, "final_status": "completed"}})
+                kernel = Path(paths[-1])
+                self.reply(
+                    200,
+                    {
+                        "run": {
+                            "finished": True,
+                            "final_status": "completed",
+                            "uc_candidate": {
+                                "kernel_path": kernel.name,
+                                "candidate_id": "fixture",
+                                "code_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(),
+                                "publication_kind": "oci_generated_candidate",
+                                "oracle_acceptance": "pending",
+                            },
+                        }
+                    },
+                )
             else:
                 self.reply(404, {})
 
