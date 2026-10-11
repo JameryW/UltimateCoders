@@ -399,3 +399,19 @@ source. All seven repository guards and staged diff/JSON scope checks passed.
 Independent Spec and Standards axes passed after verifying original/copy/kernel/
 log hashes, the two invocation changes, raw-to-portable report equality and
 all thirteen durable stopped-scope proofs. No actionable findings remained.
+
+PR #711 CI follow-up: the direct line-ending guard passed, but its real-repo
+regression test still allowed only the earlier 2022/2013 scan count. The sole
+added file since base 45b848545c77deef3c24414f7da5f354981e878d is
+research/harness-loop-diagnosis.md, a text document. The measured 2023 tracked
+blobs / 2014 text files therefore has an independently explained delta of one.
+Before the repair, the five Windows line-ending tests reproduced one failure
+and four passes. The repair adds only that reachable count pair; binary and
+gitlink pins and all synthetic mutation checks remain unchanged. This follow-up
+now includes eight documentation/evidence files and one CI regression test.
+After the repair, all five Windows line-ending tests passed in 4.80s.
+All five Linux tests also passed in 25.07s, with the shared checkout explicitly
+trusted only in the test process and temporary Git sandboxes on Linux storage.
+The initial WSL attempt hit Git's mounted-directory ownership check; no global
+Git setting was changed. Targeted ruff passed, and both independent review axes
+passed the count/inventory repair without findings.
