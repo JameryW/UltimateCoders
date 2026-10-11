@@ -115,3 +115,88 @@ known to be transient.
 - Repeated samples (>=3), warmup, per-metric dispersion and environment identity are required. Timing uses medians; peak memory/error use maxima. A missing numerical-error sample cannot be hidden by other repetitions. Noise/dispersion, workload, immutable harness, correctness and hard limits all gate acceptance.
 - Atomic checkpoints retain the original baseline and transaction. Artifact manifests record identity, policy, code SHA, checksums and size. Authorized API downloads whitelist report/benchmark/graph/patch, never internal rollback snapshots; missing remote files are explicit.
 - Required fault tests: simultaneous duplicate dispatch, crash between remote completion and slot release, crash after merge before final checkpoint, coordinator restart/future/obsolete attempts, uncertain writer, lost publish/replay, authenticated artifact integrity and per-sample hard-limit violations.
+
+## 9. Contained service extension
+
+### 9.1 Scope / Trigger
+
+Applies to the separately deployed MetaInfer contract extension. Reuse the
+pinned orchestrator and shell routes; do not vendor upstream, invoke its stock
+app factory, native reaper or plugin janitors. The extension is an execution
+API. Optional plugin/log readers are omitted because they can follow job-owned
+paths on the host. GPU/model and complete optimization acceptance remain a
+separate release criterion.
+
+### 9.2 Signatures
+
+Command: python -m ultimate_coders.metainfer_service --source PATH --root PATH
+--control PATH --workspace-root PATH [repeatable] --backend-id ID --image IMAGE
+[--runtime podman|docker] [--gpu none|wsl|nvidia] [--job-env JSON_FILE]
+[--port 48766]. It listens only on 127.0.0.1.
+
+HTTP: GET /api/uc/contract; POST /api/uc/workspaces/verify;
+GET /api/uc/jobs/TASK_ID/quiescence; GET /api/uc/hardware. Keep the pinned shell's
+discovery/schema, POST tasks and kill control. Fixed-file task observations use
+the existing GET tasks and GET task-ID response shapes.
+
+### 9.3 Contracts
+
+Use uc-metainfer/1 and the configured stable backend ID/pinned revision.
+Workspace receipts carry read_sha256 and the actual OCI writer identity.
+Nonce directories use mode 1777, source/token files mode 0644, O_EXCL creation
+and no-follow writes; tokens contain no secrets. The image resolves to an
+immutable content ID. Explicit job environment is string-valued JSON and never
+inherits host secrets. Containers match worktree UID/GID; rootless Podman uses
+keep-id and requires service UID/GID to match.
+
+Persist intent before create, ID before start and boot/cgroup/generation before
+the launch gate. Never replay a create/start after an unknown result. Receipts
+include container_id, cgroup, execution_scope, observed_at and evidence_id;
+persist the hashed receipt before CAS release of that task's workspace owner.
+Old receipts cannot release newer owners. Stop acknowledgements do not release
+ownership. Upstream ProcStatus.finished_at uses Unix epoch seconds.
+
+### 9.4 Validation & Error Matrix
+
+| Condition | Behavior |
+| --- | --- |
+| Source/task/control roots overlap allowed workspaces | Refuse service startup |
+| Configured workspace-root symlink changes after startup | Keep the validated canonical roots; never authorize its new target |
+| Control store overlaps a mount; invalid runtime UID/env/mount parameters | Reject before claiming the workspace or changing ownership |
+| Non-linked/shared Git repository | Refuse mutating launch |
+| Foreign/restarted container, changed boot, missing scope, unreadable cgroup | No stop proof; retain ownership |
+| Kill races with natural exit | Fresh identity-checked stopped observation may acknowledge; proof remains separate |
+| Short probe exits during inspection | Reobserve once; on failure stop and confirm proof, otherwise retain claim and report probe ID |
+| Unsafe metadata symlink/FIFO/oversized file | HTTP 503; never follow links or arbitrary log_file paths |
+| Failed submission | Remains listable without a false writer proof |
+| Reset/restart/cluster mutation | HTTP 409 |
+| Optional plugin/agent-log observation | HTTP 404 |
+| GPU/model runtime not configured | Hardware HTTP 503; GPU release gate rejects |
+
+### 9.5 Good / Base / Bad Cases
+
+Good: detached child survives service exit, is found by immutable container and
+kernel scope after restart, and stops before a durable receipt releases its
+workspace. Base: no GPU image, CPU workspace/lifecycle gates pass while the GPU
+gate rejects. Bad: a job replaces requirements.json with a host-file symlink;
+GET task returns 503 and cannot publish that file through experiment evidence.
+
+### 9.6 Tests Required
+
+Assert full descendant cgroup emptiness; permission errors fail closed;
+foreign/restarted identity rejection; launch-response loss never replays;
+validation failures precede claims; repeated old receipts fence newer owners;
+short probe/kill exit races; no-follow metadata/FIFO rejection; discovery and
+create survive router filtering; Unix timestamps and sanitized timeout causes;
+retargeting a configured workspace-root symlink cannot authorize protected paths.
+Run real OCI detached-writer and cross-UID HTTP gates separately from fixtures.
+Record actual GPU optimization evidence separately; CPU passes cannot close R8.
+
+### 9.7 Wrong vs Correct
+
+Wrong: call the stock app factory then remove its HTTP routes; its background
+janitor can still start host writers. Correct: build only the shell router,
+filter it before include_router, and add bounded no-follow observations.
+Wrong: treat kill success, a missing PID or Path.exists=false as a stop proof.
+Correct: verify immutable OCI state and every owned descendant cgroup; only
+FileNotFoundError establishes a missing scope, while permission errors propagate.

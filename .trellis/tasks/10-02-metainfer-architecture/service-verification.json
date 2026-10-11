@@ -1,0 +1,119 @@
+{
+  "verified_on": "2026-10-11",
+  "upstream_revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
+  "runtime": {
+    "engine": "podman",
+    "version": "4.9.3",
+    "host": "Ubuntu 24.04 WSL",
+    "cgroup_version": 1,
+    "python": "3.12.3"
+  },
+  "contained_writer_lifecycle": {
+    "passed": true,
+    "gate": "contained-writer-lifecycle",
+    "gpu_acceptance": false,
+    "service_process_restart": true,
+    "detached_writer_survived_restart": true,
+    "writer_stopped_after_cancel": true,
+    "image_id": "2ec839ab5cceab141c49a424b1a67d50d43b725717780be5d036ec1e0781b068",
+    "proof": {
+      "contract_version": "uc-metainfer/1",
+      "task_id": "detached-writer",
+      "backend_id": "containment-probe-c25a9f2598a25250",
+      "writers_stopped": true,
+      "proof_kind": "cgroup_empty",
+      "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:17a65dbd2186459f8e1b0fae99ffa55989b089d533606414ea76c0e22082d117:/sys/fs/cgroup/pids/machine.slice/libpod-17a65dbd2186459f8e1b0fae99ffa55989b089d533606414ea76c0e22082d117.scope/container",
+      "container_id": "17a65dbd2186459f8e1b0fae99ffa55989b089d533606414ea76c0e22082d117",
+      "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-17a65dbd2186459f8e1b0fae99ffa55989b089d533606414ea76c0e22082d117.scope/container",
+      "observed_at": 1791730263.7521725,
+      "evidence_id": "5b6e7bd4f082e2f935ca7f2bdf462f888440c3996feb33c0661a1b02a84411a2"
+    }
+  },
+  "restart_boundary": "Two separate launcher processes; active HTTP service restart is not claimed",
+  "cross_uid_workspace": {
+    "uc_uid": 65534,
+    "job_uid": 1000,
+    "receipt": {
+      "contract": {
+        "version": "uc-metainfer/1",
+        "revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
+        "backend_id": "containment-probe-1efa359b92f5cd16",
+        "capabilities": [
+          "workspace_probe",
+          "quiescence"
+        ]
+      },
+      "workspace": {
+        "read_sha256": "858036a09fd83cf92e17fd30fb9184e606b5b19d7d8c1703bd07196f2187b66b",
+        "writer_identity": "119af1cc6253:1000:1"
+      },
+      "hardware": null,
+      "gpu_required": false,
+      "service_url": "http://127.0.0.1:48766"
+    }
+  },
+  "http_lifecycle": {
+    "passed": true,
+    "gpu_acceptance": false,
+    "remote_task_id": "uc-contained-http-verification-d7a784f3",
+    "create_http": 200,
+    "restart_http": 409,
+    "kill_http": 200,
+    "stop_proof": {
+      "contract_version": "uc-metainfer/1",
+      "task_id": "uc-contained-http-verification-d7a784f3",
+      "backend_id": "containment-probe-1efa359b92f5cd16",
+      "writers_stopped": true,
+      "proof_kind": "cgroup_empty",
+      "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:bafeb6a6fb6d7b380ec9c80250f288f063c0e7d8cfaf9e69cf234b3cbd76144f:/sys/fs/cgroup/pids/machine.slice/libpod-bafeb6a6fb6d7b380ec9c80250f288f063c0e7d8cfaf9e69cf234b3cbd76144f.scope/container",
+      "container_id": "bafeb6a6fb6d7b380ec9c80250f288f063c0e7d8cfaf9e69cf234b3cbd76144f",
+      "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-bafeb6a6fb6d7b380ec9c80250f288f063c0e7d8cfaf9e69cf234b3cbd76144f.scope/container",
+      "observed_at": 1791728933.8119435,
+      "evidence_id": "3c339c22c40f14e8b9754d90ea4a5822cb9a99c6a3bb2bd40a88aad42d228f5d"
+    },
+    "unsafe_metadata_http": 503,
+    "optional_log_http": 404,
+    "failed_submit_http": 500,
+    "listing_after_rejection_http": 200,
+    "hardware_http": 503
+  },
+  "linux_service_regressions": {
+    "passed": 25,
+    "dependency_deprecation_warnings": 1
+  },
+  "gpu_release_acceptance": {
+    "status": "OPEN",
+    "hardware_http": 503,
+    "gpu_acceptance": false,
+    "model_attestation": null,
+    "optimization": null,
+    "oracle": null,
+    "rollback_delivery": null,
+    "active_run_recovery": null
+  },
+  "windows_full_python_suite": {
+    "passed": 1463,
+    "skipped": 16,
+    "seconds": 190.23,
+    "warnings": {
+      "dependency_deprecations": 2,
+      "local_pytest_cache": 1
+    }
+  },
+  "quality_guards": {
+    "line_endings": {
+      "tracked": 2013,
+      "text": 2004
+    },
+    "spec_refs": {
+      "line_refs": 130,
+      "mentions": 297
+    },
+    "task_refs": 865,
+    "workflow_inputs": "passed",
+    "codex_issue_workflow": "passed",
+    "readme_ci_table": "passed",
+    "ruff_lint": "passed",
+    "changed_python_format": "passed"
+  }
+}

@@ -182,3 +182,35 @@ from baseline 9c70e329f65eef5f1fcda02932abb0efa6836ae6.
   returned 3 without measurement evidence; strict threshold returned 1.
 - Actual pinned MetaInfer release gate: exit 2, contract refusal, no pass
   evidence. R8 remains in progress.
+
+## Contained service continuation (2026-10-11)
+
+Standards: 0 remaining findings. The independent review found P2: a configured
+workspace-root symlink could be retargeted after startup. ServiceConfig now
+freezes the canonical roots, and a Linux RED/GREEN regression verifies the new
+target remains unauthorized. Review confirmed the fix and directory boundaries.
+
+Spec: 0 remaining findings. Review confirmed all lifecycle, cross-UID and HTTP
+receipts match the raw measurements and their stop-proof hashes. The live report
+now states the exact launcher-process restart boundary and leaves R8 OPEN.
+Native upstream startup, unsafe host readers and writer ownership issues found
+earlier were fixed and reviewed on both axes.
+
+Final checks:
+
+- Windows full Python suite: 1463 passed, 16 skipped in 190.23s; two dependency
+  deprecations and one local pytest-cache warning.
+- Linux contained-service regressions: 25 passed; one dependency deprecation.
+- Real final-code OCI run: detached writer survived launcher-process exit,
+  fresh-process recovery observed it, and cancellation stopped it before a
+  durable cgroup receipt. Cross-UID HTTP challenge and pinned create/kill passed.
+- Ruff lint passed for python/tests/scripts; formatting passed for changed
+  Python files. Repository-wide formatting reports ten pre-existing files;
+  those are outside this continuation and no format-only edits were made.
+- Line endings: 2013 tracked files, 2004 text. Spec references: 130 line refs,
+  297 mentions. Task context: 865 valid references. Workflow inputs, Codex issue
+  wiring and README CI table checks passed.
+
+Receipts and actual identities: service-verification.json. GPU/model hardware
+attestation currently returns 503. GPU optimization, Oracle acceptance/rejection,
+rollback, delivery and active HTTP run recovery remain unverified under R8.
