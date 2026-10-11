@@ -54,9 +54,20 @@ Evidence and reproducible commands:
 - [x] Freeze canonical workspace authorization roots and regress symlink
   retargeting discovered by independent Standards review.
 - [x] Document deployment, supported runtime boundaries and measured receipts.
-- [ ] Deliver this continuation through PR/CI/merge.
+- [x] Deliver this continuation through PR #706, all 13 CI checks and merge
+  6a16df1e. Local main was synchronized to the merge.
 - [ ] R8: implement contained GPU/model attestation and run the complete real
   optimization, Oracle, rollback, delivery and active-run recovery acceptance.
 
 GPU image provisioning is in progress. The current hardware endpoint returns
 503; CPU containment passes do not close R8. This task remains in progress.
+
+## GPU validation continuation (2026-10-12)
+
+- [x] Reproduce control-store alias retargeting on Linux; freeze its canonical
+  startup path and add a regression protecting identity/ownership records.
+- [ ] Recover the locally installed, checksum-verified GPU job image and run
+  actual contained CUDA/Triton probes.
+- [ ] Establish actual Ollama coding tool execution and independent file tests;
+  text describing a tool invocation is a failed coding check.
+- [ ] Complete the R8 GPU/model, optimization and recovery release criteria.

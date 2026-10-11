@@ -47,6 +47,8 @@ outside every container mount. Keep these paths and the backend ID stable on
 restart. Each mutating repository must be an exclusive linked Git worktree.
 Workspace roots are fixed to their canonical paths at startup; later symlink
 changes cannot extend the authorized roots.
+The control-store path is fixed the same way; changing its configured alias
+cannot redirect private ownership records into a writable workspace.
 
 The service binds to 127.0.0.1. Configure UC_METAINFER_URL on the Worker and
 planner to that endpoint and UC_METAINFER_REVISION to the pinned revision.

@@ -214,3 +214,20 @@ Final checks:
 Receipts and actual identities: service-verification.json. GPU/model hardware
 attestation currently returns 503. GPU optimization, Oracle acceptance/rejection,
 rollback, delivery and active HTTP run recovery remain unverified under R8.
+
+## Control-store continuation (2026-10-12)
+
+The Linux regression first failed against the merged implementation: after
+retargeting the control-store alias to the workspace, ContainedJobs initialized
+private records there. ServiceConfig now fixes the canonical store path when
+the configuration is created. Repeating the regression preserves the private
+identity/record directory, and the full Linux service suite passed (26 tests).
+
+Independent Standards and Spec reviews both passed with no findings. Ruff lint
+and formatting passed for both changed Python files. The Windows focused suite
+passed (20 tests, 6 Linux-only cases skipped); reference and line-ending guards
+passed. PR #706 is merged at
+6a16df1e with all 13 CI checks passed; CPU containment delivery is complete.
+GPU image provisioning and local Ollama coding verification continue separately.
+R8 remains OPEN; neither provisioned dependencies nor model-generated claims
+of tool execution constitute optimization acceptance.
