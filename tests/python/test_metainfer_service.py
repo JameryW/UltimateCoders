@@ -276,6 +276,26 @@ def test_workspace_root_retargeting_cannot_authorize_protected_directories(tmp_p
         config.workspace(str(protected))
 
 
+@pytest.mark.skipif(os.name != "posix", reason="Linux symlink containment boundary")
+def test_control_store_alias_cannot_be_retargeted_by_a_workspace_writer(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    private = tmp_path / "private-control"
+    private.mkdir()
+    alias = workspace / "control-alias"
+    alias.symlink_to(private, target_is_directory=True)
+    config = ServiceConfig(alias, (workspace,), "backend-a", "revision-a")
+    alias.unlink()
+    alias.symlink_to(workspace, target_is_directory=True)
+    cgroup = tmp_path / "cgroup"
+    cgroup.mkdir()
+    jobs = ContainedJobs(config, RuntimeFixture(cgroup), boot_id="boot-a", cgroup_root=tmp_path)
+    assert config.control_dir == private
+    assert (private / "identity.json").is_file()
+    assert jobs.records.parent == private
+    assert not (workspace / "identity.json").exists()
+
+
 @pytest.mark.parametrize("change", ["backend", "container", "restart", "generation", "isolation"])
 def test_foreign_or_restarted_container_cannot_authorize_cleanup(tmp_path, change):
     config, jobs, runtime, workspace = job_fixture(tmp_path)

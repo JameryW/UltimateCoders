@@ -162,6 +162,7 @@ ownership. Upstream ProcStatus.finished_at uses Unix epoch seconds.
 | --- | --- |
 | Source/task/control roots overlap allowed workspaces | Refuse service startup |
 | Configured workspace-root symlink changes after startup | Keep the validated canonical roots; never authorize its new target |
+| Configured control-store symlink changes after startup | Keep the validated canonical store; never redirect ownership records into the workspace |
 | Control store overlaps a mount; invalid runtime UID/env/mount parameters | Reject before claiming the workspace or changing ownership |
 | Non-linked/shared Git repository | Refuse mutating launch |
 | Foreign/restarted container, changed boot, missing scope, unreadable cgroup | No stop proof; retain ownership |
@@ -189,6 +190,7 @@ validation failures precede claims; repeated old receipts fence newer owners;
 short probe/kill exit races; no-follow metadata/FIFO rejection; discovery and
 create survive router filtering; Unix timestamps and sanitized timeout causes;
 retargeting a configured workspace-root symlink cannot authorize protected paths.
+Retargeting the configured control-store alias cannot redirect private records.
 Run real OCI detached-writer and cross-UID HTTP gates separately from fixtures.
 Record actual GPU optimization evidence separately; CPU passes cannot close R8.
 

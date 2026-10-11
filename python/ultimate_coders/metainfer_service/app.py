@@ -23,8 +23,9 @@ class ServiceConfig:
     revision: str
 
     def __post_init__(self) -> None:
-        # Keep the startup authorization stable even if a job retargets a
-        # symlink used by the operator to name a workspace root.
+        # Freeze both authorization and the private store at startup; a job
+        # may retarget aliases located in its writable workspace.
+        object.__setattr__(self, "control_dir", self.control_dir.resolve())
         object.__setattr__(
             self, "workspace_roots", tuple(root.resolve() for root in self.workspace_roots)
         )
