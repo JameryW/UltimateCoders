@@ -142,12 +142,65 @@ class MetaInferAdapter:
             InferenceTaskType.OPTIMIZE_KERNEL,
             InferenceTaskType.OPTIMIZE_RUNTIME,
         ):
+            probe_key = self.operation_id + ":workspace-probe" if self.operation_id else None
+            if self.state and probe_key:
+                saved = await asyncio.to_thread(self.state.get, "remote_jobs", probe_key)
+                if saved and saved.get("state") not in ("completed", "stopped"):
+                    raise RemoteStateUncertainError("Reconcile the previous workspace probe first")
+
+            probe_context = {}
+
+            async def persist_probe(probe):
+                probe_context.update(probe)
+                if not self.state or not probe_key:
+                    return
+
+                def claim(old):
+                    if old and old.get("state") not in ("completed", "stopped"):
+                        raise RemoteStateUncertainError("Workspace probe already has an owner")
+                    return {
+                        **probe,
+                        "state": "cleanup_pending",
+                        "phase": "workspace_probe",
+                        "backend": self.url,
+                    }
+
+                write = asyncio.create_task(
+                    asyncio.to_thread(self.state.mutate, "remote_jobs", probe_key, claim)
+                )
+                try:
+                    await asyncio.shield(write)
+                except asyncio.CancelledError as exc:
+                    await write
+                    exc.cleanup_pending, exc.retryable = True, False
+                    raise
+
             receipt = await verify_workspace(
                 client,
                 self.url,
                 task.repository,
                 expected_revision=os.environ.get("UC_METAINFER_REVISION") or None,
+                on_probe=persist_probe,
             )
+            if self.state and probe_key:
+
+                def finish_probe(old):
+                    if old.get("probe_directory") != probe_context["probe_directory"]:
+                        raise RemoteStateUncertainError(
+                            "Workspace probe owner changed before receipt"
+                        )
+                    return {
+                        **old,
+                        "state": "stopped",
+                        "workspace_receipt": receipt["workspace_receipt"],
+                    }
+
+                await asyncio.to_thread(
+                    self.state.mutate,
+                    "remote_jobs",
+                    probe_key,
+                    finish_probe,
+                )
             configured = os.environ.get("UC_METAINFER_BACKEND_ID")
             if configured and receipt["backend_id"] != configured:
                 raise ValueError("Configured MetaInfer backend identity differs from service")

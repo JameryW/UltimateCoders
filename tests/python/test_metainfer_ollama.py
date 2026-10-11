@@ -290,3 +290,31 @@ def test_hardware_code_mismatch_keeps_endpoint_unavailable_after_verified_stop(a
         jobs.hardware()
     assert runtime.calls == ["create", "start"]
     assert jobs.ownership.query("workspace_owners", task_id_present=True, limit=1) == []
+
+
+@pytest.mark.parametrize("delay, expected_status", [(2.3, 200), (6, 503)])
+def test_hardware_http_accepts_a_cold_query_but_bounds_stalled_identity(
+    attested_fixture, delay, expected_status
+):
+    import shlex
+    import sys
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from ultimate_coders.metainfer_service.app import add_contract_routes
+
+    config, jobs, runtime, environment, _ = attested_fixture
+    jobs.enable_hardware(environment)
+    # This file is owned by attested_fixture inside its isolated temporary PATH.
+    smi = config.control_dir.parent / "bin/nvidia-smi"
+    assert smi.resolve().parent == config.control_dir.parent / "bin"
+    code = f"import time; time.sleep({delay}); print('GPU-fixture, Fixture GPU, 1, 100')"
+    smi.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} -c {shlex.quote(code)}\n")
+    app = FastAPI()
+    add_contract_routes(app, config, jobs)
+    started = time.monotonic()
+    with TestClient(app) as client:
+        response = client.get("/api/uc/hardware")
+    assert response.status_code == expected_status
+    assert time.monotonic() - started < 6
+    assert runtime.calls == ["create", "start"]

@@ -190,7 +190,7 @@ class HardwareAttestation:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=2,
+                timeout=5,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:

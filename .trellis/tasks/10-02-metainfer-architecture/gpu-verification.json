@@ -1,5 +1,5 @@
 {
-  "recorded_at": "2026-10-11T18:43:24.047218+00:00",
+  "recorded_at": "2026-10-11T19:02:24.476476+00:00",
   "upstream_revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
   "delivery_baseline": "48410a6e3d70ca4a0365288a70f4124434cb2c38",
   "runtime_preflight": {
@@ -265,6 +265,63 @@
       "gpu_release_acceptance": false,
       "repository_sha256": "e7901fbe5f12c1e4c4dfa08c6d9ebadefc14f329a8be52bad9ebe616af26ad7b",
       "baseline_sha256": "e7901fbe5f12c1e4c4dfa08c6d9ebadefc14f329a8be52bad9ebe616af26ad7b"
+    },
+    {
+      "task_id": "uc-attested-documented-gpu-optim-b5372b2f",
+      "state": {
+        "id": "uc-attested-documented-gpu-optim-b5372b2f",
+        "type": "evolve-kernel",
+        "label": "UC attested documented GPU optimization",
+        "state_dir": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/service/nodes/uc-contained/.metainfer/tasks/uc-attested-documented-gpu-optim-b5372b2f",
+        "created_at": 1791744112.254523,
+        "launcher": "local",
+        "status": {
+          "running": false,
+          "pid": 517663,
+          "started_at": 1791744114.6832936,
+          "finished_at": 1791745022.281397,
+          "exit_hint": "container-stopped"
+        },
+        "requirements": {
+          "task_id": "uc-attested-documented-gpu-optim-b5372b2f",
+          "task_type": "evolve-kernel",
+          "raw_request": "{\"task_type\": \"optimize_kernel\", \"repository\": \"/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/worktrees/optimization-9a638683\", \"objective\": \"Optimize the documented vector-add kernel while preserving its contract.\", \"parameters\": {\"kernel_file_path\": \"/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/worktrees/optimization-9a638683/kernel.py\", \"kernel_function_name\": \"kernel\", \"max_iterations\": \"10\"}, \"upstream_type\": \"evolve-kernel\"}",
+          "label": "UC attested documented GPU optimization",
+          "kernel_file_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/worktrees/optimization-9a638683/kernel.py",
+          "kernel_function_name": "kernel",
+          "max_iterations": "10"
+        },
+        "run": {
+          "task_id": "uc-attested-documented-gpu-optim-b5372b2f",
+          "current_iteration": 1,
+          "current_phase": "B_review_correctness_harness",
+          "last_update": 1791744942.8699389,
+          "finished": true,
+          "final_status": "failed",
+          "last_outcome": "ok",
+          "last_transition_label": "harness generated",
+          "notes": [],
+          "error": "Contained orchestrator exited without a final outcome"
+        }
+      },
+      "writers_stop_proof": {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "uc-attested-documented-gpu-optim-b5372b2f",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974:/sys/fs/cgroup/pids/machine.slice/libpod-16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974.scope/container",
+        "container_id": "16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974.scope/container",
+        "observed_at": 1791745025.4554825,
+        "evidence_id": "ddeeae66b0188a189bfda1e7683150f298a1db401d5af235ed48b2360faceeee"
+      },
+      "failure": "Actual optimization exceeded 900s",
+      "repository_changed": false,
+      "baseline_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+      "repository_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+      "gpu_release_acceptance": false,
+      "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/worktrees/optimization-9a638683"
     }
   ],
   "hardware_http_attestation_implemented": true,
@@ -272,9 +329,9 @@
   "r8_status": "OPEN",
   "remaining": [
     "actual pinned optimization completion",
-    "protected GPU benchmarks and Oracle acceptance/rejection",
-    "rollback and commit/artifact delivery",
-    "active actual-optimization cancellation/recovery and two-host artifact download"
+    "protected whole-workflow GPU Oracle acceptance/rejection and rollback",
+    "accepted patch commit and artifact delivery",
+    "actual two-host artifact download"
   ],
   "hardware_continuation_baseline": "6db2189e0214203f23d7823732ab90213c38fdb3",
   "contained_hardware_and_native_coding": {
@@ -471,5 +528,602 @@
     },
     "gpu_required": true,
     "service_url": "http://127.0.0.1:48768"
+  },
+  "hardware_delivery": {
+    "pr_url": "https://github.com/JameryW/UltimateCoders/pull/709",
+    "merge_commit": "87abce5661efe4188a967b098b52df624d8453f6",
+    "ci_checks_passed": 13
+  },
+  "active_actual_optimization_http_restart": {
+    "active_http_restart_passed": true,
+    "task_id": "uc-attested-documented-gpu-optim-b5372b2f",
+    "container_id": "16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974",
+    "hardware_evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7",
+    "no_new_jobs_or_hardware_probe": true,
+    "gpu_release_acceptance": false,
+    "before_status": {
+      "running": true,
+      "pid": 517663,
+      "started_at": 1791744114.6832936,
+      "finished_at": null,
+      "exit_hint": "container-running"
+    },
+    "after_status": {
+      "running": true,
+      "pid": 517663,
+      "started_at": 1791744114.6832936,
+      "finished_at": null,
+      "exit_hint": "container-running"
+    },
+    "before_phase": "A_gen_correctness_harness",
+    "after_phase": "A_gen_correctness_harness"
+  },
+  "independent_gpu_oracle_diagnostic": {
+    "baseline": {
+      "workload_id": "uc-vector-add-f32-contiguous-v1",
+      "correctness": true,
+      "compile_success": true,
+      "metrics": {
+        "latency_ms": 0.0033175751566886904
+      },
+      "numerical_error": 0.0,
+      "evidence": [],
+      "profile": null,
+      "statistics": {
+        "count": 5,
+        "warmup_runs": 1,
+        "samples": {
+          "latency_ms": [
+            0.0033284001052379607,
+            0.003222300112247467,
+            0.0033623874187469482,
+            0.003302299976348877,
+            0.0033175751566886904
+          ]
+        },
+        "dispersion_pct": {
+          "latency_ms": 1.5738437099199767
+        },
+        "environment": {
+          "identity": {
+            "declared": {
+              "require_gpu": "true",
+              "gpu_uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f"
+            },
+            "platform": "Linux-5.15.167.4-microsoft-standard-WSL2-x86_64-with-glibc2.36",
+            "python": "3.12.11 (main, Jul  1 2025, 05:29:09) [GCC 12.2.0]",
+            "executable": "/usr/local/bin/python",
+            "devices": [
+              {
+                "uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f",
+                "model": "NVIDIA GeForce RTX 4060 Laptop GPU",
+                "driver": "617.14",
+                "memory_mib": "8188"
+              }
+            ],
+            "dependencies": {
+              "torch": "2.6.0",
+              "triton": "3.2.0",
+              "numpy": "2.2.6",
+              "nvidia-cuda-runtime-cu12": "12.4.127"
+            },
+            "cuda_compiler": null,
+            "weights": []
+          },
+          "conditions": [
+            {
+              "uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f",
+              "temperature_c": "67",
+              "sm_clock_mhz": "1185",
+              "utilization_pct": "34"
+            }
+          ]
+        },
+        "conditions_after": [
+          {
+            "uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f",
+            "temperature_c": "75",
+            "sm_clock_mhz": "2535",
+            "utilization_pct": "36"
+          }
+        ]
+      },
+      "environment_id": "ac706c3e684a6e16f408db0ed932482c2334dc33c22028cfe90012c0abfbc285"
+    },
+    "candidate": {
+      "workload_id": "uc-vector-add-f32-contiguous-v1",
+      "correctness": true,
+      "compile_success": true,
+      "metrics": {
+        "latency_ms": 0.0036104001104831696
+      },
+      "numerical_error": 0.0,
+      "evidence": [],
+      "profile": null,
+      "statistics": {
+        "count": 5,
+        "warmup_runs": 1,
+        "samples": {
+          "latency_ms": [
+            0.003982799872756004,
+            0.0033522874116897585,
+            0.0033807501196861265,
+            0.005033599957823753,
+            0.0036104001104831696
+          ]
+        },
+        "dispersion_pct": {
+          "latency_ms": 17.992924745466322
+        },
+        "environment": {
+          "identity": {
+            "declared": {
+              "require_gpu": "true",
+              "gpu_uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f"
+            },
+            "platform": "Linux-5.15.167.4-microsoft-standard-WSL2-x86_64-with-glibc2.36",
+            "python": "3.12.11 (main, Jul  1 2025, 05:29:09) [GCC 12.2.0]",
+            "executable": "/usr/local/bin/python",
+            "devices": [
+              {
+                "uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f",
+                "model": "NVIDIA GeForce RTX 4060 Laptop GPU",
+                "driver": "617.14",
+                "memory_mib": "8188"
+              }
+            ],
+            "dependencies": {
+              "torch": "2.6.0",
+              "triton": "3.2.0",
+              "numpy": "2.2.6",
+              "nvidia-cuda-runtime-cu12": "12.4.127"
+            },
+            "cuda_compiler": null,
+            "weights": []
+          },
+          "conditions": [
+            {
+              "uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f",
+              "temperature_c": "75",
+              "sm_clock_mhz": "2385",
+              "utilization_pct": "26"
+            }
+          ]
+        },
+        "conditions_after": [
+          {
+            "uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f",
+            "temperature_c": "72",
+            "sm_clock_mhz": "2520",
+            "utilization_pct": "25"
+          }
+        ]
+      },
+      "environment_id": "ac706c3e684a6e16f408db0ed932482c2334dc33c22028cfe90012c0abfbc285"
+    },
+    "verdict": {
+      "accepted": false,
+      "reasons": [
+        "Unstable benchmark measurement latency_ms",
+        "GPU clock drift exceeds 5 percent; remeasure under stable conditions",
+        "GPU is busy outside the timed workload",
+        "Performance regression in latency_ms: 0.0033175751566886904 -> 0.0036104001104831696",
+        "Improvement does not exceed measurement noise",
+        "No sufficient improvement in latency_ms"
+      ],
+      "improvement_pct": -8.826475361201801
+    },
+    "protected_harness": {
+      "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/protected-oracle/harness.py": "8faa42656cdc89bd8775ca50bb3c06d5f71062c68be298e274a89fda3ce7c36c",
+      "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/protected-oracle/reference.py": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+    },
+    "gpu_release_acceptance": false,
+    "stop_proof": {
+      "contract_version": "uc-metainfer/1",
+      "task_id": "protected-gpu-oracle",
+      "backend_id": "uc-attested-native-aad5e8b5",
+      "writers_stopped": true,
+      "proof_kind": "cgroup_empty",
+      "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca:/sys/fs/cgroup/pids/machine.slice/libpod-1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca.scope/container",
+      "container_id": "1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca",
+      "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca.scope/container",
+      "observed_at": 1791745223.7716331,
+      "evidence_id": "364abcc54ffb26c67ce107b4d3b5e162a24cd49ee89a8cd2c995107487aa8287"
+    },
+    "kernel_bytes_preserved": true,
+    "measured_uc_code": {
+      "benchmark.py": "646b9bef52b6ed2e26bf07067ae62e33d9c3390b8d8f422f9147ce4b5b23b9d2",
+      "hardware.py": "3ab5da75a50b3bd789a90d506f12c94ab139404a7fcac38dd8a77b89047b37a4",
+      "models.py": "c8b9ca20c5141d94308173da3d327a27b71ec3b9d1d944a9ab87c9e9db4178e2",
+      "oracle.py": "6b592f75c317e975db2d922c60ebf520762b5766ac7f09e825df91db366288c7",
+      "process.py": "15f80c0a846a5327a2aa5639617964cc7aa8b6201dd9f23c9d4f75de83584567"
+    },
+    "scope": "Read-only protected measurement after cancellation; unchanged code. This is not the complete remote optimization workflow."
+  },
+  "cold_start_deadline_repair": {
+    "device_observation_seconds": 5,
+    "provider_observation_seconds": 2,
+    "hardware_http_seconds": 10,
+    "workspace_http_seconds": 30,
+    "before": {
+      "observed_prior_transient_http_503": true,
+      "prior_error_detail_not_saved": true,
+      "followup_checks": [
+        {
+          "status": 503,
+          "elapsed_seconds": 2.010491171000467,
+          "evidence_id": null,
+          "detail": "GPU identity observation timed out"
+        },
+        {
+          "status": 200,
+          "elapsed_seconds": 0.43367172999933246,
+          "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7",
+          "detail": null
+        },
+        {
+          "status": 200,
+          "elapsed_seconds": 0.41662370300036855,
+          "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7",
+          "detail": null
+        },
+        {
+          "status": 200,
+          "elapsed_seconds": 0.40450948500074446,
+          "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7",
+          "detail": null
+        },
+        {
+          "status": 200,
+          "elapsed_seconds": 0.4014408420007385,
+          "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7",
+          "detail": null
+        }
+      ],
+      "gpu_release_acceptance": false
+    },
+    "after": {
+      "observed_prior_transient_http_503": true,
+      "prior_error_detail_not_saved": true,
+      "followup_checks": [
+        {
+          "status": 200,
+          "elapsed_seconds": 2.4194912940001814,
+          "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7",
+          "detail": null
+        },
+        {
+          "status": 200,
+          "elapsed_seconds": 0.4162138669998967,
+          "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7",
+          "detail": null
+        },
+        {
+          "status": 200,
+          "elapsed_seconds": 0.4021930599992629,
+          "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7",
+          "detail": null
+        },
+        {
+          "status": 200,
+          "elapsed_seconds": 0.4323233569994045,
+          "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7",
+          "detail": null
+        },
+        {
+          "status": 200,
+          "elapsed_seconds": 0.4161060929982341,
+          "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7",
+          "detail": null
+        }
+      ],
+      "gpu_release_acceptance": false
+    },
+    "failed_workspace_gate": {
+      "exit_code": 3,
+      "error": "REJECTED: MetaInfer service is unreachable or unhealthy:",
+      "passing_evidence_written": false,
+      "subsequent_stop_proof": {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-d73a255a851643ad83d6811d29f318a2",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d:/sys/fs/cgroup/pids/machine.slice/libpod-2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d.scope/container",
+        "container_id": "2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d.scope/container",
+        "observed_at": 1791747241.7404692,
+        "evidence_id": "c00023e867c896f075a67b5cf52f00cb3adfa5f01b22aa4d376aba540f8498df"
+      }
+    },
+    "repeated_gpu_deployment_gate": {
+      "contract": {
+        "version": "uc-metainfer/1",
+        "revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "capabilities": [
+          "workspace_probe",
+          "quiescence",
+          "workspace_probe_identity",
+          "kernel_publication",
+          "hardware_identity"
+        ]
+      },
+      "workspace": {
+        "read_sha256": "7237e77361282cc13fd91c33f0edebbded0b0957d5b42ef06dda8912feed0e14",
+        "writer_identity": "8ffbd5437d50:1000:1",
+        "quiescence": {
+          "contract_version": "uc-metainfer/1",
+          "task_id": "probe-ce8b8309bd6848f5a0d0faa27f94f8e2",
+          "backend_id": "uc-attested-native-aad5e8b5",
+          "writers_stopped": true,
+          "proof_kind": "cgroup_empty",
+          "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8:/sys/fs/cgroup/pids/machine.slice/libpod-8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8.scope/container",
+          "container_id": "8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8",
+          "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8.scope/container",
+          "observed_at": 1791747231.8035336,
+          "evidence_id": "090d4399b8512bc4ec11c47b9742455a87f0fea006a04addae056f4fddf9ca77"
+        }
+      },
+      "hardware": {
+        "devices": [
+          {
+            "uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f",
+            "model": "NVIDIA GeForce RTX 4060 Laptop GPU",
+            "driver": "617.14",
+            "memory_mib": "8188"
+          }
+        ],
+        "runtime": {
+          "torch": "2.6.0+cu124",
+          "cuda": "12.4",
+          "triton": "3.2.0",
+          "image_code": {
+            "coding.py": "f1eb95ab6981e0ebe28ef6bec96a89d7aba4e7f573dd47dcdd2c555ab433d3e7",
+            "ollama.py": "0b5e1546e261a99ff14e373dc060ab6f4062d38e03fb82b9bb082b6b2d331e96",
+            "gpu_probe.py": "fe59a59cd8b88878b539ec4c14aabb60f641c2dcecc38e1e7e4bcb26f5f755b2",
+            "observations.py": "69b5d629b93f27b6b5f8238cbf4cc79b771e7783472e1a4d4b23cae632a4643a",
+            "process.py": "b6bb2d5a6a9a95ad18fd6fbf4810fec62efa9bb3d1cde1b78baa5cf184d3b76d"
+          }
+        },
+        "model_identity": {
+          "provider": "ollama",
+          "model": "uc-metainfer-gemma:1012",
+          "digest": "0979dc60650788ee9dc535e6d808fa5ac9b7790f33f38d0a207bab93caa7291f",
+          "client": "uc-native-ollama/1",
+          "client_sha256": "f1eb95ab6981e0ebe28ef6bec96a89d7aba4e7f573dd47dcdd2c555ab433d3e7"
+        },
+        "gpu_cases": [
+          {
+            "size": 33,
+            "max_error": 0.0
+          },
+          {
+            "size": 4096,
+            "max_error": 0.0
+          },
+          {
+            "size": 65536,
+            "max_error": 0.0
+          }
+        ],
+        "model_probe": {
+          "nonce_sha256": "113940aa20d40cefa444b92d98fc39e15b1fba938df47129f233899ecca87303",
+          "response_sha256": "113940aa20d40cefa444b92d98fc39e15b1fba938df47129f233899ecca87303"
+        },
+        "contract_version": "uc-metainfer/1",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
+        "image_id": "f2d47104f71e50bd62d8c9910c5e351d3a7ef1db63c2e489f3316f7bdd20d411",
+        "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+        "stop_proof": {
+          "contract_version": "uc-metainfer/1",
+          "task_id": "hardware-48a31dbb29474ead90efcfb0312b1654",
+          "backend_id": "uc-attested-native-aad5e8b5",
+          "writers_stopped": true,
+          "proof_kind": "cgroup_empty",
+          "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a:/sys/fs/cgroup/pids/machine.slice/libpod-8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a.scope/container",
+          "container_id": "8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a",
+          "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a.scope/container",
+          "observed_at": 1791743722.252279,
+          "evidence_id": "08e39ef7663eb78d89bc7db57ad082177265d3ab340c23f603f7634ccc62c8fd"
+        },
+        "profile_sha256": "70d4b7c2527714b8b3130ad6c1485d3df694b81c5b9c6b9a2f2ccd43c51688a8",
+        "evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7"
+      },
+      "gpu_required": true,
+      "service_url": "http://127.0.0.1:48768"
+    },
+    "final_owned_writer_audit": [
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-ce8b8309bd6848f5a0d0faa27f94f8e2",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8:/sys/fs/cgroup/pids/machine.slice/libpod-8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8.scope/container",
+        "container_id": "8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8.scope/container",
+        "observed_at": 1791747235.8853252,
+        "evidence_id": "04e2328da1e4f24139e3099413059531a85f41b7ce044ee9ec2cff9aeeb073e8"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "uc-attested-documented-gpu-optim-b5372b2f",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974:/sys/fs/cgroup/pids/machine.slice/libpod-16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974.scope/container",
+        "container_id": "16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974.scope/container",
+        "observed_at": 1791747236.4888732,
+        "evidence_id": "8b36bbb0ac2955c12f417e2972391b012aabda0734972c24ec2ef98a3cfd6f8e"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "native-coding",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb:/sys/fs/cgroup/pids/machine.slice/libpod-290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb.scope/container",
+        "container_id": "290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb.scope/container",
+        "observed_at": 1791747237.0678422,
+        "evidence_id": "98ad3fa0ccb95aa2ebc319d21f33993f5f816cc3795270e7d79e16a8929a7953"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-8fc35d7f1dbe48da9b90afb9fef59ef7",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110:/sys/fs/cgroup/pids/machine.slice/libpod-36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110.scope/container",
+        "container_id": "36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110.scope/container",
+        "observed_at": 1791747237.6660757,
+        "evidence_id": "ca68068136328dc841002de45c7e0ce859b7a1c435586a4d8b81a89089f78d42"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "independent-assertion",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d:/sys/fs/cgroup/pids/machine.slice/libpod-820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d.scope/container",
+        "container_id": "820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d.scope/container",
+        "observed_at": 1791747238.2527108,
+        "evidence_id": "d7997e57593954fe737326111557ba66b8caef5d0bd9f1b40392b0e7a443a41b"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-57a8a96dafaf40c1b67238c7938d20fc",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:fcbd197a0224cc20f658d35e0de330f9671897048df9c617b78bd2cfcda70462:/sys/fs/cgroup/pids/machine.slice/libpod-fcbd197a0224cc20f658d35e0de330f9671897048df9c617b78bd2cfcda70462.scope/container",
+        "container_id": "fcbd197a0224cc20f658d35e0de330f9671897048df9c617b78bd2cfcda70462",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-fcbd197a0224cc20f658d35e0de330f9671897048df9c617b78bd2cfcda70462.scope/container",
+        "observed_at": 1791747238.8557951,
+        "evidence_id": "46b97870d65f1089981b390b9f8986934c42494dbaaad70afc2d9166969dbc2b"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-085556e49fd8436d85bf7cd4ec380121",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:e4f976a9c4a877fef57bdb99bc3d6651913eae8f17cee9cd9180bffd7b64eea3:/sys/fs/cgroup/pids/machine.slice/libpod-e4f976a9c4a877fef57bdb99bc3d6651913eae8f17cee9cd9180bffd7b64eea3.scope/container",
+        "container_id": "e4f976a9c4a877fef57bdb99bc3d6651913eae8f17cee9cd9180bffd7b64eea3",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-e4f976a9c4a877fef57bdb99bc3d6651913eae8f17cee9cd9180bffd7b64eea3.scope/container",
+        "observed_at": 1791747239.4381034,
+        "evidence_id": "ff8328ceca9584115a56d4d32863c2691bde7efc56809dcd18c204ad98a05ead"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "hardware-48a31dbb29474ead90efcfb0312b1654",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a:/sys/fs/cgroup/pids/machine.slice/libpod-8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a.scope/container",
+        "container_id": "8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a.scope/container",
+        "observed_at": 1791747240.019666,
+        "evidence_id": "3df03dac29b5438b53f564a6a371c4524dde9faaf967dd5b3ab1dce1c728e8f8"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "protected-gpu-oracle",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca:/sys/fs/cgroup/pids/machine.slice/libpod-1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca.scope/container",
+        "container_id": "1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca.scope/container",
+        "observed_at": 1791747240.596967,
+        "evidence_id": "9ca4e97653a985821f269db1d5cc6a00914d4e64480ab4b0dd31ab6f3728f5d8"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "active-cache-writer",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916:/sys/fs/cgroup/pids/machine.slice/libpod-243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916.scope/container",
+        "container_id": "243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916.scope/container",
+        "observed_at": 1791747241.1361365,
+        "evidence_id": "7b2df6d1001b77179f9fa1dc04f3daf8d7c2b544fa88afcc44beb084a9fe2aa1"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-d73a255a851643ad83d6811d29f318a2",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d:/sys/fs/cgroup/pids/machine.slice/libpod-2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d.scope/container",
+        "container_id": "2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d.scope/container",
+        "observed_at": 1791747241.7404692,
+        "evidence_id": "c00023e867c896f075a67b5cf52f00cb3adfa5f01b22aa4d376aba540f8498df"
+      }
+    ],
+    "real_preflight_deadline_fault": {
+      "error": "Workspace probe outcome unknown; confirm its stopped scope before reuse",
+      "client_deadline_seconds": 0.1,
+      "elapsed_seconds": 0.6284458170011931,
+      "before": {
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "remote_id": "probe-8fc35d7f1dbe48da9b90afb9fef59ef7",
+        "probe_directory": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/worktrees/job/.uc-probe-t4hkb176",
+        "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/worktrees/job",
+        "state": "cleanup_pending",
+        "phase": "workspace_probe",
+        "backend": "http://127.0.0.1:48768"
+      },
+      "after": {
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "remote_id": "probe-8fc35d7f1dbe48da9b90afb9fef59ef7",
+        "probe_directory": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/worktrees/job/.uc-probe-t4hkb176",
+        "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/worktrees/job",
+        "state": "stopped",
+        "phase": "workspace_probe",
+        "backend": "http://127.0.0.1:48768",
+        "quiescence": {
+          "contract_version": "uc-metainfer/1",
+          "task_id": "probe-8fc35d7f1dbe48da9b90afb9fef59ef7",
+          "backend_id": "uc-attested-native-aad5e8b5",
+          "writers_stopped": true,
+          "proof_kind": "cgroup_empty",
+          "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110:/sys/fs/cgroup/pids/machine.slice/libpod-36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110.scope/container",
+          "container_id": "36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110",
+          "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110.scope/container",
+          "observed_at": 1791747139.149111,
+          "evidence_id": "737f777da68852984c026c669d325bf24a63e3925faf7c960869375cb415bb63"
+        }
+      },
+      "nonce_retained_until_stop": true,
+      "duplicate_submission_refused": true,
+      "gpu_release_acceptance": false,
+      "scope": "real_contained_preflight_fault_only"
+    },
+    "final_real_probe_fence": {
+      "proof": {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-b614ad78afa144f89002b737fa85f12e",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "workspace_fenced",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:probe-fence:probe-b614ad78afa144f89002b737fa85f12e",
+        "observed_at": 1791747798.3030837,
+        "evidence_id": "f5ea3427db1013a2bc3ea9ad2ef18ff08c94902a430aea5667367a8257121bd4"
+      },
+      "delayed_submission_status": 422,
+      "no_new_oci_jobs": true,
+      "nonce_target_untouched": true,
+      "gpu_release_acceptance": false
+    },
+    "scope": "deployment_preflight_only",
+    "gpu_release_acceptance": false
   }
 }

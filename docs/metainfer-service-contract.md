@@ -85,6 +85,7 @@ is created. Request fields:
 | `read_path` | string | absolute path to a probe file UC has already written |
 | `write_path` | string | absolute path the service must write |
 | `write_token` | string | the exact content the service must write to `write_path` |
+| `probe_id` | optional string | caller-generated `probe-<32 lowercase hex>` when `workspace_probe_identity` is advertised |
 
 Response fields:
 
@@ -92,13 +93,39 @@ Response fields:
 |-------|------|------------|
 | `read_sha256` | string | lowercase hex sha256 of the bytes at `read_path` |
 | `writer_identity` | string | non-empty; identifies the writing process |
+| `quiescence` | object | matching stopped-writer proof when `workspace_probe_identity` is advertised |
 
 Required side effect: the service writes `write_token` to `write_path`. UC then
 asserts the file exists and its content equals `write_token` exactly.
 
-Any mismatch raises `DeploymentContractError: Worker and MetaInfer do not share
-a writable workspace`. This check runs before launch, so a misconfigured shared
-volume is caught before a remote job exists.
+The client allows 30 seconds for the complete POST, including live device/model
+observation, contained probe startup and stop proof. An absolute asyncio
+deadline covers continuously trickling response bodies. Hardware GET has a 10s
+operation deadline; the service bounds device observation at 5s and provider
+identity at 2s. Contract GET remains bounded at 5s.
+
+Before POST, a persistent adapter records backend, probe ID and directory under
+`remote_jobs[operation_id + ":workspace-probe"]`. An uncertain response,
+timeout or cancellation retains nonce files and is nonretryable/cleanup_pending.
+UC must preserve the workspace and obtain stop evidence before rollback/reuse.
+An unresolved record prevents another probe; an old receipt cannot clear a newer
+probe owner. The release gate refuses to write passing evidence for this state.
+
+The contained service durably claims probe IDs once. Duplicate or delayed POSTs
+cannot replay create/start or stop another request's scope. Quiescence may fence
+an unknown probe ID against a delayed submission and return workspace_fenced;
+an active pre-create claim remains unresolved. Existing OCI scopes still need
+cgroup emptiness. Use versioned confirm_stop reconciliation with the saved ID.
+Older services retain successful probe compatibility; identifying an uncertain
+legacy probe requires service-side inspection.
+
+confirm_stop records the proof; it does not remove retained nonce files.
+Inspect the saved probe_directory, verify it is the original disposable
+directory directly beneath the recorded workspace, and remove it only after
+matching stop evidence. Then recover the workspace lease and explicitly retry.
+
+Byte/token or receipt mismatch after submission also retains the unknown scope.
+The probe itself may run in OCI; optimization is not launched until it passes.
 
 ### `GET /api/uc/jobs/{remote_id}/quiescence`
 
@@ -168,7 +195,8 @@ successful attestation. Default CPU configurations retain HTTP 503. See
 | `contract_version` != `uc-metainfer/1` | `DeploymentContractError`, contract incompatible |
 | `revision` != `UC_METAINFER_REVISION` | `DeploymentContractError`, revision is not the configured pin |
 | `capabilities` missing `workspace_probe` or `quiescence` | `DeploymentContractError`, contract incompatible |
-| workspace probe byte/token mismatch | `DeploymentContractError`, workspace not shared |
+| workspace POST timeout, cancellation or invalid receipt | nonretryable `cleanup_pending`; retain nonce/workspace and reconcile stopped writers |
+| duplicate probe ID / delayed POST after fence | refuse replay; never stop another probe's scope |
 | `writers_stopped` not `true` within 5s | `DeploymentContractError`, quiescence not proved |
 | quiescence `task_id` / `backend_id` mismatch | `DeploymentContractError`, quiescence not proved |
 | GPU `devices` empty or `model_identity` missing | `DeploymentContractError`, GPU identity incomplete |
