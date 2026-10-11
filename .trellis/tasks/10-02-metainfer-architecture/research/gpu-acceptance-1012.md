@@ -93,3 +93,20 @@ The client persists intent, retains nonces on uncertainty and refuses replay;
 operator reconciliation requires a matching receipt. Real client timeout fault
 injection passed retention/recovery and all-writer stop checks. This is contained
 preflight fault validation, separate from successful optimization acceptance.
+
+PR #710 merged at 45b84854 with eleven passing CI checks. The user confirmed no
+second host and explicitly kept cross-host acceptance incomplete. Continue local
+checks; do not substitute multiple containers or repeatedly ask for the host.
+
+Two isolated GPU replays distinguish a callable error from general model quality:
+the original rejected harness fails all ten cases by invoking Triton
+JITFunction.run without grid/warmup. A diagnostic copy calling the module's
+documented run(x, y) passes all ten with zero error and rejects a wrong candidate
+in all ten. The original artifacts were not edited. The completed reviewer also
+returned prose without its requested file; the pinned pipeline consequently
+received no file-based feedback. See harness-loop-diagnosis.md and the portable
+single_host_follow_up evidence. All thirteen owned OCI scopes stopped.
+
+These findings localize two failed seams but do not establish a successful
+model-generated harness, optimized candidate or protected workflow acceptance.
+Stable GPU conditions and genuine artifacts are still needed; R8 remains OPEN.

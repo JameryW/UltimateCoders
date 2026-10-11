@@ -1125,5 +1125,506 @@
     },
     "scope": "deployment_preflight_only",
     "gpu_release_acceptance": false
+  },
+  "single_host_follow_up": {
+    "recorded_date": "2026-10-12",
+    "scope": "harness_diagnostics_only",
+    "cross_host": {
+      "status": "incomplete",
+      "reason": "second_host_unavailable",
+      "user_confirmed_date": "2026-10-12",
+      "single_host_work_continues": true,
+      "same_host_containers_are_not_second_host_evidence": true
+    },
+    "hardware_evidence_id": "f3f86bd2dd1537bc523a7328f87e87a44faf2e6fece00b17716816876b95edd7",
+    "gpu_uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f",
+    "image_id": "f2d47104f71e50bd62d8c9910c5e351d3a7ef1db63c2e489f3316f7bdd20d411",
+    "original_harness_replay": {
+      "passed": false,
+      "error": "Some tests failed",
+      "total": 10,
+      "passed_count": 0,
+      "results": [
+        {
+          "index": 0,
+          "name": "small_even",
+          "passed": false,
+          "error": "JITFunction.run() missing 2 required keyword-only arguments: 'grid' and 'warmup'",
+          "details": null
+        },
+        {
+          "index": 1,
+          "name": "small_odd",
+          "passed": false,
+          "error": "JITFunction.run() missing 2 required keyword-only arguments: 'grid' and 'warmup'",
+          "details": null
+        },
+        {
+          "index": 2,
+          "name": "small_one",
+          "passed": false,
+          "error": "JITFunction.run() missing 2 required keyword-only arguments: 'grid' and 'warmup'",
+          "details": null
+        },
+        {
+          "index": 3,
+          "name": "medium_even",
+          "passed": false,
+          "error": "JITFunction.run() missing 2 required keyword-only arguments: 'grid' and 'warmup'",
+          "details": null
+        },
+        {
+          "index": 4,
+          "name": "medium_odd",
+          "passed": false,
+          "error": "JITFunction.run() missing 2 required keyword-only arguments: 'grid' and 'warmup'",
+          "details": null
+        },
+        {
+          "index": 5,
+          "name": "large_even",
+          "passed": false,
+          "error": "JITFunction.run() missing 2 required keyword-only arguments: 'grid' and 'warmup'",
+          "details": null
+        },
+        {
+          "index": 6,
+          "name": "large_odd",
+          "passed": false,
+          "error": "JITFunction.run() missing 2 required keyword-only arguments: 'grid' and 'warmup'",
+          "details": null
+        },
+        {
+          "index": 7,
+          "name": "large_power_of_2",
+          "passed": false,
+          "error": "JITFunction.run() missing 2 required keyword-only arguments: 'grid' and 'warmup'",
+          "details": null
+        },
+        {
+          "index": 8,
+          "name": "edge_large_odd",
+          "passed": false,
+          "error": "JITFunction.run() missing 2 required keyword-only arguments: 'grid' and 'warmup'",
+          "details": null
+        },
+        {
+          "index": 9,
+          "name": "boundary_max",
+          "passed": false,
+          "error": "JITFunction.run() missing 2 required keyword-only arguments: 'grid' and 'warmup'",
+          "details": null
+        }
+      ],
+      "harness_exit_code": 0,
+      "stderr_tail": "",
+      "task_id": "harness-replay-332f85bf",
+      "writers_stop_proof": {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "harness-replay-332f85bf",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:933a2e11545474d3c68a23488404786de81adf2e29e5edb89b38b5495072a53c:/sys/fs/cgroup/pids/machine.slice/libpod-933a2e11545474d3c68a23488404786de81adf2e29e5edb89b38b5495072a53c.scope/container",
+        "container_id": "933a2e11545474d3c68a23488404786de81adf2e29e5edb89b38b5495072a53c",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-933a2e11545474d3c68a23488404786de81adf2e29e5edb89b38b5495072a53c.scope/container",
+        "observed_at": 1791753097.5851429,
+        "evidence_id": "250bcac3402f18f11e22902c84b7bf360ce54d056c8ed8af2217c88a06efa036"
+      },
+      "harness_sha256": "4021f6c63349b6485092dcc30d44b4e2b6e6752258e92f709d2a38ec8dfb7f5b",
+      "kernel_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+      "gpu_release_acceptance": false,
+      "unchanged_model_artifact": true,
+      "red_signal": true
+    },
+    "public_entrypoint_copy_replay": {
+      "passed": true,
+      "error": null,
+      "total": 10,
+      "passed_count": 10,
+      "results": [
+        {
+          "index": 0,
+          "name": "small_even",
+          "passed": true,
+          "error": null,
+          "details": {
+            "max_error": 0.0
+          }
+        },
+        {
+          "index": 1,
+          "name": "small_odd",
+          "passed": true,
+          "error": null,
+          "details": {
+            "max_error": 0.0
+          }
+        },
+        {
+          "index": 2,
+          "name": "small_one",
+          "passed": true,
+          "error": null,
+          "details": {
+            "max_error": 0.0
+          }
+        },
+        {
+          "index": 3,
+          "name": "medium_even",
+          "passed": true,
+          "error": null,
+          "details": {
+            "max_error": 0.0
+          }
+        },
+        {
+          "index": 4,
+          "name": "medium_odd",
+          "passed": true,
+          "error": null,
+          "details": {
+            "max_error": 0.0
+          }
+        },
+        {
+          "index": 5,
+          "name": "large_even",
+          "passed": true,
+          "error": null,
+          "details": {
+            "max_error": 0.0
+          }
+        },
+        {
+          "index": 6,
+          "name": "large_odd",
+          "passed": true,
+          "error": null,
+          "details": {
+            "max_error": 0.0
+          }
+        },
+        {
+          "index": 7,
+          "name": "large_power_of_2",
+          "passed": true,
+          "error": null,
+          "details": {
+            "max_error": 0.0
+          }
+        },
+        {
+          "index": 8,
+          "name": "edge_large_odd",
+          "passed": true,
+          "error": null,
+          "details": {
+            "max_error": 0.0
+          }
+        },
+        {
+          "index": 9,
+          "name": "boundary_max",
+          "passed": true,
+          "error": null,
+          "details": {
+            "max_error": 0.0
+          }
+        }
+      ],
+      "harness_exit_code": 0,
+      "stderr_tail": "",
+      "broken_candidate": {
+        "passed": false,
+        "error": "Some tests failed",
+        "total": 10,
+        "passed_count": 0,
+        "results": [
+          {
+            "index": 0,
+            "name": "small_even",
+            "passed": false,
+            "error": "Max error 1.5462162494659424 exceeds tolerance",
+            "details": {
+              "max_error": 1.5462162494659424
+            }
+          },
+          {
+            "index": 1,
+            "name": "small_odd",
+            "passed": false,
+            "error": "Max error 1.5807876586914062 exceeds tolerance",
+            "details": {
+              "max_error": 1.5807876586914062
+            }
+          },
+          {
+            "index": 2,
+            "name": "small_one",
+            "passed": false,
+            "error": "Max error 0.08970180153846741 exceeds tolerance",
+            "details": {
+              "max_error": 0.08970180153846741
+            }
+          },
+          {
+            "index": 3,
+            "name": "medium_even",
+            "passed": false,
+            "error": "Max error 3.6309852600097656 exceeds tolerance",
+            "details": {
+              "max_error": 3.6309852600097656
+            }
+          },
+          {
+            "index": 4,
+            "name": "medium_odd",
+            "passed": false,
+            "error": "Max error 2.491682529449463 exceeds tolerance",
+            "details": {
+              "max_error": 2.491682529449463
+            }
+          },
+          {
+            "index": 5,
+            "name": "large_even",
+            "passed": false,
+            "error": "Max error 4.532530307769775 exceeds tolerance",
+            "details": {
+              "max_error": 4.532530307769775
+            }
+          },
+          {
+            "index": 6,
+            "name": "large_odd",
+            "passed": false,
+            "error": "Max error 3.8691470623016357 exceeds tolerance",
+            "details": {
+              "max_error": 3.8691470623016357
+            }
+          },
+          {
+            "index": 7,
+            "name": "large_power_of_2",
+            "passed": false,
+            "error": "Max error 4.079137325286865 exceeds tolerance",
+            "details": {
+              "max_error": 4.079137325286865
+            }
+          },
+          {
+            "index": 8,
+            "name": "edge_large_odd",
+            "passed": false,
+            "error": "Max error 4.003552436828613 exceeds tolerance",
+            "details": {
+              "max_error": 4.003552436828613
+            }
+          },
+          {
+            "index": 9,
+            "name": "boundary_max",
+            "passed": false,
+            "error": "Max error 4.451662063598633 exceeds tolerance",
+            "details": {
+              "max_error": 4.451662063598633
+            }
+          }
+        ]
+      },
+      "task_id": "harness-replay-49bba148",
+      "writers_stop_proof": {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "harness-replay-49bba148",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:0300b60823a1d7387a01a831b76b9d8215552b9e93e2a93bdbad219e180e7702:/sys/fs/cgroup/pids/machine.slice/libpod-0300b60823a1d7387a01a831b76b9d8215552b9e93e2a93bdbad219e180e7702.scope/container",
+        "container_id": "0300b60823a1d7387a01a831b76b9d8215552b9e93e2a93bdbad219e180e7702",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-0300b60823a1d7387a01a831b76b9d8215552b9e93e2a93bdbad219e180e7702.scope/container",
+        "observed_at": 1791753407.1438181,
+        "evidence_id": "bf85614a3c94745996b7ef13c199b0ab9fd2a41cc56f7e12b3203853090c2f7c"
+      },
+      "harness_sha256": "4021f6c63349b6485092dcc30d44b4e2b6e6752258e92f709d2a38ec8dfb7f5b",
+      "kernel_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+      "gpu_release_acceptance": false,
+      "unchanged_model_artifact": true,
+      "public_entrypoint_diagnostic": true,
+      "measured_harness_sha256": "aaf8aeb0f74d4cce486cf7ccd877124965cd3d1879076ecc708a967b4cd13f7a",
+      "red_signal": false
+    },
+    "completed_review_artifact_observation": {
+      "task_id": "uc-attested-documented-gpu-optim-b5372b2f",
+      "agent": "iter1-review-correctness-harness#2",
+      "actual_commands": [
+        "ls -R /mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/service/nodes/uc-contained/workspaces/uc-attested-documented-gpu-optim-b5372b2f/",
+        "cat /mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/service/nodes/uc-contained/workspaces/uc-attested-documented-gpu-optim-b5372b2f/001/correctness_harness.py"
+      ],
+      "review_text_in_agent_message": true,
+      "review_file_present_at_stopped_inspection": false,
+      "log_sha256": "057efad68a6987f5b8e71a6f4d9cfb88081075777a722e23126ba9b36bfc3b3c",
+      "interpretation": "Pinned pipeline reads the requested review file, not prose; missing file leaves empty regeneration feedback. No upstream fix is claimed."
+    },
+    "owned_writer_audit": [
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-ce8b8309bd6848f5a0d0faa27f94f8e2",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8:/sys/fs/cgroup/pids/machine.slice/libpod-8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8.scope/container",
+        "container_id": "8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-8ffbd5437d5033ebdc271386411dc506e1a2555a032b4f75bba4fa28d21ea7a8.scope/container",
+        "observed_at": 1791753433.0315816,
+        "evidence_id": "5d745aa97786e25a500c2545b9c2adb57050b7ed81da125959551917a26cad15"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "uc-attested-documented-gpu-optim-b5372b2f",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974:/sys/fs/cgroup/pids/machine.slice/libpod-16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974.scope/container",
+        "container_id": "16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-16650c7eeb6222953f3192596f464dd7559b0cbe0b0c93c702f3b50b34f4c974.scope/container",
+        "observed_at": 1791753434.2393682,
+        "evidence_id": "097554bdcb9c7d91e268e8f77e4d73ef26a7d3ede5147854be2608bed49ed930"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "harness-replay-49bba148",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:0300b60823a1d7387a01a831b76b9d8215552b9e93e2a93bdbad219e180e7702:/sys/fs/cgroup/pids/machine.slice/libpod-0300b60823a1d7387a01a831b76b9d8215552b9e93e2a93bdbad219e180e7702.scope/container",
+        "container_id": "0300b60823a1d7387a01a831b76b9d8215552b9e93e2a93bdbad219e180e7702",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-0300b60823a1d7387a01a831b76b9d8215552b9e93e2a93bdbad219e180e7702.scope/container",
+        "observed_at": 1791753435.414496,
+        "evidence_id": "b84435923fb15eba83b79947e8061e0162063523b496487b24b3dea2df1054c2"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "native-coding",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb:/sys/fs/cgroup/pids/machine.slice/libpod-290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb.scope/container",
+        "container_id": "290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-290b0a567e8c0729016d95421cf0bcb5f890dfeadd310c2524293f90506536eb.scope/container",
+        "observed_at": 1791753436.7719631,
+        "evidence_id": "1395dd713e149855baeff4faf3ae04244aaaee745bc1ac4db323389dc01f5958"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-8fc35d7f1dbe48da9b90afb9fef59ef7",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110:/sys/fs/cgroup/pids/machine.slice/libpod-36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110.scope/container",
+        "container_id": "36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-36aa742de15a4024dfb43894b445fe73abffe8149496d529aab41f187faef110.scope/container",
+        "observed_at": 1791753438.006751,
+        "evidence_id": "f2b54a52952ccb1d8ead826fbdb309188a176981da7c6c07cff34da8d2a3d322"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "independent-assertion",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d:/sys/fs/cgroup/pids/machine.slice/libpod-820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d.scope/container",
+        "container_id": "820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-820532daa277e89e1bb274037f459e98be4edb311b968620438236a95c561b0d.scope/container",
+        "observed_at": 1791753439.3199852,
+        "evidence_id": "32fddfcac141ee0dd6da561b923dd504e09e10f6fd1e398784394f06b67f6157"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "harness-replay-332f85bf",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:933a2e11545474d3c68a23488404786de81adf2e29e5edb89b38b5495072a53c:/sys/fs/cgroup/pids/machine.slice/libpod-933a2e11545474d3c68a23488404786de81adf2e29e5edb89b38b5495072a53c.scope/container",
+        "container_id": "933a2e11545474d3c68a23488404786de81adf2e29e5edb89b38b5495072a53c",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-933a2e11545474d3c68a23488404786de81adf2e29e5edb89b38b5495072a53c.scope/container",
+        "observed_at": 1791753440.6657634,
+        "evidence_id": "6dc001c12291bc5db96cfc7b547c449af6bc168bbce3445244fc69830dd75ddb"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-57a8a96dafaf40c1b67238c7938d20fc",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:fcbd197a0224cc20f658d35e0de330f9671897048df9c617b78bd2cfcda70462:/sys/fs/cgroup/pids/machine.slice/libpod-fcbd197a0224cc20f658d35e0de330f9671897048df9c617b78bd2cfcda70462.scope/container",
+        "container_id": "fcbd197a0224cc20f658d35e0de330f9671897048df9c617b78bd2cfcda70462",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-fcbd197a0224cc20f658d35e0de330f9671897048df9c617b78bd2cfcda70462.scope/container",
+        "observed_at": 1791753441.9282124,
+        "evidence_id": "b6d3effab951e6ca34d8dd0d44d7fb55e3751f20fed6ce1e1ea485bd64ecaccd"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-085556e49fd8436d85bf7cd4ec380121",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:e4f976a9c4a877fef57bdb99bc3d6651913eae8f17cee9cd9180bffd7b64eea3:/sys/fs/cgroup/pids/machine.slice/libpod-e4f976a9c4a877fef57bdb99bc3d6651913eae8f17cee9cd9180bffd7b64eea3.scope/container",
+        "container_id": "e4f976a9c4a877fef57bdb99bc3d6651913eae8f17cee9cd9180bffd7b64eea3",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-e4f976a9c4a877fef57bdb99bc3d6651913eae8f17cee9cd9180bffd7b64eea3.scope/container",
+        "observed_at": 1791753442.9846976,
+        "evidence_id": "fe5a38402f736cb650dd530a9059fb20723117f5b9e0304227937adfd24f69ea"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "hardware-48a31dbb29474ead90efcfb0312b1654",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a:/sys/fs/cgroup/pids/machine.slice/libpod-8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a.scope/container",
+        "container_id": "8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-8035f85b5c1fa1b709a17d0fbc7de89bb67d13216db3c055ee9ceb72dfb4a11a.scope/container",
+        "observed_at": 1791753444.4875515,
+        "evidence_id": "dbf5777748336d9d873ebf74ddb99be7fd2afbfc5c45419cb8dabd4162087e00"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "protected-gpu-oracle",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca:/sys/fs/cgroup/pids/machine.slice/libpod-1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca.scope/container",
+        "container_id": "1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-1598abe625e0e1d20ae94aa97817ece41aca89b0ce344e79f735deac3aa6e7ca.scope/container",
+        "observed_at": 1791753445.7257366,
+        "evidence_id": "d20b402cf7eac81fa5632f9f01ce02c53396e1cc4b82bd70a64fad625ec7072e"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "active-cache-writer",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916:/sys/fs/cgroup/pids/machine.slice/libpod-243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916.scope/container",
+        "container_id": "243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-243d6eebf615d38158a0ffb4ed9d714c7576b9eae479c7dd7c51fc140a9dc916.scope/container",
+        "observed_at": 1791753446.7626572,
+        "evidence_id": "ddd6a3c48c2afebd08b1dda50d471a62fdab5fd0990e62ad46b176d1a3bfa2f3"
+      },
+      {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "probe-d73a255a851643ad83d6811d29f318a2",
+        "backend_id": "uc-attested-native-aad5e8b5",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "a1025a6f-0b24-452b-9db0-e1f246128d47:2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d:/sys/fs/cgroup/pids/machine.slice/libpod-2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d.scope/container",
+        "container_id": "2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-2899c6844be196f08bcdf81497958929846e3d5e0112fe70e12a13b8b2f0040d.scope/container",
+        "observed_at": 1791753447.8009105,
+        "evidence_id": "6812ffb428e1227cff4b34a9edcbad6a92db40a53c5e1c5e8770545e16c2d1c1"
+      }
+    ],
+    "gpu_release_acceptance": false
   }
 }

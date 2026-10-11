@@ -343,6 +343,18 @@ tools and a deadline-owned HTTP request process for DNS/headers/body trickling.
 Native execution requires a nonroot read-only capless OCI job. Session
 resume binds model identity. Publication and protected Oracle remain separate.
 
+For local acceptance diagnostics, distinguish the documented Python callable
+from a raw Triton JIT launch: a module's run(x, y) wrapper is not
+JITFunction.run, which requires launch grid and warmup arguments. Check the
+actual callable/signature selected by kernel_function_name. Replay a rejected
+generated harness against its reference inside OCI before spending another
+full optimization deadline. Record unchanged-artifact and diagnostic-copy
+hashes separately; an operator-corrected copy cannot establish successful
+model generation or optimization. Verify that the review file requested by the
+pinned pipeline exists; an exit-zero agent message is not that file and does
+not supply file-based regeneration feedback. Do not synthesize a review verdict
+or accepted candidate from prose.
+
 ### 11.4 Validation & Error Matrix
 
 | Condition | Behavior |
@@ -354,6 +366,8 @@ resume binds model identity. Publication and protected Oracle remain separate.
 | New profile with active/uncertain ownership | Refuse before OCI create |
 | GPU/driver/model drift | Hardware 503; refuse new launches |
 | Unsupported task/environment override | Refuse before workspace claim |
+| Harness calls JIT internals as its business entrypoint | Record self-reference failure; correct only an explicitly identified diagnostic copy |
+| Reviewer returns prose without its requested file | No completed review artifact; retain failure, not a synthetic file/verdict |
 
 ### 11.5 Good / Base / Bad Cases
 
@@ -370,6 +384,11 @@ and absolute HTTP deadlines against peers continuously sending no-newline data,
 deadline with a delayed writer, legacy active ownership, stopped cache reuse,
 model drift and code mismatch. Record actual GPU/model, native CLI and HTTP
 deployment checks separately. Keep full R8 acceptance open until measured.
+For harness diagnostics retain the original failing trace, positive reference
+replay, a deliberately wrong candidate's rejection and all-writer stop receipts.
+If the user defers cross-host verification for lack of a second host, preserve
+that criterion as incomplete while continuing single-host checks; two local
+containers cannot satisfy it.
 
 ### 11.7 Wrong vs Correct
 

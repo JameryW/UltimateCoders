@@ -361,3 +361,57 @@ job records. All eleven previously audited stopped scopes remained unchanged.
 The owned nonce was removed only after the matching fence proof. Portable raw
 result: cold_start_deadline_repair.final_real_probe_fence in gpu-verification.json.
 R8 remains OPEN; these results establish preflight/recovery safety only.
+
+## Confirmed acceptance scope and GPU harness diagnostics (2026-10-12)
+
+PR #710 merged at 45b848545c77deef3c24414f7da5f354981e878d with all eleven
+CI checks passed. Local main matched the reviewed tree and the protocol endpoint
+returned HTTP 200 with workspace_probe_identity. The user then confirmed that
+no second host is available and explicitly retained incomplete cross-host
+acceptance. No original criterion is waived; single-host work continues.
+
+The failed trial's unchanged model-generated harness was replayed in its own
+GPU OCI scope: all ten cases failed with JITFunction.run missing grid/warmup.
+Original harness SHA: 4021f6c63349b6485092dcc30d44b4e2b6e6752258e92f709d2a38ec8dfb7f5b.
+Stopped-scope proof: 250bcac3402f18f11e22902c84b7bf360ce54d056c8ed8af2217c88a06efa036.
+
+A separately identified diagnostic copy replaced only the two kernel invocation
+sites with the documented module run(x, y). Ten cases passed, numerical error 0.
+An intentionally wrong run(x, y) returning x.clone() failed all ten cases.
+Diagnostic copy SHA: aaf8aeb0f74d4cce486cf7ccd877124965cd3d1879076ecc708a967b4cd13f7a.
+Stopped-scope proof: bf85614a3c94745996b7ef13c199b0ab9fd2a41cc56f7e12b3203853090c2f7c.
+The original artifact and kernel bytes were unchanged; the copy is not genuine
+model generation and no candidate was optimized or accepted.
+
+The completed reviewer #2 executed only ls and cat and emitted its FAIL review
+as an agent message. The stopped workspace contains no requested review file.
+The pinned pipeline reads that file and supplies empty regeneration feedback
+when it is absent. This explains a separate artifact seam; no upstream fix or
+successful review is claimed. Full trial and earlier Oracle failures stand.
+
+All thirteen owned OCI scopes were individually audited with matching container
+IDs and stopped receipts. Earlier eleven-scope evidence was preserved.
+Portable diagnostics and the new audit: single_host_follow_up in
+gpu-verification.json. R8 and cross-host acceptance remain incomplete.
+
+This follow-up changes eight documentation/evidence files and no production
+source. All seven repository guards and staged diff/JSON scope checks passed.
+Independent Spec and Standards axes passed after verifying original/copy/kernel/
+log hashes, the two invocation changes, raw-to-portable report equality and
+all thirteen durable stopped-scope proofs. No actionable findings remained.
+
+PR #711 CI follow-up: the direct line-ending guard passed, but its real-repo
+regression test still allowed only the earlier 2022/2013 scan count. The sole
+added file since base 45b848545c77deef3c24414f7da5f354981e878d is
+research/harness-loop-diagnosis.md, a text document. The measured 2023 tracked
+blobs / 2014 text files therefore has an independently explained delta of one.
+Before the repair, the five Windows line-ending tests reproduced one failure
+and four passes. The repair adds only that reachable count pair; binary and
+gitlink pins and all synthetic mutation checks remain unchanged. This follow-up
+now includes eight documentation/evidence files and one CI regression test.
+After the repair, all five Windows line-ending tests passed in 4.80s.
+All five Linux tests also passed in 25.07s, with the shared checkout explicitly
+trusted only in the test process and temporary Git sandboxes on Linux storage.
+The initial WSL attempt hit Git's mounted-directory ownership check; no global
+Git setting was changed. Targeted ruff passed, and both independent review axes
+passed the count/inventory repair without findings.
