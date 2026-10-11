@@ -141,6 +141,24 @@ ran after cancellation and does not establish the complete remote workflow.
 - [x] Exercise a 0.1s client deadline against real OCI: retain nonce and record,
   refuse replay, then reconcile with a matching cgroup stop receipt.
 - [x] Complete final full/focused regressions and both independent review axes.
-- [ ] Deliver the deadline repair and recovery evidence through passing CI and merge.
+- [x] Deliver through PR #710, all 11 CI checks and merge 45b84854; synchronize main.
 
 Cold-start success is deployment preflight. Full R8 acceptance remains OPEN.
+
+## Single-host harness diagnosis and deferred cross-host acceptance (2026-10-12)
+
+- [x] Record the user's confirmed lack of a second host; keep cross-host
+  acceptance incomplete without substituting local containers.
+- [x] Replay the unchanged rejected model harness in OCI. All ten cases fail
+  because JITFunction.run lacks grid/warmup; original artifacts remain unchanged.
+- [x] Replay a diagnostic copy using the documented run(x, y). All ten cases
+  pass with zero error; an intentionally wrong candidate fails all ten.
+- [x] Inspect the completed review trace: actual tools only list/read files;
+  requested review artifact is absent, so upstream gets no file-based feedback.
+- [x] Audit all thirteen owned OCI scopes as stopped. Preserve previous audits.
+- [ ] Obtain genuine model-generated harness/review artifacts and a successful
+  optimization, then protected whole-workflow Oracle/rollback/accepted delivery.
+- [ ] Perform actual cross-host artifact verification when a second host exists.
+
+The operator-corrected copy is diagnostic evidence only, not an optimized
+candidate or successful model generation. R8 remains OPEN.

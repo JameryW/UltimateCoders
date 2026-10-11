@@ -45,10 +45,13 @@ through R8 are authoritative in review.md. All eight are in scope:
 
 ## Open external input
 
-Real MetaInfer service address/configuration was requested asynchronously. The
-local host has an RTX 4060 Laptop GPU (8 GiB), driver 617.14. Ollama is not the
-specialized MetaInfer backend. Code and fault validation continue while this
-input is pending; R8 may not be claimed verified without real evidence.
+Updated 2026-10-12: the separately deployed pinned contained service is reachable
+and its GPU/model preflight passes on the RTX 4060 Laptop GPU (8 GiB), driver
+617.14. Successful full optimization and protected whole-workflow acceptance
+remain unverified. The user confirmed that no second host is available and
+explicitly kept cross-host acceptance incomplete. Continue single-host work;
+do not repeatedly request the unavailable host or count two containers on this
+machine as two hosts. This deferral does not waive the original R6/R8 criteria.
 
 ## Out of scope
 
