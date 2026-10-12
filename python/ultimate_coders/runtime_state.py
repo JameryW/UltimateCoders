@@ -363,7 +363,16 @@ def atomic_write(path: Path, data: bytes) -> None:
         file.flush()
         os.fsync(file.fileno())
     try:
-        os.replace(temporary, path)
+        for attempt in range(5):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError as exc:
+                if os.name != "nt" or getattr(exc, "winerror", None) not in (5, 32) or attempt == 4:
+                    raise
+                # Windows readers may briefly omit FILE_SHARE_DELETE. Keep
+                # publication atomic and propagate a persistent denial.
+                time.sleep(0.01 * 2**attempt)
     finally:
         temporary.unlink(missing_ok=True)
 
