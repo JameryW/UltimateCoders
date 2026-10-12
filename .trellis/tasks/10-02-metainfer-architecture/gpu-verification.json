@@ -243,7 +243,7 @@
           "finished": true,
           "final_status": "failed",
           "last_outcome": "logic_fail",
-          "last_transition_label": "harness rejected \u2192 regen",
+          "last_transition_label": "harness rejected → regen",
           "notes": [],
           "error": "Contained orchestrator exited without a final outcome"
         }
@@ -1626,5 +1626,1459 @@
       }
     ],
     "gpu_release_acceptance": false
+  },
+  "native_artifact_continuation": {
+    "recorded_at": "2026-10-12T01:54:58.874502+00:00",
+    "delivery_baseline": "c12f2e49998f9e76f567aa5c4b50e0172a470fac",
+    "branch": "codex/metainfer-ollama-context",
+    "upstream_revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
+    "image_id": "12098cc317e4ae7f07d15a96fb98509b40b1d668db6ce7da0392b9a1db93d06a",
+    "ollama_profile": {
+      "UC_OLLAMA_MODEL": "uc-metainfer-native9b:1012",
+      "UC_OLLAMA_DIGEST": "7bb044cb04582112c39bb1474b9c6c087cee3a3bfbd4167e335a84e37e8516a5",
+      "UC_OLLAMA_NUM_CTX": "16384",
+      "UC_OLLAMA_NUM_PREDICT": "8192"
+    },
+    "provider_configuration": {
+      "installed_version": "0.40.3",
+      "OLLAMA_GO_TEMPLATE": false,
+      "new_alias_only": true,
+      "model_downloads": false,
+      "nonce_text_repaired": false
+    },
+    "attempts": [
+      {
+        "attempt": "model-artifacts-2eddb509",
+        "outcome": "Initial probe failed before root report; old control root retained its stopped failed probe.",
+        "gpu_release_acceptance": false,
+        "artifacts": [],
+        "reference_sha256": []
+      },
+      {
+        "attempt": "model-artifacts-90e116c1",
+        "outcome": "Provider proxy unavailable; hardware nonce failed; scope stopped.",
+        "gpu_release_acceptance": false,
+        "artifacts": [],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      },
+      {
+        "attempt": "model-artifacts-94b9a644",
+        "outcome": "Actual Gemma created an empty touched file; later request timed out; no completed harness.",
+        "gpu_release_acceptance": false,
+        "raw_report_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-94b9a644/model-artifacts-94b9a644-result.json",
+        "raw_report_sha256": "0576f49baac111b2d473dcf402fc6ac31a4b5712bc3b4c790b37130d7acaa384",
+        "raw_report": {
+          "attempt": "model-artifacts-94b9a644",
+          "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-94b9a644/worktrees/model-artifacts-94b9a644",
+          "image_id": "f2d47104f71e50bd62d8c9910c5e351d3a7ef1db63c2e489f3316f7bdd20d411",
+          "hardware_evidence_id": "95f9362d8bb5b888cc122510fec14d6a76eab4b9ac56961685232c4912f8f6b8",
+          "kernel_function_name": "run",
+          "reference_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+          "gpu_release_acceptance": false,
+          "steps": [
+            {
+              "label": "generate",
+              "task_id": "model-artifacts-94b9a644-generate",
+              "failure": null,
+              "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-94b9a644/model-artifacts-94b9a644-generate-state/orchestrator.log",
+              "log_sha256": "f69939b584451387a58a880bee5ae9a733fa0526ebf2f73adf709f8fc4a6bd1d",
+              "writers_stop_proof": {
+                "contract_version": "uc-metainfer/1",
+                "task_id": "model-artifacts-94b9a644-generate",
+                "backend_id": "uc-model-artifacts-94b9a644",
+                "writers_stopped": true,
+                "proof_kind": "cgroup_empty",
+                "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:f7f2a30a1f2d16eb8cb0b99a70558a116afe83f6e967537a36a5c3bdc2881ccb:/sys/fs/cgroup/pids/machine.slice/libpod-f7f2a30a1f2d16eb8cb0b99a70558a116afe83f6e967537a36a5c3bdc2881ccb.scope/container",
+                "container_id": "f7f2a30a1f2d16eb8cb0b99a70558a116afe83f6e967537a36a5c3bdc2881ccb",
+                "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-f7f2a30a1f2d16eb8cb0b99a70558a116afe83f6e967537a36a5c3bdc2881ccb.scope/container",
+                "observed_at": 1791764210.6080668,
+                "evidence_id": "024821b501a4b5b40254bbb28d169e0986a86020b0ac9983be483548f8c87819"
+              }
+            }
+          ],
+          "generate_prompt_sha256": "0d37ff5cbff668007bce21606dcdf4f5ef5381463d358725b2a10372cb8b262f"
+        },
+        "artifacts": [
+          {
+            "path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-94b9a644/worktrees/model-artifacts-94b9a644/correctness_harness.py",
+            "bytes": 0,
+            "lines": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        ],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      },
+      {
+        "attempt": "model-artifacts-c4dcc960",
+        "outcome": "Installed 4B strict nonce response mismatch; hardware unavailable.",
+        "gpu_release_acceptance": false,
+        "artifacts": [],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      },
+      {
+        "attempt": "model-artifacts-5e04d17e",
+        "outcome": "Installed 9B Go template polluted the strict nonce with a thinking tag; refused.",
+        "gpu_release_acceptance": false,
+        "artifacts": [],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      },
+      {
+        "attempt": "model-artifacts-32e3b633",
+        "outcome": "Separate 4B template alias still returned extra nonce prose; refused.",
+        "gpu_release_acceptance": false,
+        "artifacts": [],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      },
+      {
+        "attempt": "model-artifacts-c580970b",
+        "outcome": "Genuine written harness failed reference startup: no detected Triton JIT function.",
+        "gpu_release_acceptance": false,
+        "raw_report_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/model-artifacts-c580970b-result.json",
+        "raw_report_sha256": "08d7ade81eefb9a46128d7d9e2b7d52f31a84423b6a70a0c1e1b0966eee6d24e",
+        "raw_report": {
+          "attempt": "model-artifacts-c580970b",
+          "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/worktrees/model-artifacts-c580970b",
+          "image_id": "c711c14c5d3f5b059ac5145f9b1a2424c174f573b9e32b50282d9d18e877a086",
+          "hardware_evidence_id": "8f057885573f480794159fc2c44c12be772f24c6024dea37e97f9d255407b8e4",
+          "kernel_function_name": "run",
+          "reference_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+          "gpu_release_acceptance": false,
+          "steps": [
+            {
+              "label": "generate",
+              "task_id": "model-artifacts-c580970b-generate",
+              "failure": null,
+              "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/model-artifacts-c580970b-generate-state/orchestrator.log",
+              "log_sha256": "3760e12710f20ef4694fddd0f077cfb7ba12b07d37045c44c23438553406da1f",
+              "writers_stop_proof": {
+                "contract_version": "uc-metainfer/1",
+                "task_id": "model-artifacts-c580970b-generate",
+                "backend_id": "uc-model-artifacts-c580970b",
+                "writers_stopped": true,
+                "proof_kind": "cgroup_empty",
+                "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:869baf9b29e9ebc2d50852114cd2d377ceefa50312bbb80135a3f4dec48e7618:/sys/fs/cgroup/pids/machine.slice/libpod-869baf9b29e9ebc2d50852114cd2d377ceefa50312bbb80135a3f4dec48e7618.scope/container",
+                "container_id": "869baf9b29e9ebc2d50852114cd2d377ceefa50312bbb80135a3f4dec48e7618",
+                "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-869baf9b29e9ebc2d50852114cd2d377ceefa50312bbb80135a3f4dec48e7618.scope/container",
+                "observed_at": 1791765346.039083,
+                "evidence_id": "cfadb0c7681b463cd2fef1aa017bbcf2fadf5e14de216b6f0f0510f7459a762d"
+              }
+            },
+            {
+              "label": "self-reference",
+              "task_id": "model-artifacts-c580970b-self-reference",
+              "failure": null,
+              "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/model-artifacts-c580970b-self-reference-state/orchestrator.log",
+              "log_sha256": "d67f2fd0ae160a881c9b9436774461f770456986ee0726b673256cd2e9c19359",
+              "writers_stop_proof": {
+                "contract_version": "uc-metainfer/1",
+                "task_id": "model-artifacts-c580970b-self-reference",
+                "backend_id": "uc-model-artifacts-c580970b",
+                "writers_stopped": true,
+                "proof_kind": "cgroup_empty",
+                "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:349660d31e06dc533ff257552bc777c9030abdab913e23d60dcc8870316df79e:/sys/fs/cgroup/pids/machine.slice/libpod-349660d31e06dc533ff257552bc777c9030abdab913e23d60dcc8870316df79e.scope/container",
+                "container_id": "349660d31e06dc533ff257552bc777c9030abdab913e23d60dcc8870316df79e",
+                "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-349660d31e06dc533ff257552bc777c9030abdab913e23d60dcc8870316df79e.scope/container",
+                "observed_at": 1791765370.82488,
+                "evidence_id": "f5a0e6ad1ad96c6bb5e23accecdfcef616d5404cc904c3b93c9aaf4e748df422"
+              }
+            }
+          ],
+          "model": "uc-metainfer-context9b:1012",
+          "model_digest": "55faf797d20981a553c15eca58636441f914d3d85addff3d302e6ca639c67137",
+          "num_ctx": 4096,
+          "generate_prompt_sha256": "d1a752d091d1a92ce779829633d5aa833e4844766db4413a784a23152fdfb29d",
+          "generate_completed": true,
+          "generate_actual_tools": 11,
+          "generated_harness_sha256": "bfde70b6cee548f2902eaf5eaa5186bdd24afb00ee22d0e95dcf1ede27bad455"
+        },
+        "artifacts": [
+          {
+            "path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/worktrees/model-artifacts-c580970b/correctness_harness.py",
+            "bytes": 9177,
+            "lines": 289,
+            "sha256": "bfde70b6cee548f2902eaf5eaa5186bdd24afb00ee22d0e95dcf1ede27bad455"
+          }
+        ],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      },
+      {
+        "attempt": "model-artifacts-1aff1643",
+        "outcome": "Actual reviewer tools read/listed files, then final prose; required review file absent.",
+        "gpu_release_acceptance": false,
+        "raw_report_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-1aff1643/model-artifacts-1aff1643-result.json",
+        "raw_report_sha256": "3fbc7c0bc6e4fe9a2616ec7f0bc21d2c6aca29e204c270d30366585574b2a676",
+        "raw_report": {
+          "attempt": "model-artifacts-1aff1643",
+          "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-1aff1643/worktrees/model-artifacts-1aff1643",
+          "image_id": "b5f84beb812b476872b323f501d36c037f2234b36f52305038f306c257ba8321",
+          "hardware_evidence_id": "2f4d4994921ba9c97f77a0f022beca7c13578d53eb7104695b796e1fe86522bc",
+          "kernel_function_name": "run",
+          "reference_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+          "gpu_release_acceptance": false,
+          "steps": [
+            {
+              "label": "review-failed",
+              "task_id": "model-artifacts-1aff1643-review-failed",
+              "failure": null,
+              "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-1aff1643/model-artifacts-1aff1643-review-failed-state/orchestrator.log",
+              "log_sha256": "a2b2cf34158bcd2fa3b0aa855ba16651f42f73c638b6c9b5a84f203faa3fc2fe",
+              "writers_stop_proof": {
+                "contract_version": "uc-metainfer/1",
+                "task_id": "model-artifacts-1aff1643-review-failed",
+                "backend_id": "uc-model-artifacts-1aff1643",
+                "writers_stopped": true,
+                "proof_kind": "cgroup_empty",
+                "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:ff92d764b4e685ae2c7366a399221faf565f11cc37dc06f0f07d2ae4e20047c4:/sys/fs/cgroup/pids/machine.slice/libpod-ff92d764b4e685ae2c7366a399221faf565f11cc37dc06f0f07d2ae4e20047c4.scope/container",
+                "container_id": "ff92d764b4e685ae2c7366a399221faf565f11cc37dc06f0f07d2ae4e20047c4",
+                "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-ff92d764b4e685ae2c7366a399221faf565f11cc37dc06f0f07d2ae4e20047c4.scope/container",
+                "observed_at": 1791765926.570429,
+                "evidence_id": "e4b73ded2f8e6ae1b74c389a655d6ff1a818f942208ee5f067c6c955fb5533b3"
+              }
+            }
+          ],
+          "model": "uc-metainfer-context9b:1012",
+          "model_digest": "55faf797d20981a553c15eca58636441f914d3d85addff3d302e6ca639c67137",
+          "num_ctx": 8192,
+          "previous_model_harness_sha256": "bfde70b6cee548f2902eaf5eaa5186bdd24afb00ee22d0e95dcf1ede27bad455",
+          "review-failed_prompt_sha256": "4645985599354d8a8d3e7045a281ace96a87aeb8396b369ab6d4dba342f06b80",
+          "review-failed_completed": true,
+          "review-failed_actual_tools": 7
+        },
+        "artifacts": [],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      },
+      {
+        "attempt": "model-artifacts-ee6be1d3",
+        "outcome": "Provider returned empty final message/tools; no completed review file.",
+        "gpu_release_acceptance": false,
+        "raw_report_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-ee6be1d3/model-artifacts-ee6be1d3-result.json",
+        "raw_report_sha256": "7180da2a62692e8d9729c41ff5e5b601ab08cec6a8764824264378b61b4e2b80",
+        "raw_report": {
+          "attempt": "model-artifacts-ee6be1d3",
+          "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-ee6be1d3/worktrees/model-artifacts-ee6be1d3",
+          "image_id": "9af2c24ff6f7fc92926bd9dfe632e890ed32915b11d85aad518adbe7ee3f6016",
+          "hardware_evidence_id": "82eef91f3023f6f16c2a5497eecde5e4463aa064c473ca0e9d2885005a1cbfad",
+          "kernel_function_name": "run",
+          "reference_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+          "gpu_release_acceptance": false,
+          "steps": [
+            {
+              "label": "review-failed",
+              "task_id": "model-artifacts-ee6be1d3-review-failed",
+              "failure": null,
+              "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-ee6be1d3/model-artifacts-ee6be1d3-review-failed-state/orchestrator.log",
+              "log_sha256": "6685326e1f44706e8df167af12624831295b19238b6b40910b24a8259212c042",
+              "writers_stop_proof": {
+                "contract_version": "uc-metainfer/1",
+                "task_id": "model-artifacts-ee6be1d3-review-failed",
+                "backend_id": "uc-model-artifacts-ee6be1d3",
+                "writers_stopped": true,
+                "proof_kind": "cgroup_empty",
+                "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:21db7aedc31ee808ea3a67ae506cc3049573a15bd749937fa5d3fefaa793a306:/sys/fs/cgroup/pids/machine.slice/libpod-21db7aedc31ee808ea3a67ae506cc3049573a15bd749937fa5d3fefaa793a306.scope/container",
+                "container_id": "21db7aedc31ee808ea3a67ae506cc3049573a15bd749937fa5d3fefaa793a306",
+                "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-21db7aedc31ee808ea3a67ae506cc3049573a15bd749937fa5d3fefaa793a306.scope/container",
+                "observed_at": 1791766727.2370863,
+                "evidence_id": "35bced22cbe8cfb0580016f580e1c68dd29b65d9ba0f9d4d9bf09fc34df0602a"
+              }
+            }
+          ],
+          "model": "uc-metainfer-context9b:1012",
+          "model_digest": "55faf797d20981a553c15eca58636441f914d3d85addff3d302e6ca639c67137",
+          "num_ctx": 8192,
+          "previous_model_harness_sha256": "bfde70b6cee548f2902eaf5eaa5186bdd24afb00ee22d0e95dcf1ede27bad455",
+          "review-failed_prompt_sha256": "8bdc58474dfe4ce05432525742321787852fcf6d947218e3694ff5aab6d4d1bc",
+          "review-failed_completed": false
+        },
+        "artifacts": [],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      },
+      {
+        "attempt": "model-artifacts-368ec9d7",
+        "outcome": "Native GGUF path wrote a genuine rejection review; regeneration exhausted output 4096.",
+        "gpu_release_acceptance": false,
+        "raw_report_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/model-artifacts-368ec9d7-result.json",
+        "raw_report_sha256": "9e66fddfec213903c2dfc0673e3e3f1d2a1c860b71c1f0198a64aa0c3335cf20",
+        "raw_report": {
+          "attempt": "model-artifacts-368ec9d7",
+          "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/worktrees/model-artifacts-368ec9d7",
+          "image_id": "9af2c24ff6f7fc92926bd9dfe632e890ed32915b11d85aad518adbe7ee3f6016",
+          "hardware_evidence_id": "391bc1a967701bd98b1df607a67280c44d79da004685697b25e1a43f32f1b52b",
+          "kernel_function_name": "run",
+          "reference_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+          "gpu_release_acceptance": false,
+          "steps": [
+            {
+              "label": "review-failed",
+              "task_id": "model-artifacts-368ec9d7-review-failed",
+              "failure": null,
+              "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/model-artifacts-368ec9d7-review-failed-state/orchestrator.log",
+              "log_sha256": "3ede87014385c526eaad116c8c623e4e83834a26e8c12d36219be220ad1d2c92",
+              "writers_stop_proof": {
+                "contract_version": "uc-metainfer/1",
+                "task_id": "model-artifacts-368ec9d7-review-failed",
+                "backend_id": "uc-model-artifacts-368ec9d7",
+                "writers_stopped": true,
+                "proof_kind": "cgroup_empty",
+                "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:d884dbaa7ced06773c2a8d79be200c1ee5cc82d2b87f352f75a56521f35bead9:/sys/fs/cgroup/pids/machine.slice/libpod-d884dbaa7ced06773c2a8d79be200c1ee5cc82d2b87f352f75a56521f35bead9.scope/container",
+                "container_id": "d884dbaa7ced06773c2a8d79be200c1ee5cc82d2b87f352f75a56521f35bead9",
+                "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-d884dbaa7ced06773c2a8d79be200c1ee5cc82d2b87f352f75a56521f35bead9.scope/container",
+                "observed_at": 1791767695.0315733,
+                "evidence_id": "170009351b5b3adbbca3491fbed24819bbc706e0a47c1c2769f540386726b719"
+              }
+            },
+            {
+              "label": "generate",
+              "task_id": "model-artifacts-368ec9d7-generate",
+              "failure": null,
+              "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/model-artifacts-368ec9d7-generate-state/orchestrator.log",
+              "log_sha256": "43401919f5d85a8b55ca31d9e39a6b66c978a98178cf27710a943077b25555b9",
+              "writers_stop_proof": {
+                "contract_version": "uc-metainfer/1",
+                "task_id": "model-artifacts-368ec9d7-generate",
+                "backend_id": "uc-model-artifacts-368ec9d7",
+                "writers_stopped": true,
+                "proof_kind": "cgroup_empty",
+                "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:b52d3682f5a70895e3e4670eb401408f9846595e6e2a01d8188b7ba69bd5f18a:/sys/fs/cgroup/pids/machine.slice/libpod-b52d3682f5a70895e3e4670eb401408f9846595e6e2a01d8188b7ba69bd5f18a.scope/container",
+                "container_id": "b52d3682f5a70895e3e4670eb401408f9846595e6e2a01d8188b7ba69bd5f18a",
+                "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-b52d3682f5a70895e3e4670eb401408f9846595e6e2a01d8188b7ba69bd5f18a.scope/container",
+                "observed_at": 1791767810.4318776,
+                "evidence_id": "908e1e9a41638b09c48857c6ccac6df3775ede78bc9d2c211c3f2956994396c2"
+              }
+            }
+          ],
+          "model": "uc-metainfer-native9b:1012",
+          "model_digest": "7bb044cb04582112c39bb1474b9c6c087cee3a3bfbd4167e335a84e37e8516a5",
+          "num_ctx": 8192,
+          "previous_model_harness_sha256": "bfde70b6cee548f2902eaf5eaa5186bdd24afb00ee22d0e95dcf1ede27bad455",
+          "review-failed_prompt_sha256": "1d8d1e94443fb71fcc106040a4d14bf490a191a885f782097327b5578619af8a",
+          "review-failed_completed": true,
+          "review-failed_actual_tools": 1,
+          "failed_review_text": "# Correctness Harness Review - Iteration #1\n\n## Verdict: FAIL\n\n## Issues Found\n\n### 1. Hardcoded Reference Path (Critical)\n**Issue:** The harness hardcodes a reference path:\n```python\nref_path = \"/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/model-artifacts-c580970b-protected/reference.py\"\n```\n\n**Impact:** This path is specific to a different model artifact (`model-artifacts-c580970b`) and will fail in any other environment. The harness cannot be reused generically.\n\n**Suggested Fix:** Accept the reference path as a command-line argument (e.g., `python correctness_harness.py <evolved_kernel.py> <reference_kernel.py>`) or derive it from the current working directory context.\n\n---\n\n### 2. Missing Non-Finite Value Tests\n**Issue:** The kernel contract explicitly states: *\"Values are finite in [-100,100]\"* and *\"nonfinite values are outside this kernel's contract.\"*\n\nThe harness **does not test** inputs containing:\n- `NaN` values\n- `Inf` values\n- Values outside `[-100, 100]`\n\n**Impact:** A broken kernel might silently produce wrong results for non-finite inputs. The harness should verify that the kernel either:\n- Rejects such inputs (raises an error), OR\n- Produces consistent, well-defined results for them\n\n**Suggested Fix:** Add test cases with `torch.nan`, `torch.inf`, and out-of-range values.\n\n---\n\n### 3. Missing Stride/Contiguity Tests\n**Issue:** The kernel contract requires inputs to be **contiguous**. The harness only tests contiguous tensors.\n\n**Impact:** A broken kernel might mishandle non-contiguous inputs (e.g., strided tensors, views). The harness should verify the kernel either:\n- Correctly rejects non-contiguous inputs, OR\n- Handles them correctly\n\n**Suggested Fix:** Add test cases with non-contiguous tensors (e.g., `x[::2]`, `x.t()`, `x[1::2]`).\n\n---\n\n### 4. Missing Device Mismatch Tests\n**Issue:** The kernel contract requires inputs to be on **CUDA**. The harness only tests CUDA tensors.\n\n**Impact:** A broken kernel might silently produce wrong results on CPU tensors or crash on device mismatch.\n\n**Suggested Fix:** Add test cases with CPU tensors to verify the kernel rejects them appropriately.\n\n---\n\n### 5. Missing Shape Mismatch Tests\n**Issue:** The kernel contract requires `x.shape == y.shape`. The harness only tests matching shapes.\n\n**Impact:** A broken kernel might silently produce wrong results when shapes don't match.\n\n**Suggested Fix:** Add test cases with mismatched shapes (e.g., `x.shape[0] != y.shape[0]`).\n\n---\n\n### 6. Missing Dtype Mismatch Tests\n**Issue:** The kernel contract requires `x.dtype == y.dtype == torch.float32`. The harness only tests float32.\n\n**Impact:** A broken kernel might mishandle other dtypes (float16, bfloat16, int32, etc.).\n\n**Suggested Fix:** Add test cases with different dtypes to verify proper rejection or handling.\n\n---\n\n### 7. Missing Empty Input Test\n**Issue:** The kernel contract states *\"empty inputs\"* are outside the contract. The harness never tests an empty tensor (`N=0`).\n\n**Impact:** A broken kernel might crash or produce undefined behavior on empty inputs.\n\n**Suggested Fix:** Add a test case with `torch.empty(0, dtype=torch.float32, device='cuda')`.\n\n---\n\n### 8. Missing Large Size Test (OOM Boundary)\n**Issue:** The kernel contract allows `N <= 65536`. The harness tests up to 4096 but not near the upper bound.\n\n**Impact:** A broken kernel might have issues at larger sizes (e.g., memory allocation failures, incorrect grid sizing).\n\n**Suggested Fix:** Add test cases at sizes 65536 and near-boundary values like 65535, 65534.\n\n---\n\n### 9. Missing Grid/Block Boundary Tests\n**Issue:** The kernel uses `BLOCK=32`. The harness tests various sizes but doesn't specifically target:\n- Sizes where `N % BLOCK == 0` (perfect alignment)\n- Sizes where `N % BLOCK == 1` (single-element tail)\n- Sizes where `N % BLOCK == BLOCK-1` (single-element head)\n\n**Impact:** A broken kernel might mishandle the last block or the first block.\n\n**Suggested Fix:** Explicitly add tests for sizes where `N % 32 == 0`, `N % 32 == 1`, and `N % 32 == 31`.\n\n---\n\n### 10. Missing Negative Size Test\n**Issue:** The kernel contract requires `1 <= N`. The harness never tests `N=0` or negative sizes.\n\n**Impact:** A broken kernel might crash or produce undefined behavior on zero-size inputs.\n\n**Suggested Fix:** Add a test case with `N=0` to verify proper rejection.\n\n---\n\n### 11. Missing Precision/Overflow Tests\n**Issue:** The kernel contract allows values in `[-100, 100]`. The harness tests boundary values but doesn't test:\n- Values near the overflow threshold (e.g., `x=100, y=100` → `200`, which is still fine for float32)\n- Values that would cause overflow if the range were larger\n\n**Impact:** A broken kernel might mishandle edge cases near float32 limits.\n\n**Suggested Fix:** Add tests with values near `[-100, 100]` boundaries and also test with values that would overflow float32 (e.g., `x=1e38, y=1e38`).\n\n---\n\n### 12. Missing Determinism Test\n**Issue:** The harness doesn't verify that the kernel produces **deterministic** results across multiple runs.\n\n**Impact:** A broken kernel might produce non-deterministic results (e.g., due to race conditions or non-deterministic reduction).\n\n**Suggested Fix:** Run each test case multiple times and verify all results are identical.\n\n---\n\n### 13. Missing Reference Kernel Loading Error Handling\n**Issue:** The harness assumes the reference kernel file exists and is loadable. If it doesn't exist, the harness crashes with a cryptic error.\n\n**Impact:** The harness fails silently or crashes when the reference kernel is unavailable.\n\n**Suggested Fix:** Add a fallback mechanism (e.g., embed the reference kernel inline, or use a built-in reference implementation).\n\n---\n\n### 14. Missing Timeout Handling\n**Issue:** The harness doesn't handle kernels that hang or take too long to execute.\n\n**Impact:** A broken kernel that hangs will cause the harness to hang indefinitely.\n\n**Suggested Fix:** Add a timeout mechanism (e.g., using `torch.cuda.Event` or a separate thread with `threading.Timer`).\n\n---\n\n### 15. Missing Memory Leak Detection\n**Issue:** The harness doesn't check for memory leaks between test cases.\n\n**Impact:** A broken kernel might leak memory, causing OOM errors in later tests.\n\n**Suggested Fix:** Add memory usage tracking between test cases (e.g., using `torch.cuda.memory_allocated()`).\n\n---\n\n## Summary\n\nThe harness has **15 distinct gaps** that could allow a broken kernel to pass undetected. The most critical issues are:\n\n1. **Hardcoded reference path** — makes the harness non-portable\n2. **Missing non-finite value tests** — violates the kernel contract\n3. **Missing non-contiguous input tests** — violates the kernel contract\n4. **Missing empty input test** — violates the kernel contract\n5. **Missing large-size tests** — could miss OOM or grid-sizing bugs\n\n## Confidence: 4/5\n\nThe harness would likely pass a broken kernel that:\n- Produces correct results for contiguous, finite, float32, CUDA tensors of matching shape\n- But fails on non-contiguous inputs, non-finite values, empty inputs, or large sizes\n\nThe harness would **fail** a broken kernel that produces wrong results on the tested inputs.\n",
+          "failed_review_sha256": "d50dfe2cc801437b61bfce751db11a05e0d677be2527cb1de21c0ed7778085f7",
+          "generate_prompt_sha256": "d6a9a15db7eb1f1c25292f2555b9f6ceae761c1394a3cfc7f16b025fd2d149ba",
+          "generate_completed": false
+        },
+        "artifacts": [
+          {
+            "path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/worktrees/model-artifacts-368ec9d7/failed-review-original.md",
+            "bytes": 7239,
+            "lines": 175,
+            "sha256": "d50dfe2cc801437b61bfce751db11a05e0d677be2527cb1de21c0ed7778085f7"
+          }
+        ],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      },
+      {
+        "attempt": "model-artifacts-9ecc470f",
+        "outcome": "Context 8192 exhausted at prompt 4030 plus generated 4162; provider failed, no review file.",
+        "gpu_release_acceptance": false,
+        "raw_report_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-9ecc470f/model-artifacts-9ecc470f-result.json",
+        "raw_report_sha256": "f9826cb7377d318252898a3a984c11a03a922dc16a1195ced78f0fffda1c8f89",
+        "raw_report": {
+          "attempt": "model-artifacts-9ecc470f",
+          "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-9ecc470f/worktrees/model-artifacts-9ecc470f",
+          "image_id": "4f66979f30d1d7530fe52b50f9c505e76fcf00eb2024a3253d2fbb57e1d124ba",
+          "hardware_evidence_id": "ed5b5fc94c09a3cb578eb17e4c0d7ed4b0e18872654754753f6fcc604f7bf9e2",
+          "kernel_function_name": "run",
+          "reference_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+          "gpu_release_acceptance": false,
+          "steps": [
+            {
+              "label": "review-failed",
+              "task_id": "model-artifacts-9ecc470f-review-failed",
+              "failure": null,
+              "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-9ecc470f/model-artifacts-9ecc470f-review-failed-state/orchestrator.log",
+              "log_sha256": "ae8022c2c164f8d22f1a58598cbc61400c924bc3134004ffcf98871052f8a07a",
+              "writers_stop_proof": {
+                "contract_version": "uc-metainfer/1",
+                "task_id": "model-artifacts-9ecc470f-review-failed",
+                "backend_id": "uc-model-artifacts-9ecc470f",
+                "writers_stopped": true,
+                "proof_kind": "cgroup_empty",
+                "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:9f0712464bf16033da2066156f4ed82a24a74f3f49f2d6b6ccbfcddc768e60e7:/sys/fs/cgroup/pids/machine.slice/libpod-9f0712464bf16033da2066156f4ed82a24a74f3f49f2d6b6ccbfcddc768e60e7.scope/container",
+                "container_id": "9f0712464bf16033da2066156f4ed82a24a74f3f49f2d6b6ccbfcddc768e60e7",
+                "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-9f0712464bf16033da2066156f4ed82a24a74f3f49f2d6b6ccbfcddc768e60e7.scope/container",
+                "observed_at": 1791768510.4643202,
+                "evidence_id": "0aad2daa89c524fd12186bf7a5769e0c3e67f2ab14ce38668b802b6803cf9f91"
+              }
+            }
+          ],
+          "model": "uc-metainfer-native9b:1012",
+          "model_digest": "7bb044cb04582112c39bb1474b9c6c087cee3a3bfbd4167e335a84e37e8516a5",
+          "num_ctx": 8192,
+          "num_predict": 8192,
+          "previous_model_harness_sha256": "bfde70b6cee548f2902eaf5eaa5186bdd24afb00ee22d0e95dcf1ede27bad455",
+          "review-failed_prompt_sha256": "10619d980bfebb7cc1a691509500a555c7563b1ee3d5a0f1249019218792e379",
+          "review-failed_completed": false
+        },
+        "artifacts": [],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      },
+      {
+        "attempt": "model-artifacts-013dbb17",
+        "outcome": "Genuine written harness completed generation, then reference crashed on excluded integer dtype.",
+        "gpu_release_acceptance": false,
+        "raw_report_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-013dbb17/model-artifacts-013dbb17-result.json",
+        "raw_report_sha256": "33bfe8b94fab1b6e784c6f2d046077f7251421d8bc6dac1412be542ec600f038",
+        "raw_report": {
+          "attempt": "model-artifacts-013dbb17",
+          "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-013dbb17/worktrees/model-artifacts-013dbb17",
+          "image_id": "4f66979f30d1d7530fe52b50f9c505e76fcf00eb2024a3253d2fbb57e1d124ba",
+          "hardware_evidence_id": "e666a945f515990a22f24f6019cd88ed5dce9c4bd805c4aff95ebb83d66f4ad0",
+          "kernel_function_name": "run",
+          "reference_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+          "gpu_release_acceptance": false,
+          "steps": [
+            {
+              "label": "generate",
+              "task_id": "model-artifacts-013dbb17-generate",
+              "failure": null,
+              "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-013dbb17/model-artifacts-013dbb17-generate-state/orchestrator.log",
+              "log_sha256": "32cf3c3de81eec95a268f594d01140bf18f030b853ef6389ee05aa3e2f828db3",
+              "writers_stop_proof": {
+                "contract_version": "uc-metainfer/1",
+                "task_id": "model-artifacts-013dbb17-generate",
+                "backend_id": "uc-model-artifacts-013dbb17",
+                "writers_stopped": true,
+                "proof_kind": "cgroup_empty",
+                "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:501f36d5df8e6554eb49ca59f0f84c3c5dc2183a4cf980de3505788c23c9629d:/sys/fs/cgroup/pids/machine.slice/libpod-501f36d5df8e6554eb49ca59f0f84c3c5dc2183a4cf980de3505788c23c9629d.scope/container",
+                "container_id": "501f36d5df8e6554eb49ca59f0f84c3c5dc2183a4cf980de3505788c23c9629d",
+                "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-501f36d5df8e6554eb49ca59f0f84c3c5dc2183a4cf980de3505788c23c9629d.scope/container",
+                "observed_at": 1791768908.9994166,
+                "evidence_id": "3b5ebb50662c7f59da05787d6228910682711934ca9179b1a677f029063cbdce"
+              }
+            },
+            {
+              "label": "self-reference",
+              "task_id": "model-artifacts-013dbb17-self-reference",
+              "failure": null,
+              "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-013dbb17/model-artifacts-013dbb17-self-reference-state/orchestrator.log",
+              "log_sha256": "f8460a48affa1cb62dee742c9647d757d536008c5eee52261d308cc8bf6e566a",
+              "writers_stop_proof": {
+                "contract_version": "uc-metainfer/1",
+                "task_id": "model-artifacts-013dbb17-self-reference",
+                "backend_id": "uc-model-artifacts-013dbb17",
+                "writers_stopped": true,
+                "proof_kind": "cgroup_empty",
+                "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:a949224ec511cdbd6093ea75228b55dc07e3ca1463b22d5fbc2b93e13d99ab0a:/sys/fs/cgroup/pids/machine.slice/libpod-a949224ec511cdbd6093ea75228b55dc07e3ca1463b22d5fbc2b93e13d99ab0a.scope/container",
+                "container_id": "a949224ec511cdbd6093ea75228b55dc07e3ca1463b22d5fbc2b93e13d99ab0a",
+                "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-a949224ec511cdbd6093ea75228b55dc07e3ca1463b22d5fbc2b93e13d99ab0a.scope/container",
+                "observed_at": 1791768921.545184,
+                "evidence_id": "96b55b0f7f8739ceaa56c23726b263769e98b299a7fedf30d2b942ea712fd31f"
+              }
+            }
+          ],
+          "model": "uc-metainfer-native9b:1012",
+          "model_digest": "7bb044cb04582112c39bb1474b9c6c087cee3a3bfbd4167e335a84e37e8516a5",
+          "num_ctx": 16384,
+          "num_predict": 8192,
+          "reused_model_review_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/worktrees/model-artifacts-368ec9d7/failed-review-original.md",
+          "reused_model_review_sha256": "d50dfe2cc801437b61bfce751db11a05e0d677be2527cb1de21c0ed7778085f7",
+          "generate_prompt_sha256": "7f2a577b0d0a2233d8011e89908c3909394a2511a1a56075c4b53dae37ff9919",
+          "generate_completed": true,
+          "generate_actual_tools": 1,
+          "generated_harness_sha256": "babe59c019533f219e0a9520b4598e29b046c2c4088228edd1549cadd3b7df9c"
+        },
+        "artifacts": [
+          {
+            "path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-013dbb17/worktrees/model-artifacts-013dbb17/correctness_harness.py",
+            "bytes": 19035,
+            "lines": 537,
+            "sha256": "babe59c019533f219e0a9520b4598e29b046c2c4088228edd1549cadd3b7df9c"
+          }
+        ],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      },
+      {
+        "attempt": "model-artifacts-f769f753",
+        "outcome": "Final image preflight passed; full harness review hit the actual 180s transport deadline and had no completion. Separate exact file-tool check passed.",
+        "gpu_release_acceptance": false,
+        "raw_report_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/model-artifacts-f769f753-result.json",
+        "raw_report_sha256": "a9d94c0a3e16b68692eda020fe332c35df53feb0cc49ab9f0d998b9577826357",
+        "raw_report": {
+          "attempt": "model-artifacts-f769f753",
+          "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/worktrees/model-artifacts-f769f753",
+          "image_id": "12098cc317e4ae7f07d15a96fb98509b40b1d668db6ce7da0392b9a1db93d06a",
+          "hardware_evidence_id": "51f21ffbee7cd36b7145f3923b561577a9392fabb140fe4985956ed141752727",
+          "kernel_function_name": "run",
+          "reference_sha256": "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67",
+          "gpu_release_acceptance": false,
+          "steps": [
+            {
+              "label": "review-failed",
+              "task_id": "model-artifacts-f769f753-review-failed",
+              "failure": null,
+              "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/model-artifacts-f769f753-review-failed-state/orchestrator.log",
+              "log_sha256": "b224e6c9aacc3d676f46aa4ec7a3d71daa8355175f98fa6a842eb382a51f3512",
+              "writers_stop_proof": {
+                "contract_version": "uc-metainfer/1",
+                "task_id": "model-artifacts-f769f753-review-failed",
+                "backend_id": "uc-model-artifacts-f769f753",
+                "writers_stopped": true,
+                "proof_kind": "cgroup_empty",
+                "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:219723208ecc4011271549951f48895f98464e6450200539de50a5fe79dc5cfd:/sys/fs/cgroup/pids/machine.slice/libpod-219723208ecc4011271549951f48895f98464e6450200539de50a5fe79dc5cfd.scope/container",
+                "container_id": "219723208ecc4011271549951f48895f98464e6450200539de50a5fe79dc5cfd",
+                "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-219723208ecc4011271549951f48895f98464e6450200539de50a5fe79dc5cfd.scope/container",
+                "observed_at": 1791769726.5788796,
+                "evidence_id": "9425ff082542ef3297a40cf30edd3fb4d734a02b4d9057f6b651f051f6738177"
+              }
+            }
+          ],
+          "model": "uc-metainfer-native9b:1012",
+          "model_digest": "7bb044cb04582112c39bb1474b9c6c087cee3a3bfbd4167e335a84e37e8516a5",
+          "num_ctx": 16384,
+          "num_predict": 8192,
+          "previous_model_harness_sha256": "babe59c019533f219e0a9520b4598e29b046c2c4088228edd1549cadd3b7df9c",
+          "review-failed_prompt_sha256": "1f47c4e3c75f976e8830f37676571028570fdf81af66cfd99dd9ea9d01246c3f",
+          "review-failed_completed": false
+        },
+        "artifacts": [],
+        "reference_sha256": [
+          "87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67"
+        ]
+      }
+    ],
+    "actual_native_file": {
+      "task_id": "native-file-0f6526dc4c97",
+      "image_id": "12098cc317e4ae7f07d15a96fb98509b40b1d668db6ce7da0392b9a1db93d06a",
+      "hardware_evidence_id": "51f21ffbee7cd36b7145f3923b561577a9392fabb140fe4985956ed141752727",
+      "nonce": "38b424ca76da4ce4a958ae36f59e08c0",
+      "failure": null,
+      "workspace": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/worktrees/native-file-0f6526dc4c97",
+      "log_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/native-file-0f6526dc4c97-state/orchestrator.log",
+      "log_sha256": "311642cae0ce2c3f7f40dbb0467b4816f23233203cae019f52624cb9d1c78103",
+      "events": [
+        {
+          "type": "thread.started",
+          "thread_id": "709d00b2-6e89-4232-8041-33b039ac0958"
+        },
+        {
+          "type": "turn.started"
+        },
+        {
+          "type": "item.completed",
+          "item": {
+            "id": "tool-1",
+            "type": "file_change",
+            "status": "completed",
+            "changes": [
+              {
+                "path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/worktrees/native-file-0f6526dc4c97/artifact-check.txt",
+                "kind": "add"
+              }
+            ]
+          }
+        },
+        {
+          "type": "item.completed",
+          "item": {
+            "id": "message-1",
+            "type": "agent_message",
+            "text": "Done. Created `artifact-check.txt` containing exactly `38b424ca76da4ce4a958ae36f59e08c0` (32 bytes, no trailing newline)."
+          }
+        },
+        {
+          "type": "turn.completed",
+          "usage": {
+            "input_tokens": 729,
+            "output_tokens": 50
+          },
+          "actual_tools_executed": 1,
+          "model_digest": "7bb044cb04582112c39bb1474b9c6c087cee3a3bfbd4167e335a84e37e8516a5"
+        }
+      ],
+      "writers_stop_proof": {
+        "contract_version": "uc-metainfer/1",
+        "task_id": "native-file-0f6526dc4c97",
+        "backend_id": "uc-model-artifacts-f769f753",
+        "writers_stopped": true,
+        "proof_kind": "cgroup_empty",
+        "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:1f198177b2f05430bff9cff4902ce0c18c378f89d5e854f02596ce81cb030bcf:/sys/fs/cgroup/pids/machine.slice/libpod-1f198177b2f05430bff9cff4902ce0c18c378f89d5e854f02596ce81cb030bcf.scope/container",
+        "container_id": "1f198177b2f05430bff9cff4902ce0c18c378f89d5e854f02596ce81cb030bcf",
+        "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-1f198177b2f05430bff9cff4902ce0c18c378f89d5e854f02596ce81cb030bcf.scope/container",
+        "observed_at": 1791769893.5055385,
+        "evidence_id": "0bea96e5ac58fcd5a4540c9bc035ebcc2f9edec4069e7ab0d57f0538a476307e"
+      },
+      "gpu_release_acceptance": false,
+      "artifact_matches": true,
+      "artifact_sha256": "26d840b05e681602e57f9d760d53fd60e86f1a036a7dae91d17ff5f51dd4b3ce",
+      "passed": true
+    },
+    "deployment_gate": {
+      "contract": {
+        "version": "uc-metainfer/1",
+        "revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
+        "backend_id": "uc-model-artifacts-f769f753",
+        "capabilities": [
+          "workspace_probe",
+          "quiescence",
+          "workspace_probe_identity",
+          "kernel_publication",
+          "hardware_identity"
+        ]
+      },
+      "workspace": {
+        "read_sha256": "e20fe30f41bf1821e1ed6c2b814e5ad79df3260939c70585a435ecd5c1429d43",
+        "writer_identity": "b6167d5f950a:1000:1",
+        "quiescence": {
+          "contract_version": "uc-metainfer/1",
+          "task_id": "probe-af63d382b3614fa792d287040af1e273",
+          "backend_id": "uc-model-artifacts-f769f753",
+          "writers_stopped": true,
+          "proof_kind": "cgroup_empty",
+          "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:b6167d5f950a04f39654da86aa9ab28fd524dd2f8fc886a54f3cad314e89b43c:/sys/fs/cgroup/pids/machine.slice/libpod-b6167d5f950a04f39654da86aa9ab28fd524dd2f8fc886a54f3cad314e89b43c.scope/container",
+          "container_id": "b6167d5f950a04f39654da86aa9ab28fd524dd2f8fc886a54f3cad314e89b43c",
+          "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-b6167d5f950a04f39654da86aa9ab28fd524dd2f8fc886a54f3cad314e89b43c.scope/container",
+          "observed_at": 1791770014.3089817,
+          "evidence_id": "2b61eed170cb3313a17daf84315698067589491f5bfc74e876856282ffaa171a"
+        }
+      },
+      "hardware": {
+        "devices": [
+          {
+            "uuid": "GPU-0e9353b0-7678-a5ab-eb56-083ecede327f",
+            "model": "NVIDIA GeForce RTX 4060 Laptop GPU",
+            "driver": "617.14",
+            "memory_mib": "8188"
+          }
+        ],
+        "runtime": {
+          "torch": "2.6.0+cu124",
+          "cuda": "12.4",
+          "triton": "3.2.0",
+          "image_code": {
+            "coding.py": "9f196ee461ddfbd482e5665af21e4ecb2099dc46b2a40fea93caaa2891ba0b13",
+            "ollama.py": "531b62c05a84e0ba6f5387ba49419ec0696a379794b71d7533ff58dbfd367535",
+            "gpu_probe.py": "fe59a59cd8b88878b539ec4c14aabb60f641c2dcecc38e1e7e4bcb26f5f755b2",
+            "observations.py": "69b5d629b93f27b6b5f8238cbf4cc79b771e7783472e1a4d4b23cae632a4643a",
+            "process.py": "b6bb2d5a6a9a95ad18fd6fbf4810fec62efa9bb3d1cde1b78baa5cf184d3b76d"
+          }
+        },
+        "model_identity": {
+          "provider": "ollama",
+          "model": "uc-metainfer-native9b:1012",
+          "digest": "7bb044cb04582112c39bb1474b9c6c087cee3a3bfbd4167e335a84e37e8516a5",
+          "client": "uc-native-ollama/1",
+          "client_sha256": "9f196ee461ddfbd482e5665af21e4ecb2099dc46b2a40fea93caaa2891ba0b13"
+        },
+        "gpu_cases": [
+          {
+            "size": 33,
+            "max_error": 0.0
+          },
+          {
+            "size": 4096,
+            "max_error": 0.0
+          },
+          {
+            "size": 65536,
+            "max_error": 0.0
+          }
+        ],
+        "model_probe": {
+          "nonce_sha256": "8341655c2124daf32b7b1a60ad6fe16bb9f45a55f0f1979e78ffa19f2a58923b",
+          "response_sha256": "8341655c2124daf32b7b1a60ad6fe16bb9f45a55f0f1979e78ffa19f2a58923b"
+        },
+        "contract_version": "uc-metainfer/1",
+        "backend_id": "uc-model-artifacts-f769f753",
+        "revision": "b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890",
+        "image_id": "12098cc317e4ae7f07d15a96fb98509b40b1d668db6ce7da0392b9a1db93d06a",
+        "boot_id": "9e4d7211-2d7f-4c91-8965-fd35047454ba",
+        "stop_proof": {
+          "contract_version": "uc-metainfer/1",
+          "task_id": "hardware-eaf07ab83c174a4c9229f8455db2048f",
+          "backend_id": "uc-model-artifacts-f769f753",
+          "writers_stopped": true,
+          "proof_kind": "cgroup_empty",
+          "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:25982e71ec6f6fc132c5072945027b6767a6d4e3df4bd1fb83836635f6d232dc:/sys/fs/cgroup/pids/machine.slice/libpod-25982e71ec6f6fc132c5072945027b6767a6d4e3df4bd1fb83836635f6d232dc.scope/container",
+          "container_id": "25982e71ec6f6fc132c5072945027b6767a6d4e3df4bd1fb83836635f6d232dc",
+          "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-25982e71ec6f6fc132c5072945027b6767a6d4e3df4bd1fb83836635f6d232dc.scope/container",
+          "observed_at": 1791769535.9757583,
+          "evidence_id": "d68c80946c1b35b2a23589b65f5ee58f8032b630152d01991658d578a1f4063f"
+        },
+        "profile_sha256": "65585a5818fc4645e86a37065c4b8e43756ade339c9ff6c302c538148dd10259",
+        "evidence_id": "51f21ffbee7cd36b7145f3923b561577a9392fabb140fe4985956ed141752727"
+      },
+      "gpu_required": true,
+      "service_url": "http://127.0.0.1:48768"
+    },
+    "deployment_gate_raw_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/context-final-http-gpu-gate.json",
+    "deployment_gate_raw_sha256": "2beadcc3b3f48bdffd2d4730dc1c537453c4b87fcda1586b3b4b7a36b93b7610",
+    "owned_scope_audit": {
+      "boot_id": "9e4d7211-2d7f-4c91-8965-fd35047454ba",
+      "scopes": [
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-013dbb17/control/jobs/43558e65172af4b5078bed51f89d71246cd153bbd2d6b2f658d8ad1ada5fa881.json",
+          "record_sha256": "58f19714bacd2c91391d41455dd22b26c5f650175c27889851d3318d83bbeb7a",
+          "image_id": "4f66979f30d1d7530fe52b50f9c505e76fcf00eb2024a3253d2fbb57e1d124ba",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-013dbb17/control/evidence/e5b2241ce81c182a7a280bf220304e5e433b24ccdbe798f09017ab8641e2a376.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-f4a0ae47085b4d00975a0aaddefe9459",
+            "backend_id": "uc-model-artifacts-013dbb17",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:8c988debcbad849eac481e3c32c943abdad1223062e02751a9cf018e09a73dfc:/sys/fs/cgroup/pids/machine.slice/libpod-8c988debcbad849eac481e3c32c943abdad1223062e02751a9cf018e09a73dfc.scope/container",
+            "container_id": "8c988debcbad849eac481e3c32c943abdad1223062e02751a9cf018e09a73dfc",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-8c988debcbad849eac481e3c32c943abdad1223062e02751a9cf018e09a73dfc.scope/container",
+            "observed_at": 1791770022.095049,
+            "evidence_id": "e5b2241ce81c182a7a280bf220304e5e433b24ccdbe798f09017ab8641e2a376"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-013dbb17/control/jobs/5a4f887fc53537c19863ee48f66e3972b9ddd0a1d76d55f6b61dd2f75d341159.json",
+          "record_sha256": "87331bc67b349ab8544338d9cbd6110f36fcb7de94ea92c33b5997d8f7cba611",
+          "image_id": "4f66979f30d1d7530fe52b50f9c505e76fcf00eb2024a3253d2fbb57e1d124ba",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-013dbb17/control/evidence/9d23ddd879f923206b38b13ff74e66170c028f4979b357ca2e1b23713140f11c.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "model-artifacts-013dbb17-self-reference",
+            "backend_id": "uc-model-artifacts-013dbb17",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:a949224ec511cdbd6093ea75228b55dc07e3ca1463b22d5fbc2b93e13d99ab0a:/sys/fs/cgroup/pids/machine.slice/libpod-a949224ec511cdbd6093ea75228b55dc07e3ca1463b22d5fbc2b93e13d99ab0a.scope/container",
+            "container_id": "a949224ec511cdbd6093ea75228b55dc07e3ca1463b22d5fbc2b93e13d99ab0a",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-a949224ec511cdbd6093ea75228b55dc07e3ca1463b22d5fbc2b93e13d99ab0a.scope/container",
+            "observed_at": 1791770022.7282276,
+            "evidence_id": "9d23ddd879f923206b38b13ff74e66170c028f4979b357ca2e1b23713140f11c"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-013dbb17/control/jobs/86b2fb7b63508623528120b0ec898d6a0c7eaf30de61110734d5336489a3569a.json",
+          "record_sha256": "e4552e32866a449cfa9abace68a476dd2214c68a57d0dd916eeebb31501ee0ae",
+          "image_id": "4f66979f30d1d7530fe52b50f9c505e76fcf00eb2024a3253d2fbb57e1d124ba",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-013dbb17/control/evidence/3011247a63c1bd5b9e0ead1336632e2def14ee1b9f80e33f5cdab992d6d8bba2.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "model-artifacts-013dbb17-generate",
+            "backend_id": "uc-model-artifacts-013dbb17",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:501f36d5df8e6554eb49ca59f0f84c3c5dc2183a4cf980de3505788c23c9629d:/sys/fs/cgroup/pids/machine.slice/libpod-501f36d5df8e6554eb49ca59f0f84c3c5dc2183a4cf980de3505788c23c9629d.scope/container",
+            "container_id": "501f36d5df8e6554eb49ca59f0f84c3c5dc2183a4cf980de3505788c23c9629d",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-501f36d5df8e6554eb49ca59f0f84c3c5dc2183a4cf980de3505788c23c9629d.scope/container",
+            "observed_at": 1791770023.3770278,
+            "evidence_id": "3011247a63c1bd5b9e0ead1336632e2def14ee1b9f80e33f5cdab992d6d8bba2"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-1aff1643/control/jobs/2de42bf801d12de4579c5d2a607562ca34f4de45620b9a0d6da66bc49113e615.json",
+          "record_sha256": "9275b6d2349542f59e792192357ef6d2f659daca18c021eb8901223f8d8774f0",
+          "image_id": "b5f84beb812b476872b323f501d36c037f2234b36f52305038f306c257ba8321",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-1aff1643/control/evidence/ae77c7fd00a785b72450676e28d92b9b373359ad7ac5528668d0251403ada7dd.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-3f97608e80f647efad4ab4b47033d508",
+            "backend_id": "uc-model-artifacts-1aff1643",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:48d33f5472421381c1503ea244422448118fa9ecef30b8fada5a0178dd23133b:/sys/fs/cgroup/pids/machine.slice/libpod-48d33f5472421381c1503ea244422448118fa9ecef30b8fada5a0178dd23133b.scope/container",
+            "container_id": "48d33f5472421381c1503ea244422448118fa9ecef30b8fada5a0178dd23133b",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-48d33f5472421381c1503ea244422448118fa9ecef30b8fada5a0178dd23133b.scope/container",
+            "observed_at": 1791770025.5203757,
+            "evidence_id": "ae77c7fd00a785b72450676e28d92b9b373359ad7ac5528668d0251403ada7dd"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-1aff1643/control/jobs/465615c9d090c357bf553118ad8d4a83b1accd1585a97123104353c24f3ec4d0.json",
+          "record_sha256": "ece58dbee06fd95aedbc62fa07939d8116261b2ece660c770d03596417accf93",
+          "image_id": "b5f84beb812b476872b323f501d36c037f2234b36f52305038f306c257ba8321",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-1aff1643/control/evidence/1a1a290d24a63269152efab983d2ce9cb37c3e9b8bc64ca93dd0d441a0ff50e4.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "model-artifacts-1aff1643-review-failed",
+            "backend_id": "uc-model-artifacts-1aff1643",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:ff92d764b4e685ae2c7366a399221faf565f11cc37dc06f0f07d2ae4e20047c4:/sys/fs/cgroup/pids/machine.slice/libpod-ff92d764b4e685ae2c7366a399221faf565f11cc37dc06f0f07d2ae4e20047c4.scope/container",
+            "container_id": "ff92d764b4e685ae2c7366a399221faf565f11cc37dc06f0f07d2ae4e20047c4",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-ff92d764b4e685ae2c7366a399221faf565f11cc37dc06f0f07d2ae4e20047c4.scope/container",
+            "observed_at": 1791770026.189052,
+            "evidence_id": "1a1a290d24a63269152efab983d2ce9cb37c3e9b8bc64ca93dd0d441a0ff50e4"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-32e3b633/control/jobs/1f76d7a54830b9624dd5a3490443ffb240993455b281666c63178106c4dc429b.json",
+          "record_sha256": "74d9515680df1acf86076836137f422b8ae9ed2fd2658f70f79c7f50ac7d6f31",
+          "image_id": "c711c14c5d3f5b059ac5145f9b1a2424c174f573b9e32b50282d9d18e877a086",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-32e3b633/control/evidence/73d848dc84ad3483c37b872a900c9fcf0651e471bccc19185373d848031b1abc.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-8f7118ae832d4b9f854aec8c6eb9affe",
+            "backend_id": "uc-model-artifacts-32e3b633",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:42fee13fb10466ed4caa1ff636601edc1004d3081ff443c86c320c06496a1a26:/sys/fs/cgroup/pids/machine.slice/libpod-42fee13fb10466ed4caa1ff636601edc1004d3081ff443c86c320c06496a1a26.scope/container",
+            "container_id": "42fee13fb10466ed4caa1ff636601edc1004d3081ff443c86c320c06496a1a26",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-42fee13fb10466ed4caa1ff636601edc1004d3081ff443c86c320c06496a1a26.scope/container",
+            "observed_at": 1791770028.2498887,
+            "evidence_id": "73d848dc84ad3483c37b872a900c9fcf0651e471bccc19185373d848031b1abc"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/control/jobs/d269582545f6c725871f0442df15560c61690fe608a1d00acd07c8e859bc0ba1.json",
+          "record_sha256": "cfa7e5d3ca3f98a95110f44c862c08fe760d3170dbe6b85b84310483fa987e05",
+          "image_id": "9af2c24ff6f7fc92926bd9dfe632e890ed32915b11d85aad518adbe7ee3f6016",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/control/evidence/dd5f515a7c5ec1b23ed64f7eb6d131718d0d19f922af4ef882ea1364fb5eb8dc.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "model-artifacts-368ec9d7-review-failed",
+            "backend_id": "uc-model-artifacts-368ec9d7",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:d884dbaa7ced06773c2a8d79be200c1ee5cc82d2b87f352f75a56521f35bead9:/sys/fs/cgroup/pids/machine.slice/libpod-d884dbaa7ced06773c2a8d79be200c1ee5cc82d2b87f352f75a56521f35bead9.scope/container",
+            "container_id": "d884dbaa7ced06773c2a8d79be200c1ee5cc82d2b87f352f75a56521f35bead9",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-d884dbaa7ced06773c2a8d79be200c1ee5cc82d2b87f352f75a56521f35bead9.scope/container",
+            "observed_at": 1791770030.3149054,
+            "evidence_id": "dd5f515a7c5ec1b23ed64f7eb6d131718d0d19f922af4ef882ea1364fb5eb8dc"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/control/jobs/e6b910186cd12019e5e5d7726db342bd9ec9cd3c8ac7c834ac65b3626f6bf948.json",
+          "record_sha256": "f2f5fd1b7d7eb74767429dfce726f44197bfb238db01922fe3fde2115ea7aedf",
+          "image_id": "9af2c24ff6f7fc92926bd9dfe632e890ed32915b11d85aad518adbe7ee3f6016",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/control/evidence/5e174eb0a0ed3bde6c37c05d6f1f7c248c45988711f2674e9801ceff49d77592.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-cd69638b9a4f4990ad538ccb24b65d02",
+            "backend_id": "uc-model-artifacts-368ec9d7",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:06749e861d388cf3c65709277805f9feb6621fb45fb759cbf67da75058881310:/sys/fs/cgroup/pids/machine.slice/libpod-06749e861d388cf3c65709277805f9feb6621fb45fb759cbf67da75058881310.scope/container",
+            "container_id": "06749e861d388cf3c65709277805f9feb6621fb45fb759cbf67da75058881310",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-06749e861d388cf3c65709277805f9feb6621fb45fb759cbf67da75058881310.scope/container",
+            "observed_at": 1791770030.960814,
+            "evidence_id": "5e174eb0a0ed3bde6c37c05d6f1f7c248c45988711f2674e9801ceff49d77592"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/control/jobs/e88e0729e6c8692e7802eeed406fd048caa169a6ace570ae5a713632458b97d3.json",
+          "record_sha256": "1eab4246df95f3d4ba0a9baecb48d573cd160b2e12641abd10a30409d30a8283",
+          "image_id": "9af2c24ff6f7fc92926bd9dfe632e890ed32915b11d85aad518adbe7ee3f6016",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-368ec9d7/control/evidence/c604cb53ecc195ca49dc29b1352f81f9381ed35e6238c95bbe509fa2ff75103b.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "model-artifacts-368ec9d7-generate",
+            "backend_id": "uc-model-artifacts-368ec9d7",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:b52d3682f5a70895e3e4670eb401408f9846595e6e2a01d8188b7ba69bd5f18a:/sys/fs/cgroup/pids/machine.slice/libpod-b52d3682f5a70895e3e4670eb401408f9846595e6e2a01d8188b7ba69bd5f18a.scope/container",
+            "container_id": "b52d3682f5a70895e3e4670eb401408f9846595e6e2a01d8188b7ba69bd5f18a",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-b52d3682f5a70895e3e4670eb401408f9846595e6e2a01d8188b7ba69bd5f18a.scope/container",
+            "observed_at": 1791770031.622015,
+            "evidence_id": "c604cb53ecc195ca49dc29b1352f81f9381ed35e6238c95bbe509fa2ff75103b"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-5e04d17e/control/jobs/e24ee519a04123e19f1d02613e16ce34e6d5a5e3284d114309399aa6e64c14fb.json",
+          "record_sha256": "a57800f240e8961e5d5cafb319a91a0b8c4faf5e4a874d1d5b3fb1e30c43ca84",
+          "image_id": "c711c14c5d3f5b059ac5145f9b1a2424c174f573b9e32b50282d9d18e877a086",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-5e04d17e/control/evidence/225bba42bb60dd6e5dabcbc538c695f2dc9a4f129cc401d99dca8d4405f4745b.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-0838750211e84b379e4122ee1154fc9b",
+            "backend_id": "uc-model-artifacts-5e04d17e",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:fab4ca9318f61c6779b384c02d0884347148acb09c50f10c18af2b89b96ec6c5:/sys/fs/cgroup/pids/machine.slice/libpod-fab4ca9318f61c6779b384c02d0884347148acb09c50f10c18af2b89b96ec6c5.scope/container",
+            "container_id": "fab4ca9318f61c6779b384c02d0884347148acb09c50f10c18af2b89b96ec6c5",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-fab4ca9318f61c6779b384c02d0884347148acb09c50f10c18af2b89b96ec6c5.scope/container",
+            "observed_at": 1791770033.767315,
+            "evidence_id": "225bba42bb60dd6e5dabcbc538c695f2dc9a4f129cc401d99dca8d4405f4745b"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-90e116c1/control/jobs/8ab699e3401988907d6462fd54c833e7ef5299e6bbb6925f40ab26ce8b015b30.json",
+          "record_sha256": "2db9cc4ef9866eacff0eff414c0a3ad692806bbd520389845279da0397895f27",
+          "image_id": "f2d47104f71e50bd62d8c9910c5e351d3a7ef1db63c2e489f3316f7bdd20d411",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-90e116c1/control/evidence/734f27fcfdbfc9558ebf528a72e8f30ba14410f62b152de91bb1ea5fa6aed8ad.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-591bd88e47dd4cb6a5c036d6c8f9e8a5",
+            "backend_id": "uc-model-artifacts-90e116c1",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:aeae4cbfb5025e267c32c2eca19a239fc5b0cd0caa964ae70be457da10fa2423:/sys/fs/cgroup/pids/machine.slice/libpod-aeae4cbfb5025e267c32c2eca19a239fc5b0cd0caa964ae70be457da10fa2423.scope/container",
+            "container_id": "aeae4cbfb5025e267c32c2eca19a239fc5b0cd0caa964ae70be457da10fa2423",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-aeae4cbfb5025e267c32c2eca19a239fc5b0cd0caa964ae70be457da10fa2423.scope/container",
+            "observed_at": 1791770035.930443,
+            "evidence_id": "734f27fcfdbfc9558ebf528a72e8f30ba14410f62b152de91bb1ea5fa6aed8ad"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-94b9a644/control/jobs/0409faeef3d000f34fab665b6551b06e0f9eaec555b915a6ee4f11fff2d0815e.json",
+          "record_sha256": "b846527a7114373831381124df4c6593cd1f6515c3b282f0c10b5ab341dcbd4f",
+          "image_id": "f2d47104f71e50bd62d8c9910c5e351d3a7ef1db63c2e489f3316f7bdd20d411",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-94b9a644/control/evidence/97c3eae119c44235d7c5a59e185eb3fa9e393aebadf20fd584bf902e71c698ca.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-ccc63d04e71d4f859004989cb232ff33",
+            "backend_id": "uc-model-artifacts-94b9a644",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:d3742ed88d679a1338e4d3321e224d2fd289d8c65183eeca18ee6d9fc45e5c0a:/sys/fs/cgroup/pids/machine.slice/libpod-d3742ed88d679a1338e4d3321e224d2fd289d8c65183eeca18ee6d9fc45e5c0a.scope/container",
+            "container_id": "d3742ed88d679a1338e4d3321e224d2fd289d8c65183eeca18ee6d9fc45e5c0a",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-d3742ed88d679a1338e4d3321e224d2fd289d8c65183eeca18ee6d9fc45e5c0a.scope/container",
+            "observed_at": 1791770038.025762,
+            "evidence_id": "97c3eae119c44235d7c5a59e185eb3fa9e393aebadf20fd584bf902e71c698ca"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-94b9a644/control/jobs/346a721e7ac92e09b1e98f4f90ac673f51961e812e3b8af6462c4881a32c967a.json",
+          "record_sha256": "11aa31fa8c8b34a1ae7b8b3fab89d4ad619a935f461f36d6725a6c642daa2143",
+          "image_id": "f2d47104f71e50bd62d8c9910c5e351d3a7ef1db63c2e489f3316f7bdd20d411",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-94b9a644/control/evidence/e53bd3fffa26db7eacc07769468f12e8f1b7a2b742d2794472ff585331440004.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "model-artifacts-94b9a644-generate",
+            "backend_id": "uc-model-artifacts-94b9a644",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:f7f2a30a1f2d16eb8cb0b99a70558a116afe83f6e967537a36a5c3bdc2881ccb:/sys/fs/cgroup/pids/machine.slice/libpod-f7f2a30a1f2d16eb8cb0b99a70558a116afe83f6e967537a36a5c3bdc2881ccb.scope/container",
+            "container_id": "f7f2a30a1f2d16eb8cb0b99a70558a116afe83f6e967537a36a5c3bdc2881ccb",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-f7f2a30a1f2d16eb8cb0b99a70558a116afe83f6e967537a36a5c3bdc2881ccb.scope/container",
+            "observed_at": 1791770038.669063,
+            "evidence_id": "e53bd3fffa26db7eacc07769468f12e8f1b7a2b742d2794472ff585331440004"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-9ecc470f/control/jobs/eecb04ece42382a353ace56a8449352701d85f3f582ea0a23cf9309b01d54859.json",
+          "record_sha256": "3d23e758794c3cc2f7ba30b26d6917140e153cea27b40c9474b684d93a4f6be0",
+          "image_id": "4f66979f30d1d7530fe52b50f9c505e76fcf00eb2024a3253d2fbb57e1d124ba",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-9ecc470f/control/evidence/46761d69a7b813e9e2671833839ab1fe2d8dd8c73de8540593d3c75f36c38b36.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-444ea2e6935f4f42a28753fb4f46394f",
+            "backend_id": "uc-model-artifacts-9ecc470f",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:791e8a374fa8cfa0f77f594e8aee1acb0deef79f3ea8dbbe8a98ed2e503c6094:/sys/fs/cgroup/pids/machine.slice/libpod-791e8a374fa8cfa0f77f594e8aee1acb0deef79f3ea8dbbe8a98ed2e503c6094.scope/container",
+            "container_id": "791e8a374fa8cfa0f77f594e8aee1acb0deef79f3ea8dbbe8a98ed2e503c6094",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-791e8a374fa8cfa0f77f594e8aee1acb0deef79f3ea8dbbe8a98ed2e503c6094.scope/container",
+            "observed_at": 1791770040.6724014,
+            "evidence_id": "46761d69a7b813e9e2671833839ab1fe2d8dd8c73de8540593d3c75f36c38b36"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-9ecc470f/control/jobs/f9ee3ace2766b568d997ca11b107cc07479c0f1475e9e4c6792ac013afda9438.json",
+          "record_sha256": "6f7d43798f73faea02b70cbcbfb01cbf70276eb81b72054ad31b4e2c0a775286",
+          "image_id": "4f66979f30d1d7530fe52b50f9c505e76fcf00eb2024a3253d2fbb57e1d124ba",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-9ecc470f/control/evidence/e799829a8b1ed51fcbf344e4321ca3c2db7e83c3c7e4d77d60bea032707619c2.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "model-artifacts-9ecc470f-review-failed",
+            "backend_id": "uc-model-artifacts-9ecc470f",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:9f0712464bf16033da2066156f4ed82a24a74f3f49f2d6b6ccbfcddc768e60e7:/sys/fs/cgroup/pids/machine.slice/libpod-9f0712464bf16033da2066156f4ed82a24a74f3f49f2d6b6ccbfcddc768e60e7.scope/container",
+            "container_id": "9f0712464bf16033da2066156f4ed82a24a74f3f49f2d6b6ccbfcddc768e60e7",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-9f0712464bf16033da2066156f4ed82a24a74f3f49f2d6b6ccbfcddc768e60e7.scope/container",
+            "observed_at": 1791770041.3756716,
+            "evidence_id": "e799829a8b1ed51fcbf344e4321ca3c2db7e83c3c7e4d77d60bea032707619c2"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c4dcc960/control/jobs/a24a8c3cfb508294deac84f931a27353a93243950ea1023e58f847a520fd3d75.json",
+          "record_sha256": "79f3b98a68ab500939a969873f9b919e13e73d96296cf4d95641a766e5492347",
+          "image_id": "c711c14c5d3f5b059ac5145f9b1a2424c174f573b9e32b50282d9d18e877a086",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c4dcc960/control/evidence/383d4dc65186cbdf4b7844d86eeb1f7f7496898e030be0fce37775ee9a07ee65.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-f77e63139aff409598ed26bbdbc085c3",
+            "backend_id": "uc-model-artifacts-c4dcc960",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:02f4124443e9b1ed89f806430a85b3df6ba60f153cf2fe56f64f5a14f5ad8448:/sys/fs/cgroup/pids/machine.slice/libpod-02f4124443e9b1ed89f806430a85b3df6ba60f153cf2fe56f64f5a14f5ad8448.scope/container",
+            "container_id": "02f4124443e9b1ed89f806430a85b3df6ba60f153cf2fe56f64f5a14f5ad8448",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-02f4124443e9b1ed89f806430a85b3df6ba60f153cf2fe56f64f5a14f5ad8448.scope/container",
+            "observed_at": 1791770043.4277496,
+            "evidence_id": "383d4dc65186cbdf4b7844d86eeb1f7f7496898e030be0fce37775ee9a07ee65"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/control/jobs/26ec0858b5612c9147d353ea097eb3e1d591d85ed39c4809cabbfbf4cbbe3b6c.json",
+          "record_sha256": "074faf18651a12227e7c1f50ddd95621080715f38c88808d58f4d74f00b1870a",
+          "image_id": "c711c14c5d3f5b059ac5145f9b1a2424c174f573b9e32b50282d9d18e877a086",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/control/evidence/80acb89ed94a4d0a48c70fc002a930a1583daa94288e647b372f5650d627da2f.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "model-artifacts-c580970b-generate",
+            "backend_id": "uc-model-artifacts-c580970b",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:869baf9b29e9ebc2d50852114cd2d377ceefa50312bbb80135a3f4dec48e7618:/sys/fs/cgroup/pids/machine.slice/libpod-869baf9b29e9ebc2d50852114cd2d377ceefa50312bbb80135a3f4dec48e7618.scope/container",
+            "container_id": "869baf9b29e9ebc2d50852114cd2d377ceefa50312bbb80135a3f4dec48e7618",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-869baf9b29e9ebc2d50852114cd2d377ceefa50312bbb80135a3f4dec48e7618.scope/container",
+            "observed_at": 1791770045.5101645,
+            "evidence_id": "80acb89ed94a4d0a48c70fc002a930a1583daa94288e647b372f5650d627da2f"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/control/jobs/2c22db19e1a471863478ab86c715b0a1e35152ae5ddd5f39973e2c313aeb19cc.json",
+          "record_sha256": "fb673d6c73e108d7aa26e625063b9d1e05b621e21590814520f77019c6bdc604",
+          "image_id": "c711c14c5d3f5b059ac5145f9b1a2424c174f573b9e32b50282d9d18e877a086",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/control/evidence/882c4824a6197448baea7900b1f9265b754eaad42d3c844b5dd731129bd8ab0f.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-efbf2ab44b984683a612f410782bfa6c",
+            "backend_id": "uc-model-artifacts-c580970b",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:132b167f78aeaef63cafb69a937642057948aa4463496578757844228a43aa88:/sys/fs/cgroup/pids/machine.slice/libpod-132b167f78aeaef63cafb69a937642057948aa4463496578757844228a43aa88.scope/container",
+            "container_id": "132b167f78aeaef63cafb69a937642057948aa4463496578757844228a43aa88",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-132b167f78aeaef63cafb69a937642057948aa4463496578757844228a43aa88.scope/container",
+            "observed_at": 1791770046.148855,
+            "evidence_id": "882c4824a6197448baea7900b1f9265b754eaad42d3c844b5dd731129bd8ab0f"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/control/jobs/f35c592a382a70b364d2b83657a2a1095b4885953f999e271f3ba3e8360df0c9.json",
+          "record_sha256": "60fe19e60d345815d031a633d745ea58fe11fc670f8fd360f38f7be737461d25",
+          "image_id": "c711c14c5d3f5b059ac5145f9b1a2424c174f573b9e32b50282d9d18e877a086",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-c580970b/control/evidence/1184c3c287b9c82835a8246c031162f128b24d1b311b14ca56d66db3e095858b.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "model-artifacts-c580970b-self-reference",
+            "backend_id": "uc-model-artifacts-c580970b",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:349660d31e06dc533ff257552bc777c9030abdab913e23d60dcc8870316df79e:/sys/fs/cgroup/pids/machine.slice/libpod-349660d31e06dc533ff257552bc777c9030abdab913e23d60dcc8870316df79e.scope/container",
+            "container_id": "349660d31e06dc533ff257552bc777c9030abdab913e23d60dcc8870316df79e",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-349660d31e06dc533ff257552bc777c9030abdab913e23d60dcc8870316df79e.scope/container",
+            "observed_at": 1791770046.73061,
+            "evidence_id": "1184c3c287b9c82835a8246c031162f128b24d1b311b14ca56d66db3e095858b"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-ee6be1d3/control/jobs/180a58ea699191459d97e3bf8f2d3f7a74f8927222d74d6c465c3f5ac17135a6.json",
+          "record_sha256": "23babc14d9066dc5bf2faef74514780d5e7d7799ff48b8f5b1a143ba76e3d1dd",
+          "image_id": "9af2c24ff6f7fc92926bd9dfe632e890ed32915b11d85aad518adbe7ee3f6016",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-ee6be1d3/control/evidence/6d6114262e7d31dbcd6bf074f37bcc001142c774847732ad8c652ba00912ad04.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-1268f0e67d184fd7953cd64865c9dd69",
+            "backend_id": "uc-model-artifacts-ee6be1d3",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:6da0855f180e5e52eec88955e2d8570d77ef788bece446805327ba5b6ace288e:/sys/fs/cgroup/pids/machine.slice/libpod-6da0855f180e5e52eec88955e2d8570d77ef788bece446805327ba5b6ace288e.scope/container",
+            "container_id": "6da0855f180e5e52eec88955e2d8570d77ef788bece446805327ba5b6ace288e",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-6da0855f180e5e52eec88955e2d8570d77ef788bece446805327ba5b6ace288e.scope/container",
+            "observed_at": 1791770048.9097579,
+            "evidence_id": "6d6114262e7d31dbcd6bf074f37bcc001142c774847732ad8c652ba00912ad04"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-ee6be1d3/control/jobs/2ce06bd42af0c9c5f31783996bb8ff057523785dd1f6c1f37fc68333267ed490.json",
+          "record_sha256": "cc4ca321daef8448ff8db718b6a6ec1a8c97bac73f10f54aee344d4ae508e24d",
+          "image_id": "9af2c24ff6f7fc92926bd9dfe632e890ed32915b11d85aad518adbe7ee3f6016",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-ee6be1d3/control/evidence/a78782f8d62267cb5893440489d38abcd1ef2865e0909f3fa71dbc845ef19716.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "model-artifacts-ee6be1d3-review-failed",
+            "backend_id": "uc-model-artifacts-ee6be1d3",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:21db7aedc31ee808ea3a67ae506cc3049573a15bd749937fa5d3fefaa793a306:/sys/fs/cgroup/pids/machine.slice/libpod-21db7aedc31ee808ea3a67ae506cc3049573a15bd749937fa5d3fefaa793a306.scope/container",
+            "container_id": "21db7aedc31ee808ea3a67ae506cc3049573a15bd749937fa5d3fefaa793a306",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-21db7aedc31ee808ea3a67ae506cc3049573a15bd749937fa5d3fefaa793a306.scope/container",
+            "observed_at": 1791770049.5496173,
+            "evidence_id": "a78782f8d62267cb5893440489d38abcd1ef2865e0909f3fa71dbc845ef19716"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/control/jobs/1097fc9397fb3e72cf60ae6ecc26bd2b77df2e1cadab9c41cac9e2b44be77290.json",
+          "record_sha256": "0a683d8370ad15d2435fac0e778d32176dc3eef8f182c5f0d930263149604b77",
+          "image_id": "12098cc317e4ae7f07d15a96fb98509b40b1d668db6ce7da0392b9a1db93d06a",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/control/evidence/167ba3e78e7e0dc6c75f27b8116d3192b8ac68d50530eaa733e882f60016e960.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "native-file-0f6526dc4c97",
+            "backend_id": "uc-model-artifacts-f769f753",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:1f198177b2f05430bff9cff4902ce0c18c378f89d5e854f02596ce81cb030bcf:/sys/fs/cgroup/pids/machine.slice/libpod-1f198177b2f05430bff9cff4902ce0c18c378f89d5e854f02596ce81cb030bcf.scope/container",
+            "container_id": "1f198177b2f05430bff9cff4902ce0c18c378f89d5e854f02596ce81cb030bcf",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-1f198177b2f05430bff9cff4902ce0c18c378f89d5e854f02596ce81cb030bcf.scope/container",
+            "observed_at": 1791770051.635349,
+            "evidence_id": "167ba3e78e7e0dc6c75f27b8116d3192b8ac68d50530eaa733e882f60016e960"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/control/jobs/5e105c1cf9bb80ff5eacf9c83f043d33350f2c3b5e0ba6807172dd43d4b68030.json",
+          "record_sha256": "8e7754df2290e23a04e6cf1aa02a4fadb4bb77f991997e1bcaaec63a100289c3",
+          "image_id": "12098cc317e4ae7f07d15a96fb98509b40b1d668db6ce7da0392b9a1db93d06a",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/control/evidence/08c60f4aa3b27e86c8109afd46fbe0e862fc0dfd166c16a9f8288a3dbdca9c6a.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-eaf07ab83c174a4c9229f8455db2048f",
+            "backend_id": "uc-model-artifacts-f769f753",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:25982e71ec6f6fc132c5072945027b6767a6d4e3df4bd1fb83836635f6d232dc:/sys/fs/cgroup/pids/machine.slice/libpod-25982e71ec6f6fc132c5072945027b6767a6d4e3df4bd1fb83836635f6d232dc.scope/container",
+            "container_id": "25982e71ec6f6fc132c5072945027b6767a6d4e3df4bd1fb83836635f6d232dc",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-25982e71ec6f6fc132c5072945027b6767a6d4e3df4bd1fb83836635f6d232dc.scope/container",
+            "observed_at": 1791770052.3270805,
+            "evidence_id": "08c60f4aa3b27e86c8109afd46fbe0e862fc0dfd166c16a9f8288a3dbdca9c6a"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/control/jobs/a6f9763f7fdde5ba975afca0b08e57f1aadc6412e90655bac1c53f972049f624.json",
+          "record_sha256": "38be8b014ec36983e85dfcb96a6a94d7862955137c3483dae8a9afe68a328aab",
+          "image_id": "12098cc317e4ae7f07d15a96fb98509b40b1d668db6ce7da0392b9a1db93d06a",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/control/evidence/47094ffcf3f40b379a4bd84f25eed5699b2c6edf6f6007d767d4f3488bea3605.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "probe-af63d382b3614fa792d287040af1e273",
+            "backend_id": "uc-model-artifacts-f769f753",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:b6167d5f950a04f39654da86aa9ab28fd524dd2f8fc886a54f3cad314e89b43c:/sys/fs/cgroup/pids/machine.slice/libpod-b6167d5f950a04f39654da86aa9ab28fd524dd2f8fc886a54f3cad314e89b43c.scope/container",
+            "container_id": "b6167d5f950a04f39654da86aa9ab28fd524dd2f8fc886a54f3cad314e89b43c",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-b6167d5f950a04f39654da86aa9ab28fd524dd2f8fc886a54f3cad314e89b43c.scope/container",
+            "observed_at": 1791770053.0006115,
+            "evidence_id": "47094ffcf3f40b379a4bd84f25eed5699b2c6edf6f6007d767d4f3488bea3605"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/control/jobs/c1c4a912c001ceeaad5f7b1fc5bbb34d787e90c6a8176260c104bdd73878c5fc.json",
+          "record_sha256": "57038bbd58df8aa94c86d6f2e86234efe7c95b9164ea7b1b23a75bedb7efe6bc",
+          "image_id": "12098cc317e4ae7f07d15a96fb98509b40b1d668db6ce7da0392b9a1db93d06a",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/control/evidence/b1eeb690d01bd740cd151e5a0662dfc0c8f8f0f11683135a047638f8dab7f9b3.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "probe-27e6e89cb15b4a4bbe7dffd412a46d29",
+            "backend_id": "uc-model-artifacts-f769f753",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:080169a01eae240f5c9d2c46a3af740d403d2c497eb50171f9d3718a72ed20ae:/sys/fs/cgroup/pids/machine.slice/libpod-080169a01eae240f5c9d2c46a3af740d403d2c497eb50171f9d3718a72ed20ae.scope/container",
+            "container_id": "080169a01eae240f5c9d2c46a3af740d403d2c497eb50171f9d3718a72ed20ae",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-080169a01eae240f5c9d2c46a3af740d403d2c497eb50171f9d3718a72ed20ae.scope/container",
+            "observed_at": 1791770053.6347709,
+            "evidence_id": "b1eeb690d01bd740cd151e5a0662dfc0c8f8f0f11683135a047638f8dab7f9b3"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/control/jobs/dec2579132d8a5b036a6ac1776435404f2b0ecd4ba40d700abf678b3709da892.json",
+          "record_sha256": "458349aadaf43d2cabb585e86f5a1962577e3f89b05aeec913e6b0ae5196595a",
+          "image_id": "12098cc317e4ae7f07d15a96fb98509b40b1d668db6ce7da0392b9a1db93d06a",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/model-artifact-verification/model-artifacts-f769f753/control/evidence/cf5c3e779aab7ff89ca5b8cbd0ca4182908d1b471f63d20544bc839f068312c7.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "model-artifacts-f769f753-review-failed",
+            "backend_id": "uc-model-artifacts-f769f753",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:219723208ecc4011271549951f48895f98464e6450200539de50a5fe79dc5cfd:/sys/fs/cgroup/pids/machine.slice/libpod-219723208ecc4011271549951f48895f98464e6450200539de50a5fe79dc5cfd.scope/container",
+            "container_id": "219723208ecc4011271549951f48895f98464e6450200539de50a5fe79dc5cfd",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-219723208ecc4011271549951f48895f98464e6450200539de50a5fe79dc5cfd.scope/container",
+            "observed_at": 1791770054.370302,
+            "evidence_id": "cf5c3e779aab7ff89ca5b8cbd0ca4182908d1b471f63d20544bc839f068312c7"
+          }
+        },
+        {
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/d678934d97403cb4323784b8de3762302aa4543085552fe67ebb90ed683eddf4.json",
+          "record_sha256": "b7921077060902d45a03d640406e0ae4f70972856d6b99ef80f993bd4a855f4b",
+          "image_id": "f2d47104f71e50bd62d8c9910c5e351d3a7ef1db63c2e489f3316f7bdd20d411",
+          "receipt_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/evidence/15dbae516e194b5b213f3832e473ccd185ee24d7b6a95f21ca09fa52fafec4ee.json",
+          "proof": {
+            "contract_version": "uc-metainfer/1",
+            "task_id": "hardware-5d483befcce44f6f8938d1357d32107e",
+            "backend_id": "uc-attested-native-aad5e8b5",
+            "writers_stopped": true,
+            "proof_kind": "cgroup_empty",
+            "execution_scope": "9e4d7211-2d7f-4c91-8965-fd35047454ba:e132a304e3625206b0e4882186b0c71c0a062227773c5a196b34ab50b547e5d1:/sys/fs/cgroup/pids/machine.slice/libpod-e132a304e3625206b0e4882186b0c71c0a062227773c5a196b34ab50b547e5d1.scope/container",
+            "container_id": "e132a304e3625206b0e4882186b0c71c0a062227773c5a196b34ab50b547e5d1",
+            "cgroup": "/sys/fs/cgroup/pids/machine.slice/libpod-e132a304e3625206b0e4882186b0c71c0a062227773c5a196b34ab50b547e5d1.scope/container",
+            "observed_at": 1791770056.67745,
+            "evidence_id": "15dbae516e194b5b213f3832e473ccd185ee24d7b6a95f21ca09fa52fafec4ee"
+          }
+        }
+      ],
+      "historical_records": [
+        {
+          "task_id": "probe-ce8b8309bd6848f5a0d0faa27f94f8e2",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/107e58dfe35ad4475ee1bec0e3f24bc8a2e3e6d03dad946693548cf44d804db4.json"
+        },
+        {
+          "task_id": "uc-attested-documented-gpu-optim-b5372b2f",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/806e6ab816bdd9208290e7152725f1c037b3fdef7c61cee7eeaffd29e4482517.json"
+        },
+        {
+          "task_id": "harness-replay-49bba148",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/8d03efb5cfdcf949dccf161d0df18d2bfae39c85e731cef88435edae5cdcede0.json"
+        },
+        {
+          "task_id": "native-coding",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/9d1c77aa7d896f4da88caeaaeabe793909050e6c259aa267d6d598e59b4b2a45.json"
+        },
+        {
+          "task_id": "probe-8fc35d7f1dbe48da9b90afb9fef59ef7",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/9f1191fa3283b95402089670d0f508fb24b842997844b5194fee2befa5cc4d5d.json"
+        },
+        {
+          "task_id": "independent-assertion",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/a69e3cdbb6d60085a2a2c287aafee2bcda3b6a36b0f432f5121a36546cab7ef6.json"
+        },
+        {
+          "task_id": "harness-replay-332f85bf",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/ba0fe4dc20f3a7d4c9964c86e7fdf9e3e6d931056fe780960b9004f7230d76e9.json"
+        },
+        {
+          "task_id": "probe-57a8a96dafaf40c1b67238c7938d20fc",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/c025006c6be160c122f8f146d2e4440c56bf43ed4a6ac50494c1fd88793cb4a2.json"
+        },
+        {
+          "task_id": "probe-085556e49fd8436d85bf7cd4ec380121",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/c432a310b544ea8690aab03ca1a72d3eedd5cd9d87da283069a6465b4d1151cb.json"
+        },
+        {
+          "task_id": "hardware-48a31dbb29474ead90efcfb0312b1654",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/c5b6f5f7806ee681f30923f5eea4b6f0fb7aa0e787d418ab19f4ef4236c10d62.json"
+        },
+        {
+          "task_id": "protected-gpu-oracle",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/e0bc0caf7a62c96540949f4a11a1cc54315c2c2b624a3209ee7ba56286f69dbb.json"
+        },
+        {
+          "task_id": "active-cache-writer",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/e7d5a8c6f0ab25aba2d4d5713cacbc74d95d7b1fa240795a0608b05ac7fc8605.json"
+        },
+        {
+          "task_id": "probe-d73a255a851643ad83d6811d29f318a2",
+          "boot_id": "a1025a6f-0b24-452b-9db0-e1f246128d47",
+          "record_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/attested-native-verification/aad5e8b5/control/jobs/ee79f68d6fb68c650fa68d637f16e57c0e33a55cd2ad6fb6843e8c33abeea29d.json"
+        }
+      ],
+      "gpu_release_acceptance": false,
+      "all_current_boot_writers_stopped": true
+    },
+    "owned_scope_audit_raw_path": "/mnt/c/Users/jamer/aiworks/UltimateCoders/.uc/context-final-owned-writer-audit.json",
+    "owned_scope_audit_raw_sha256": "baf804284f7d2e708f92358d79146c3549fa458837ca0de889edf3059cbb1281",
+    "tests": {
+      "windows_full": {
+        "passed": 1509,
+        "skipped": 61,
+        "seconds": 264.45,
+        "dependency_warnings": 2,
+        "cache_warning": 1
+      },
+      "linux_focused": {
+        "passed": 118,
+        "skipped": 3,
+        "seconds": 88.46,
+        "dependency_warnings": 1
+      },
+      "review_boundary_red_green": {
+        "client_exhaustion": 2,
+        "cli_exhaustion": 2,
+        "fd_cleanup": 1,
+        "normal_cli": 1
+      },
+      "windows_handle_red_green": 2,
+      "ruff_python_tests": "passed",
+      "repository_guards": "all seven passed"
+    },
+    "gpu_release_acceptance": false,
+    "r8_status": "OPEN",
+    "remaining": [
+      "successful genuine full optimization",
+      "protected whole-workflow acceptance and rollback",
+      "accepted candidate delivery",
+      "actual cross-host artifact verification (user has no second host)"
+    ],
+    "provider_primary_observations": {
+      "observed_at": "2026-10-12T02:00:56.4321340Z",
+      "version": "0.40.3",
+      "models": [
+        {
+          "model": "uc-metainfer-gemma:1012",
+          "digest": "0979dc60650788ee9dc535e6d808fa5ac9b7790f33f38d0a207bab93caa7291f",
+          "parameters": 11907350576,
+          "details": {
+            "parent_model": "gemma4:12b",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "11.9B",
+            "quantization_level": "Q4_K_M",
+            "runner": "llamacpp"
+          }
+        },
+        {
+          "model": "uc-metainfer-coding:latest",
+          "digest": "0c54bc8e9a50838ad8bfd08c89ac4dba68982d6adf69fdfebecadf27d556c728",
+          "parameters": 4022468096,
+          "details": {
+            "parent_model": "hf.co/Ma7ee7/Qwen3.8_4B_Distilled_GGUF:qwen3-4b-thinking-2507.Q4_K_M",
+            "format": "gguf",
+            "family": "qwen3",
+            "families": [
+              "qwen3"
+            ],
+            "parameter_size": "4.02B",
+            "quantization_level": "Q4_K_M",
+            "runner": "llamacpp"
+          }
+        },
+        {
+          "model": "uc-metainfer-coding-9b:latest",
+          "digest": "c604d8c2496349d93c02ae1a4ab8de30f26c099df61405a958cf366e618e7b72",
+          "parameters": 9197093888,
+          "details": {
+            "parent_model": "qwen3.8-9b-uc:latest",
+            "format": "gguf",
+            "family": "qwen35",
+            "families": [
+              "qwen35"
+            ],
+            "parameter_size": "9.2B",
+            "quantization_level": "Q4_K_M",
+            "runner": "llamacpp"
+          }
+        },
+        {
+          "model": "uc-metainfer-native9b:1012",
+          "digest": "7bb044cb04582112c39bb1474b9c6c087cee3a3bfbd4167e335a84e37e8516a5",
+          "parameters": 9197093888,
+          "details": {
+            "parent_model": "hf.co/empero-ai/Qwen3.8-9B-Distill-GGUF:Qwen3.8-9B-Q4_K_M",
+            "format": "gguf",
+            "family": "qwen35",
+            "families": [
+              "qwen35"
+            ],
+            "parameter_size": "9.2B",
+            "quantization_level": "Q4_K_M",
+            "runner": "llamacpp"
+          }
+        }
+      ],
+      "raw_http_path": "C:\\Users\\jamer\\aiworks\\UltimateCoders\\.uc\\context-installed-model-observations-1012.json",
+      "raw_http_sha256": "bdb6200d31d685d0f9cc9f69f0c80baa540fe574720fe30d1ad2d9dd158bfd5b",
+      "server_log_snapshots": [
+        {
+          "path": "C:\\Users\\jamer\\aiworks\\UltimateCoders\\.uc\\context-provider-native-log-snapshot-1012.txt",
+          "sha256": "718174536035f3c0527ac8175951d46209d8a5683eb9a044d2f7b7b9e4f141fc",
+          "entries": [
+            {
+              "line": 1,
+              "text": "time=2026-10-12T09:09:02.413+08:00 level=INFO source=routes.go:2373 msg=\"server config\" env=\"map[CUDA_VISIBLE_DEVICES: GGML_VK_VISIBLE_DEVICES: GPU_DEVICE_ORDINAL: HIP_VISIBLE_DEVICES: HSA_OVERRIDE_GFX_VERSION: HTTPS_PROXY: HTTP_PROXY: LLAMA_ARG_FIT: LLAMA_ARG_FIT_TARGET: NO_PROXY: OLLAMA_CONTEXT_LENGTH:0 OLLAMA_CREATE_REMOTE:false OLLAMA_DEBUG:INFO OLLAMA_DEBUG_LOG_REQUESTS:false OLLAMA_EDITOR: OLLAMA_FLASH_ATTENTION:false OLLAMA_GO_TEMPLATE:false OLLAMA_GPU_OVERHEAD:0 OLLAMA_HOST:http://127.0.0.1:11434 OLLAMA_IGPU_ENABLE: OLLAMA_KEEP_ALIVE:5m0s OLLAMA_KV_CACHE_TYPE: OLLAMA_LLM_LIBRARY: OLLAMA_LOAD_TIMEOUT:5m0s OLLAMA_MAX_LOADED_MODELS:1 OLLAMA_MAX_QUEUE:512 OLLAMA_MAX_TRANSFER_STREAMS:4 OLLAMA_MODELS:C:\\\\Users\\\\jamer\\\\.ollama\\\\models OLLAMA_NOHISTORY:false OLLAMA_NOPRUNE:false OLLAMA_NO_CLOUD:true OLLAMA_NUM_PARALLEL:1 OLLAMA_ORIGINS:[http://localhost https://localhost http://localhost:* https://localhost:* http://127.0.0.1 https://127.0.0.1 http://127.0.0.1:* https://127.0.0.1:* http://0.0.0.0 https://0.0.0.0 http://0.0.0.0:* https://0.0.0.0:* app://* file://* tauri://* vscode-webview://* vscode-file://*] OLLAMA_REMOTES:[ollama.com] OLLAMA_SCHED_SPREAD:false OLLAMA_VULKAN:true ROCR_VISIBLE_DEVICES:]\""
+            },
+            {
+              "line": 5,
+              "text": "time=2026-10-12T09:09:02.519+08:00 level=INFO source=routes.go:2435 msg=\"Listening on 127.0.0.1:11434 (version 0.40.3)\""
+            },
+            {
+              "line": 802,
+              "text": "slot   operator(): id  0 | task 33 | new prompt, n_ctx_slot = 8192, n_keep = 4, task.n_tokens = 4030"
+            },
+            {
+              "line": 818,
+              "text": "slot init_sampler: id  0 | task 33 | init sampler, took 0.64 ms, tokens: text = 4030, total = 4030"
+            },
+            {
+              "line": 854,
+              "text": "slot print_timing: id  0 | task 33 | prompt eval time =    2858.94 ms /  4030 tokens (    0.71 ms per token,  1409.61 tokens per second)"
+            },
+            {
+              "line": 855,
+              "text": "slot print_timing: id  0 | task 33 |        eval time =  102941.86 ms /  4162 tokens (   24.74 ms per token,    40.42 tokens per second)"
+            },
+            {
+              "line": 856,
+              "text": "slot print_timing: id  0 | task 33 |       total time =  105800.80 ms /  8192 tokens"
+            },
+            {
+              "line": 858,
+              "text": "slot      release: id  0 | task 33 | stop processing: n_tokens = 8191, truncated = 1"
+            },
+            {
+              "line": 1639,
+              "text": "slot print_timing: id  0 | task 30 |        eval time =  207550.54 ms /  8192 tokens (   25.34 ms per token,    39.47 tokens per second)"
+            },
+            {
+              "line": 1640,
+              "text": "slot print_timing: id  0 | task 30 |       total time =  211672.61 ms / 14551 tokens"
+            },
+            {
+              "line": 1642,
+              "text": "slot      release: id  0 | task 30 | stop processing: n_tokens = 14550, truncated = 0"
+            }
+          ]
+        },
+        {
+          "path": "C:\\Users\\jamer\\aiworks\\UltimateCoders\\.uc\\context-provider-go-log-snapshot-1012.txt",
+          "sha256": "c5e321bfac55180e46bd7fb24f24a86537e18bf6618604f01cddc0c2e2ca1d8c",
+          "entries": [
+            {
+              "line": 1,
+              "text": "time=2026-10-12T08:19:36.698+08:00 level=INFO source=routes.go:2373 msg=\"server config\" env=\"map[CUDA_VISIBLE_DEVICES: GGML_VK_VISIBLE_DEVICES: GPU_DEVICE_ORDINAL: HIP_VISIBLE_DEVICES: HSA_OVERRIDE_GFX_VERSION: HTTPS_PROXY: HTTP_PROXY: LLAMA_ARG_FIT: LLAMA_ARG_FIT_TARGET: NO_PROXY: OLLAMA_CONTEXT_LENGTH:0 OLLAMA_CREATE_REMOTE:false OLLAMA_DEBUG:INFO OLLAMA_DEBUG_LOG_REQUESTS:false OLLAMA_EDITOR: OLLAMA_FLASH_ATTENTION:false OLLAMA_GO_TEMPLATE:true OLLAMA_GPU_OVERHEAD:0 OLLAMA_HOST:http://127.0.0.1:11434 OLLAMA_IGPU_ENABLE: OLLAMA_KEEP_ALIVE:5m0s OLLAMA_KV_CACHE_TYPE: OLLAMA_LLM_LIBRARY: OLLAMA_LOAD_TIMEOUT:5m0s OLLAMA_MAX_LOADED_MODELS:1 OLLAMA_MAX_QUEUE:512 OLLAMA_MAX_TRANSFER_STREAMS:4 OLLAMA_MODELS:C:\\\\Users\\\\jamer\\\\.ollama\\\\models OLLAMA_NOHISTORY:false OLLAMA_NOPRUNE:false OLLAMA_NO_CLOUD:false OLLAMA_NUM_PARALLEL:1 OLLAMA_ORIGINS:[http://localhost https://localhost http://localhost:* https://localhost:* http://127.0.0.1 https://127.0.0.1 http://127.0.0.1:* https://127.0.0.1:* http://0.0.0.0 https://0.0.0.0 http://0.0.0.0:* https://0.0.0.0:* app://* file://* tauri://* vscode-webview://* vscode-file://*] OLLAMA_REMOTES:[ollama.com] OLLAMA_SCHED_SPREAD:false OLLAMA_VULKAN:true ROCR_VISIBLE_DEVICES:]\""
+            },
+            {
+              "line": 5,
+              "text": "time=2026-10-12T08:19:36.791+08:00 level=INFO source=routes.go:2435 msg=\"Listening on 127.0.0.1:11434 (version 0.40.3)\""
+            },
+            {
+              "line": 1318,
+              "text": "slot      release: id  0 | task 3091 | stop processing: n_tokens = 3343, truncated = 0"
+            },
+            {
+              "line": 1400,
+              "text": "slot      release: id  0 | task 3361 | stop processing: n_tokens = 4064, truncated = 0"
+            },
+            {
+              "line": 1875,
+              "text": "slot      release: id  0 | task 30 | stop processing: n_tokens = 3835, truncated = 0"
+            }
+          ]
+        }
+      ],
+      "owner_metadata": {
+        "birth": "2026-10-12T09:09:02.2435414+08:00",
+        "go_template": false,
+        "pid": 7624,
+        "executable": "C:\\Users\\jamer\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
+        "no_cloud": true,
+        "max_loaded_models": 1,
+        "num_parallel": 1
+      },
+      "note": "Read-only API inventory/show/version; no inference, download or alias mutation. Snapshot log entries preserve real flags and exhausted request counts."
+    }
   }
 }

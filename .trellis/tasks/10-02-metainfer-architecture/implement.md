@@ -162,3 +162,34 @@ Cold-start success is deployment preflight. Full R8 acceptance remains OPEN.
 
 The operator-corrected copy is diagnostic evidence only, not an optimized
 candidate or successful model generation. R8 remains OPEN.
+
+## Native files, effective budgets and checkpoint readers (2026-10-12)
+
+- [x] Deliver PR #711 at c12f2e49; preserve its diagnostics and thirteen
+  historical stopped-scope receipts.
+- [x] Bind bounded context/output budgets to actual HTTP, hardware profile,
+  launch and saved conversations, including implicit legacy defaults.
+- [x] Add real structured write_file handling, atomic no-follow bounded files,
+  actual file_change events and distinct command/message item IDs.
+- [x] Reject provider output exhaustion before tools or success events; close
+  directory FDs when temporary cleanup fails. Confirm RED then GREEN through
+  real HTTP and actual filesystem descriptors.
+- [x] Reproduce Windows sharing denial using actual CreateFileW handles; repair
+  with five atomic replace attempts and bounded backoff, preserving old bytes
+  on persistent error. Both regressions pass.
+- [x] Run final full Windows tests (1509 passed, 61 skips), Linux related tests
+  (118 passed, 3 skips), Ruff and all seven repository guards.
+- [x] Build immutable image 12098cc3 and pass actual model file delivery and
+  the HTTP shared-workspace/GPU deployment gate on port 48768.
+- [x] Audit all 27 owned scopes on the current WSL boot as stopped, preserving
+  thirteen prior-boot records as historical evidence.
+- [x] Preserve genuine rejected harnesses/reviews and the latest review timeout.
+  No manual artifact correction is counted as model acceptance.
+- [x] Complete final independent Spec/Standards evidence reviews and prepare
+  the reviewed commit/PR delivery. CI and merge status are recorded by the PR.
+- [ ] Complete genuine successful full optimization, protected whole-workflow
+  Oracle/rollback/delivery and actual cross-host artifact acceptance.
+
+Actual native file delivery and preflight pass; model harness quality still
+fails reference execution or review deadlines. R8 stays OPEN. The user has no
+second host and explicitly retained incomplete cross-host acceptance.

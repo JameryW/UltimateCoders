@@ -415,3 +415,87 @@ trusted only in the test process and temporary Git sandboxes on Linux storage.
 The initial WSL attempt hit Git's mounted-directory ownership check; no global
 Git setting was changed. Targeted ruff passed, and both independent review axes
 passed the count/inventory repair without findings.
+
+## Native artifact continuation (2026-10-12)
+
+Baseline: c12f2e49998f9e76f567aa5c4b50e0172a470fac, merged PR #711 with eleven
+passing checks. Branch: codex/metainfer-ollama-context. This delivery repairs
+the native Ollama profile/session/file boundaries and Windows checkpoint
+publication found during the still-open R8 single-host work.
+
+The actual context and output limits now reach every chat and bind launch,
+cache and sessions. Both implicit-default override paths were reproduced and
+fixed before workspace claim/create. write_file publishes actual structured
+provider bytes through no-follow FDs; it does not synthesize a requested file
+from model prose. File and message item IDs are distinct. Two independent
+review axes found output exhaustion still accepted at done=true; real HTTP
+client/CLI text and complete file-call tests first failed and then passed.
+The final stream boundary rejects done_reason=length before tools/session
+publication/success. A cleanup-error regression also demonstrated an open
+directory FD; nested finally now closes it while propagating the error.
+
+An actual Windows reader without FILE_SHARE_DELETE reproduced WinError 5.
+Transient release now permits atomic replacement; a persistent reader exhausts
+five attempts, preserves original bytes, removes only the owned temporary and
+raises. Backoff is 10/20/40/80ms; other platform/error paths are immediate.
+
+Final checks on the delivered source:
+
+- Windows complete Python suite: 1509 passed, 61 platform skips, 264.45s.
+  Two existing dependency deprecations and one local cache-directory warning.
+- Linux service/Ollama/publication/architecture/runtime-state: 118 passed,
+  3 skips, 88.46s; one existing dependency deprecation. The initial NTFS temp
+  directory failed FIFO/mode/Git fixture semantics; rerunning on native /tmp
+  passed without weakening tests or adding skips. CLI sessions are isolated.
+- Six focused output-exhaustion/cleanup/normal-file checks: passed, 9.07s,
+  after the respective RED reproductions. Two actual Windows-handle cases
+  passed after their RED reproductions.
+- Ruff across python/ and tests/ passed. All seven repository guards passed:
+  spec refs, task refs, line endings, workflow inputs, Codex issue flow,
+  README CI table and journal ledger. Existing advisory inventories stand.
+  Tracked census remains 2023 blobs / 2014 text / 9 binary / 1 gitlink;
+  no files or guard allowlists were added for this delivery.
+
+Immutable image 12098cc317e4ae7f07d15a96fb98509b40b1d668db6ce7da0392b9a1db93d06a
+matches the final normalized native code hashes. Actual Torch 2.6.0+cu124 /
+CUDA 12.4 / Triton 3.2.0 vector-add cases 33, 4096 and 65536 have zero error.
+The installed Ollama 0.40.3 native GGUF profile uses a separate 9B alias pinned
+to digest 7bb044cb04582112c39bb1474b9c6c087cee3a3bfbd4167e335a84e37e8516a5,
+context 16384 and output 8192. Existing aliases/weights were preserved; no new
+model download or nonce-text repair was used.
+
+The final model actually wrote the exact random marker through write_file;
+its file_change, final event, byte checksum and stopped scope were observed.
+The service reused the stopped hardware cache and passed the real HTTP GPU
+and shared-workspace gate. The first operator invocation mistakenly supplied
+the coding alias to --model, which filters GPU device names; it correctly
+rejected. The corrected RTX 4060 filter passed. Both workspace probe scopes
+are in the final audit. All 27 owned scopes on boot
+9e4d7211-2d7f-4c91-8965-fd35047454ba were individually observed stopped;
+thirteen earlier-boot records are retained as historical, not revalidated.
+
+Genuine harness generation is still unsuccessful as acceptance: one unchanged
+harness failed JIT detection, another used torch.randn for an excluded integer
+dtype, and the final review hit the real 180s header deadline with no successful
+event/file. Earlier context/output/template failures are retained. Generation
+completion and container-lifecycle completion are not correctness success.
+Raw reports/log hashes, reference and artifact hashes, exact file result,
+HTTP hardware/workspace receipts and each stop receipt are appended as
+native_artifact_continuation in gpu-verification.json. All reference bytes
+remain 87c37016af10e1959103a34bcbcec75e306f2975848f1b5f33282807eb798e67.
+
+Source Spec and Standards review axes both passed after the exhaustion and FD
+fixes; final evidence review follows. This is preflight and artifact-seam
+validation. Successful full optimization, protected whole-workflow Oracle,
+rollback, accepted candidate delivery and explicitly deferred two-host checks
+remain OPEN. The task is neither completed nor archived.
+
+Final independent Standards/Evidence review: PASS, no actionable findings.
+It matched eight raw reports, eleven logs, four model files, twelve reference
+files and all 27 record/receipt groups, then observed all 27 containers stopped
+with PID zero and no remaining cgroup writers. Final Spec/Evidence review:
+PASS, no actionable findings. It independently matched those raw/portable
+hashes, final marker/events, five image code hashes, thirteen historical
+records, four actual model metadata observations and two fixed server log
+snapshots with sixteen exact line-numbered entries. The source exhaustion P2
+remains repaired. Full acceptance criteria and open task status stand.

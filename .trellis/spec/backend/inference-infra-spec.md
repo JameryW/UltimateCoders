@@ -307,7 +307,11 @@ active-run recovery or actual two-host artifact acceptance.
 
 ContainedJobs.enable_hardware(environment, *, observe_url=None) -> None.
 ContainedJobs.hardware() -> dict. HardwareAttestation.initialize() -> None.
-OllamaProfile(url, model, digest).identity() -> dict; .chat(messages, tools=list) -> dict.
+OllamaProfile(url, model, digest, num_ctx=16384, num_predict=4096).identity() -> dict;
+.chat(messages, tools=list) -> dict. from_environment reads UC_OLLAMA_NUM_CTX.
+save_session(directory, thread, profile, messages) and
+load_session(directory, thread, profile) persist/validate effective num_ctx.
+Native write_file(path, content, workspace) -> path/kind/bytes/sha256.
 Service: --gpu wsl|nvidia --attest-ollama [--ollama-observe-url URL].
 Native client: /opt/uc/ultimate_coders/metainfer_service/coding.py exec
 [resume UUID] --json --sandbox workspace-write -C WORKSPACE - (stdin prompt).
@@ -319,6 +323,29 @@ Require uc.metainfer.ollama=1, the explicit native client path, codex event
 backend and UC_OLLAMA_URL/MODEL/DIGEST. Restrict environment overrides and host
 proxy inheritance. No automatic CLI/provider fallback. This initial profile
 supports one physical/visible GPU and evolve-kernel jobs.
+
+UC_OLLAMA_NUM_CTX is optional, defaults to 16384 and must be an integer from
+1024 through 32768. Every chat sends this value as options.num_ctx. The explicit
+environment value enters the private profile hash; changing it cannot reuse
+the previous profile cache or trigger a fresh probe while writers are owned.
+Launch compares the effective profile, including its default context, before
+workspace claims or OCI create. Adding a context to a proof that omitted the
+key cannot bypass this check. Sessions store effective num_ctx; resume refuses
+a different context. Legacy sessions without the field can resume only at the
+legacy default. Keep the provider identity response's existing wire shape.
+Keep the legacy default and model/digest validation. Check actual model size,
+resident VRAM and context rather than inferring size from a local alias name.
+Provider templates must honor think:false; repair a faulty template through a
+new pinned alias, never by removing text from the observed nonce response.
+UC_OLLAMA_NUM_PREDICT is optional, defaults to 4096 and accepts integers from
+128 through 8192. Every chat sends it as options.num_predict. It is part of the
+effective profile, cache hash and session record. A different output budget
+cannot override an implicit attested default or resume the previous session;
+legacy sessions without the field remain compatible only at 4096. Record
+output exhaustion as failure, never as a completed tool or passing artifact.
+Reject done_reason=length at the stream completion boundary, before returning
+accumulated text or tools to the CLI. A nonempty final message or syntactically
+complete tool call does not override the provider's incomplete result.
 
 A private owned probe runs trusted image code, real kernels and an actual model
 nonce request without model-generated commands. Require matching image code and
@@ -343,6 +370,16 @@ tools and a deadline-owned HTTP request process for DNS/headers/body trickling.
 Native execution requires a nonroot read-only capless OCI job. Session
 resume binds model identity. Publication and protected Oracle remain separate.
 
+The native write_file tool accepts actual provider tool calls, bounded UTF-8
+content (64 KiB) and paths within the current workspace. Traverse directories
+through no-follow FDs; reject traversal, links and special targets. Publish
+atomically, fsync and preserve existing permissions. Emit a file_change only
+after the write succeeds; command and message item IDs must be distinct. File
+tool results are returned to the model. Never turn an agent message into an
+artifact or infer a command from it. A requested file still needs independent
+existence and content checks; the native client's final text is not that file.
+Close directory FDs even when temporary-file cleanup raises an error.
+
 For local acceptance diagnostics, distinguish the documented Python callable
 from a raw Triton JIT launch: a module's run(x, y) wrapper is not
 JITFunction.run, which requires launch grid and warmup arguments. Check the
@@ -360,6 +397,14 @@ or accepted candidate from prose.
 | Condition | Behavior |
 | --- | --- |
 | No profile, foreign client or incompatible image | No hardware/probe launch |
+| Invalid context size/type | Reject before provider HTTP or hardware launch |
+| Context profile changed while writers are owned | Refuse re-attestation before create |
+| Implicit default proof followed by a different context override | Refuse launch before workspace claims |
+| Saved session context differs from the current context | Refuse before chat inference |
+| Output budget invalid or different from the proof/session | Refuse before launch/inference |
+| Stream completion reports output exhaustion | Fail before tools, session publication or success events |
+| File tool escapes workspace, follows links or exceeds its bound | Refuse without writing the target |
+| Valid streamed file call | Persist actual bytes, emit file_change, return checksum |
 | Changed digest, wrong model or incomplete stream | Fail closed; no substitute tool |
 | Probe failure, code mismatch or unknown writers | No accepted evidence; retain unknown scope |
 | Matching restart cache | Fresh stop/GPU/model checks; no new GPU/model inference |
@@ -375,6 +420,9 @@ Good: kernels agree with Torch, the pinned model answers a nonce, every writer
 stops and restart reuses observed evidence. Base: CPU containment remains usable
 while hardware is 503. Bad: declaring full optimization from GPU inventory or
 prose that describes a tool invocation.
+Good: an explicit context reaches the provider and resumes only with that same
+context. Base: omitted context and legacy sessions retain 16384. Bad: silently
+adding 4096 to a launch proved at the implicit default, or restoring its session.
 
 ### 11.6 Tests Required
 
@@ -390,6 +438,17 @@ If the user defers cross-host verification for lack of a second host, preserve
 that criterion as incomplete while continuing single-host checks; two local
 containers cannot satisfy it.
 
+Context tests must observe actual HTTP options, preserve the legacy default,
+exercise both allowed endpoints and invalid sizes/types, refuse explicit
+profile changes with owned writers, and refuse implicit-default overrides
+before claim/create. Exercise same-context restore, changed-context rejection
+and legacy-session compatibility through real bounded session files.
+File tests exercise real bytes, checksum, permissions, traversal/links/FIFO and
+size refusal. A real HTTP peer drives the native CLI and verifies file_change,
+distinct item IDs and the tool-result round trip; prose remains unexecuted.
+Observe explicit output budget and its default in real HTTP payloads; test
+invalid sizes/types, implicit-default launch override and changed-budget resume.
+
 ### 11.7 Wrong vs Correct
 
 Wrong: benchmark the GPU on every active-run service restart. Correct: recheck
@@ -397,3 +456,51 @@ private evidence and live identity, and require quiescent ownership before a
 fresh probe. Wrong: let model shell tools write their hardware witness.
 Correct: trusted attestation executes no model-generated commands; test actual
 coding quality separately.
+Wrong: compare only the environment keys explicitly present in a proof.
+Correct: compare its effective profile, including defaults, before launch.
+
+## 12. Windows checkpoint publication under readers
+
+### 12.1 Scope / Trigger
+
+Applies to runtime_state.atomic_write and all JSON checkpoints using it.
+Windows readers can temporarily deny deletion while a replacement is ready.
+
+### 12.2 Signatures
+
+atomic_write(path: Path, data: bytes) -> None; atomic_json(path, data) -> None.
+
+### 12.3 Contracts
+
+Flush and fsync a same-directory temporary file before atomic replacement.
+On Windows only, PermissionError with winerror 5 or 32 permits at most five
+replace attempts, with 10/20/40/80 ms backoff. Never delete the destination or
+copy into it as a fallback. Persistent denial propagates and removes only the
+temporary file; the previous complete checkpoint remains. Other errors and
+POSIX replacement failures propagate immediately. This retries publication,
+not a remote task submission, container creation or execution operation.
+
+### 12.4 Validation & Error Matrix
+
+| Condition | Behavior |
+| --- | --- |
+| Reader releases after first actual sharing denial | Retry atomic replacement |
+| Reader keeps target locked | Fail after five attempts; preserve old bytes |
+| Other permission error or POSIX failure | Fail immediately |
+
+### 12.5 Good / Base / Bad Cases
+
+Good: a transient reader releases and the complete new record appears. Base:
+uncontended replacement follows its existing path. Bad: deleting the target
+or copying bytes into it to bypass a sharing denial exposes missing/partial state.
+
+### 12.6 Tests Required
+
+Use actual Windows CreateFileW handles omitting FILE_SHARE_DELETE. Verify a
+released reader permits the second attempt and a retained reader causes five
+failed attempts without changing old bytes or leaking the temporary file.
+
+### 12.7 Wrong vs Correct
+
+Wrong: suppress all PermissionError or retry indefinitely. Correct: retry only
+the bounded Windows sharing/access cases and propagate the final failure.

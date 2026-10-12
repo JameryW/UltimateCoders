@@ -110,3 +110,13 @@ single_host_follow_up evidence. All thirteen owned OCI scopes stopped.
 These findings localize two failed seams but do not establish a successful
 model-generated harness, optimized candidate or protected workflow acceptance.
 Stable GPU conditions and genuine artifacts are still needed; R8 remains OPEN.
+
+The native artifact continuation fixes effective provider budgets/session
+binding, real file tools, output exhaustion, FD cleanup and Windows atomic
+checkpoint contention. Final image 12098cc3 passed actual native file delivery
+and the HTTP workspace/GPU deployment gate; all 27 current-boot owned scopes
+stopped. Thirteen prior-boot receipts remain historical. Windows full suite:
+1509 passed/61 skips; Linux focused: 118 passed/3 skips. Genuine harnesses still
+fail their reference contract or review deadlines; no manual repair is accepted.
+See native_artifact_continuation in gpu-verification.json and the extended
+harness-loop-diagnosis.md. Full R8 and cross-host acceptance remain OPEN.

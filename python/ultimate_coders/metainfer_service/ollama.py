@@ -15,6 +15,8 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 MAX_RESPONSE = 4 * 1024 * 1024
+DEFAULT_CONTEXT = 16384
+DEFAULT_PREDICT = 4096
 CODING_CLIENT = "/opt/uc/ultimate_coders/metainfer_service/coding.py"
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,8 @@ class OllamaProfile:
     url: str
     model: str
     digest: str
+    num_ctx: int = DEFAULT_CONTEXT
+    num_predict: int = DEFAULT_PREDICT
 
     def __post_init__(self) -> None:
         parsed = urlsplit(self.url)
@@ -56,6 +60,10 @@ class OllamaProfile:
             or parsed.path not in ("", "/")
             or not re.fullmatch(r"[A-Za-z0-9_./:-]{1,200}", self.model)
             or not re.fullmatch(r"[a-f0-9]{64}", self.digest)
+            or type(self.num_ctx) is not int
+            or not 1024 <= self.num_ctx <= 32768
+            or type(self.num_predict) is not int
+            or not 128 <= self.num_predict <= 8192
         ):
             raise ValueError("Invalid explicit Ollama profile")
         object.__setattr__(self, "url", self.url.rstrip("/"))
@@ -66,6 +74,8 @@ class OllamaProfile:
             environment.get("UC_OLLAMA_URL", ""),
             environment.get("UC_OLLAMA_MODEL", ""),
             environment.get("UC_OLLAMA_DIGEST", ""),
+            int(environment.get("UC_OLLAMA_NUM_CTX", str(DEFAULT_CONTEXT))),
+            int(environment.get("UC_OLLAMA_NUM_PREDICT", str(DEFAULT_PREDICT))),
         )
 
     def _exchange(self, path: str, payload: dict | None, timeout: float) -> dict:
@@ -124,7 +134,9 @@ class OllamaProfile:
             "tools": tools,
             "think": False,
             "stream": True,
-            "options": {"temperature": 0.1, "num_ctx": 16384, "num_predict": 4096},
+            "options": {
+                "temperature": 0.1, "num_ctx": self.num_ctx, "num_predict": self.num_predict,
+            },
         }
         content = json.dumps(payload).encode()
         if len(content) > MAX_RESPONSE:
@@ -178,6 +190,8 @@ def http_exchange(profile: OllamaProfile, path: str, payload: dict | None, timeo
             thinking.append(message.get("thinking", ""))
             calls.extend(message.get("tool_calls", []))
             if chunk.get("done") is True:
+                if chunk.get("done_reason") == "length":
+                    raise ValueError("Ollama output budget exhausted; response is incomplete")
                 return {
                     **chunk,
                     "message": {

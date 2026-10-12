@@ -120,10 +120,12 @@ class ContainedJobs:
         extra_mounts: list[tuple[Path, bool]] | None = None,
     ) -> int:
         if self.hardware_attestation is not None:
+            from .ollama import OllamaProfile
+
             if any(
                 environment.get(key) != value
                 for key, value in self.hardware_attestation.environment.items()
-            ):
+            ) or OllamaProfile.from_environment(environment) != self.hardware_attestation.profile:
                 raise ValueError("Job environment changed from the attested coding profile")
             self.hardware()
         workspace = self.config.workspace(str(workspace))

@@ -179,3 +179,29 @@ and was stopped; independent Git comparison confirmed unchanged repository bytes
 Complete optimization, protected Oracle outcomes, rollback, delivery and actual
 two-host artifact verification still need passing evidence. See
 [portable GPU receipts](../.trellis/tasks/10-02-metainfer-architecture/gpu-verification.json).
+
+## Native artifact and budget verification (2026-10-12 continuation)
+
+The final contained image 12098cc3 uses explicit context/output limits and
+session/profile binding. It rejects exhausted model responses before tools or
+success events and writes only actual structured write_file calls. The installed
+Ollama model's separate native GGUF alias is pinned to digest 7bb044cb; no model
+download or modification of original aliases was needed. The final actual
+file-tool check wrote an exact random marker, reported file_change and stopped
+with a matching cgroup receipt. The HTTP workspace/GPU gate on port 48768
+passed with the RTX 4060 Laptop and zero-error Torch/Triton cases.
+
+Full Windows Python regressions: 1509 passed, 61 platform skips. Linux related
+regressions: 118 passed, 3 skips. Ruff and all seven repository guards passed.
+An actual Windows sharing-denied checkpoint reader is now handled by bounded
+atomic replacement retries; persistent readers preserve previous bytes.
+All 27 owned OCI scopes on the current WSL boot were audited as stopped.
+Thirteen earlier stopped records remain historical evidence.
+
+The genuine model-generated harnesses still fail reference execution or review
+deadlines. Original code, logs and rejected files were preserved; no diagnostic
+copy is accepted as genuine generation. Native file delivery and deployment
+preflight do not satisfy complete optimization, protected Oracle/rollback or
+accepted candidate delivery. The user has no second host, so actual cross-host
+artifact acceptance remains incomplete. R8 stays OPEN; current portable
+outcomes are in native_artifact_continuation of the GPU receipts above.

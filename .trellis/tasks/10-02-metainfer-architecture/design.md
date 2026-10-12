@@ -83,3 +83,21 @@ A changed profile requires quiescent indexed ownership, including legacy
 records. Test the HTTP, OCI and native protocol seams already owned by R8.
 Keep Oracle thresholds and separate availability, coding quality and full
 optimization acceptance.
+
+## Native artifact and budget boundaries (2026-10-12 continuation)
+
+Make the actual provider context and output budgets explicit, bounded and part
+of the effective launch/session profile. A default omitted from the attestation
+environment remains binding. Reject provider-declared output exhaustion before
+returning text or tools; preserve the failed response instead of repairing it.
+
+Add one native file tool for real model bytes, using the existing contained
+workspace. No-follow directory traversal, regular targets, bounded content,
+atomic publication and mandatory FD cleanup apply. The Codex event interface
+reports actual file changes with IDs distinct from command/message items.
+The upstream file requirement, protected reference, Oracle and delivery gates
+remain authoritative; a written harness can still fail its input contract.
+
+Keep Windows checkpoint publication atomic under readers. Retry only the
+observed sharing/access denial errors, at most five attempts with bounded
+backoff; persistent errors preserve previous bytes and propagate normally.

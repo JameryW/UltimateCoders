@@ -155,7 +155,9 @@ interface; it is not the OpenAI Codex CLI. Select it explicitly in --job-env:
   "METAINFER_CODEX_BIN": "/opt/uc/ultimate_coders/metainfer_service/coding.py",
   "UC_OLLAMA_URL": "http://CONTAINER-REACHABLE-OLLAMA:11434",
   "UC_OLLAMA_MODEL": "YOUR-INSTALLED-MODEL:TAG",
-  "UC_OLLAMA_DIGEST": "EXACT-64-CHARACTER-SHA256-FROM-OLLAMA"
+  "UC_OLLAMA_DIGEST": "EXACT-64-CHARACTER-SHA256-FROM-OLLAMA",
+  "UC_OLLAMA_NUM_CTX": "16384",
+  "UC_OLLAMA_NUM_PREDICT": "8192"
 }
 ```
 
@@ -167,12 +169,42 @@ visible GPU and evolve-kernel jobs. Unsupported environment overrides, changed
 digests and incompatible images fail closed. URLs cannot contain credentials;
 host proxy settings are not inherited. There is no automatic backend fallback.
 
+UC_OLLAMA_NUM_CTX is an optional integer from 1024 through 32768; omitting it
+preserves the earlier 16384 context. It is sent explicitly in every native chat
+request and is part of the attested deployment profile. Choose it from observed
+model and GPU memory requirements. Changing it requires quiescent workspaces
+and fresh attestation; a smaller context does not waive coding or Oracle checks.
+Launch validates the effective context even when it was omitted from the proof
+environment. Sessions cannot resume at a different context; older sessions
+without the context field remain compatible only at the earlier default.
+UC_OLLAMA_NUM_PREDICT similarly controls the output budget, from 128 through
+8192 tokens, default 4096. It enters the effective attested profile and session
+binding. Size both budgets for the actual prompt/artifact; reaching the output
+limit can truncate a tool call and is not a successful file delivery.
+The client rejects done_reason=length before executing any returned tool or
+emitting a successful final event, even when the response contains nonempty
+text or a complete-looking file call. Preserve failed logs and artifacts.
+The selected model's chat template must honor think:false. A template that
+always opens a thinking block can return a stray closing tag instead of the
+exact nonce. Correct the provider configuration in a separate model alias and
+pin its new digest; do not strip arbitrary model text to manufacture a pass.
+Verify actual tool_calls too: a successful nonce does not prove tool parsing.
+Match the serving template and parser to the source GGUF. For the measured
+GGUF deployment, OLLAMA_GO_TEMPLATE=false selects the native GGUF path;
+the earlier Go template could discard native XML calls into an empty response.
+This is explicit provider configuration, not automatic client fallback.
+The flag is documented by [Ollama's serving configuration](https://github.com/ollama/ollama/blob/main/envconfig/config.go);
+verify it against the installed server and the actual tool response before use.
+
 Before serving, an owned image probe runs real Torch/Triton kernels and a model
 nonce request. It executes no model-generated code. GPU UUID/driver, runtime,
 model digest and image code are recorded after all probe writers stop. The native
 client checks digest before and after requests, accepts actual tool_calls only,
 bounds streams/sessions/commands and kills timed-out command groups. Coding
 quality and optimization acceptance require separate verification.
+The native write_file tool produces bounded files inside the current workspace
+and emits file_change after the actual write. Reviews must use a real tool to
+write their requested file; a review message alone remains a failed artifact.
 
 Private cached evidence binds boot, image, profile, executable code and stopped
 probe. Restart rechecks live identity without another GPU/model inference.
