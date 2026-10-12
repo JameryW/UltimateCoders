@@ -499,3 +499,8 @@ hashes, final marker/events, five image code hashes, thirteen historical
 records, four actual model metadata observations and two fixed server log
 snapshots with sixteen exact line-numbered entries. The source exhaustion P2
 remains repaired. Full acceptance criteria and open task status stand.
+
+The reviewed continuation is tracked by PR #712. Its CI and merge status are
+the delivery record; the task metadata now links this PR while retaining the
+merged c12f2e49 continuation baseline. This association changes no source or
+acceptance outcome.
