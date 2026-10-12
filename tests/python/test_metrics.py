@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import time
+from unittest.mock import patch
 
 import pytest
 from ultimate_coders.dashboard.metrics import (
@@ -184,12 +185,13 @@ class TestMetricsAggregator:
 
     def test_events_per_minute(self) -> None:
         agg = MetricsAggregator()
-        # Record 10 events — should give ~10 * (60/rate_window) events/min
-        for i in range(10):
-            agg.record_event("task_completed", {"duration_ms": 1000})
-        snap = agg.snapshot()
-        # With 10 events in a very short window, events_per_minute should be high
-        assert snap.event.events_per_minute > 0
+        # Ten events over one second give 600/min, independent of clock precision.
+        with patch("ultimate_coders.dashboard.metrics.time.monotonic", return_value=1000) as clock:
+            for _ in range(10):
+                agg.record_event("task_completed", {"duration_ms": 1000})
+            clock.return_value = 1001
+            snap = agg.snapshot()
+        assert snap.event.events_per_minute == pytest.approx(600)
 
     def test_error_spike_detected(self) -> None:
         agg = MetricsAggregator()

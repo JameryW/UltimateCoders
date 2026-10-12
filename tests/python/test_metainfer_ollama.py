@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,7 +14,7 @@ from ultimate_coders.metainfer_service.ollama import OllamaProfile
 @pytest.fixture
 def ollama_peer():
     observed = {"digest": "a" * 64, "chunks": [], "requests": [], "trickle": None,
-                "responses": None}
+                "responses": None, "header_delay": 0}
     stop = threading.Event()
 
     class Handler(BaseHTTPRequestHandler):
@@ -32,6 +33,8 @@ def ollama_peer():
         def do_POST(self):  # noqa: N802 -- HTTP interface
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             observed["requests"].append(payload)
+            if stop.wait(observed["header_delay"]):
+                return
             self.send_response(200)
             self.end_headers()
             if observed["trickle"] == "chat":
@@ -174,6 +177,54 @@ def test_absolute_deadline_terminates_a_peer_that_keeps_trickling_without_newlin
         else:
             profile.chat([], tools=[], timeout=0.5)
     assert time.monotonic() - started < 2
+
+
+@pytest.mark.parametrize("budget", [60, 600])
+def test_http_transport_preserves_the_callers_budget_at_the_real_connection(
+    ollama_peer, monkeypatch, budget
+):
+    from ultimate_coders.metainfer_service import ollama
+
+    profile, peer = ollama_peer
+    peer["chunks"] = [{"model": profile.model, "done": True,
+                       "message": {"content": "Actual provider bytes"}}]
+    original_builder = ollama.build_opener
+    observed = []
+
+    def instrument_opener(*handlers):
+        opener = original_builder(*handlers)
+        original_open = opener.open
+
+        def open_connection(request, *, timeout):
+            observed.append(timeout)
+            return original_open(request, timeout=timeout)
+
+        opener.open = open_connection
+        return opener
+
+    monkeypatch.setattr(ollama, "build_opener", instrument_opener)
+    result = ollama.http_exchange(profile, "/api/chat", {}, budget)
+    assert result["message"]["content"] == "Actual provider bytes"
+    assert observed == [budget]
+
+
+@pytest.mark.parametrize("delay,budget,completed", [(0.1, 2, True), (2, 0.5, False)])
+def test_real_header_delay_uses_the_absolute_operation_deadline(
+    ollama_peer, delay, budget, completed
+):
+    profile, peer = ollama_peer
+    peer["header_delay"] = delay
+    peer["chunks"] = [{"model": profile.model, "done": True,
+                       "message": {"content": "Actual delayed response"}}]
+    started = time.monotonic()
+    if completed:
+        assert profile.chat([], tools=[], timeout=budget)["message"]["content"] == (
+            "Actual delayed response"
+        )
+    else:
+        with pytest.raises(TimeoutError, match="deadline"):
+            profile.chat([], tools=[], timeout=budget)
+        assert time.monotonic() - started < 2
 
 
 @pytest.mark.parametrize(
@@ -334,6 +385,104 @@ def test_native_cli_executes_streamed_file_tool_and_emits_distinct_items(
     assert len({item["id"] for item in items}) == len(items)
     assert events[-1]["actual_tools_executed"] == 1
     assert peer["requests"][1]["messages"][-1]["tool_name"] == "write_file"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Native CLI sessions require Linux")
+@pytest.mark.parametrize("tool", ["write_file", "exec_command"])
+@pytest.mark.parametrize("verdict", ["malformed", "PASS", "FAIL"])
+def test_native_review_completion_requires_unambiguous_pinned_format(
+    tmp_path, monkeypatch, ollama_peer, capsys, native_cli_sessions, tool, verdict
+):
+    from ultimate_coders.metainfer_service import coding
+
+    profile, peer = ollama_peer
+    monkeypatch.setattr(coding, "require_containment", lambda: None)
+    monkeypatch.setenv("UC_OLLAMA_URL", profile.url)
+    monkeypatch.setenv("UC_OLLAMA_MODEL", profile.model)
+    monkeypatch.setenv("UC_OLLAMA_DIGEST", profile.digest)
+    filename = "correctness_review.md" if tool == "write_file" else "perf_review.md"
+    content = "## Verdict: FAIL\nSome tests passed, but the harness is invalid.\n"
+    if verdict != "malformed":
+        content = f"**Verdict**: {verdict}\nObserved failures and passes are evidence.\n"
+    arguments = {"path": filename, "content": content}
+    if tool == "exec_command":
+        script = f"from pathlib import Path; Path({filename!r}).write_text({content!r})"
+        arguments = {"cmd": shlex.quote(os.sys.executable) + " -c " + shlex.quote(script)}
+    peer["responses"] = [
+        [{"model": profile.model, "done": True, "message": {"tool_calls": [
+            {"function": {"name": tool, "arguments": arguments}}
+        ]}}],
+        [{"model": profile.model, "done": True, "message": {"content": "Review written."}}],
+    ]
+    if verdict == "malformed":
+        with pytest.raises(ValueError, match="verdict"):
+            coding.main(["exec", "-C", str(tmp_path), "Write " + filename])
+    else:
+        assert coding.main(["exec", "-C", str(tmp_path), "Write " + filename]) == 0
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert (tmp_path / filename).read_text() == content
+    assert any(event["type"] == "turn.completed" for event in events) == (verdict != "malformed")
+
+
+@pytest.mark.parametrize(
+    ("text", "valid"),
+    [
+        ("**Verdict**: PASS\nTests passed; no failures.\n", True),
+        ("**Verdict**: FAIL\nSome cases passed.\n", True),
+        ("\n- **Verdict**: FAIL\n", True),
+        ("## Verdict: FAIL\nSome cases passed.\n", False),
+        ("**Verdict**: PASS or FAIL\n", False),
+        ("**Verdict**: PASS\n## Verdict: FAIL\n", False),
+        ("**Verdict**: PASS\n- **Verdict**: PASS\n", False),
+        ("# Review\n**Verdict**: PASS\n", False),
+        ("```\n**Verdict**: PASS\n```\n", False),
+        ("", False),
+    ],
+)
+def test_native_review_format_preserves_explicit_verdict(text, valid):
+    from ultimate_coders.metainfer_service.coding import validate_review
+
+    if valid:
+        validate_review(text)
+    else:
+        with pytest.raises(ValueError, match="verdict"):
+            validate_review(text)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Review files use Linux no-follow descriptors")
+@pytest.mark.parametrize("kind", ["valid", "malformed", "symlink", "fifo", "large"])
+def test_native_review_files_are_bounded_regular_and_close_descriptors(tmp_path, monkeypatch, kind):
+    from ultimate_coders.metainfer_service import coding
+
+    target = tmp_path / "correctness_review.md"
+    content = "**Verdict**: FAIL\nSome tests passed.\n"
+    if kind == "symlink":
+        outside = tmp_path / "original.md"
+        outside.write_text(content)
+        target.symlink_to(outside)
+    elif kind == "fifo":
+        os.mkfifo(target)
+    else:
+        contents = content if kind == "valid" else "x" * 65537 if kind == "large" else "FAIL"
+        target.write_text(contents)
+    opened = []
+    actual_open = coding.os.open
+
+    def tracked_open(*args, **kwargs):
+        descriptor = actual_open(*args, **kwargs)
+        opened.append(descriptor)
+        return descriptor
+
+    monkeypatch.setattr(coding.os, "open", tracked_open)
+    if kind == "valid":
+        coding.verify_review_files(tmp_path)
+        assert target.read_text() == content
+    else:
+        with pytest.raises((ValueError, OSError)):
+            coding.verify_review_files(tmp_path)
+    for descriptor in opened:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Native CLI sessions require Linux")
