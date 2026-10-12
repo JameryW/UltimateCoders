@@ -71,6 +71,19 @@ candidate, commit code or claim Oracle acceptance.
 UC kernel workflows require this capability, wait for all-writer quiescence,
 refetch the final outcome and verify the repository bytes against the receipt.
 The protected UC benchmark and Oracle then decide acceptance or rollback.
+Native correctness_review.md and perf_review.md must begin with the literal
+line `**Verdict**: PASS` or `**Verdict**: FAIL` and have one verdict declaration;
+a leading list bullet is also supported. The client checks any existing review
+before final completion, including files written by shell tools. It rejects
+ambiguous formats, links, nonregular or oversized files and retains original
+bytes. This prevents the pinned parser's fallback word counting from accepting
+a heading that says FAIL. A valid FAIL remains a failed review; a valid PASS
+still requires independent correctness and protected Oracle acceptance.
+UC validates select and multiselect answers against the live form's option
+labels before submission intent or backend reservation. For the pinned
+evolve-kernel form, max_iterations accepts the string labels 10, 20 and 50;
+the UC outer workflow iteration policy is a separate setting. An invalid
+answer fails locally instead of becoming an uncertain remote submission.
 Upgrade the job image and restart the service together; old images retain
 workspace/lifecycle checks but cannot run these kernel workflows. Remote
 worker_nodes delegation is refused because its writers would fall outside the
@@ -202,9 +215,19 @@ model digest and image code are recorded after all probe writers stop. The nativ
 client checks digest before and after requests, accepts actual tool_calls only,
 bounds streams/sessions/commands and kills timed-out command groups. Coding
 quality and optimization acceptance require separate verification.
+Native requests use their complete operation deadline, up to the current
+600s chat budget, without a shorter independent 180s header limit. A dedicated
+request process still bounds DNS, headers and body as one operation.
 The native write_file tool produces bounded files inside the current workspace
 and emits file_change after the actual write. Reviews must use a real tool to
 write their requested file; a review message alone remains a failed artifact.
+Harness instructions request file-backed reference loading and actual
+execution. Validate the resulting files independently: reference self-tests
+alone can miss a harness that bypasses the documented wrapper. A negative
+candidate should retain the same interface and original raw kernel while
+returning incorrect results from its public wrapper. It must fail numeric
+comparison. Keep original files and raw observations; model instructions or
+a written review file cannot substitute for protected Oracle acceptance.
 
 Private cached evidence binds boot, image, profile, executable code and stopped
 probe. Restart rechecks live identity without another GPU/model inference.

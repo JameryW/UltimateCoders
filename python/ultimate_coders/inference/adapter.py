@@ -428,6 +428,17 @@ class MetaInferAdapter:
                     answers[field_key] = spec["default"]
                 if spec.get("required") and answers.get(field_key) in (None, "", []):
                     raise ValueError(f"{task_type} requires parameter {field_key}")
+                value, options = answers.get(field_key), spec.get("options")
+                if value is not None and options and spec.get("type") in ("select", "multiselect"):
+                    labels = [option["label"] for option in options]
+                    if spec["type"] == "select":
+                        valid = value in labels
+                    else:
+                        valid = isinstance(value, list) and all(item in labels for item in value)
+                    if not valid:
+                        raise ValueError(
+                            f"{task_type} has invalid choices for parameter {field_key}"
+                        )
             payload = {
                 "type": task_type,
                 "label": "UC " + (key or task.task_type.value),

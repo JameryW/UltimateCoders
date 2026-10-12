@@ -23,7 +23,7 @@ The sandbox adapter launches `python -m ultimate_coders.inference.runner --reque
 - Domain config: `inference_task` contains operation/repository/objective/framework/model/hardware/constraints/parameters and optional `upstream_type`; `benchmark` contains immutable argv/workload/protected paths; `oracle`, `apply_command`, `max_iterations` are optional policy/execution settings.
 - Explicit agent selection overrides heuristics. Explicit domain tasks remain one node. Remote nodes require `inference_infra` and the matching operation capability; benchmarks require only `inference_benchmark`. Default routing requires framework/inference context and engineering intent.
 - Actual upstream: discover `/api/sys-shell/task-types/{type}/schema`, POST `/api/sys-shell/tasks` with type/answers/raw_request, poll `/api/sys-shell/{id}`, stop via `/{id}/control` with action kill and force true. Never retry POST without upstream idempotency support.
-- Defaults: port-model, evolve-kernel, gen-infer-framework (runtime **generation**), sglang-trace-analyze. Existing-runtime optimization selects a real service plugin explicitly. Required form fields come from the live schema, never guessed prose.
+- Defaults: port-model, evolve-kernel, gen-infer-framework (runtime **generation**), sglang-trace-analyze. Existing-runtime optimization selects a real service plugin explicitly. Required form fields come from the live schema, never guessed prose. Validate non-null select values against the declared option labels and multiselect values as lists of those labels before reserving backend capacity, persisting submission intent or POST. Preserve label types; do not coerce numeric values to strings or guess an allowed iteration count.
 - UC's assigned repository path overrides submitted paths. Kernel files stay within it; model-porting target_framework_dir is redirected there. Service and worker must share these absolute paths.
 - BenchmarkResult requires workload_id plus strict compile/correctness booleans. Metrics use milliseconds, tokens/second and GB; numerical_error is optional unless constrained. A final_status from MetaInfer is not correctness/performance evidence.
 - Graph version 1 validates unique node IDs and edge endpoints. Declared task nodes carry provenance; measured evidence is attached per iteration. Accepted graph/measurements enter shared project Memory; all verdicts persist in local history.
@@ -37,7 +37,7 @@ The sandbox adapter launches `python -m ultimate_coders.inference.runner --reque
 | Condition | Behavior |
 |---|---|
 | Disabled service | No automatic domain routing/capability advertising |
-| Missing/unknown form parameters | Fail before POST |
+| Missing/unknown form parameters or invalid select/multiselect choices | Fail before capacity reservation, submission intent and POST |
 | Unknown service plugin or transport error | Explicit domain failure; no generic fallback |
 | Deadline/cooperative cancellation | Request remote stop; release only after all-writer quiescence evidence, otherwise retain the task ID and quarantine |
 | Compile/correctness failure, mismatched workload, invalid/missing metrics | Reject |
@@ -308,7 +308,9 @@ active-run recovery or actual two-host artifact acceptance.
 ContainedJobs.enable_hardware(environment, *, observe_url=None) -> None.
 ContainedJobs.hardware() -> dict. HardwareAttestation.initialize() -> None.
 OllamaProfile(url, model, digest, num_ctx=16384, num_predict=4096).identity() -> dict;
-.chat(messages, tools=list) -> dict. from_environment reads UC_OLLAMA_NUM_CTX.
+.chat(messages, tools=list, timeout=600) -> dict.
+http_exchange(profile, path, payload, timeout) uses the caller's remaining
+operation budget. from_environment reads UC_OLLAMA_NUM_CTX.
 save_session(directory, thread, profile, messages) and
 load_session(directory, thread, profile) persist/validate effective num_ctx.
 Native write_file(path, content, workspace) -> path/kind/bytes/sha256.
@@ -367,6 +369,9 @@ Native chat validates actual alias digest before and after inference. Preserve
 real streamed tools; never derive commands from prose. Bound conversation and
 stream sizes, turns, commands and deadlines. Use the existing ProcessTree for
 tools and a deadline-owned HTTP request process for DNS/headers/body trickling.
+Pass the remaining operation budget to the actual HTTP connection; do not add
+an independent shorter socket/header ceiling. The owning request process still
+enforces the absolute deadline, including continuous header/body trickling.
 Native execution requires a nonroot read-only capless OCI job. Session
 resume binds model identity. Publication and protected Oracle remain separate.
 
@@ -391,6 +396,14 @@ model generation or optimization. Verify that the review file requested by the
 pinned pipeline exists; an exit-zero agent message is not that file and does
 not supply file-based regeneration feedback. Do not synthesize a review verdict
 or accepted candidate from prose.
+Native harness instructions request actual file-backed reference loading and
+execution before completion. These are model instructions, not a correctness
+proof: independently replay the resulting artifact against the reference and
+interface-compatible incorrect candidates. Retain the raw kernel when testing
+an incorrect public wrapper, so an artifact that bypasses run(x,y) cannot pass
+merely by comparing that unchanged raw kernel. A malformed missing-symbol
+fixture does not establish numeric rejection. Never silently substitute a
+reference implementation or change the requested callable/JSON contract.
 
 ### 11.4 Validation & Error Matrix
 
@@ -406,6 +419,8 @@ or accepted candidate from prose.
 | File tool escapes workspace, follows links or exceeds its bound | Refuse without writing the target |
 | Valid streamed file call | Persist actual bytes, emit file_change, return checksum |
 | Changed digest, wrong model or incomplete stream | Fail closed; no substitute tool |
+| Headers arrive after 180s but within the requested deadline | Continue within the caller's budget; no premature socket ceiling |
+| Headers/body remain incomplete at the operation deadline | Terminate the request process; do not accept partial data |
 | Probe failure, code mismatch or unknown writers | No accepted evidence; retain unknown scope |
 | Matching restart cache | Fresh stop/GPU/model checks; no new GPU/model inference |
 | New profile with active/uncertain ownership | Refuse before OCI create |
@@ -413,6 +428,8 @@ or accepted candidate from prose.
 | Unsupported task/environment override | Refuse before workspace claim |
 | Harness calls JIT internals as its business entrypoint | Record self-reference failure; correct only an explicitly identified diagnostic copy |
 | Reviewer returns prose without its requested file | No completed review artifact; retain failure, not a synthetic file/verdict |
+| Existing native correctness/performance review lacks one leading supported verdict declaration | Fail before final message/turn completion; preserve original bytes |
+| Harness passes a reference but also accepts an incorrect compatible wrapper | Reject the harness; preserve both artifacts and actual numeric outcomes |
 
 ### 11.5 Good / Base / Bad Cases
 
@@ -432,6 +449,9 @@ and absolute HTTP deadlines against peers continuously sending no-newline data,
 deadline with a delayed writer, legacy active ownership, stopped cache reuse,
 model drift and code mismatch. Record actual GPU/model, native CLI and HTTP
 deployment checks separately. Keep full R8 acceptance open until measured.
+Observe the remaining budget at a real HTTP connection and cover delayed
+headers both within and beyond the absolute deadline. For the long-generation
+fault, retain the same actual 183s header-delay probe before/after the repair.
 For harness diagnostics retain the original failing trace, positive reference
 replay, a deliberately wrong candidate's rejection and all-writer stop receipts.
 If the user defers cross-host verification for lack of a second host, preserve
@@ -448,6 +468,14 @@ size refusal. A real HTTP peer drives the native CLI and verifies file_change,
 distinct item IDs and the tool-result round trip; prose remains unexecuted.
 Observe explicit output budget and its default in real HTTP payloads; test
 invalid sizes/types, implicit-default launch override and changed-budget resume.
+The two existing native review files must start with **Verdict**: PASS or FAIL
+(an optional leading bullet is supported) and contain one verdict declaration.
+Reject heading-only, competing, example-only or missing declarations before
+native completion. Both valid PASS and FAIL are delivered unchanged; format
+validation does not establish correctness. Bounded no-follow regular-file reads
+also cover shell-created files. Exercise symlink/FIFO/oversize refusal and FD
+closure. Do not rewrite model verdicts to compensate for the pinned parser's
+fallback word counts.
 
 ### 11.7 Wrong vs Correct
 
@@ -458,6 +486,8 @@ Correct: trusted attestation executes no model-generated commands; test actual
 coding quality separately.
 Wrong: compare only the environment keys explicitly present in a proof.
 Correct: compare its effective profile, including defaults, before launch.
+Wrong: accept a reference self-test while a harness ignores the public wrapper.
+Correct: require a compatible wrong-wrapper control to fail numerically.
 
 ## 12. Windows checkpoint publication under readers
 

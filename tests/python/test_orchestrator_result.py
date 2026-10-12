@@ -73,6 +73,15 @@ class TestTaskTimestampLifecycle:
     def _old_timestamp() -> datetime:
         return datetime(2020, 1, 1, tzinfo=timezone.utc)
 
+    @staticmethod
+    def _set_control_clock(monkeypatch):
+        clock = MagicMock(wraps=datetime)
+        clock.now.side_effect = [
+            datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+            datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
+        ]
+        monkeypatch.setattr("ultimate_coders.agent.types.datetime", clock)
+
     async def test_assign_subtask_refreshes_parent_timestamp(self):
         orch = Orchestrator()
         task = _make_task("t-assign-ts", ["st-1"])
@@ -94,11 +103,12 @@ class TestTaskTimestampLifecycle:
 
         assert task.updated_at > self._old_timestamp()
 
-    def test_pause_and_resume_refresh_timestamp(self):
+    def test_pause_and_resume_refresh_timestamp(self, monkeypatch):
         orch = Orchestrator()
         task = _make_task("t-control-ts", ["st-1"])
         task.updated_at = self._old_timestamp()
         orch.tasks[task.id] = task
+        self._set_control_clock(monkeypatch)
 
         assert orch.pause_task_local(task.id) is True
         paused_at = task.updated_at
@@ -115,11 +125,12 @@ class TestTaskTimestampLifecycle:
         assert orch.pause_task_local("missing-task") is False
         assert orch.resume_task_local("missing-task") is False
 
-    async def test_cancel_refreshes_timestamp_for_task_and_subtask(self):
+    async def test_cancel_refreshes_timestamp_for_task_and_subtask(self, monkeypatch):
         orch = Orchestrator()
         task = _make_task("t-cancel-ts", ["st-1"])
         task.updated_at = self._old_timestamp()
         orch.tasks[task.id] = task
+        self._set_control_clock(monkeypatch)
 
         await orch.cancel_task(task.id, subtask_id="st-1")
         cancelled_subtask_at = task.updated_at

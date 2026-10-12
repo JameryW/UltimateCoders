@@ -101,3 +101,31 @@ remain authoritative; a written harness can still fail its input contract.
 Keep Windows checkpoint publication atomic under readers. Retry only the
 observed sharing/access denial errors, at most five attempts with bounded
 backoff; persistent errors preserve previous bytes and propagate normally.
+
+## Harness acceptance continuation (2026-10-12)
+
+Pass the caller's remaining native HTTP operation budget to the actual opener;
+the outer request process still enforces the absolute deadline. A separate
+180-second socket/header ceiling incorrectly rejected slow real model responses
+before their caller budget expired. Keep DNS, headers and body under the same
+deadline and preserve exhaustion refusal.
+
+Improve model instructions for existing reference imports, the documented
+callable and actual harness execution. Instructions remain heuristics. A
+reference self-test alone cannot detect a harness bypassing the public wrapper;
+use an interface-compatible wrong wrapper retaining the original raw kernel.
+Preserve genuine failed files and reviews without rewriting them into passes.
+
+The real UC workflow also exposed missing live-form choice validation:
+max_iterations=1 was refused by the pinned form before task creation. Validate
+single/multiple option labels before reservation, intent and POST. Do not coerce
+answers or alter the pinned form. Existing uncertain records remain isolated;
+a local validation repair cannot retroactively prove their remote outcome.
+
+The fixed review parser also misclassified an actual heading-only FAIL by
+counting passed substrings in its body. Add a native completion boundary for
+the two existing review files: one leading canonical verdict, bounded no-follow
+regular-file reads and refusal before final completion. Deliver a valid FAIL
+unchanged; never manufacture PASS or treat format validation as correctness.
+This additive guard leaves the pinned source untouched and requires a new
+attested native image/profile. Earlier image6 attempts remain earlier evidence.

@@ -504,3 +504,129 @@ The reviewed continuation is tracked by PR #712. Its CI and merge status are
 the delivery record; the task metadata now links this PR while retaining the
 merged c12f2e49 continuation baseline. This association changes no source or
 acceptance outcome.
+
+## Harness acceptance continuation (2026-10-12, baseline 61a65556)
+
+Branch codex/metainfer-harness-acceptance repairs three observed integration
+boundaries and records the production UC workflow's actual failed outcome.
+No upstream source, model weights, original kernel or Oracle threshold changed.
+
+The native opener silently capped response headers at 180s despite a longer
+caller budget. An actual local HTTP peer delayed headers 183s under a 190s
+budget: the old code failed at 180.474523s, the repair succeeded at 183.704007s.
+The subprocess still enforces the whole operation deadline, including DNS,
+headers and continuously trickling bodies. The long peer is transport evidence
+only. Real-connection budget/delayed-header regressions first failed then passed.
+
+Nine real model checkpoints remain distinct from acceptance. Fresh Qwen failed
+embedded Triton source inspection and then a four-argument call to run(x,y).
+An actual repaired harness passed 27 reference cases while bypassing that public
+wrapper. Its bit-identical diagnostic copy also passed 27 compatible wrong-run
+cases, an observed false acceptance. The original negative missing the raw
+kernel was a malformed ABI fixture, not a numerical rejection. A later genuine
+repair passed 46 reference cases and rejected the compatible wrong wrapper
+(2/46 passed); its FAIL review correctly found missing maximum length, while
+excluded-input demands do not extend the contract. Gemma passed 11 reference
+cases and rejected all 11 wrong-wrapper cases, then received a genuine FAIL
+review for relevant boundary/guard coverage. Its next artifact contained a
+Tensor JSON field and reached the 720s checkpoint deadline. A Qwen repair
+exhausted 16 turns; precise observed-line feedback finally caused a real
+minimal bool edit, but unchanged uninitialized poisoned inputs still rejected
+the reference. No operator-corrected artifact is counted as generation success.
+
+The first production workflow failed before GPU measurement because the local
+controller's relative PYTHONPATH was evaluated in the assigned worktree. After
+fixing that ignored controller, the next workflow completed protected baseline
+measurement but submitted max_iterations="1", outside the pinned form's string
+choices "10"/"20"/"50". HTTP 400 left submission_unknown, quarantine and capacity
+retained; no remote task exists in the observed service registry. This isolated
+verification state has not been cleared or replayed. The client repair checks
+live select/multiselect labels before reservation, intent and POST. Five invalid
+and four legal regression cases reproduced 5 failures/4 passes, then all passed;
+both platforms passed all 25 adapter tests. The actual HTTP service now refuses
+that invalid value locally with unchanged task list and no occupied capacity.
+
+An independent production run used an allowed "10" inner iteration choice and
+one outer UC iteration. Its six protected baseline invocations produced five
+measured latency samples around 0.003258ms with 0.1262% dispersion and zero
+numerical error. Benchmark code and input repository were mounted read-only in
+separate owned OCI scopes. The unchanged baseline, protected scripts/settings,
+hardware conditions, measurements and individual stop receipts are recorded.
+The task reached performance review, then the 900s remote execution deadline.
+UC obtained quiescence, entered rollback, recorded failure and released that
+run's GPU/backend reservations. Repository bytes and Git baseline remain
+unchanged. Candidate Oracle evaluation and accepted patch/commit delivery were
+not reached; this is a real failure/stop/rollback path, not successful R8.
+
+The production run also exposed a pin-specific parsing error: the unchanged
+review file explicitly says "## Verdict: FAIL", yet the fallback count of PASS
+substrings (including passed) versus FAIL words returned PASS. A state transition
+named "harness approved" therefore is not valid approval evidence. The native
+client now verifies any existing correctness/performance review before final
+message/turn completion, requiring one leading supported bold verdict, with
+bounded regular-file no-follow reads. It preserves bytes and refuses ambiguous
+formats from either a real file tool or shell. A valid FAIL is still delivered
+as FAIL. Two invalid CLI cases first failed and four valid PASS/FAIL cases passed;
+all six now pass. Ten format and five real FD/link/FIFO/size cases also pass.
+Both original failed reviews were replayed unchanged in the final image: the
+new guard rejected them, including the one the actual pinned parser calls PASS.
+This is a protocol guard, not semantic harness or Oracle validation.
+
+Three preexisting tests assumed sub-tick time advance on Windows Python3.9.
+Deterministic actual clock sources now verify 10 events over 1s = 600/min and
+task transition timestamp refresh/no-op stability. Production timing logic is
+unchanged. Windows3.9 adapter/clock tests: 80 passed, 3.91s; Windows3.14 clock:
+55 passed, 3.23s; Linux clock: 55 passed, 5.90s. An initial Windows3.9 full run
+had 1494 passes, 61 skips, three repaired timing failures and 25 setup errors
+because no cp39 Rust extension is installed. It is not a full-suite pass. Other
+initial interpreter attempts lacked pytest or service dependencies and were
+environment setup failures; no tests or acceptance criteria were skipped to
+hide them. The final ABI-matched Windows3.14 full suite passed 1532 tests with
+72 platform skips in 197.70s. The final Linux related suite passed 223 tests
+with three skips in 83.84s; one existing dependency deprecation. Ruff passed.
+
+Earlier image6 b2456544 remains immutable with its frozen two-file build sources
+and original failed workflows. Final image7 233de64c35a1bf17d35bc7947275abe8fa8d382f8604fe64b5f1bcfab3b3c0ae
+binds all five current native code hashes and fresh observed GPU/model evidence.
+Actual native write_file delivered the exact random marker and completion event;
+CUDA/Triton cases 33/4096/65536 and the model nonce passed. A separate new control
+profile replaced this task's owned old v5 HTTP daemon on port 48768 after exact
+process/boot/backend verification; its old deployment pointer was preserved.
+The final HTTP GPU/shared-workspace gate passed. Native WSL Podman plus Windows
+Ollama remains the local validation setup; this does not certify a whole-app
+Podman deployment or the complete OS/GPU/model matrix.
+
+All raw reports, model file hashes, native event logs, protected workflow
+artifacts, benchmark stop receipts and final deployment/audit evidence are in
+harness_acceptance_continuation of gpu-verification.json. Historical evidence
+is retained; full successful optimization, protected candidate Oracle outcomes,
+accepted delivery and explicitly deferred two-host acceptance remain OPEN.
+
+Root-cause prevention: (1) timeout ownership was split between caller and hidden
+transport ceiling, fixed by one remaining budget with real boundary tests;
+(2) the client reproduced only part of the live form protocol, fixed by option
+validation before irreversible intent; (3) the upstream heuristic confused prose
+with an authoritative verdict, fixed by a native delivery-format boundary;
+(4) positive self-reference tests hid API bypass, exposed by a compatible numeric
+negative; (5) host clock precision made timing assertions nondeterministic,
+fixed by controlling actual clock inputs without weakening production behavior.
+
+Final observed audit: 74 owned OCI scopes on the current WSL boot were
+individually verified stopped, with matching immutable image/container/cgroup
+identities and hashed receipts. Thirteen older-boot records remain historical.
+The prior invalid submission's isolated quarantine/reservations remain retained;
+stopped indexed containers do not retroactively resolve an unknown operation.
+
+Final independent Spec/Evidence review: PASS, no actionable findings. It matched
+the nine checkpoints, three workflows, native/model file hashes, frozen image6
+and current image7 sources, and separate old27/70/final74 audits. Read-only SQLite
+confirmed b247 stopped/released and 9a still uncertain/occupied; HEAD and repository
+bytes match the initial snapshot, and baseline statistics were independently
+recomputed. The pinned source remains clean at b3f6505a.
+Final independent Standards/Evidence review: PASS, no actionable findings. It
+matched 348 file hashes, 18 raw JSON groups and 192 proof validations, and
+observed all 74 current-boot containers stopped with PID zero and no cgroup
+writers. R8 and cross-host acceptance remain OPEN.
+Ruff, git diff --check and all seven final repository guards passed. Tracked
+census remains 2023 blobs / 2014 text / 9 binary / 1 gitlink. No new tracked
+files, census exceptions or guard allowlists were added.

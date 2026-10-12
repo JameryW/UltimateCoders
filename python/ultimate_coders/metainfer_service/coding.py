@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 import time
@@ -70,6 +71,43 @@ def require_containment() -> None:
 
 def emit(kind: str, **fields) -> None:
     print(json.dumps({"type": kind, **fields}), flush=True)
+
+
+def validate_review(text: str) -> None:
+    """Require one leading verdict that the pinned parser reads deterministically."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    formats = {
+        "**Verdict**: PASS", "**Verdict**: FAIL", "- **Verdict**: PASS", "- **Verdict**: FAIL",
+    }
+    declarations = [
+        line for line in lines
+        if re.match(r"^(?:#{1,6}\s+|-\s+)?(?:\*\*)?Verdict(?:\*\*)?\s*:", line, re.I)
+    ]
+    if not lines or lines[0] not in formats or len(declarations) != 1:
+        raise ValueError("Native review requires one leading '**Verdict**: PASS' or FAIL verdict")
+
+
+def verify_review_files(workspace: Path) -> None:
+    """Observe bounded existing review bytes without following links or rewriting them."""
+    directory = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for name in ("correctness_review.md", "perf_review.md"):
+            try:
+                descriptor = os.open(
+                    name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory,
+                )
+            except FileNotFoundError:
+                continue
+            with os.fdopen(descriptor, "rb") as reader:
+                info = os.fstat(reader.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+                    raise ValueError("Native review must be a bounded regular file")
+                data = reader.read(65537)
+                if len(data) > 65536:
+                    raise ValueError("Native review exceeds its bound")
+                validate_review(data.decode("utf-8"))
+    finally:
+        os.close(directory)
 
 
 def write_file(path: str, content: str, workspace: Path) -> dict:
@@ -234,8 +272,18 @@ def main(argv: list[str] | None = None) -> int:
                 "requested code, harness and review artifacts in the current directory. "
                 "When asked to write a file, make a real tool call before the final response; "
                 "chat text does not create that file. Verify tool results before finishing. "
-                "Do not use the network. When reviewing, judge only the documented valid "
-                "input contract; explicitly excluded inputs are not missing requirements.",
+                "Do not use the network. When generating or reviewing test harnesses, use "
+                "the documented callable and valid input contract; explicitly excluded inputs "
+                "are not missing requirements. Load a supplied reference from its existing "
+                "file with importlib.util, preserving source availability for Triton JIT; "
+                "never embed, reimplement or substitute that reference. Execute a generated "
+                "correctness harness against the supplied reference before finishing, inspect "
+                "its actual JSON results, and fix observed failures. Reviewers should run the "
+                "existing harness and record actual observations. Keep artifacts focused and "
+                "concise without reducing the requested coverage or changing output contracts. "
+                "Start correctness_review.md and perf_review.md with exactly '**Verdict**: PASS' "
+                "or '**Verdict**: FAIL' as their first nonblank line, "
+                "with no other verdict declarations.",
             }
         ]
     messages.append({"role": "user", "content": prompt})
@@ -254,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
         if not calls:
             if not message.get("content", "").strip():
                 raise ValueError("Native coding returned an empty final response")
+            verify_review_files(workspace)
             emit(
                 "item.completed",
                 item={"id": "message-" + str(turn), "type": "agent_message",

@@ -260,6 +260,57 @@ async def test_missing_parameter_never_starts_a_gpu_job(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("widget", "value", "valid"),
+    [
+        ("select", "1", False),
+        ("select", 10, False),
+        ("select", ["10"], False),
+        ("select", "10", True),
+        ("select", None, True),
+        ("multiselect", "10", False),
+        ("multiselect", ["1"], False),
+        ("multiselect", ["10", "20"], True),
+        ("multiselect", [], True),
+    ],
+)
+async def test_form_choices_validate_before_submission_intent(tmp_path, widget, value, valid):
+    from ultimate_coders.runtime_state import RuntimeState
+
+    state = RuntimeState(tmp_path / "state.db", database_url="")
+    submitted = []
+
+    def service(request):
+        if request.url.path.endswith("/schema"):
+            return httpx.Response(
+                200,
+                json={"fields": [{"key": "choice", "type": widget,
+                                  "options": [{"label": "10"}, {"label": "20"}]}]},
+            )
+        if request.method == "POST":
+            submitted.append(json.loads(request.content)["answers"])
+            return httpx.Response(200, json={"task_id": "job-1"})
+        if request.url.path.endswith("/job-1"):
+            return httpx.Response(200, json={"run": {"finished": True, "final_status": "success"}})
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(service)) as client:
+        execution = MetaInferAdapter(
+            "http://service", client=client, state=state, operation_id="choices"
+        ).analyze_trace(repository="repo", objective="trace", parameters={"choice": value})
+        if valid:
+            assert (await execution).status == "completed"
+            assert submitted == [{"choice": value}]
+        else:
+            with pytest.raises(ValueError, match="choice"):
+                await execution
+            assert submitted == []
+            assert state.get("remote_jobs", "choices") is None
+    assert not any(record.get("holders") for record in state.records("resource_budgets"))
+    assert not any(record.get("operation_id") for record in state.records("backend_slots"))
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["deadline", "cancel", "failed", "kill_unconfirmed"])
 async def test_failure_and_cancellation_terminate_remote_jobs(mode):
     started = asyncio.Event()

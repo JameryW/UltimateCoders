@@ -156,7 +156,7 @@ def http_exchange(profile: OllamaProfile, path: str, payload: dict | None, timeo
     )
     parts, thinking, calls, size = [], [], [], 0
     with build_opener(ProxyHandler({}), NoRedirect()).open(
-        request, timeout=min(180, timeout)
+        request, timeout=timeout
     ) as response:
         if path == "/api/tags":
             body = response.read(MAX_RESPONSE + 1)

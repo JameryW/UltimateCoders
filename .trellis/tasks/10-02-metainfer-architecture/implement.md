@@ -193,3 +193,36 @@ candidate or successful model generation. R8 remains OPEN.
 Actual native file delivery and preflight pass; model harness quality still
 fails reference execution or review deadlines. R8 stays OPEN. The user has no
 second host and explicitly retained incomplete cross-host acceptance.
+
+## Harness acceptance and review protocol (2026-10-12)
+
+- [x] Preserve PR #712 / 61a65556 as the continuation baseline.
+- [x] Reproduce 183s delayed response headers with a 190s caller budget:
+  before 180.474s refusal, after 183.704s success. Keep absolute deadlines.
+- [x] Improve existing-reference/API/self-test model instructions; retain all
+  nine genuine generation/repair/audit outcomes without counting them as R8.
+- [x] Detect the 27-case wrong-wrapper false acceptance; retain the compatible
+  negative control and the original malformed negative as distinct evidence.
+- [x] Run the production UC workflow with protected OCI benchmark measurements.
+  Record the setup failure, invalid pinned choice and bounded real optimization.
+- [x] Refuse invalid live select/multiselect choices before backend reservation,
+  intent and POST. Nine RED/GREEN cases and actual live HTTP refusal pass.
+- [x] Repair three Windows coarse-clock test assumptions using deterministic
+  clocks, retaining real control functions and precise rate assertions.
+- [x] Reproduce explicit FAIL being parsed as PASS by the unchanged pin. Refuse
+  ambiguous existing native review files before final completion; preserve bytes
+  and cover both real file-tool/shell paths, valid PASS/FAIL and FD boundaries.
+- [x] Build separate image7 233de64c; actual GPU/model and native file delivery
+  pass. Replay the original failed reviews unchanged inside that image.
+- [x] Deploy image7 on local port 48768; final HTTP GPU/workspace gate passes.
+- [x] Final Windows Python3.14 suite: 1532 passed, 72 skips, 197.70s. Linux
+  related suite: 223 passed, 3 skips, 83.84s. Ruff passes.
+- [x] Complete independent Spec/Standards source and evidence reviews; prepare
+  the reviewed commit/PR. CI/merge results are recorded by the linked PR.
+- [ ] Complete successful genuine optimization, protected candidate Oracle
+  acceptance/rejection and accepted delivery. The image6 real attempt reached
+  performance review, timed out, stopped all writers, rolled back and released
+  its GPU/backend reservations; it did not produce an accepted candidate.
+- [ ] Resolve the earlier invalid submission only through evidence-backed
+  recovery. Its isolated verification state retains quarantine and reservations.
+- [ ] Complete actual two-host artifact acceptance when a second host exists.
