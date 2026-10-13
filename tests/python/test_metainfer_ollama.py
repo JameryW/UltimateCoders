@@ -449,6 +449,54 @@ def test_native_review_format_preserves_explicit_verdict(text, valid):
             validate_review(text)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="Native generator review snapshots require Linux")
+@pytest.mark.parametrize("phase", ["CORRECTNESS", "PERFORMANCE"])
+@pytest.mark.parametrize("tool", ["write_file", "exec_command"])
+@pytest.mark.parametrize("case", ["stale", "changed", "new", "reviewer", "generic"])
+def test_native_generator_preserves_unchanged_reviews_without_approving_new_reviews(
+    tmp_path, monkeypatch, ollama_peer, capsys, native_cli_sessions, phase, tool, case,
+):
+    from ultimate_coders.metainfer_service import coding
+
+    profile, peer = ollama_peer
+    monkeypatch.setattr(coding, "require_containment", lambda: None)
+    monkeypatch.setenv("UC_OLLAMA_URL", profile.url)
+    monkeypatch.setenv("UC_OLLAMA_MODEL", profile.model)
+    monkeypatch.setenv("UC_OLLAMA_DIGEST", profile.digest)
+    original = "# Historical Review\n## Verdict: FAIL\nOriginal rejected evidence.\n"
+    (tmp_path / "correctness_review.md").write_text(original)
+    if case != "new":
+        (tmp_path / "perf_review.md").write_text(original)
+    filename = "perf_review.md" if case in ("changed", "new") else "correctness_harness.py"
+    content = "# Newly written artifact\n## Verdict: FAIL\n"
+    arguments = {"path": filename, "content": content}
+    if tool == "exec_command":
+        script = f"from pathlib import Path; Path({filename!r}).write_text({content!r})"
+        arguments = {"cmd": shlex.quote(os.sys.executable) + " -c " + shlex.quote(script)}
+    peer["responses"] = [
+        [{"model": profile.model, "done": True, "message": {"tool_calls": [
+            {"function": {"name": tool, "arguments": arguments}},
+        ]}}],
+        [{"model": profile.model, "done": True, "message": {"content": "Artifact written."}}],
+    ]
+    header = f"You are the **{phase} HARNESS GENERATOR** for GPU kernel optimization, iteration #1."
+    if case == "reviewer":
+        header = f"You are the **{phase} HARNESS REVIEWER** for iteration #1."
+    elif case == "generic":
+        header = "Generate a correctness harness."
+    prompt = header + "\nWrite the requested artifact; preserve historical evidence."
+    if case == "stale":
+        assert coding.main(["exec", "-C", str(tmp_path), prompt]) == 0
+        assert (tmp_path / "perf_review.md").read_text() == original
+    else:
+        with pytest.raises(ValueError, match="verdict"):
+            coding.main(["exec", "-C", str(tmp_path), prompt])
+    assert (tmp_path / "correctness_review.md").read_text() == original
+    assert (tmp_path / filename).read_text() == content
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert any(event["type"] == "turn.completed" for event in events) == (case == "stale")
+
+
 @pytest.mark.skipif(os.name != "posix", reason="Review files use Linux no-follow descriptors")
 @pytest.mark.parametrize("kind", ["valid", "malformed", "symlink", "fifo", "large"])
 def test_native_review_files_are_bounded_regular_and_close_descriptors(tmp_path, monkeypatch, kind):

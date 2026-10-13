@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -67,6 +68,15 @@ class UpstreamLauncher:
         ):
             raise ValueError("Upstream task directories do not match the task identity")
         raw = json.loads(requirements["raw_request"])
+        label = requirements.get("label", "")
+        submission_identity = None
+        if isinstance(label, str) and label.startswith("UC "):
+            submission_identity = {
+                "operation_id": label[3:],
+                "request_sha256": hashlib.sha256(
+                    json.dumps(raw, sort_keys=True).encode()
+                ).hexdigest(),
+            }
         if (
             getattr(self.jobs, "hardware_attestation", None) is not None
             and requirements["task_type"] != "evolve-kernel"
@@ -149,6 +159,10 @@ class UpstreamLauncher:
             command,
             {**self.environment, "METAINFER_TASK_ID": task_id},
             extra_mounts=[(common, False), (git_dir, False), (repository / ".git", False)],
+            **(
+                {"submission_identity": submission_identity}
+                if submission_identity is not None else {}
+            ),
         )
 
     def status(self, task_id: str):

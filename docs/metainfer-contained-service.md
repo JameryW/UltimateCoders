@@ -229,12 +229,37 @@ returning incorrect results from its public wrapper. It must fail numeric
 comparison. Keep original files and raw observations; model instructions or
 a written review file cannot substitute for protected Oracle acceptance.
 
+The pinned pipeline reuses its iteration directory after review rejection.
+Native harness generation snapshots existing review files and preserves only
+their unchanged bytes, so rejected feedback does not block regeneration.
+New or changed reviews remain subject to the canonical verdict rule, and
+reviewer/generic completion checks stay strict. Selection uses the original
+pinned generator prompt header, not model output. Preserving old feedback does
+not approve it; do not rewrite its verdict to make a workflow pass. This client
+change requires a matching immutable image and fresh hardware attestation.
+
 Private cached evidence binds boot, image, profile, executable code and stopped
 probe. Restart rechecks live identity without another GPU/model inference.
 A changed profile cannot re-attest while any workspace remains owned, including
 legacy ownership records. Start the service before GPU workers initially and
 preserve its control store. Hardware GET and new launches refuse GPU/model drift.
 Unavailable observations or uncertain probe writers cannot advertise hardware.
+
+## Attaching a submission after response loss
+
+The contained service advertises `job_identity` and provides
+`GET /api/uc/jobs/<task_id>/identity` for UC's existing operator `attach` action.
+The UC operation ID and canonical task request SHA are saved privately before
+container creation and bound to the observed OCI identity. Identity reads do
+not trust job-writable task files, relaunch code or release reservations.
+After a matching, version-checked attach, use separate `confirm_stop` only when
+the service can prove all writers stopped. Keep the actor and evidence audit.
+
+Upgrade the service first; existing UC recovery clients already use this route.
+Legacy jobs without the pre-create binding, unknown task IDs and identity drift
+return HTTP 503. Do not reconstruct bindings from historical task files or
+clear an uncertain submission because a task listing is empty. A failed request
+with no durable remote identity remains quarantined pending authoritative proof.
 
 Measured deployment results are in
 [the live report](live-feedback-and-metainfer-verification.md).

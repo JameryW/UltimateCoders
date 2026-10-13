@@ -226,3 +226,33 @@ second host and explicitly retained incomplete cross-host acceptance.
 - [ ] Resolve the earlier invalid submission only through evidence-backed
   recovery. Its isolated verification state retains quarantine and reservations.
 - [ ] Complete actual two-host artifact acceptance when a second host exists.
+
+## Submission identity recovery (2026-10-13)
+
+- [x] Reproduce identity HTTP 404 on the actual known image7 optimization task.
+- [x] Bind the complete UC operation ID and canonical task SHA privately before
+  OCI create; expose the identity through the existing operator attach seam.
+- [x] Refuse legacy/missing/foreign identities; preserve reservations until
+  independent stopped-writer confirmation. Never retrofit a historical binding.
+- [x] Pass real OCI/HTTP identity and versioned attach/stop, including metadata
+  rewritten inside the container, active capacity preservation and stopped marker.
+- [x] Preserve the first operator script's syntax failure, stop its scope and
+  recover its verification reservations through the production API.
+- [x] Run full Windows tests (1543 passed, 74 skips), final identity tests (53
+  passed, 33 skips), Linux related tests (181 passed, 1 skip), Ruff and both
+  independent source review axes.
+- [x] Settle the image7 3600s-budget trial through operator stop after reproducing
+  stale review bytes blocking regeneration; UC rolled back unchanged code and
+  released its reservations. No candidate Oracle acceptance occurred.
+- [x] Fix the exact pinned generator boundary: preserve only byte-identical
+  entry reviews, keep all new/changed/reviewer/generic checks strict.
+- [x] Record RED 4 failures/16 passes and GREEN 41 passes; final Windows full
+  1544 passes/94 skips, Linux related 201 passes/1 skip, Ruff passes.
+- [x] Build image8 877e2b53. Actual model completion preserves the original
+  rejected review; generic completion of the same bytes refuses.
+- [x] Deploy image8 on 48768; actual GPU/workspace HTTP gate passes. New audit
+  observes 88 owned current-boot scopes stopped and 13 earlier-boot historical
+  records, without replacing the earlier audits.
+- [x] Complete final combined Spec/Evidence and Standards/Evidence reviews:
+  both PASS, no actionable findings. Ruff, diff check and all seven guards pass.
+- [ ] Complete PR delivery. R8 remains OPEN.

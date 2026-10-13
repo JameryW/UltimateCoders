@@ -87,8 +87,9 @@ def validate_review(text: str) -> None:
         raise ValueError("Native review requires one leading '**Verdict**: PASS' or FAIL verdict")
 
 
-def verify_review_files(workspace: Path) -> None:
-    """Observe bounded existing review bytes without following links or rewriting them."""
+def read_review_files(workspace: Path) -> dict[str, bytes]:
+    """Snapshot bounded regular review bytes without following links or rewriting them."""
+    reviews = {}
     directory = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for name in ("correctness_review.md", "perf_review.md"):
@@ -105,9 +106,20 @@ def verify_review_files(workspace: Path) -> None:
                 data = reader.read(65537)
                 if len(data) > 65536:
                     raise ValueError("Native review exceeds its bound")
-                validate_review(data.decode("utf-8"))
+                reviews[name] = data
     finally:
         os.close(directory)
+    return reviews
+
+
+def verify_review_files(
+    workspace: Path, *, unchanged_reviews: dict[str, bytes] | None = None,
+) -> None:
+    """Validate reviews, preserving untouched feedback only during pinned generation."""
+    for name, data in read_review_files(workspace).items():
+        if unchanged_reviews is not None and unchanged_reviews.get(name) == data:
+            continue
+        validate_review(data.decode("utf-8"))
 
 
 def write_file(path: str, content: str, workspace: Path) -> dict:
@@ -259,6 +271,14 @@ def main(argv: list[str] | None = None) -> int:
     if not prompt.strip() or len(prompt.encode()) > MAX_RESPONSE:
         raise ValueError("Invalid native coding prompt")
     workspace = args.C.resolve(strict=True)
+    # The pinned generator reuses its iteration directory after a rejected review.
+    # Preserve that feedback unchanged; reviewer and generic turns remain strict.
+    generating_harness = re.fullmatch(
+        r"You are the \*\*(?:CORRECTNESS|PERFORMANCE) HARNESS GENERATOR\*\* "
+        r"for GPU kernel optimization, iteration #[0-9]+\.",
+        prompt.partition("\n")[0],
+    ) is not None
+    unchanged_reviews = read_review_files(workspace) if generating_harness else None
     thread = resume or str(uuid.uuid4())
     directory = Path("/tmp/uc-ollama-sessions")
     directory.mkdir(mode=0o700, exist_ok=True)
@@ -302,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
         if not calls:
             if not message.get("content", "").strip():
                 raise ValueError("Native coding returned an empty final response")
-            verify_review_files(workspace)
+            verify_review_files(workspace, unchanged_reviews=unchanged_reviews)
             emit(
                 "item.completed",
                 item={"id": "message-" + str(turn), "type": "agent_message",
