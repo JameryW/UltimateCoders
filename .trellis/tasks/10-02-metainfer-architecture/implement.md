@@ -278,4 +278,5 @@ second host and explicitly retained incomplete cross-host acceptance.
   confirms the previous uncertain quarantine remains unchanged.
 - [x] Complete independent Spec/Evidence and Standards/Evidence reviews: PASS,
   no remaining actionable findings. All seven repository guards pass.
-- [ ] Complete this evidence PR delivery. R8 remains OPEN.
+- [x] Commit the reviewed evidence and open PR #715; CI and merge outcomes
+  are recorded by the linked PR. R8 remains OPEN.

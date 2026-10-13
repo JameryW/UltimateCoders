@@ -792,3 +792,7 @@ The review's snapshot-source ambiguity was resolved by actual_start_script
 descriptors and historical-field explanations without changing original bytes.
 All seven repository guards and diff check pass. Implementation code is
 unchanged in this continuation; its full test/CI delivery is PR #714 above.
+
+The reviewed evidence continuation is tracked by
+[PR #715](https://github.com/JameryW/UltimateCoders/pull/715). Its CI and merge
+record does not close R8 or the user-deferred cross-host criterion.
