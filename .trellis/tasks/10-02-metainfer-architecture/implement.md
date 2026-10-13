@@ -280,3 +280,27 @@ second host and explicitly retained incomplete cross-host acceptance.
   no remaining actionable findings. All seven repository guards pass.
 - [x] Commit the reviewed evidence and open PR #715; CI and merge outcomes
   are recorded by the linked PR. R8 remains OPEN.
+
+## Native thinking and required artifacts (2026-10-14)
+
+- [x] Reproduce the fixed false-mode nonce failure and preserve conditional
+  and unconditional prefill failures. Actual provider think:true separates
+  nonce content and thinking, and returns real tools.
+- [x] Add strict explicit UC_OLLAMA_THINK, default false; bind provider request,
+  effective launch profile, attestation environment/hash and saved sessions.
+  Refuse changed modes and nonboolean legacy fields before inference.
+- [x] Reproduce four generator prose completions with no required file. Add a
+  scoped bounded artifact check and at most two actual model feedback turns;
+  preserve raw replies and keep existing turn/deadline and review boundaries.
+- [x] Verify RED14fail/2pass then native protocol GREEN107pass; artifact guard
+  RED8fail then GREEN28pass including all prior review snapshot checks.
+- [x] Verify final Windows1558pass/105platformskip, Linux194pass, ruff and seven
+  repository guards. Independent Source Spec and Source Standards PASS.
+- [x] Freeze v9/v10 images and run actual GPU/model, file+command, prose-only
+  and pinned HTTP deployment preflights. Settle both failed 4B workflows with
+  real stop receipts, unchanged Git/kernel and released reservations.
+- [ ] Finish genuine optimization/protected candidate Oracle/accepted delivery
+  verification. Installed 9B weights have a separately pinned official
+  renderer/parser profile; its real full-workflow results are recorded next.
+
+R8 and the explicitly deferred cross-host criterion remain OPEN.

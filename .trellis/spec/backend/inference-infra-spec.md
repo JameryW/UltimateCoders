@@ -340,13 +340,14 @@ active-run recovery or actual two-host artifact acceptance.
 
 ContainedJobs.enable_hardware(environment, *, observe_url=None) -> None.
 ContainedJobs.hardware() -> dict. HardwareAttestation.initialize() -> None.
-OllamaProfile(url, model, digest, num_ctx=16384, num_predict=4096).identity() -> dict;
+OllamaProfile(url, model, digest, num_ctx=16384, num_predict=4096, think=False).identity() -> dict;
 .chat(messages, tools=list, timeout=600) -> dict.
 http_exchange(profile, path, payload, timeout) uses the caller's remaining
 operation budget. from_environment reads UC_OLLAMA_NUM_CTX.
 save_session(directory, thread, profile, messages) and
 load_session(directory, thread, profile) persist/validate effective num_ctx.
 Native write_file(path, content, workspace) -> path/kind/bytes/sha256.
+read_workspace_artifacts(workspace, names) -> bounded no-follow file bytes.
 Service: --gpu wsl|nvidia --attest-ollama [--ollama-observe-url URL].
 Native client: /opt/uc/ultimate_coders/metainfer_service/coding.py exec
 [resume UUID] --json --sandbox workspace-write -C WORKSPACE - (stdin prompt).
@@ -370,8 +371,18 @@ a different context. Legacy sessions without the field can resume only at the
 legacy default. Keep the provider identity response's existing wire shape.
 Keep the legacy default and model/digest validation. Check actual model size,
 resident VRAM and context rather than inferring size from a local alias name.
-Provider templates must honor think:false; repair a faulty template through a
-new pinned alias, never by removing text from the observed nonce response.
+Provider templates must match the selected thinking mode; repair a faulty
+template through a new pinned alias, never by removing nonce response text.
+UC_OLLAMA_THINK is optional and accepts exactly "true" or "false", default
+"false". OllamaProfile.think must be a strict boolean. Every chat sends this
+boolean, preserving separate provider thinking/content/tool_calls fields.
+Thinking-only weights need an explicitly selected true mode; never infer the
+mode from an alias or silently retry with another configuration. The explicit
+environment enters the profile hash; the effective boolean participates in
+launch equality and saved sessions. A changed mode cannot reuse attestation
+with owned writers or resume an existing session. Legacy sessions without
+think resume only with false; a numeric 0/1 field is invalid. Keep the public
+identity wire shape and nonce/tool verification unchanged.
 UC_OLLAMA_NUM_PREDICT is optional, defaults to 4096 and accepts integers from
 128 through 8192. Every chat sends it as options.num_predict. It is part of the
 effective profile, cache hash and session record. A different output budget
@@ -429,6 +440,16 @@ model generation or optimization. Verify that the review file requested by the
 pinned pipeline exists; an exit-zero agent message is not that file and does
 not supply file-based regeneration feedback. Do not synthesize a review verdict
 or accepted candidate from prose.
+For the exact pinned correctness/performance harness generator first lines,
+require the corresponding correctness_harness.py/perf_harness.py to be a
+nonempty regular file within the workspace, no links, bounded at 64 KiB.
+If final prose leaves it missing/empty, send at most two explicit user feedback
+messages requesting the real write_file tool and reference execution. Persist
+the actual reply and feedback in the session; preserve the 16-turn/900s bounds.
+After exhaustion, fail before agent_message/turn.completed. Links/special or
+oversized files fail immediately. Generic prompts retain ordinary text final
+responses. This existence check does not establish harness correctness or
+execution; pinned self-tests and protected UC Oracle remain authoritative.
 Native harness instructions request actual file-backed reference loading and
 execution before completion. These are model instructions, not a correctness
 proof: independently replay the resulting artifact against the reference and
@@ -448,6 +469,8 @@ reference implementation or change the requested callable/JSON contract.
 | Implicit default proof followed by a different context override | Refuse launch before workspace claims |
 | Saved session context differs from the current context | Refuse before chat inference |
 | Output budget invalid or different from the proof/session | Refuse before launch/inference |
+| Thinking mode ambiguous, nonboolean or different from proof/session | Refuse before launch/inference |
+| Thinking-only model selected with true | Send actual think:true; preserve separated provider fields |
 | Stream completion reports output exhaustion | Fail before tools, session publication or success events |
 | File tool escapes workspace, follows links or exceeds its bound | Refuse without writing the target |
 | Valid streamed file call | Persist actual bytes, emit file_change, return checksum |
@@ -461,6 +484,8 @@ reference implementation or change the requested callable/JSON contract.
 | Unsupported task/environment override | Refuse before workspace claim |
 | Harness calls JIT internals as its business entrypoint | Record self-reference failure; correct only an explicitly identified diagnostic copy |
 | Reviewer returns prose without its requested file | No completed review artifact; retain failure, not a synthetic file/verdict |
+| Exact pinned generator returns prose with no nonempty harness | At most two real model feedback turns, then fail before completion |
+| Required harness is a link, special file or larger than 64 KiB | Refuse without following/rewriting it |
 | Checked native review lacks one leading supported verdict declaration | Fail before final message/turn completion; preserve original bytes |
 | Pinned harness generator encounters an unchanged review retained from a rejected prior phase | Preserve its bounded snapshot; do not block generation or approve the review |
 | Harness passes a reference but also accepts an incorrect compatible wrapper | Reject the harness; preserve both artifacts and actual numeric outcomes |
@@ -474,11 +499,16 @@ prose that describes a tool invocation.
 Good: an explicit context reaches the provider and resumes only with that same
 context. Base: omitted context and legacy sessions retain 16384. Bad: silently
 adding 4096 to a launch proved at the implicit default, or restoring its session.
+Good: explicitly enable thinking for thinking-only weights and receive final
+nonce text through the provider's content field. Base: omitted thinking remains
+false. Bad: strip reasoning from a failed nonce or change mode during resume.
 
 ### 11.6 Tests Required
 
 Use real local HTTP peers for digest, streamed tools, wrong models, truncated
 streams, prose and proxy inheritance. Assert rejected profile before create,
+thinking mode on the actual request, separated response fields, invalid mode
+refusal, legacy-false/session drift and stopped cache reuse with owned writers,
 and absolute HTTP deadlines against peers continuously sending no-newline data,
 deadline with a delayed writer, legacy active ownership, stopped cache reuse,
 model drift and code mismatch. Record actual GPU/model, native CLI and HTTP
@@ -525,6 +555,10 @@ Test both generators and real file/shell tools: old rejected reviews preserved
 with actual generation completion; new/changed malformed reviews, reviewers
 and generic calls still refuse. Keep the existing FD/link/FIFO/size limits and
 record actual image/model checks separately from genuine harness acceptance.
+For both pinned generators, assert missing/empty artifacts cause at most two
+feedback requests; retain original responses and observe actual file_change
+only after a tool write. Verify no final success on exhaustion or a linked
+artifact. Generic prose remains text and old review snapshots stay unchanged.
 
 ### 11.7 Wrong vs Correct
 

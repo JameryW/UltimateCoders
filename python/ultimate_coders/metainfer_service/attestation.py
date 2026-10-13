@@ -34,6 +34,7 @@ class HardwareAttestation:
                 "UC_OLLAMA_DIGEST",
                 "UC_OLLAMA_NUM_CTX",
                 "UC_OLLAMA_NUM_PREDICT",
+                "UC_OLLAMA_THINK",
                 "METAINFER_ROOT",
                 "METAINFER_NODE_ID",
                 "HOME",

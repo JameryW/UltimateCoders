@@ -46,6 +46,7 @@ class OllamaProfile:
     digest: str
     num_ctx: int = DEFAULT_CONTEXT
     num_predict: int = DEFAULT_PREDICT
+    think: bool = False
 
     def __post_init__(self) -> None:
         parsed = urlsplit(self.url)
@@ -64,18 +65,23 @@ class OllamaProfile:
             or not 1024 <= self.num_ctx <= 32768
             or type(self.num_predict) is not int
             or not 128 <= self.num_predict <= 8192
+            or type(self.think) is not bool
         ):
             raise ValueError("Invalid explicit Ollama profile")
         object.__setattr__(self, "url", self.url.rstrip("/"))
 
     @classmethod
     def from_environment(cls, environment: dict[str, str]) -> OllamaProfile:
+        thinking = environment.get("UC_OLLAMA_THINK", "false")
+        if thinking not in ("true", "false"):
+            raise ValueError("UC_OLLAMA_THINK must be exactly true or false")
         return cls(
             environment.get("UC_OLLAMA_URL", ""),
             environment.get("UC_OLLAMA_MODEL", ""),
             environment.get("UC_OLLAMA_DIGEST", ""),
             int(environment.get("UC_OLLAMA_NUM_CTX", str(DEFAULT_CONTEXT))),
             int(environment.get("UC_OLLAMA_NUM_PREDICT", str(DEFAULT_PREDICT))),
+            thinking == "true",
         )
 
     def _exchange(self, path: str, payload: dict | None, timeout: float) -> dict:
@@ -132,7 +138,7 @@ class OllamaProfile:
             "model": self.model,
             "messages": messages,
             "tools": tools,
-            "think": False,
+            "think": self.think,
             "stream": True,
             "options": {
                 "temperature": 0.1, "num_ctx": self.num_ctx, "num_predict": self.num_predict,

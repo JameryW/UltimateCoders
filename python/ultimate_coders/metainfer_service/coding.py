@@ -87,12 +87,12 @@ def validate_review(text: str) -> None:
         raise ValueError("Native review requires one leading '**Verdict**: PASS' or FAIL verdict")
 
 
-def read_review_files(workspace: Path) -> dict[str, bytes]:
-    """Snapshot bounded regular review bytes without following links or rewriting them."""
-    reviews = {}
+def read_workspace_artifacts(workspace: Path, names: tuple[str, ...]) -> dict[str, bytes]:
+    """Read bounded regular artifacts without following links or rewriting them."""
+    artifacts = {}
     directory = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        for name in ("correctness_review.md", "perf_review.md"):
+        for name in names:
             try:
                 descriptor = os.open(
                     name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory,
@@ -102,14 +102,18 @@ def read_review_files(workspace: Path) -> dict[str, bytes]:
             with os.fdopen(descriptor, "rb") as reader:
                 info = os.fstat(reader.fileno())
                 if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
-                    raise ValueError("Native review must be a bounded regular file")
+                    raise ValueError("Native artifact must be a bounded regular file")
                 data = reader.read(65537)
                 if len(data) > 65536:
-                    raise ValueError("Native review exceeds its bound")
-                reviews[name] = data
+                    raise ValueError("Native artifact exceeds its bound")
+                artifacts[name] = data
     finally:
         os.close(directory)
-    return reviews
+    return artifacts
+
+
+def read_review_files(workspace: Path) -> dict[str, bytes]:
+    return read_workspace_artifacts(workspace, ("correctness_review.md", "perf_review.md"))
 
 
 def verify_review_files(
@@ -219,7 +223,7 @@ async def execute_command(
 def save_session(directory: Path, thread: str, profile: OllamaProfile, messages: list) -> None:
     content = json.dumps(
         {"identity": profile.identity(), "num_ctx": profile.num_ctx,
-         "num_predict": profile.num_predict, "messages": messages}
+         "num_predict": profile.num_predict, "think": profile.think, "messages": messages}
     ).encode()
     if len(content) > MAX_RESPONSE:
         raise ValueError("Native conversation exceeds the session bound")
@@ -237,10 +241,13 @@ def load_session(directory: Path, thread: str, profile: OllamaProfile) -> list:
         or saved.get("identity") != profile.identity()
         or saved.get("num_ctx", DEFAULT_CONTEXT) != profile.num_ctx
         or saved.get("num_predict", DEFAULT_PREDICT) != profile.num_predict
+        or type(saved.get("think", False)) is not bool
+        or saved.get("think", False) != profile.think
         or not isinstance(saved.get("messages"), list)
     ):
         raise ValueError(
-            "Native session model identity, context or output budget changed or unavailable"
+            "Native session model identity, context, output budget or thinking mode "
+            "changed or unavailable"
         )
     return saved["messages"]
 
@@ -273,12 +280,15 @@ def main(argv: list[str] | None = None) -> int:
     workspace = args.C.resolve(strict=True)
     # The pinned generator reuses its iteration directory after a rejected review.
     # Preserve that feedback unchanged; reviewer and generic turns remain strict.
-    generating_harness = re.fullmatch(
-        r"You are the \*\*(?:CORRECTNESS|PERFORMANCE) HARNESS GENERATOR\*\* "
+    generator = re.fullmatch(
+        r"You are the \*\*(CORRECTNESS|PERFORMANCE) HARNESS GENERATOR\*\* "
         r"for GPU kernel optimization, iteration #[0-9]+\.",
         prompt.partition("\n")[0],
-    ) is not None
-    unchanged_reviews = read_review_files(workspace) if generating_harness else None
+    )
+    required_artifact = (
+        "correctness_harness.py" if generator[1] == "CORRECTNESS" else "perf_harness.py"
+    ) if generator else None
+    unchanged_reviews = read_review_files(workspace) if generator else None
     thread = resume or str(uuid.uuid4())
     directory = Path("/tmp/uc-ollama-sessions")
     directory.mkdir(mode=0o700, exist_ok=True)
@@ -309,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     messages.append({"role": "user", "content": prompt})
     emit("thread.started", thread_id=thread)
     emit("turn.started")
-    deadline, executed = time.monotonic() + 900, 0
+    deadline, executed, artifact_feedback = time.monotonic() + 900, 0, 0
     for turn in range(16):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -323,6 +333,21 @@ def main(argv: list[str] | None = None) -> int:
             if not message.get("content", "").strip():
                 raise ValueError("Native coding returned an empty final response")
             verify_review_files(workspace, unchanged_reviews=unchanged_reviews)
+            if required_artifact and not read_workspace_artifacts(
+                workspace, (required_artifact,),
+            ).get(required_artifact):
+                if artifact_feedback >= 2:
+                    raise ValueError(f"Native generator did not produce {required_artifact}")
+                messages.append({"role": "user", "content": (
+                    f"Required artifact {required_artifact} is missing or empty. "
+                    "Chat text does not create this file. Use the actual write_file tool "
+                    f"with path '{required_artifact}' and its complete contents, then "
+                    "use exec_command to run the requested reference check. "
+                    "Do not finish with code or a file-shaped JSON object in prose."
+                )})
+                save_session(directory, thread, profile, messages)
+                artifact_feedback += 1
+                continue
             emit(
                 "item.completed",
                 item={"id": "message-" + str(turn), "type": "agent_message",

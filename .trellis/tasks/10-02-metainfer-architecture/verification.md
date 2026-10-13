@@ -796,3 +796,39 @@ unchanged in this continuation; its full test/CI delivery is PR #714 above.
 The reviewed evidence continuation is tracked by
 [PR #715](https://github.com/JameryW/UltimateCoders/pull/715). Its CI and merge
 record does not close R8 or the user-deferred cross-host criterion.
+
+## Native thinking and actual artifact completion (2026-10-14)
+
+The native client fixed think:false regardless of the installed model's
+supported mode. Original 4B replies failed the exact nonce check; neither
+conditional nor unconditional empty-thinking prefills repaired it. The actual
+Ollama think:true API passed two nonce requests and one formal file-tool call,
+keeping reasoning/content/tool_calls in their separate provider fields.
+UC_OLLAMA_THINK now accepts strictly true/false and defaults to false. It
+participates in effective launch equality, attestation and native sessions;
+legacy sessions remain false-only. Identity wire shape and nonce checks stay
+unchanged. No response text is removed to manufacture an accepted nonce.
+
+The first whole workflow produced four code-only final messages and no file;
+the pin retried logic_fail. The exact pinned correctness/performance generator
+headers now require a nonempty bounded regular harness, with no-follow reads.
+Missing/empty bytes receive at most two real model feedback turns, then fail
+before success events. Existing 16-turn/900s bounds and review snapshots remain;
+generic text responses stay compatible. A file's presence is not correctness.
+
+Final source checks: Windows1558pass/105platformskip, Linux194pass, ruff PASS
+and all seven repository guards PASS. Thinking regression RED14fail/2pass,
+protocol GREEN107pass; artifact regression RED8fail, GREEN28pass including
+the twenty previous review snapshot cases. Independent Source Spec PASS and
+Source Standards PASS, with no actionable findings.
+
+Immutable v9/v10 preflights passed actual GPU/model attestation, native file
+and command execution, a prose-only nonexecution control and the pinned HTTP
+deployment gate. Two genuine 4B workflows still failed to reach candidate
+Oracle: the first emitted prose only; the second exhausted output twice,
+then wrote a harness and executed commands that repeatedly referenced a missing
+file. Both were stopped through their exact service identities and independently
+settled with unchanged Git/kernel and released reservations. Original failed
+logs and artifacts remain. A separately pinned installed 9B renderer/parser
+profile is being verified; its settled results follow. R8 and the user-deferred
+cross-host acceptance remain OPEN.
