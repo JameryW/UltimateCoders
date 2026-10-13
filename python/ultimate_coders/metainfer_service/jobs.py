@@ -48,6 +48,7 @@ def sync_directory(path: Path) -> None:
 
 class ContainedJobs:
     workspace_probe_identity = True
+    job_identity = True
 
     def __init__(
         self,
@@ -118,7 +119,18 @@ class ContainedJobs:
         environment: dict[str, str],
         *,
         extra_mounts: list[tuple[Path, bool]] | None = None,
+        submission_identity: dict[str, str] | None = None,
     ) -> int:
+        if submission_identity is not None and (
+            not isinstance(submission_identity, dict)
+            or set(submission_identity) != {"operation_id", "request_sha256"}
+            or not isinstance(submission_identity.get("operation_id"), str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", submission_identity["operation_id"])
+            or not isinstance(submission_identity.get("request_sha256"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", submission_identity["request_sha256"])
+        ):
+            raise ValueError("Invalid submission identity")
+        submission_identity = dict(submission_identity) if submission_identity is not None else None
         if self.hardware_attestation is not None:
             from .ollama import OllamaProfile
 
@@ -162,6 +174,11 @@ class ContainedJobs:
                 ).encode()
             ).hexdigest(),
         }
+        if submission_identity is not None:
+            labels.update({
+                "uc.operation": submission_identity["operation_id"],
+                "uc.task_request": submission_identity["request_sha256"],
+            })
         record: dict[str, Any] = {
             "task_id": task_id,
             "backend_id": self.config.backend_id,
@@ -172,6 +189,10 @@ class ContainedJobs:
             "started_at": time.time(),
             "gate_released": False,
             "workspace": str(workspace),
+            **(
+                {"submission_identity": submission_identity}
+                if submission_identity is not None else {}
+            ),
         }
         path = self._path(task_id)
 
@@ -224,6 +245,27 @@ class ContainedJobs:
         record["gate_released"] = True
         checkpoint(path, record)
         return observed["pid"]
+
+    def identity(self, task_id: str) -> dict:
+        """Read only the pre-create identity bound to this observed OCI job."""
+        record = self._load(task_id)
+        binding = record.get("submission_identity")
+        if not isinstance(binding, dict) or (
+            not binding.get("operation_id")
+            or not binding.get("request_sha256")
+            or record["labels"].get("uc.operation") != binding["operation_id"]
+            or record["labels"].get("uc.task_request") != binding["request_sha256"]
+        ):
+            raise RuntimeError("Job has no durable submission identity; cannot attach")
+        observed = self._observe(record)
+        return {
+            "contract_version": CONTRACT_VERSION,
+            "task_id": task_id,
+            "backend_id": self.config.backend_id,
+            "operation_id": binding["operation_id"],
+            "request_sha256": binding["request_sha256"],
+            "container_id": observed["id"],
+        }
 
     def status(self, task_id: str) -> dict:
         record = self._load(task_id)

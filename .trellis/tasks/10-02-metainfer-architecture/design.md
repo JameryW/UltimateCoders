@@ -129,3 +129,29 @@ regular-file reads and refusal before final completion. Deliver a valid FAIL
 unchanged; never manufacture PASS or treat format validation as correctness.
 This additive guard leaves the pinned source untouched and requires a new
 attested native image/profile. Earlier image6 attempts remain earlier evidence.
+
+## Submission identity recovery continuation (2026-10-13)
+
+The deployed contained service returned HTTP 404 for the identity route already
+used by UC's operator `attach` command. Implement that existing seam with an
+additive `job_identity` capability. Bind the UC operation label and canonical
+task request SHA into the private launch intent and OCI labels before create;
+read only that binding and verify the immutable observed container on identity
+requests. Preserve old jobs without bindings as unavailable; never derive
+trusted identity later from job-writable metadata. Identity observation and
+attachment retain reservations until separate stopped-scope confirmation.
+
+Continue genuine optimization in the existing image7 deployment with a fresh
+worktree/state and a valid inner iteration choice, using a 3600s execution
+budget. Protected Oracle policy stays unchanged. Preserve original failed
+model output and all-writer evidence; successful transport/harness self-tests
+alone cannot close R8 or its user-deferred cross-host criterion.
+
+The image7 trial also reproduced a completion-boundary bug: an unchanged
+malformed review from an earlier phase blocked a generator that changed only
+its harness. Snapshot bounded regular review bytes at invocation entry only
+for the exact pinned correctness/performance generator headers. On completion,
+preserve only identical pre-existing reviews; validate all new/changed ones.
+Reviewers and generic prompts stay strict. Preserve rejected feedback rather
+than rewriting it. Build image8 with this native change and fresh attestation;
+the stopped image7 attempt remains a failed attempt, not accepted optimization.

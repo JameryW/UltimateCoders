@@ -630,3 +630,82 @@ writers. R8 and cross-host acceptance remain OPEN.
 Ruff, git diff --check and all seven final repository guards passed. Tracked
 census remains 2023 blobs / 2014 text / 9 binary / 1 gitlink. No new tracked
 files, census exceptions or guard allowlists were added.
+
+## Submission identity continuation (2026-10-13)
+
+Baseline PR #713 / 02cfc0b4 is merged and the pinned source remains unchanged.
+The current daemon reproduced HTTP 404 for `/api/uc/jobs/<known-task>/identity`,
+although UC's existing operator attach command calls that route. The extension
+now advertises `job_identity`, binds the full UC operation label and canonical
+task request SHA privately before OCI create, and observes the matching immutable
+container before returning identity. Job-writable metadata is not trusted;
+legacy/missing/foreign jobs refuse without releasing ownership or reservations.
+
+Final source review: Spec PASS and Standards PASS, no actionable findings.
+Windows full suite: 1543 passed, 74 platform skips, 288.76s. Additional final
+identity assertions: 53 passed, 33 skips, 24.08s. Linux related suite: 181 passed,
+1 skip, 94.45s, with the existing FastAPI/Starlette deprecation. Ruff passes.
+
+Real OCI/HTTP controlled identity recovery passes. A live container rewrote its
+requirements label to `UC foreign`; the private binding still matched the actual
+operation/request/container. Production versioned attach retained the active
+writer, workspace and capacity. Separate stop confirmation obtained a cgroup
+receipt, stopped marker growth and released capacity. The temporary daemon also
+stopped. This is a controlled direct-launch fixture, not pinned submission loss
+or model optimization. Preserve the first operator-script quoting failure and
+its actual stopped scope; its UC state was recovered through matching identity,
+attach and independent stop confirmation rather than manual record clearing.
+Portable originals/checksums are in `job_identity_continuation` of
+gpu-verification.json; previous manifests and audits are unchanged.
+
+A fresh genuine image7 workflow, wholeflow-026410c9d4, used a 3600s execution
+budget and the valid inner iteration choice `10`. Six protected GPU
+baseline calls completed: median latency 0.0032604001462459564ms, dispersion
+0.20867316863282018%, zero numerical error. The first generated harness failed
+28/28 cases with undefined run_ref; actual model tools repaired it to 28/28.
+Reviews then failed with Ollama HTTP 500; regenerated code also had Tensor
+boolean errors. A genuinely written 18754-byte review used a heading first and
+was refused by the native verdict guard before completion. The same file then
+incorrectly blocked generation call #5 although only the harness changed. Its
+actual file_change -> validate_review error reproduces the stage-boundary bug.
+The operator stopped this identified blocked task before budget expiry, obtained
+a matching cgroup receipt, and UC observed failure, rolled back unchanged kernel
+SHA 87c37016...8e67 and released both reservations. This was operator stop, not
+an execution deadline success or candidate Oracle acceptance.
+
+The repair snapshots bounded no-follow regular review bytes only for the exact
+original pinned correctness/performance generator headers. Only unchanged entry
+bytes are preserved; every new/changed review and reviewer/generic turn remains
+strict. RED: 4 failed/16 passed in 50.28s, through actual HTTP and file/shell tools.
+GREEN review checks: 41 passed in 63.27s. Final Windows full: 1544 passed, 94
+platform skips in 208.03s. Final Linux related: 201 passed, 1 skip in 126.02s.
+Ruff passes. These final results supersede the earlier identity-only runs above.
+
+Immutable image8 877e2b53 passes actual GPU/model attestation and two genuine
+native file calls with the original rejected review copied unchanged. The
+generator call completes; the generic call writes its marker then refuses the
+same review before completion. Original review bytes are preserved in both;
+this is native boundary verification, not genuine harness acceptance. The old
+v7 daemon was retired through verified PID/boot/image/root identity and its
+deployment snapshot retained. Image8 is deployed at 127.0.0.1:48768 with the new
+identity capability and a fresh public GPU/workspace gate. A new audit observes
+all 88 owned current-boot scopes stopped, PID zero, empty/missing cgroups and
+released private workspace owners. Thirteen older-boot records remain historical.
+Previous 27/70/74-scope audits and frozen image6/image7 code remain unchanged.
+
+R8 remains OPEN. The earlier invalid submission remains quarantined in its
+isolated verification DB; the new binding does not retroactively resolve it.
+Actual cross-host acceptance remains deferred by the user for lack of a second
+host. These identity fixtures do not satisfy that criterion.
+
+Final combined Spec/Evidence review: PASS, no actionable findings. It matched
+the private identity and image8 boundary outcomes, raw file/proof hashes,
+88 stopped observations, empty ownership stores, frozen sources and the
+unchanged v7 rollback baseline. Final Standards/Evidence review: PASS, no
+actionable findings; raw reports, all-writer observations, reservations and
+current HTTP identity match. The final read-only contract/hardware/existing-job
+identity GET snapshot contains three HTTP 200 responses and creates no probe;
+the main session obtained it and independent reviews checked the saved bytes.
+Ruff, git diff --check and all seven repository guards pass; tracked census
+remains 2023 blobs / 2014 text / 9 binary / 1 gitlink, without new tracked files
+or guard exemptions. CI/merge will be recorded by the PR; R8 remains OPEN.

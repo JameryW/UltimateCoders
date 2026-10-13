@@ -135,7 +135,8 @@ Command: python -m ultimate_coders.metainfer_service --source PATH --root PATH
 [--port 48766]. It listens only on 127.0.0.1.
 
 HTTP: GET /api/uc/contract; POST /api/uc/workspaces/verify;
-GET /api/uc/jobs/TASK_ID/quiescence; GET /api/uc/hardware. Keep the pinned shell's
+GET /api/uc/jobs/TASK_ID/quiescence; GET /api/uc/jobs/TASK_ID/identity;
+GET /api/uc/hardware. Keep the pinned shell's
 discovery/schema, POST tasks and kill control. Fixed-file task observations use
 the existing GET tasks and GET task-ID response shapes.
 
@@ -154,6 +155,27 @@ is nonretryable/cleanup_pending and requires stopped-scope reconciliation before
 rollback or reuse. Adapter records probe context before POST under
 remote_jobs[operation_id + ":workspace-probe"] and refuses an unresolved replay.
 Completion matches its probe directory before changing the record.
+
+The additive `job_identity` capability implements the identity endpoint used
+by `RemoteJobs.reconcile(..., "attach", remote_id=..., actor=...)`. For UC
+submissions the Launcher binds the complete `UC <operation_id>` label and
+SHA-256 of `json.dumps(json.loads(raw_request), sort_keys=True).encode()`
+before OCI create. `ContainedJobs.launch(..., submission_identity=None)`
+validates an optional dict containing exactly `operation_id` (1..256 ASCII
+letters/digits/underscore/dot/colon/hyphen) and `request_sha256` (64 lowercase
+hex digits), copies it into its private intent and binds both values to OCI
+labels `uc.operation` / `uc.task_request`. Job-owned requirements/run files
+are never identity evidence. Missing bindings cannot be retrofitted.
+
+Identity responses contain `contract_version`, `backend_id`, `task_id`,
+`operation_id`, `request_sha256` and the actually observed `container_id`.
+Refuse with HTTP 503 on legacy/missing jobs, changed boot, unavailable OCI,
+altered labels or immutable container identity. Reading identity does not
+publish a stopped-writer receipt, stop/relaunch code, release workspace
+ownership or capacity. Attach still requires the current local record version
+and matching operation/request/backend; only separate `confirm_stop` with
+actual quiescence can release capacity. Roll out the service first; existing
+clients already use this route. Missing old submissions remain quarantined.
 
 The additive workspace_probe_identity capability accepts a caller-generated
 probe-<32 lowercase hex> ID and returns a matching quiescence receipt. A durable
@@ -189,6 +211,8 @@ ownership. Upstream ProcStatus.finished_at uses Unix epoch seconds.
 | Short probe exits during inspection | Reobserve once; on failure stop and confirm proof, otherwise retain claim and report probe ID |
 | Unsafe metadata symlink/FIFO/oversized file | HTTP 503; never follow links or arbitrary log_file paths |
 | Failed submission | Remains listable without a false writer proof |
+| Legacy/missing submission binding or changed OCI identity | Identity HTTP 503; retain uncertainty and reservations |
+| Valid matching identity for an uncertain local submission | Versioned attach only; retain live writer ownership/capacity |
 | Reset/restart/cluster mutation | HTTP 409 |
 | Optional plugin/agent-log observation | HTTP 404 |
 | GPU/model runtime not configured | Hardware HTTP 503; GPU release gate rejects |
@@ -200,6 +224,10 @@ kernel scope after restart, and stops before a durable receipt releases its
 workspace. Base: no GPU image, CPU workspace/lifecycle gates pass while the GPU
 gate rejects. Bad: a job replaces requirements.json with a host-file symlink;
 GET task returns 503 and cannot publish that file through experiment evidence.
+Good: a lost create response is attached using its private pre-create identity
+and actual OCI observation. Base: legacy jobs continue execution with identity
+unavailable. Bad: deriving operation identity from a writer-modified label/file
+or treating a matching identity as stopped-writer evidence.
 
 ### 9.6 Tests Required
 
@@ -208,7 +236,12 @@ foreign/restarted identity rejection; launch-response loss never replays;
 validation failures precede claims; repeated old receipts fence newer owners;
 short probe/kill exit races; no-follow metadata/FIFO rejection; discovery and
 create survive router filtering; Unix timestamps and sanitized timeout causes;
-retargeting a configured workspace-root symlink cannot authorize protected paths.
+identity persisted before create, stable after writer metadata changes and
+caller dict mutation; invalid binding refused before ownership; real public
+identity -> production attach -> separate stop confirmation with capacity
+retained until quiescence; legacy/missing/foreign identity refused. Record real
+OCI/HTTP recovery separately from fixtures and full GPU optimization.
+Retargeting a configured workspace-root symlink cannot authorize protected paths.
 Retargeting the configured control-store alias cannot redirect private records.
 Run real OCI detached-writer and cross-UID HTTP gates separately from fixtures.
 Record actual GPU optimization evidence separately; CPU passes cannot close R8.
@@ -428,7 +461,8 @@ reference implementation or change the requested callable/JSON contract.
 | Unsupported task/environment override | Refuse before workspace claim |
 | Harness calls JIT internals as its business entrypoint | Record self-reference failure; correct only an explicitly identified diagnostic copy |
 | Reviewer returns prose without its requested file | No completed review artifact; retain failure, not a synthetic file/verdict |
-| Existing native correctness/performance review lacks one leading supported verdict declaration | Fail before final message/turn completion; preserve original bytes |
+| Checked native review lacks one leading supported verdict declaration | Fail before final message/turn completion; preserve original bytes |
+| Pinned harness generator encounters an unchanged review retained from a rejected prior phase | Preserve its bounded snapshot; do not block generation or approve the review |
 | Harness passes a reference but also accepts an incorrect compatible wrapper | Reject the harness; preserve both artifacts and actual numeric outcomes |
 
 ### 11.5 Good / Base / Bad Cases
@@ -468,7 +502,7 @@ size refusal. A real HTTP peer drives the native CLI and verifies file_change,
 distinct item IDs and the tool-result round trip; prose remains unexecuted.
 Observe explicit output budget and its default in real HTTP payloads; test
 invalid sizes/types, implicit-default launch override and changed-budget resume.
-The two existing native review files must start with **Verdict**: PASS or FAIL
+Checked native review files must start with **Verdict**: PASS or FAIL
 (an optional leading bullet is supported) and contain one verdict declaration.
 Reject heading-only, competing, example-only or missing declarations before
 native completion. Both valid PASS and FAIL are delivered unchanged; format
@@ -476,6 +510,21 @@ validation does not establish correctness. Bounded no-follow regular-file reads
 also cover shell-created files. Exercise symlink/FIFO/oversize refusal and FD
 closure. Do not rewrite model verdicts to compensate for the pinned parser's
 fallback word counts.
+
+Only the pinned generator prompt's complete original first line may select a
+generation boundary: `You are the **CORRECTNESS HARNESS GENERATOR** for GPU
+kernel optimization, iteration #N.` or the same PERFORMANCE header, with ASCII
+digits for N. At invocation entry, `read_review_files(workspace)` snapshots
+bounded no-follow regular files. `verify_review_files(workspace,
+unchanged_reviews=snapshot)` may preserve a review only if it existed at entry
+and its final bytes are identical. New or changed reviews remain strict;
+reviewer and generic turns use no exemption. Select this boundary from the
+original caller prompt, never model output or inferred review verdict. Preserve
+the rejected review as generation feedback; unchanged bytes are not a PASS.
+Test both generators and real file/shell tools: old rejected reviews preserved
+with actual generation completion; new/changed malformed reviews, reviewers
+and generic calls still refuse. Keep the existing FD/link/FIFO/size limits and
+record actual image/model checks separately from genuine harness acceptance.
 
 ### 11.7 Wrong vs Correct
 
@@ -486,6 +535,10 @@ Correct: trusted attestation executes no model-generated commands; test actual
 coding quality separately.
 Wrong: compare only the environment keys explicitly present in a proof.
 Correct: compare its effective profile, including defaults, before launch.
+Wrong: block harness regeneration on an untouched rejected review, or ignore
+every review in a generator. Correct: preserve only the entry snapshot's same
+bytes during the pinned generation phase and strictly check all new/changed
+reviews; reviewers/generic completions retain their original boundary.
 Wrong: accept a reference self-test while a harness ignores the public wrapper.
 Correct: require a compatible wrong-wrapper control to fail numerically.
 

@@ -13,7 +13,8 @@ pytestmark = pytest.mark.skipif(os.name != "posix", reason="Linux OCI filesystem
 
 
 @pytest.mark.parametrize("publisher", [False, True])
-def test_launcher_negotiates_publication_inside_owned_job(tmp_path, monkeypatch, publisher):
+@pytest.mark.parametrize("label", ["UC experiment:1", "manual task"])
+def test_launcher_negotiates_publication_inside_owned_job(tmp_path, monkeypatch, publisher, label):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from ultimate_coders.metainfer_service.app import ServiceConfig, add_contract_routes
@@ -66,9 +67,19 @@ def test_launcher_negotiates_publication_inside_owned_job(tmp_path, monkeypatch,
         "task_type": "evolve-kernel",
         "kernel_file_path": str(workspace / "kernel.py"),
         "raw_request": json.dumps({"repository": str(workspace)}),
+        "label": label,
     }
     assert UpstreamLauncher(jobs, {}).start("job", requirement, state, generated) == 42
     command = calls[0][0][4]
+    if label.startswith("UC "):
+        assert calls[0][1]["submission_identity"] == {
+            "operation_id": "experiment:1",
+            "request_sha256": hashlib.sha256(
+                json.dumps({"repository": str(workspace)}, sort_keys=True).encode()
+            ).hexdigest(),
+        }
+    else:
+        assert "submission_identity" not in calls[0][1]
     if publisher:
         assert command[2] == "ultimate_coders.metainfer_service.execution"
         assert command[command.index("--repository") + 1] == str(workspace)

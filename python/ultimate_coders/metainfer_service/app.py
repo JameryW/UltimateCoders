@@ -71,6 +71,7 @@ def add_contract_routes(app: FastAPI, config: ServiceConfig, jobs: Any) -> None:
                 else []
             )
             + (["kernel_publication"] if kernel_publication_enabled(jobs) else [])
+            + (["job_identity"] if getattr(jobs, "job_identity", False) else [])
             + (["hardware_identity"] if getattr(jobs, "hardware_attestation", None) else []),
         }
 
@@ -121,6 +122,15 @@ def add_contract_routes(app: FastAPI, config: ServiceConfig, jobs: Any) -> None:
             raise HTTPException(503, "Contained launcher unavailable")
         try:
             return jobs.quiescence(task_id)
+        except (ValueError, OSError, RuntimeError) as exc:
+            raise HTTPException(503, str(exc)) from exc
+
+    @app.get("/api/uc/jobs/{task_id}/identity")
+    def identity(task_id: str):
+        if not getattr(jobs, "job_identity", False):
+            raise HTTPException(503, "Contained submission identity unavailable")
+        try:
+            return jobs.identity(task_id)
         except (ValueError, OSError, RuntimeError) as exc:
             raise HTTPException(503, str(exc)) from exc
 

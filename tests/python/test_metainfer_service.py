@@ -1,5 +1,6 @@
 """Contract extension tests at the public HTTP and contained-launch interfaces."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -10,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
@@ -89,6 +91,132 @@ def job_fixture(tmp_path):
     config = ServiceConfig(tmp_path / "control", (root,), "backend-a", "revision-a")
     jobs = ContainedJobs(config, runtime, boot_id="boot-a", cgroup_root=tmp_path)
     return config, jobs, runtime, workspace
+
+
+@pytest.mark.asyncio
+async def test_submission_identity_attach_requires_stop_proof_before_capacity_release(tmp_path):
+    from ultimate_coders.inference.reconcile import RemoteJobs
+    from ultimate_coders.inference.resources import ResourceBudget
+    from ultimate_coders.runtime_state import RuntimeState
+
+    config, jobs, runtime, workspace = job_fixture(tmp_path)
+    operation = "experiment:1"
+    request = {"repository": str(workspace)}
+    digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
+    binding = {"operation_id": operation, "request_sha256": digest}
+    state_dir = tmp_path / "state"
+    create = runtime.create
+
+    def observe_intent(*args):
+        intent = json.loads(jobs._path("created").read_text())
+        assert intent["submission_identity"] == binding
+        assert "container_id" not in intent and intent["gate_released"] is False
+        assert args[1]["uc.operation"] == operation and args[1]["uc.task_request"] == digest
+        return create(*args)
+
+    runtime.create = observe_intent
+    jobs.launch("created", workspace, state_dir, tmp_path / "generated", ["true"], {},
+                submission_identity=binding)
+    # The writer may alter mounted metadata; only the private pre-create binding counts.
+    (state_dir / "requirements.json").write_text('{"label":"UC foreign","raw_request":"{}"}')
+    binding["operation_id"] = "foreign"
+    state = RuntimeState(tmp_path / "uc/state.sqlite3", database_url="")
+    state.mutate("remote_jobs", operation, lambda _: {
+        "state": "submission_unknown", "backend_id": config.backend_id, "request_sha256": digest,
+    })
+    state.mutate("backend_slots", "occupied", lambda _: {"operation_id": operation})
+    await ResourceBudget(state, config.backend_id).acquire(operation, timeout=1)
+    app = FastAPI()
+    add_contract_routes(app, config, jobs)
+    remote = RemoteJobs(state, "http://service")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://service",
+    ) as client:
+        assert "job_identity" in (await client.get("/api/uc/contract")).json()["capabilities"]
+        state.mutate("remote_jobs", operation, lambda old: {**old, "request_sha256": "0" * 64})
+        with pytest.raises(ValueError, match="does not match"):
+            await remote.reconcile(operation, remote.get(operation).version, "attach",
+                                   remote_id="created", actor="operator", client=client)
+        assert remote.get(operation).state == "submission_unknown"
+        state.mutate("remote_jobs", operation, lambda old: {**old, "request_sha256": digest})
+        attached = await remote.reconcile(operation, remote.get(operation).version, "attach",
+                                          remote_id="created", actor="operator", client=client)
+        assert attached["state"] == "running" and attached["remote_id"] == "created"
+        assert state.get("resource_budgets", config.backend_id)["holders"]
+        assert state.get("backend_slots", "occupied")["operation_id"] == operation
+        assert jobs.ownership.get("workspace_owners", str(workspace))["task_id"] == "created"
+        jobs.stop("created", force=True)
+        stopped = await remote.reconcile(operation, remote.get(operation).version, "confirm_stop",
+                                         actor="operator", client=client)
+    assert stopped["state"] == "stopped" and stopped["quiescence"]["writers_stopped"]
+    assert state.get("resource_budgets", config.backend_id)["holders"] == {}
+    assert state.get("backend_slots", "occupied") == {}
+    assert runtime.calls == ["create", "start", "stop"]
+
+
+@pytest.mark.parametrize("damage", ["binding", "container_label", "container_id", "boot"])
+def test_job_identity_refuses_changed_private_or_oci_identity(tmp_path, damage):
+    config, jobs, runtime, workspace = job_fixture(tmp_path)
+    jobs.launch("created", workspace, tmp_path / "state", tmp_path / "generated", ["true"], {},
+                submission_identity={"operation_id": "op:1", "request_sha256": "f" * 64})
+    path = jobs._path("created")
+    record = json.loads(path.read_text())
+    if damage == "binding":
+        record["submission_identity"]["request_sha256"] = "a" * 64
+    elif damage == "container_label":
+        runtime.containers[runtime.current]["labels"] = {
+            **record["labels"], "uc.operation": "foreign",
+        }
+    elif damage == "container_id":
+        record["container_id"] = "c" * 64
+        runtime.containers["c" * 64] = runtime.containers[runtime.current]
+    else:
+        record["boot_id"] = "foreign"
+    # A different container with matching labels is also refused by immutable image/id checks.
+    if damage == "container_id":
+        original = runtime.inspect
+        runtime.inspect = lambda container: {**original(container), "id": "d" * 64}
+    path.write_text(json.dumps(record))
+    app = FastAPI()
+    add_contract_routes(app, config, jobs)
+    with TestClient(app) as client:
+        assert client.get("/api/uc/jobs/created/identity").status_code == 503
+    assert jobs.ownership.get("workspace_owners", str(workspace))["task_id"] == "created"
+    assert not list(jobs.evidence.glob("*.json"))
+
+
+@pytest.mark.parametrize("binding", [
+    "not a mapping",
+    {"operation_id": "../foreign", "request_sha256": "a" * 64},
+    {"operation_id": True, "request_sha256": "a" * 64},
+    {"operation_id": "op", "request_sha256": "bad"},
+    {"operation_id": "op"},
+    {"operation_id": "op", "request_sha256": "a" * 64, "extra": "value"},
+])
+def test_invalid_submission_identity_is_refused_before_ownership_or_create(tmp_path, binding):
+    _, jobs, runtime, workspace = job_fixture(tmp_path)
+    with pytest.raises(ValueError, match="submission identity"):
+        jobs.launch("created", workspace, tmp_path / "state", tmp_path / "generated", ["true"], {},
+                    submission_identity=binding)
+    assert runtime.calls == []
+    assert not jobs.ownership.records("workspace_owners")
+    assert not list(jobs.records.glob("*.json"))
+
+
+def test_identity_cannot_be_inferred_for_legacy_missing_or_uncontained_jobs(tmp_path):
+    config, jobs, runtime, workspace = job_fixture(tmp_path)
+    jobs.launch("legacy", workspace, tmp_path / "state", tmp_path / "generated", ["true"], {})
+    app = FastAPI()
+    add_contract_routes(app, config, jobs)
+    with TestClient(app) as client:
+        for task in ("legacy", "missing"):
+            assert client.get(f"/api/uc/jobs/{task}/identity").status_code == 503
+    app = FastAPI()
+    add_contract_routes(app, config, None)
+    with TestClient(app) as client:
+        assert client.get("/api/uc/jobs/legacy/identity").status_code == 503
+    assert runtime.calls == ["create", "start"]
+    assert not list(jobs.evidence.glob("*.json"))
 
 
 def test_hardware_profile_refuses_an_unbound_coding_client_before_launch(tmp_path):
