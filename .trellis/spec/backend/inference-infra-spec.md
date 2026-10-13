@@ -575,6 +575,11 @@ bytes during the pinned generation phase and strictly check all new/changed
 reviews; reviewers/generic completions retain their original boundary.
 Wrong: accept a reference self-test while a harness ignores the public wrapper.
 Correct: require a compatible wrong-wrapper control to fail numerically.
+Wrong: infer bounded-input compliance from reference/wrong-wrapper pass counts
+or the model's repair explanation. Correct: verify the actual input generator
+against its range contract separately. `torch.randn * 200 - 100` remains
+unbounded; a schema/numeric diagnostic pass cannot establish full harness
+acceptance. Preserve the original bytes/report and append the failed assessment.
 
 ## 12. Windows checkpoint publication under readers
 

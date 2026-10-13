@@ -171,7 +171,7 @@ These failed trials extend runtime evidence; they do not complete R8.
 
 ## Explicit native thinking mode (2026-10-14)
 
-The installed 4B thinking-only weights reproduced nonce failure when the
+The installed 4B model/template profile reproduced nonce failure when the
 native client fixed think:false. Conditional and unconditional empty-thinking
 prefills did not repair it. The provider's actual think:true API separated
 reasoning from final nonce content and returned formal file-tool calls.

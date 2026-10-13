@@ -302,5 +302,18 @@ second host and explicitly retained incomplete cross-host acceptance.
 - [ ] Finish genuine optimization/protected candidate Oracle/accepted delivery
   verification. Installed 9B weights have a separately pinned official
   renderer/parser profile; its real full-workflow results are recorded next.
+- [x] Preserve false-/true-mode 9B whole-workflow failures and all original
+  artifacts; neither reached candidate Oracle. Verify all four trial Git/kernel
+  rollbacks and resource settlement independently.
+- [x] Correct the overbroad semantic conclusion found by both reviewers:
+  preserve reference4/4 and wrong-wrapper0/4, but independently record the
+  still-unbounded random input as FAIL. Freeze the original model bytes/raw.
+- [x] Observe all163 known current-boot owned scopes stopped, with13 older-boot
+  records historical. Keep the earlier unknown submission quarantined.
+- [x] Verify twelve cached HTTP200 routes without new probes and actual provider
+  model disappearance. Preserve the old deployment pointer before selecting v10.
+- [x] Complete final Spec/Evidence and Standards/Evidence reviews: both PASS,
+  no actionable findings. Reviewed delivery is tracked by PR #716; its linked
+  CI/merge record does not complete R8.
 
 R8 and the explicitly deferred cross-host criterion remain OPEN.

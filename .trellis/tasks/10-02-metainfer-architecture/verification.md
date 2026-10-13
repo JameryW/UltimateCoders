@@ -832,3 +832,43 @@ settled with unchanged Git/kernel and released reservations. Original failed
 logs and artifacts remain. A separately pinned installed 9B renderer/parser
 profile is being verified; its settled results follow. R8 and the user-deferred
 cross-host acceptance remain OPEN.
+
+The explicit installed 9B renderer/parser profile completed both false- and
+true-mode whole-workflow trials with the original protected reference,
+unchanged Oracle thresholds and six actual baseline calls each. Neither
+reached candidate Oracle acceptance. False mode retained incomplete outputs,
+malformed review declarations and invalid public-wrapper harness calls. True
+mode produced two actual harness files and syntax checks, but review had three
+incomplete output-budget responses and one malformed leading verdict; the
+next review was stopped. File presence and syntax checks do not establish
+correctness. No phase result or harness was seeded from a diagnostic.
+
+The short four-case semantic diagnostic observed reference 4/4 and wrong-wrapper
+0/4. Both independent reviewers found that its helper's `passed:true` checked
+only summary schema and numerical counts: the model still used unbounded
+`torch.randn * 200 - 100`. The original report and model bytes are preserved,
+with a separate failed input-range assessment. Overall semantic preflight is
+FAIL; no range repair or full harness acceptance is claimed. The installed
+4B training variant was not established by the local metadata.
+
+All four genuine trials were stopped through their exact service identities.
+Independent Git/SQLite verification confirms unchanged HEAD/kernel bytes,
+failed trial state and released trial reservations. The final audit observes
+163 known current-boot owned scopes stopped, PID zero and matching cgroup
+receipts; 13 earlier-boot records remain historical. It does not resolve the
+previous unknown submission, whose quarantine and holders remain intact.
+Twelve cached contract/hardware/known-identity GETs returned HTTP200 across
+four services without a new probe. Actual provider observation found no loaded
+model after unload. The canonical local deployment now selects the healthy
+immutable v10 service on 48783; its previous pointer and raw trial metadata
+are preserved. Native WSL/Podman verification does not require Docker Desktop.
+
+Source commit `5f709265` has eleven successful CI checks on
+[PR #716](https://github.com/JameryW/UltimateCoders/pull/716). Final Spec/Evidence
+and Standards/Evidence reviews both PASS with no remaining actionable findings.
+Spec matched 192 descriptors, 83 raw reports, 163 scopes and 406 proof references;
+Standards also matched all prior evidence, 26 ownership databases and the live
+stopped runtime. The linked PR records the final delivery CI/merge outcome.
+All seven repository guards and diff check PASS. R8 successful optimization,
+protected candidate Oracle acceptance,
+accepted Worker delivery and user-deferred two-host verification remain OPEN.
