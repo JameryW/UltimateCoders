@@ -709,3 +709,90 @@ the main session obtained it and independent reviews checked the saved bytes.
 Ruff, git diff --check and all seven repository guards pass; tracked census
 remains 2023 blobs / 2014 text / 9 binary / 1 gitlink, without new tracked files
 or guard exemptions. CI/merge will be recorded by the PR; R8 remains OPEN.
+
+PR #714 merged on 2026-10-13 at 12:51 UTC as
+1e7dc7fa82b0540444ac0a1cc91b40eaf936958c. All eleven checks passed, including
+the complete Python 3.9/3.12 CI suites, Dashboard and repository guards. Local
+main was synchronized before the new Gemma verification. This source delivery
+does not establish successful optimization, candidate Oracle or accepted delivery.
+
+## Genuine Gemma workflows (2026-10-13)
+
+Both trials used immutable image8 877e2b53, the unmodified pinned MetaInfer
+b3f6505a, installed Gemma alias uc-metainfer-gemma:1012 with digest 0979dc60,
+16384 context tokens, separate service roots and a 3600s controller budget.
+The explicit profiles differed in output budget, 4096 versus 8192. Their
+deployment snapshots inherited historical pending-source and start_script
+metadata; actual source was the merged PR #714 baseline above. Each portable
+trial explicitly identifies its actual Gemma start script. The inherited script
+is not a reproduction command for these profiles. No automatic provider fallback,
+model download, upstream fork or Oracle threshold change was introduced.
+
+The 4096 trial wholeflow-c72beb6993 completed six protected baseline calls:
+median latency 0.0032600000500679015ms, dispersion 0.2471224780302444%, zero
+numerical error. Actual model tools wrote two harness versions and a 2014-byte
+leading `**Verdict**: FAIL` review; three native turns completed, with no
+command-execution events. The review contains genuine coverage concerns and
+an incorrect portability complaint about the supplied absolute reference path;
+it remains original model output, not an operator-endorsed assessment.
+Regeneration first failed invalid file arguments and then wrote a new harness.
+The next review exhausted 4096 output tokens twice. Operator stop settled the
+task; it did not time out its 3600s controller budget or reach a candidate Oracle.
+
+The 8192 trial wholeflow-a55268040f completed six protected baseline calls:
+median latency 0.003273100033402443ms, dispersion 0.27035715892643736%, zero
+numerical error. The first generator call omitted the required `path` argument:
+its original session was copied read-only while the container was still alive.
+Only `content` was present, and the client refused the call without inferring a
+filename. Retry wrote a 4080-byte harness and completed one native turn, again
+with no command-execution event. Two review attempts exceeded the existing
+600s chat limit without writing a review. The operator then stopped the third
+attempt and preserved its started events; this was not a successful review or
+an exhausted 3600s controller deadline. No model artifacts were rewritten.
+
+Both independent settlement checks matched actual worktree HEADs to their
+starting commits and kernel SHA 87c37016...8e67. UC states are failed, remote
+records stopped, GPU reservation lists empty and both capacity budgets idle
+with no holders or waiters. Each benchmark report has an empty iterations
+array; its initial optimized field mirrors the baseline and is not a candidate
+measurement. Accepted patch/commit delivery and protected candidate Oracle
+acceptance/rejection remain unverified.
+
+A separate audit observed all 106 current-boot owned OCI scopes stopped,
+actual PID zero and matching empty/missing cgroups. Thirteen earlier-boot
+records remain historical. Earlier audits and portable sections are preserved.
+The failed 4096 session's tmpfs was already gone after stop, so its diagnostic
+copy was unavailable; only the 8192 original is recorded as a copied session.
+The first diagnostic helper's filename lookup failed before any copy; its
+original script and the subsequent unavailable-tmpfs attempt are retained.
+
+The operator's Ollama unload request returned `done_reason: unload` while
+the selected model was still loaded. Provider disappearance is observed
+separately; the acknowledgement alone is not a cleanup pass and is never used
+as a remote writer-stop proof. R8 stays OPEN, as does the user-deferred actual
+two-host acceptance. The earlier unknown submission remains quarantined in
+its isolated verification DB; observed stopped scopes cannot resolve it.
+
+The seventeenth provider observation confirmed that the selected Gemma model
+was absent. Preserve the earlier unload-acknowledged-but-loaded report and the
+recent provider log window separately. Final cached contract/hardware/known-job
+identity GETs returned nine HTTP200 responses across all three services,
+without adding a job or probe. Read-only SQLite inspection independently
+confirmed the previous cleanup_pending/submission_unknown quarantine and its
+holders remain intact. Seventy-five prior identity-continuation file descriptors
+were checked unchanged before sealing the append-only Gemma evidence section.
+
+Final Spec/Evidence review: PASS, no remaining actionable findings. It matched
+94 newly referenced files, 29 raw reports, 132 stop-proof references, native
+events, protected samples and actual Git/SQLite settlement. Final
+Standards/Evidence review: PASS, no hard standard breach or actionable Fowler
+smell. It independently matched 106 control records/receipts, 21 ownership
+databases, actual cgroups, preserved history and both settlement states.
+The review's snapshot-source ambiguity was resolved by actual_start_script
+descriptors and historical-field explanations without changing original bytes.
+All seven repository guards and diff check pass. Implementation code is
+unchanged in this continuation; its full test/CI delivery is PR #714 above.
+
+The reviewed evidence continuation is tracked by
+[PR #715](https://github.com/JameryW/UltimateCoders/pull/715). Its CI and merge
+record does not close R8 or the user-deferred cross-host criterion.
