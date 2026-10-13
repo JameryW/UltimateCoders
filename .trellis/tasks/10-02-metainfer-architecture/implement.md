@@ -255,4 +255,27 @@ second host and explicitly retained incomplete cross-host acceptance.
   records, without replacing the earlier audits.
 - [x] Complete final combined Spec/Evidence and Standards/Evidence reviews:
   both PASS, no actionable findings. Ruff, diff check and all seven guards pass.
-- [ ] Complete PR delivery. R8 remains OPEN.
+- [x] Complete PR #714 delivery: merged at 1e7dc7fa with all eleven CI checks
+  successful. R8 remains OPEN.
+
+## Genuine Gemma workflows (2026-10-13)
+
+- [x] Keep the merged PR #714 source and immutable image8; select separate
+  explicit installed Gemma profiles with 4096 and 8192 output tokens.
+- [x] Complete six protected baseline calls per trial with the original
+  reference, valid inner iteration choice `10` and unchanged Oracle thresholds.
+- [x] Preserve the model's real FAIL review, malformed file arguments,
+  incomplete output and two actual 600s review deadlines. Neither trial
+  produced a candidate for the protected Oracle.
+- [x] Stop only the identified tasks through the service; independently check
+  cgroup receipts, SQLite state, unchanged Git HEAD/kernel and released budgets.
+- [x] Record a separate audit: 106 current-boot owned scopes stopped and
+  13 historical records. Preserve earlier audits and the unknown quarantine.
+- [x] Confirm provider unload by actual model disappearance on the seventeenth
+  observation; keep the earlier acknowledged-but-still-loaded report.
+- [x] Confirm nine cached contract/hardware/known-identity GETs return HTTP200
+  across three services without creating a new probe. Read-only verification
+  confirms the previous uncertain quarantine remains unchanged.
+- [x] Complete independent Spec/Evidence and Standards/Evidence reviews: PASS,
+  no remaining actionable findings. All seven repository guards pass.
+- [ ] Complete this evidence PR delivery. R8 remains OPEN.

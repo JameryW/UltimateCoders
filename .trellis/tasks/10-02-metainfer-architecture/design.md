@@ -155,3 +155,16 @@ preserve only identical pre-existing reviews; validate all new/changed ones.
 Reviewers and generic prompts stay strict. Preserve rejected feedback rather
 than rewriting it. Build image8 with this native change and fresh attestation;
 the stopped image7 attempt remains a failed attempt, not accepted optimization.
+
+## Genuine Gemma verification continuation (2026-10-13)
+
+Reuse merged image8 without source changes and explicitly select the installed
+Gemma model in separate roots for 4096/8192 output budgets. Keep the protected
+reference, baseline sampling, Oracle thresholds and upstream pin unchanged.
+Record actual file and command events separately from model completion prose.
+On an identified blocked trial, obtain the service's stopped-writer evidence,
+let UC settle rollback and reservations, and independently read Git/SQLite.
+Observe provider unload separately: an Ollama unload acknowledgement may arrive
+while an in-flight buffered request still keeps the model loaded. Preserve all
+original failed outputs, previous manifests/audits and the unknown quarantine.
+These failed trials extend runtime evidence; they do not complete R8.
