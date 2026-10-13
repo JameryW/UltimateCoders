@@ -157,6 +157,67 @@ def test_explicit_output_budget_reaches_provider_without_changing_legacy_default
     assert peer["requests"][1]["options"]["num_predict"] == 8192
 
 
+@pytest.mark.parametrize("setting,expected", [(None, False), ("false", False), ("true", True)])
+def test_explicit_thinking_mode_reaches_provider_and_preserves_separate_fields(
+    ollama_peer, setting, expected
+):
+    profile, peer = ollama_peer
+    environment = {"UC_OLLAMA_URL": profile.url, "UC_OLLAMA_MODEL": profile.model,
+                   "UC_OLLAMA_DIGEST": profile.digest}
+    if setting is not None:
+        environment["UC_OLLAMA_THINK"] = setting
+    configured = OllamaProfile.from_environment(environment)
+    call = {"function": {"name": "write_file", "arguments": {"path": "actual.txt", "content": "x"}}}
+    peer["chunks"] = [
+        {"model": profile.model, "message": {"thinking": "private reasoning"}},
+        {"model": profile.model, "message": {"content": "final", "tool_calls": [call]},
+         "done": True},
+    ]
+    result = configured.chat([], tools=[])
+    assert peer["requests"][0]["think"] is expected
+    assert result["message"]["content"] == "final"
+    assert result["message"]["thinking"] == "private reasoning"
+    assert result["message"]["tool_calls"] == [call]
+    assert configured.identity() == profile.identity()
+
+
+@pytest.mark.parametrize("setting", ["", "1", "yes", "TRUE", "auto", True, None])
+def test_thinking_environment_refuses_ambiguous_values_before_http(setting):
+    with pytest.raises(ValueError, match="UC_OLLAMA_THINK"):
+        OllamaProfile.from_environment({"UC_OLLAMA_THINK": setting})
+
+
+@pytest.mark.parametrize("setting", [1, 0, "true", None])
+def test_thinking_profile_requires_a_boolean(setting):
+    with pytest.raises(ValueError, match="profile"):
+        OllamaProfile("http://localhost", "coding:test", "a" * 64, think=setting)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Native sessions require Linux no-follow files")
+def test_native_session_binds_thinking_mode_and_legacy_false(tmp_path, ollama_peer):
+    from ultimate_coders.metainfer_service.coding import load_session, save_session
+
+    profile, _ = ollama_peer
+    messages = [{"role": "user", "content": "saved"}]
+    thinking = OllamaProfile(profile.url, profile.model, profile.digest, think=True)
+    save_session(tmp_path, "thinking", thinking, messages)
+    assert json.loads((tmp_path / "thinking.json").read_text())["think"] is True
+    assert load_session(tmp_path, "thinking", thinking) == messages
+    with pytest.raises(ValueError, match="thinking"):
+        load_session(tmp_path, "thinking", profile)
+    (tmp_path / "legacy.json").write_text(
+        json.dumps({"identity": profile.identity(), "messages": messages})
+    )
+    assert load_session(tmp_path, "legacy", profile) == messages
+    with pytest.raises(ValueError, match="thinking"):
+        load_session(tmp_path, "legacy", thinking)
+    (tmp_path / "integer.json").write_text(
+        json.dumps({"identity": profile.identity(), "messages": messages, "think": 1})
+    )
+    with pytest.raises(ValueError, match="thinking"):
+        load_session(tmp_path, "integer", thinking)
+
+
 def test_profile_does_not_inherit_host_proxy_settings(ollama_peer, monkeypatch):
     profile, _ = ollama_peer
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
@@ -387,6 +448,55 @@ def test_native_cli_executes_streamed_file_tool_and_emits_distinct_items(
     assert peer["requests"][1]["messages"][-1]["tool_name"] == "write_file"
 
 
+@pytest.mark.skipif(os.name != "posix", reason="Pinned artifacts require Linux no-follow files")
+@pytest.mark.parametrize("phase,filename", [("CORRECTNESS", "correctness_harness.py"),
+                                           ("PERFORMANCE", "perf_harness.py")])
+@pytest.mark.parametrize("case", ["created", "missing", "empty", "link"])
+def test_pinned_generator_requires_actual_artifact_and_bounds_model_feedback(
+    tmp_path, monkeypatch, ollama_peer, capsys, native_cli_sessions, phase, filename, case
+):
+    from ultimate_coders.metainfer_service import coding
+
+    profile, peer = ollama_peer
+    monkeypatch.setattr(coding, "require_containment", lambda: None)
+    monkeypatch.setenv("UC_OLLAMA_URL", profile.url)
+    monkeypatch.setenv("UC_OLLAMA_MODEL", profile.model)
+    monkeypatch.setenv("UC_OLLAMA_DIGEST", profile.digest)
+    prose = {"model": profile.model, "done": True, "message": {"content": "Code in chat only."}}
+    peer["responses"] = [[prose], [prose], [prose]]
+    path = tmp_path / filename
+    if case == "empty":
+        path.write_bytes(b"")
+    elif case == "link":
+        target = tmp_path / "unchanged.txt"
+        target.write_text("Original bytes")
+        path.symlink_to(target)
+    elif case == "created":
+        peer["responses"][1] = [{"model": profile.model, "done": True,
+            "message": {"tool_calls": [{"function": {"name": "write_file",
+                "arguments": {"path": filename, "content": "# Actual model file\n"}}}]}}]
+    prompt = (f"You are the **{phase} HARNESS GENERATOR** for GPU kernel optimization, "
+              "iteration #1.\nWrite the requested file.")
+    if case == "created":
+        assert coding.main(["exec", "-C", str(tmp_path), prompt]) == 0
+        assert path.read_text() == "# Actual model file\n"
+    else:
+        with pytest.raises(OSError if case == "link" else ValueError,
+                           match=None if case == "link" else "did not produce"):
+            coding.main(["exec", "-C", str(tmp_path), prompt])
+        assert (not path.exists()) if case == "missing" else path.read_bytes() == (
+            b"" if case == "empty" else b"Original bytes")
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert any(event["type"] == "turn.completed" for event in events) == (case == "created")
+    assert len(peer["requests"]) == (1 if case == "link" else 3)
+    if case != "link":
+        feedback = peer["requests"][1]["messages"][-1]
+        assert feedback["role"] == "user"
+        assert filename in feedback["content"] and "write_file" in feedback["content"]
+    files = [event for event in events if event.get("item", {}).get("type") == "file_change"]
+    assert len(files) == int(case == "created")
+
+
 @pytest.mark.skipif(os.name != "posix", reason="Native CLI sessions require Linux")
 @pytest.mark.parametrize("tool", ["write_file", "exec_command"])
 @pytest.mark.parametrize("verdict", ["malformed", "PASS", "FAIL"])
@@ -467,7 +577,8 @@ def test_native_generator_preserves_unchanged_reviews_without_approving_new_revi
     (tmp_path / "correctness_review.md").write_text(original)
     if case != "new":
         (tmp_path / "perf_review.md").write_text(original)
-    filename = "perf_review.md" if case in ("changed", "new") else "correctness_harness.py"
+    filename = "perf_review.md" if case in ("changed", "new") else (
+        "correctness_harness.py" if phase == "CORRECTNESS" else "perf_harness.py")
     content = "# Newly written artifact\n## Verdict: FAIL\n"
     arguments = {"path": filename, "content": content}
     if tool == "exec_command":
@@ -746,7 +857,8 @@ def test_attested_context_changes_require_quiescent_ownership(attested_fixture):
 
 
 @pytest.mark.parametrize(
-    "key,value", [("UC_OLLAMA_NUM_CTX", "4096"), ("UC_OLLAMA_NUM_PREDICT", "8192")]
+    "key,value", [("UC_OLLAMA_NUM_CTX", "4096"), ("UC_OLLAMA_NUM_PREDICT", "8192"),
+                  ("UC_OLLAMA_THINK", "true")]
 )
 def test_implicit_attested_context_cannot_be_overridden_before_launch(attested_fixture, key, value):
     config, jobs, runtime, environment, _ = attested_fixture
@@ -764,6 +876,26 @@ def test_implicit_attested_context_cannot_be_overridden_before_launch(attested_f
     assert runtime.calls == ["create", "start"]
     assert not state.exists()
     assert jobs.ownership.query("workspace_owners", task_id_present=True, limit=1) == []
+
+
+def test_attested_thinking_profile_restarts_but_cannot_change_with_an_owned_writer(
+    attested_fixture,
+):
+    from ultimate_coders.metainfer_service.jobs import ContainedJobs
+
+    config, jobs, runtime, environment, _ = attested_fixture
+    configured = {**environment, "UC_OLLAMA_THINK": "true"}
+    jobs.enable_hardware(configured)
+    assert jobs.hardware_attestation.profile.think is True
+    evidence = jobs.hardware()
+    jobs.ownership.mutate("workspace_owners", "active", lambda _: {"task_id": "live-job"})
+    recovered = ContainedJobs(config, runtime, cgroup_root=jobs.cgroup_root)
+    recovered.enable_hardware(configured)
+    assert recovered.hardware()["evidence_id"] == evidence["evidence_id"]
+    assert runtime.calls == ["create", "start"]
+    with pytest.raises(RuntimeError, match="Quiesce"):
+        recovered.enable_hardware(environment)
+    assert runtime.calls == ["create", "start"]
 
 
 def test_hardware_code_mismatch_keeps_endpoint_unavailable_after_verified_stop(attested_fixture):

@@ -280,3 +280,40 @@ second host and explicitly retained incomplete cross-host acceptance.
   no remaining actionable findings. All seven repository guards pass.
 - [x] Commit the reviewed evidence and open PR #715; CI and merge outcomes
   are recorded by the linked PR. R8 remains OPEN.
+
+## Native thinking and required artifacts (2026-10-14)
+
+- [x] Reproduce the fixed false-mode nonce failure and preserve conditional
+  and unconditional prefill failures. Actual provider think:true separates
+  nonce content and thinking, and returns real tools.
+- [x] Add strict explicit UC_OLLAMA_THINK, default false; bind provider request,
+  effective launch profile, attestation environment/hash and saved sessions.
+  Refuse changed modes and nonboolean legacy fields before inference.
+- [x] Reproduce four generator prose completions with no required file. Add a
+  scoped bounded artifact check and at most two actual model feedback turns;
+  preserve raw replies and keep existing turn/deadline and review boundaries.
+- [x] Verify RED14fail/2pass then native protocol GREEN107pass; artifact guard
+  RED8fail then GREEN28pass including all prior review snapshot checks.
+- [x] Verify final Windows1558pass/105platformskip, Linux194pass, ruff and seven
+  repository guards. Independent Source Spec and Source Standards PASS.
+- [x] Freeze v9/v10 images and run actual GPU/model, file+command, prose-only
+  and pinned HTTP deployment preflights. Settle both failed 4B workflows with
+  real stop receipts, unchanged Git/kernel and released reservations.
+- [ ] Finish genuine optimization/protected candidate Oracle/accepted delivery
+  verification. Installed 9B weights have a separately pinned official
+  renderer/parser profile; its real full-workflow results are recorded next.
+- [x] Preserve false-/true-mode 9B whole-workflow failures and all original
+  artifacts; neither reached candidate Oracle. Verify all four trial Git/kernel
+  rollbacks and resource settlement independently.
+- [x] Correct the overbroad semantic conclusion found by both reviewers:
+  preserve reference4/4 and wrong-wrapper0/4, but independently record the
+  still-unbounded random input as FAIL. Freeze the original model bytes/raw.
+- [x] Observe all163 known current-boot owned scopes stopped, with13 older-boot
+  records historical. Keep the earlier unknown submission quarantined.
+- [x] Verify twelve cached HTTP200 routes without new probes and actual provider
+  model disappearance. Preserve the old deployment pointer before selecting v10.
+- [x] Complete final Spec/Evidence and Standards/Evidence reviews: both PASS,
+  no actionable findings. Reviewed delivery is tracked by PR #716; its linked
+  CI/merge record does not complete R8.
+
+R8 and the explicitly deferred cross-host criterion remain OPEN.

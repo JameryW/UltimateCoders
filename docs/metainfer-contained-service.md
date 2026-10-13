@@ -197,15 +197,23 @@ limit can truncate a tool call and is not a successful file delivery.
 The client rejects done_reason=length before executing any returned tool or
 emitting a successful final event, even when the response contains nonempty
 text or a complete-looking file call. Preserve failed logs and artifacts.
-The selected model's chat template must honor think:false. A template that
-always opens a thinking block can return a stray closing tag instead of the
-exact nonce. Correct the provider configuration in a separate model alias and
-pin its new digest; do not strip arbitrary model text to manufacture a pass.
+UC_OLLAMA_THINK accepts exactly "true" or "false", default "false". Set it to
+"true" for a thinking-only model. Every native chat sends the selected boolean;
+Ollama separates its thinking field from final content and actual tool_calls.
+The mode is bound to attestation and saved sessions. Changing it requires
+quiescent workspaces and fresh attestation; resume refuses a different mode.
+Older sessions without this field resume only at the default false mode.
+A template that disagrees with the model's supported mode can leak reasoning
+or a closing tag into the nonce reply. Correct the explicit provider/profile
+configuration and pin any new alias digest; preserve the actual response bytes.
 Verify actual tool_calls too: a successful nonce does not prove tool parsing.
 Match the serving template and parser to the source GGUF. For the measured
-GGUF deployment, OLLAMA_GO_TEMPLATE=false selects the native GGUF path;
+GGUF deployment without explicit RENDERER or PARSER directives,
+OLLAMA_GO_TEMPLATE=false selects the native GGUF path;
 the earlier Go template could discard native XML calls into an empty response.
 This is explicit provider configuration, not automatic client fallback.
+Explicit RENDERER/PARSER directives still select Ollama's rendered path in
+[Ollama 0.40.3](https://github.com/ollama/ollama/blob/v0.40.3/server/routes.go).
 The flag is documented by [Ollama's serving configuration](https://github.com/ollama/ollama/blob/main/envconfig/config.go);
 verify it against the installed server and the actual tool response before use.
 
@@ -223,6 +231,13 @@ and emits file_change after the actual write. Reviews must use a real tool to
 write their requested file; a review message alone remains a failed artifact.
 Harness instructions request file-backed reference loading and actual
 execution. Validate the resulting files independently: reference self-tests
+alone do not establish full acceptance. For the pinned correctness/performance
+generator headers, native completion additionally requires a nonempty regular
+correctness_harness.py/perf_harness.py file, bounded at 64 KiB with no links.
+Missing/empty files trigger at most two feedback messages asking the model to
+use actual tools, within the existing turn/deadline limits; exhaustion fails
+before a completed event. This does not convert prose to files or validate the
+harness logic. Generic prompts can still finish with ordinary text. Self-tests
 alone can miss a harness that bypasses the documented wrapper. A negative
 candidate should retain the same interface and original raw kernel while
 returning incorrect results from its public wrapper. It must fail numeric

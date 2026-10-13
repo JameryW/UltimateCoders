@@ -168,3 +168,27 @@ Observe provider unload separately: an Ollama unload acknowledgement may arrive
 while an in-flight buffered request still keeps the model loaded. Preserve all
 original failed outputs, previous manifests/audits and the unknown quarantine.
 These failed trials extend runtime evidence; they do not complete R8.
+
+## Explicit native thinking mode (2026-10-14)
+
+The installed 4B model/template profile reproduced nonce failure when the
+native client fixed think:false. Conditional and unconditional empty-thinking
+prefills did not repair it. The provider's actual think:true API separated
+reasoning from final nonce content and returned formal file-tool calls.
+Add a strict, explicit UC_OLLAMA_THINK profile option, default false. Bind
+the effective mode to launch equality and sessions; bind the environment to
+attestation. Legacy sessions without think remain false-only. Keep native
+identity wire shape, response bytes, deadlines and Oracle policy unchanged.
+Use a new immutable image and fresh control root. The JSON tool template is
+provider configuration using Ollama's formal legacy tool parser, not a UC
+prose-to-command conversion. Preserve all failed aliases/probes and old audits.
+
+The first full thinking-mode trial returned four code-only final messages and
+no required artifact; the pin repeatedly returned logic_fail. Stop that exact
+trial with cgroup evidence. For the two exact pinned generator headers, read
+the requested harness through the existing no-follow bounded artifact reader.
+Missing/empty bytes prompt at most two real model feedback requests within the
+existing turn/deadline budget, then refuse completion. Persist feedback and
+original responses; reject links/special/oversized artifacts immediately.
+Generic text completion and rejected-review snapshots retain their contracts.
+Actual artifact existence is distinct from its correctness and Oracle verdict.
