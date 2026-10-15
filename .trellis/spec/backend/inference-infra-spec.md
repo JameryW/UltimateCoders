@@ -464,6 +464,7 @@ reference implementation or change the requested callable/JSON contract.
 | Condition | Behavior |
 | --- | --- |
 | No profile, foreign client or incompatible image | No hardware/probe launch |
+| Pinned harness uses `torch.randn` / `randn_like` | At most two input-range feedback turns, then fail before success |
 | Invalid context size/type | Reject before provider HTTP or hardware launch |
 | Context profile changed while writers are owned | Refuse re-attestation before create |
 | Implicit default proof followed by a different context override | Refuse launch before workspace claims |
@@ -580,6 +581,13 @@ or the model's repair explanation. Correct: verify the actual input generator
 against its range contract separately. `torch.randn * 200 - 100` remains
 unbounded; a schema/numeric diagnostic pass cannot establish full harness
 acceptance. Preserve the original bytes/report and append the failed assessment.
+The native correctness/performance generators run
+`assess_harness_input_range` on the required harness artifact before final
+completion: AST detection of `torch.randn` / `randn_like` yields at most two
+real model feedback turns, then fails without emitting success. Bounded
+samplers such as `torch.rand(...) * 200 - 100` and deterministic ranges pass
+this gate only; it does not replace reference replay, wrong-wrapper controls
+or the protected Oracle.
 
 ## 12. Windows checkpoint publication under readers
 

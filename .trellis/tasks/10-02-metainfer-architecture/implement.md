@@ -317,3 +317,16 @@ second host and explicitly retained incomplete cross-host acceptance.
   CI/merge record does not complete R8.
 
 R8 and the explicitly deferred cross-host criterion remain OPEN.
+
+## Harness input-range gate (2026-10-15)
+
+- [x] Turn the measured unbounded `torch.randn` semantic FAIL into a native
+  generator gate: AST assessment rejects `randn` / `randn_like`, allows
+  bounded `torch.rand * 200 - 100` and deterministic ranges, and gives at most
+  two real model feedback turns before failing without success events.
+- [x] Strengthen native system instructions with the explicit bounded sampler.
+- [x] Cover unit assessment and generator feedback/repair/exhaustion paths in
+  `test_metainfer_ollama.py` without claiming R8 optimization acceptance.
+- [ ] Rebuild/deploy a new attested native image and re-run genuine GPU
+  workflows. This cloud environment has no GPU; single-host R8 optimization,
+  protected Oracle, accepted delivery and deferred cross-host remain OPEN.

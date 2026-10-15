@@ -448,6 +448,86 @@ def test_native_cli_executes_streamed_file_tool_and_emits_distinct_items(
     assert peer["requests"][1]["messages"][-1]["tool_name"] == "write_file"
 
 
+@pytest.mark.parametrize(
+    ("source", "ok"),
+    [
+        ("x = torch.rand(n, device='cuda') * 200 - 100\n", True),
+        ("x = torch.linspace(-100, 100, n, device='cuda')\n", True),
+        ("x = torch.randn(n, device='cuda') * 200 - 100\n", False),
+        ("x = torch.randn_like(y)\n", False),
+        ("def bad(:\n", False),
+    ],
+)
+def test_harness_input_range_rejects_unbounded_samplers_only(source, ok):
+    from ultimate_coders.metainfer_service.coding import (
+        assess_harness_input_range,
+        validate_harness_input_range,
+    )
+
+    reason = assess_harness_input_range(source)
+    if ok:
+        assert reason is None
+        validate_harness_input_range(source)
+    else:
+        assert reason is not None
+        with pytest.raises(ValueError, match="input|syntax"):
+            validate_harness_input_range(source)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Pinned artifacts require Linux no-follow files")
+@pytest.mark.parametrize("phase,filename", [("CORRECTNESS", "correctness_harness.py"),
+                                           ("PERFORMANCE", "perf_harness.py")])
+@pytest.mark.parametrize("case", ["unbounded", "repaired", "exhausted"])
+def test_pinned_generator_rejects_unbounded_input_sampling_with_bounded_feedback(
+    tmp_path, monkeypatch, ollama_peer, capsys, native_cli_sessions, phase, filename, case
+):
+    from ultimate_coders.metainfer_service import coding
+
+    profile, peer = ollama_peer
+    monkeypatch.setattr(coding, "require_containment", lambda: None)
+    monkeypatch.setenv("UC_OLLAMA_URL", profile.url)
+    monkeypatch.setenv("UC_OLLAMA_MODEL", profile.model)
+    monkeypatch.setenv("UC_OLLAMA_DIGEST", profile.digest)
+    bad = "import torch\nx = torch.randn(8) * 200 - 100\n"
+    good = "import torch\nx = torch.rand(8) * 200 - 100\n"
+    prose = {"model": profile.model, "done": True, "message": {"content": "Harness ready."}}
+
+    def write_call(content):
+        return {"model": profile.model, "done": True, "message": {"tool_calls": [
+            {"function": {"name": "write_file",
+                          "arguments": {"path": filename, "content": content}}}
+        ]}}
+
+    if case == "unbounded":
+        peer["responses"] = [[write_call(bad)], [prose], [prose], [prose]]
+    elif case == "repaired":
+        peer["responses"] = [[write_call(bad)], [prose], [write_call(good)], [prose]]
+    else:
+        peer["responses"] = [
+            [write_call(bad)], [prose], [write_call(bad)], [prose], [write_call(bad)], [prose],
+        ]
+    prompt = (f"You are the **{phase} HARNESS GENERATOR** for GPU kernel optimization, "
+              "iteration #1.\nWrite the requested file.")
+    if case == "repaired":
+        assert coding.main(["exec", "-C", str(tmp_path), prompt]) == 0
+        assert (tmp_path / filename).read_text() == good
+    else:
+        with pytest.raises(ValueError, match="unbounded"):
+            coding.main(["exec", "-C", str(tmp_path), prompt])
+        assert (tmp_path / filename).read_text() == bad
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert any(event["type"] == "turn.completed" for event in events) == (case == "repaired")
+    feedback_turns = [
+        request["messages"][-1]
+        for request in peer["requests"]
+        if request["messages"]
+        and request["messages"][-1].get("role") == "user"
+        and "input-range" in request["messages"][-1].get("content", "")
+    ]
+    assert len(feedback_turns) == (1 if case == "repaired" else 2)
+    assert "torch.rand" in feedback_turns[0]["content"]
+
+
 @pytest.mark.skipif(os.name != "posix", reason="Pinned artifacts require Linux no-follow files")
 @pytest.mark.parametrize("phase,filename", [("CORRECTNESS", "correctness_harness.py"),
                                            ("PERFORMANCE", "perf_harness.py")])

@@ -1,1 +1,3 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/inference-infra-spec.md", "reason": "Harness input-range contract and wrong-wrapper/reference boundaries"}
+{"file": ".trellis/tasks/10-02-metainfer-architecture/research/harness-loop-diagnosis.md", "reason": "Prior harness contract failures and prevention status"}
