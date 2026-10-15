@@ -540,6 +540,9 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     eight in `check.jsonl` and ten in `implement.jsonl`, moving the known totals
     from 812/814 to 830/832.
 
+    MetaInfer harness input-range continuation adds two `implement.jsonl`
+    `.trellis` references (865 -> 867).
+
     This is a tripwire, not a whitelist: if a future change moves any of these
     numbers, it must be updated in the same change.
     """
@@ -556,7 +559,12 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     # Local deployment adds seven spec references in each of two task carriers.
     # Runtime repair adds four implementation and three check spec references.
     # Worker plan/intent continuation adds six references in each of two carriers.
-    assert len(refs) in (812, 814, 830, 832, 846, 853, 865), f"reference count drifted: {len(refs)}"
+    # MetaInfer harness input-range continuation adds two implement.jsonl
+    # `.trellis` references (inference-infra-spec.md + harness-loop-diagnosis.md),
+    # moving 865 -> 867.
+    assert len(refs) in (812, 814, 830, 832, 846, 853, 865, 867), (
+        f"reference count drifted: {len(refs)}"
+    )
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
 
