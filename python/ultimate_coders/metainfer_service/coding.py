@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import hashlib
 import json
@@ -85,6 +86,36 @@ def validate_review(text: str) -> None:
     ]
     if not lines or lines[0] not in formats or len(declarations) != 1:
         raise ValueError("Native review requires one leading '**Verdict**: PASS' or FAIL verdict")
+
+
+def assess_harness_input_range(source: str) -> str | None:
+    """Return a failure reason when a harness samples unbounded float inputs.
+
+    Reference/wrong-wrapper pass counts do not establish the documented
+    finite [-100, 100] contract. ``torch.randn`` / ``randn_like`` remain
+    unbounded even when scaled. This static check rejects those samplers
+    only; it does not claim full harness acceptance.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return f"Harness has invalid syntax and cannot prove its input range: {exc.msg}"
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr in ("randn", "randn_like"):
+            return (
+                "Harness uses unbounded torch.randn/randn_like input sampling; "
+                "generate finite float32 values in [-100,100] with "
+                "torch.rand(...) * 200 - 100 (or an equivalent bounded sampler)"
+            )
+    return None
+
+
+def validate_harness_input_range(source: str) -> None:
+    reason = assess_harness_input_range(source)
+    if reason is not None:
+        raise ValueError(reason)
 
 
 def read_workspace_artifacts(workspace: Path, names: tuple[str, ...]) -> dict[str, bytes]:
@@ -304,7 +335,10 @@ def main(argv: list[str] | None = None) -> int:
                 "chat text does not create that file. Verify tool results before finishing. "
                 "Do not use the network. When generating or reviewing test harnesses, use "
                 "the documented callable and valid input contract; explicitly excluded inputs "
-                "are not missing requirements. Load a supplied reference from its existing "
+                "are not missing requirements. For float32 CUDA inputs in the documented "
+                "[-100,100] contract, generate finite values with torch.rand(...) * 200 - 100 "
+                "(or an equivalent bounded sampler); never use torch.randn or randn_like, "
+                "even when scaled. Load a supplied reference from its existing "
                 "file with importlib.util, preserving source availability for Triton JIT; "
                 "never embed, reimplement or substitute that reference. Execute a generated "
                 "correctness harness against the supplied reference before finishing, inspect "
@@ -319,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     messages.append({"role": "user", "content": prompt})
     emit("thread.started", thread_id=thread)
     emit("turn.started")
-    deadline, executed, artifact_feedback = time.monotonic() + 900, 0, 0
+    deadline, executed, artifact_feedback, range_feedback = time.monotonic() + 900, 0, 0, 0
     for turn in range(16):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -333,9 +367,11 @@ def main(argv: list[str] | None = None) -> int:
             if not message.get("content", "").strip():
                 raise ValueError("Native coding returned an empty final response")
             verify_review_files(workspace, unchanged_reviews=unchanged_reviews)
-            if required_artifact and not read_workspace_artifacts(
-                workspace, (required_artifact,),
-            ).get(required_artifact):
+            artifacts = (
+                read_workspace_artifacts(workspace, (required_artifact,))
+                if required_artifact else {}
+            )
+            if required_artifact and not artifacts.get(required_artifact):
                 if artifact_feedback >= 2:
                     raise ValueError(f"Native generator did not produce {required_artifact}")
                 messages.append({"role": "user", "content": (
@@ -348,6 +384,23 @@ def main(argv: list[str] | None = None) -> int:
                 save_session(directory, thread, profile, messages)
                 artifact_feedback += 1
                 continue
+            if required_artifact and required_artifact.endswith("_harness.py"):
+                reason = assess_harness_input_range(
+                    artifacts[required_artifact].decode("utf-8", errors="replace"),
+                )
+                if reason is not None:
+                    if range_feedback >= 2:
+                        raise ValueError(reason)
+                    messages.append({"role": "user", "content": (
+                        f"Independent input-range check failed for {required_artifact}: "
+                        f"{reason}. Use write_file to repair the existing file. "
+                        "Keep the documented public callable, sizes and JSON contract. "
+                        "Do not finish until the harness samples finite values in [-100,100] "
+                        "without torch.randn/randn_like."
+                    )})
+                    save_session(directory, thread, profile, messages)
+                    range_feedback += 1
+                    continue
             emit(
                 "item.completed",
                 item={"id": "message-" + str(turn), "type": "agent_message",

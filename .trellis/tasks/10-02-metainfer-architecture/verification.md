@@ -872,3 +872,23 @@ stopped runtime. The linked PR records the final delivery CI/merge outcome.
 All seven repository guards and diff check PASS. R8 successful optimization,
 protected candidate Oracle acceptance,
 accepted Worker delivery and user-deferred two-host verification remain OPEN.
+
+## Harness input-range native gate (2026-10-15)
+
+The 2026-10-14 semantic diagnostic correctly recorded overall FAIL after both
+reviewers found that schema/numeric pass counts hid unbounded
+`torch.randn * 200 - 100`. This continuation turns that measured contract into
+a production native-generator gate without claiming GPU acceptance.
+
+`assess_harness_input_range` parses the required harness AST and rejects
+`torch.randn` / `randn_like` while allowing bounded `torch.rand(...) * 200 - 100`
+and deterministic ranges. Invalid syntax fails closed. Pinned correctness and
+performance generators check the artifact before final completion, send at most
+two real input-range feedback turns, then fail without success events. System
+instructions now name the bounded sampler explicitly. Focused unit and generator
+tests: 11 passed; full `test_metainfer_ollama.py`: 126 passed; ruff clean on the
+touched files.
+
+This cloud agent has no GPU, Podman MetaInfer service or self-hosted runner, so
+no new immutable image, genuine workflow or Oracle evidence is claimed. R8 and
+the user-deferred cross-host criterion remain OPEN.
