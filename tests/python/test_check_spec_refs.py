@@ -656,10 +656,17 @@ def test_real_corpus_unanchored_census_is_reported():
     # Architecture refresh removes three duplicate backticked launcher paths
     # (run-omp.sh, run-gateway.sh, run-cluster.sh) from docs/architecture.md:
     # 275 -> 272; the launch commands remain documented in both READMEs.
-    # 278 -> 285 -> 290 -> 291 -> 290 -> 291 -> 297. The last move is the
+    # 278 -> 285 -> 290 -> 291 -> 290 -> 291 -> 297 -> 305. The last move is
+    # the dsec DeepSeek sandbox environment doc (docs/dsec-sandbox.md), which
+    # backtick-names its eight implementation files (sandbox_dsec.py,
+    # harness_deepseek.py, sandbox.py, registry.py,
+    # docker/docker-compose.dsec.yml, run-dsec.sh,
+    # tests/python/test_dsec_sandbox_env.py, test_sandbox_env_allowlist.py).
+    # All eight are MENTION_RESOLVED, so the unclassified count is untouched.
+    # Earlier moves: the
     # implementable uc-metainfer/1 contract doc (docs/metainfer-service-contract.md),
     # which names the four endpoints' consuming modules and its own test file,
-    # plus the link to it from docs/inference-infra.md. Earlier moves: the
+    # plus the link to it from docs/inference-infra.md; the
     # typing rules in type-safety.md; gotcha/convention sections 7a/7b in
     # inference-infra-spec.md (service_contract.py, runner.py, resources.py,
     # crates/uc-types/src/error.rs, the component-guidelines path); the
@@ -670,7 +677,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # count is untouched. Upstream file paths are named WITHOUT their extension
     # so the guard resolves them against this repo rather than calling them
     # dangling -- `test_app_core` rather than `metainfer/server/tests/...py`.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 297
+    assert sum(1 for r in rows if r["kind"] == "mention") == 305
 
 
 def test_real_corpus_has_no_false_content_mismatch():
