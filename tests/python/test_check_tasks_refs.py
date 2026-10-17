@@ -562,7 +562,9 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     # MetaInfer harness input-range continuation adds two implement.jsonl
     # `.trellis` references (inference-infra-spec.md + harness-loop-diagnosis.md),
     # moving 865 -> 867.
-    assert len(refs) in (812, 814, 830, 832, 846, 853, 865, 867), (
+    # DeepSeek Search/Fetch task carriers add implement/check jsonl `.trellis`
+    # refs (880 after those carriers are tracked).
+    assert len(refs) in (812, 814, 830, 832, 846, 853, 865, 867, 880), (
         f"reference count drifted: {len(refs)}"
     )
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
