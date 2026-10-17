@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -429,7 +431,19 @@ def test_memory_backend_reads_env_coordinates(monkeypatch: pytest.MonkeyPatch) -
     assert backend.branch == "main"
 
 
+def _require_mcp() -> None:
+    """Handler-level tests need the mcp package; CI installs none.
+
+    The gate mirrors test_memory_tools_present_with_package: without the
+    package the descriptors are hidden, so calling the handlers directly
+    would exercise a code path production never reaches.
+    """
+    if engine_mcp.Server is None:
+        pytest.skip("mcp package not installed")
+
+
 def test_mcp_recall_renders_three_channels(monkeypatch: pytest.MonkeyPatch) -> None:
+    _require_mcp()
     backend = CodingMemory(user_id="u", workspace_id="w", branch="b", client=FakeCodingClient())
     monkeypatch.setattr(engine_mcp, "_MEMORY_BACKEND", backend)
     out = asyncio.run(engine_mcp._recall_coding_memory(None, {"query": "timeout"}))
@@ -440,6 +454,7 @@ def test_mcp_recall_renders_three_channels(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_mcp_recall_scoping_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    _require_mcp()
     client = FakeCodingClient()
     backend = CodingMemory(user_id="u", workspace_id="w", branch="b", client=client)
     monkeypatch.setattr(engine_mcp, "_MEMORY_BACKEND", backend)
@@ -448,6 +463,7 @@ def test_mcp_recall_scoping_override(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_mcp_recall_reports_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    _require_mcp()
     backend = CodingMemory(user_id="u", client=FakeCodingClient(search_raises=True))
     monkeypatch.setattr(engine_mcp, "_MEMORY_BACKEND", backend)
     out = asyncio.run(engine_mcp._recall_coding_memory(None, {"query": "q"}))
@@ -455,6 +471,7 @@ def test_mcp_recall_reports_failure(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_mcp_remember_reports_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    _require_mcp()
     client = FakeCodingClient()
     backend = CodingMemory(user_id="u", workspace_id="w", branch="b", client=client)
     monkeypatch.setattr(engine_mcp, "_MEMORY_BACKEND", backend)
@@ -464,7 +481,46 @@ def test_mcp_remember_reports_counts(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_mcp_remember_rejects_empty_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    _require_mcp()
     backend = CodingMemory(user_id="u", client=FakeCodingClient())
     monkeypatch.setattr(engine_mcp, "_MEMORY_BACKEND", backend)
     out = asyncio.run(engine_mcp._remember_coding_memory(None, {"messages": []}))
     assert "No messages" in out[0].text
+
+
+def test_import_guard_stays_total_without_the_mcp_package(tmp_path: Path) -> None:
+    """CI installs no mcp package; the import guard must define every name.
+
+    Reproduces the CI environment in a subprocess (an ``mcp`` stub on
+    PYTHONPATH that raises ImportError, exactly like the missing package
+    does) and pins the module contract: ``Server``, ``Tool`` and
+    ``TextContent`` are all None. The historical shape set only
+    ``Server = None`` and left the other two undefined, which turned any
+    handler-level call into a NameError on CI -- that is how this
+    integration's first CI run went red.
+    """
+    stub_dir = tmp_path / "no-mcp"
+    stub_dir.mkdir()
+    (stub_dir / "mcp.py").write_text(
+        "raise ImportError('blocked for the no-mcp parity test')\n",
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    pythonpath = os.pathsep.join([str(stub_dir), str(REPO / "python"), env.get("PYTHONPATH", "")])
+    env["PYTHONPATH"] = pythonpath
+    code = (
+        "import ultimate_coders.agent.engine_mcp as m\n"
+        "assert m.Server is None, 'the stub must block the mcp import'\n"
+        "assert m.Tool is None, 'Tool must be defined (None) without mcp'\n"
+        "assert m.TextContent is None, 'TextContent must be defined (None)'\n"
+        "print('ok')\n"
+    )
+    r = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(REPO),
+    )
+    assert r.returncode == 0, f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+    assert "ok" in r.stdout

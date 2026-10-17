@@ -29,8 +29,14 @@ try:
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent, Tool
 except ImportError:
-    # ponytail: mcp package is optional — only needed for sandbox agent tools
+    # ponytail: mcp package is optional — only needed for sandbox agent tools.
+    # The module contract must stay total: every name the handlers and
+    # descriptors reference is defined either way (None when the package is
+    # missing), so a function-level caller never hits a NameError — the gates
+    # below hide the tools instead.
     Server = None  # type: ignore[assignment,misc]
+    Tool = None  # type: ignore[assignment,misc]
+    TextContent = None  # type: ignore[assignment,misc]
 
 from ultimate_coders.agent.hy_memory import CodingMemory, hy_memory_available
 from ultimate_coders.engine import Engine
@@ -66,7 +72,8 @@ def _memory_tools() -> list:
 
     Hidden both when the optional ``hy-memory`` package is missing AND when
     the optional ``mcp`` package is missing (``Server`` is None then, and
-    ``Tool`` is undefined).
+    ``Tool`` / ``TextContent`` are None too — the import guard defines them
+    either way so callers never hit a NameError).
     """
     if not hy_memory_available() or Server is None:
         return []
