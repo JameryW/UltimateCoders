@@ -142,6 +142,8 @@ class TestAllowlistConstruction:
     def test_shared_list_covers_uc_control_plane_and_proxies(self):
         assert "UC_*" in SHARED_ENV_ALLOWLIST
         assert {"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"} <= set(SHARED_ENV_ALLOWLIST)
+        # DeepSeek Search/Fetch MCP tools need credentials on every agent.
+        assert {"DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"} <= set(SHARED_ENV_ALLOWLIST)
 
     @pytest.mark.parametrize(
         ("agent", "credential"),

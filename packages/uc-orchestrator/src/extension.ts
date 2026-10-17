@@ -22,6 +22,8 @@
  * - uc_index   — Index management: index_repo/list_repos/get_state/remove_index
  * - uc_file    — File operations: list_dir/get_file
  * - uc_worker  — Worker status: list workers, check capacity/heartbeat
+ * - uc_deepseek_web_search / uc_deepseek_web_fetch — DeepSeek Search/Fetch
+ *   (registered only when DEEPSEEK_API_KEY is set; HTTP via UC Python)
  *
  * UI features:
  * - Rich progress widget above editor (real-time subtask progress)
@@ -42,6 +44,7 @@ import { registerIndexTools } from "./orchestrator/index-bridge";
 import { registerFileTools } from "./orchestrator/file-bridge";
 import { registerWorkerTools } from "./orchestrator/worker-bridge";
 import { registerSchedulerTools } from "./orchestrator/scheduler-bridge";
+import { registerDeepSeekWebTools } from "./orchestrator/deepseek-web-bridge";
 import { createProgressWidget, type ProgressWidgetState, type SubtaskProgressInfo } from "./ui/progress-widget";
 import { createSubtaskTreeOverlay } from "./ui/subtask-tree-overlay";
 import { createTaskListOverlay } from "./ui/task-list-overlay";
@@ -874,4 +877,5 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	registerFileTools(pi, bridge);
 	registerWorkerTools(pi, bridge);
 	registerSchedulerTools(pi, bridge);
+	registerDeepSeekWebTools(pi);
 }

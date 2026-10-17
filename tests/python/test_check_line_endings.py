@@ -216,6 +216,7 @@ def test_real_repo_is_reconciled() -> None:
         (2023, 2014),  # Harness diagnostics add one text research document.
         (2029, 2020),  # dsec DeepSeek sandbox environment: six new text files.
         (2034, 2025),  # hy-memory backend: five new text files.
+        (2046, 2037),  # DeepSeek Search/Fetch: client, tools, OMP bridge, tests, docs/task.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

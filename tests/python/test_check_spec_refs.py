@@ -656,7 +656,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # Architecture refresh removes three duplicate backticked launcher paths
     # (run-omp.sh, run-gateway.sh, run-cluster.sh) from docs/architecture.md:
     # 275 -> 272; the launch commands remain documented in both READMEs.
-    # 278 -> 285 -> 290 -> 291 -> 290 -> 291 -> 297 -> 305 -> 308. The 305 -> 308
+    # 278 -> 285 -> 290 -> 291 -> 290 -> 291 -> 297 -> 305 -> 308 -> 309.
+    # The 308 -> 309 move is the DeepSeek Search/Fetch OMP tools note in
+    # omp-tools-spec.md (deepseek-web-bridge / deepseek_web). The 305 -> 308
     # move is the hy-memory cognitive-memory backend doc (docs/hy-memory.md),
     # which backtick-names three implementation files (sandbox.py,
     # docker/docker-compose.dsec.yml as the compose-merge precedent, and
@@ -683,7 +685,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # count is untouched. Upstream file paths are named WITHOUT their extension
     # so the guard resolves them against this repo rather than calling them
     # dangling -- `test_app_core` rather than `metainfer/server/tests/...py`.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 308
+    assert sum(1 for r in rows if r["kind"] == "mention") == 309
 
 
 def test_real_corpus_has_no_false_content_mismatch():
