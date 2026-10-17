@@ -1,0 +1,82 @@
+# hy-memory cognitive memory backend — compose override.
+#
+# Layers the Hy-Memory coding-memory backend on top of the full stack: the
+# orchestrator and both worker variants receive the MEMORY_* endpoint
+# configuration so in-process CodingMemory calls (and the in-sandbox MCP
+# memory tools, which inherit the same child env — see
+# docs/hy-memory.md) reach the same backend.
+#
+# Unlike dsec this override does NOT pin any agent: hy-memory is a memory
+# backend, not a coding agent, and every agent can use it. It composes with
+# docker-compose.dsec.yml (DeepSeek endpoints double as the recommended
+# hy-memory LLM provider — the SDK speaks the OpenAI protocol).
+#
+# Usage:
+#   docker compose \
+#     -f docker/docker-compose.yml \
+#     -f docker/docker-compose.hymemory.yml \
+#     --profile app up --build
+#
+# Configuration lives in docker/.env (git-ignored) — copy
+# docker/.env.hymemory.example as a starting point:
+#   MEMORY_LLM_API_KEY=...        (required; any OpenAI-compatible key)
+#   MEMORY_EMBEDDER_API_KEY=...   (required; any OpenAI-compatible key)
+#
+# Doctor (boot diagnosis, no API cost, no other services needed):
+#   docker compose -f docker/docker-compose.yml \
+#     -f docker/docker-compose.hymemory.yml \
+#     --profile app run --rm --no-deps worker \
+#     python -m ultimate_coders.agent.hy_memory --check
+
+services:
+  # Task planning + dispatch coordinator.
+  orchestrator:
+    environment:
+      MEMORY_LLM_API_KEY: "${MEMORY_LLM_API_KEY:-}"
+      MEMORY_LLM_BASE_URL: "${MEMORY_LLM_BASE_URL:-}"
+      MEMORY_LLM_MODEL: "${MEMORY_LLM_MODEL:-}"
+      MEMORY_EMBEDDER_API_KEY: "${MEMORY_EMBEDDER_API_KEY:-}"
+      MEMORY_EMBEDDER_BASE_URL: "${MEMORY_EMBEDDER_BASE_URL:-}"
+      MEMORY_EMBEDDER_MODEL: "${MEMORY_EMBEDDER_MODEL:-}"
+      MEMORY_EMBEDDING_DIMS: "${MEMORY_EMBEDDING_DIMS:-}"
+      MEMORY_DATA_DIR: "${MEMORY_DATA_DIR:-/data/hy-memory}"
+      MEMORY_MODE: "${MEMORY_MODE:-pro}"
+      MEMORY_ENABLE_GRAPH: "${MEMORY_ENABLE_GRAPH:-}"
+    volumes:
+      - hymemory_data:/data/hy-memory
+
+  # Python Worker + Sandbox — the service whose agents talk to memory.
+  worker:
+    environment:
+      MEMORY_LLM_API_KEY: "${MEMORY_LLM_API_KEY:-}"
+      MEMORY_LLM_BASE_URL: "${MEMORY_LLM_BASE_URL:-}"
+      MEMORY_LLM_MODEL: "${MEMORY_LLM_MODEL:-}"
+      MEMORY_EMBEDDER_API_KEY: "${MEMORY_EMBEDDER_API_KEY:-}"
+      MEMORY_EMBEDDER_BASE_URL: "${MEMORY_EMBEDDER_BASE_URL:-}"
+      MEMORY_EMBEDDER_MODEL: "${MEMORY_EMBEDDER_MODEL:-}"
+      MEMORY_EMBEDDING_DIMS: "${MEMORY_EMBEDDING_DIMS:-}"
+      MEMORY_DATA_DIR: "${MEMORY_DATA_DIR:-/data/hy-memory}"
+      MEMORY_MODE: "${MEMORY_MODE:-pro}"
+      MEMORY_ENABLE_GRAPH: "${MEMORY_ENABLE_GRAPH:-}"
+    volumes:
+      - hymemory_data:/data/hy-memory
+
+  # NATS-connected worker variant (same sandbox layer, different transport).
+  nats-worker:
+    environment:
+      MEMORY_LLM_API_KEY: "${MEMORY_LLM_API_KEY:-}"
+      MEMORY_LLM_BASE_URL: "${MEMORY_LLM_BASE_URL:-}"
+      MEMORY_LLM_MODEL: "${MEMORY_LLM_MODEL:-}"
+      MEMORY_EMBEDDER_API_KEY: "${MEMORY_EMBEDDER_API_KEY:-}"
+      MEMORY_EMBEDDER_BASE_URL: "${MEMORY_EMBEDDER_BASE_URL:-}"
+      MEMORY_EMBEDDER_MODEL: "${MEMORY_EMBEDDER_MODEL:-}"
+      MEMORY_EMBEDDING_DIMS: "${MEMORY_EMBEDDING_DIMS:-}"
+      MEMORY_DATA_DIR: "${MEMORY_DATA_DIR:-/data/hy-memory}"
+      MEMORY_MODE: "${MEMORY_MODE:-pro}"
+      MEMORY_ENABLE_GRAPH: "${MEMORY_ENABLE_GRAPH:-}"
+    volumes:
+      - hymemory_data:/data/hy-memory
+
+# Named volume for the memory backend's local storage (SQLite + Chroma).
+volumes:
+  hymemory_data:
