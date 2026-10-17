@@ -37,6 +37,7 @@ htmlcov/
 
 # Maturin
 ultimate_coders/_uc_core*.so
+ultimate_coders.libs/
 
 # Environment
 .env
