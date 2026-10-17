@@ -26,8 +26,11 @@ Trigger: any change to tool schemas, bridge methods, or new tool registration.
 | `uc_index` | index-bridge.ts | indexRepo, getIndexState, removeIndex, listRepos | Index management |
 | `uc_file` | file-bridge.ts | listDir, getFile | File browsing |
 | `uc_worker` | worker-bridge.ts | listWorkers | Worker status awareness |
+| `uc_deepseek_web_search` | deepseek-web-bridge.ts | invokeDeepSeekWebCli → Python CLI | DeepSeek official Search API |
+| `uc_deepseek_web_fetch` | deepseek-web-bridge.ts | invokeDeepSeekWebCli → Python CLI | DeepSeek official Fetch API |
 
 Registration pattern: each file exports `register*(pi, bridge)` called from `extension.ts`.
+DeepSeek web tools are an exception: `registerDeepSeekWebTools(pi)` takes no GrpcBridge; HTTP lives in UC Python (`ultimate_coders.agent.deepseek_web`) and the bridge only shells `python -m ultimate_coders.agent.deepseek_web …`.
 
 ---
 
@@ -100,6 +103,32 @@ Registration pattern: each file exports `register*(pi, bridge)` called from `ext
   worker_id?: string,       // required for status; prefix matching supported
 }
 ```
+
+### uc_deepseek_web_search / uc_deepseek_web_fetch
+
+```typescript
+// uc_deepseek_web_search
+{
+  query: string,            // 1–128 Unicode chars (API constraint)
+  count?: number,           // 1–50, default 10
+  ori_question?: string,    // optional original user question
+  need_content?: boolean,   // include page content when available
+}
+
+// uc_deepseek_web_fetch
+{
+  url: string,              // public https URL only (UC precheck)
+}
+```
+
+Enablement: tools are registered only when `DEEPSEEK_API_KEY` is a non-empty string at registration time. Call-time also rechecks the key and returns `{ isError: true }` if cleared. Default API base `https://api.deepseek.com`; optional `DEEPSEEK_BASE_URL` override. Worker MCP mirrors the same Python client as tools `deepseek_web_search` / `deepseek_web_fetch` (no `uc_` prefix on the worker surface).
+
+Fetch URL policy (Python `validate_fetch_url`, before HTTP):
+- `https:` only (plain `http:` rejected)
+- reject userinfo in URL
+- reject non-global addresses after DNS (localhost, RFC1918, link-local, ULA, CGNAT `100.64/10`, cloud metadata); unresolved/ambiguous private targets fail closed
+
+Wrong: reimplement Search/Fetch with `fetch()` in TypeScript. Correct: CLI bridge to UC Python. Wrong: treat missing key as empty search results. Correct: omit tools or return `isError`.
 
 ---
 
@@ -283,6 +312,10 @@ gRPC server heartbeat timeout: **120s** (was 600s). Worker crash detected in 2 m
 ### Registering tool with unused orchestrator parameter
 **Symptom**: `registerTaskTools(pi, bridge, orchestrator)` where `orchestrator` is never used.
 **Fix**: Only pass what's needed. If all operations go through bridge, don't pass orchestrator.
+
+### Implementing DeepSeek Search/Fetch HTTP in the OMP bridge
+**Symptom**: Duplicate clients, divergent SSRF rules, billing/QPS behavior drift from workers.
+**Fix**: Keep HTTP in `python/ultimate_coders/agent/deepseek_web.py`; OMP only spawns `python -m ultimate_coders.agent.deepseek_web` and parses JSON stdout.
 
 ### Forgetting to check restart marker on connection failure
 **Symptom**: GrpcBridge says `connected=true` but all calls fail after gRPC server restart.

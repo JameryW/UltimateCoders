@@ -1,7 +1,7 @@
 {
   "id": "deepseek-search-fetch",
   "name": "deepseek-search-fetch",
-  "title": "brainstorm: DeepSeek Search/Fetch API integration",
+  "title": "DeepSeek Search/Fetch API integration",
   "description": "",
   "status": "in_progress",
   "dev_type": null,
@@ -15,12 +15,12 @@
   "branch": "cursor/deepseek-search-fetch-3239",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "82af89d9efbec8693e808f80645bcec373093e40",
   "pr_url": null,
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Approach C delivered: UC Python client for /v1/tools/search|fetch, Worker MCP deepseek_web_*, OMP uc_deepseek_web_* via Python CLI bridge. Key-gated enablement; https-only fetch with non-global IP denial (incl. CGNAT). omp-tools-spec updated. deepseek-harness unchanged. Branch cursor/deepseek-search-fetch-3239.",
   "meta": {}
 }
