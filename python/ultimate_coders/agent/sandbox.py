@@ -76,6 +76,12 @@ SHARED_ENV_ALLOWLIST: tuple[str, ...] = (
     "no_proxy",
 )
 
+#: DeepSeek credential/endpoint variables. Single-sourced: both the
+#: ``deepseek-harness`` agent and the ``dsec`` sandbox environment (same
+#: adapter, registered by ``ultimate_coders.agent.sandbox_dsec``) map to this
+#: tuple so the two entries can never drift apart.
+_DEEPSEEK_ENV_ALLOWLIST: tuple[str, ...] = ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL")
+
 #: Per-adapter credential / endpoint extensions, keyed by CANONICAL agent
 #: name (aliases are normalised through the plugin registry first).
 ADAPTER_ENV_ALLOWLIST: dict[str, tuple[str, ...]] = {
@@ -103,7 +109,10 @@ ADAPTER_ENV_ALLOWLIST: dict[str, tuple[str, ...]] = {
     # In-tree plugins: `dsh` reads its own key/base-url; the local litellm
     # loop registers api_key_env=None but reads OPENAI_* inside the child,
     # so only an explicit entry can cover it.
-    "deepseek-harness": ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"),
+    "deepseek-harness": _DEEPSEEK_ENV_ALLOWLIST,
+    # The dsec sandbox environment selects the same dsh adapter under its
+    # own canonical name (see ultimate_coders.agent.sandbox_dsec).
+    "dsec": _DEEPSEEK_ENV_ALLOWLIST,
     "local-harness": (
         "OPENAI_API_KEY",
         "OPENAI_API_BASE",

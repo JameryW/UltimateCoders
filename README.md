@@ -441,6 +441,46 @@ per-host gateways (future work). The external-git design is already
 cross-host-safe at the data level: each host runs its own compose and clones
 from the same remote, and merge arbitration reconciles concurrent edits.
 
+### DeepSeek Sandbox Environment (dsec)
+
+`dsec` is a named sandbox environment whose coding agent is the official
+DeepSeek Harness (`dsh --profile headless`, preinstalled in the worker
+image). It is the same plugin-registry sandbox layer as every other agent —
+`dsec` is simply the environment name that selects it everywhere
+(`UC_CODING_AGENT=dsec`; `deepseek-harness` is the same adapter's canonical
+name).
+
+```bash
+# One-time: credentials (git-ignored)
+cp docker/.env.dsec.example docker/.env   # then set DEEPSEEK_API_KEY
+
+# Boot diagnosis — dsh binary + headless profile + credentials, no API cost
+./run-dsec.sh doctor
+
+# Start the full stack with every worker on the DeepSeek harness
+./run-dsec.sh up
+# Dashboard: http://localhost:8081/dashboard
+```
+
+Programmatic use (embedding the sandbox without Docker):
+
+```python
+from ultimate_coders.agent.sandbox_dsec import dsec_sandbox_config, preflight_dsec
+from ultimate_coders.agent.sandbox import SandboxManager
+
+ok, message = preflight_dsec()          # (False, "<what to fix>") when not ready
+manager = SandboxManager(dsec_sandbox_config(project_path="/repo"))
+output = await manager.execute("Fix the failing test in main.rs")
+```
+
+`python -m ultimate_coders.agent.sandbox_dsec [--check] [--json]` prints the
+same environment report the doctor uses. Credentials flow through the
+sandbox's deny-by-default env allowlist (`DEEPSEEK_API_KEY`,
+`DEEPSEEK_BASE_URL` reach the agent; host secrets do not). See
+[docs/dsec-sandbox.md](docs/dsec-sandbox.md) for the full reference,
+troubleshooting (credentials file shape, `DEEPSEEK_BASE_URL` gateways) and
+the test map.
+
 ## CI
 
 Eleven independent workflows are defined. Ten run on pushes and pull requests targeting `main`; `metainfer-release-gate.yml` is manual-only. All but `ci-scripts.yml` and the manual gate are path-filtered, so they only run when one of the listed paths changes; the workflow files themselves are the source of truth:
@@ -476,7 +516,7 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_POSTGRES_URL` | `postgresql://localhost:5432/ultimatecoders` | PostgreSQL connection URL |
 | `UC_NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL |
 | `UC_PROJECT_PATH` | - | Project path for sandbox execution |
-| `UC_CODING_AGENT` | `grok-build` | Worker coding agent: `grok-build`/`grok`, `claude-code`, `codex`, `opencode`, `oh-my-pi`/`omp`, `mimo-code`/`mimo`, `deepseek-harness`, or `local-harness` |
+| `UC_CODING_AGENT` | `grok-build` | Worker coding agent: `grok-build`/`grok`, `claude-code`, `codex`, `opencode`, `oh-my-pi`/`omp`, `mimo-code`/`mimo`, `deepseek-harness`, `dsec` (DeepSeek sandbox environment), or `local-harness` |
 | `UC_METAINFER_URL` | _(empty)_ | Optional external MetaInfer service; enables inference capabilities and automatic domain routing |
 | `UC_INFERENCE_TASK_JSON` | _(empty)_ | JSON `agent_config` defaults for inference experiments and natural-language routing |
 | `UC_INFERENCE_ARTIFACT_DIR` | `.uc-inference-artifacts` beside the assigned repository | Native experiment artifact root; Compose sets `/artifacts/inference` on a persistent volume |
@@ -492,7 +532,8 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `OPENAI_API_KEY` | - | OpenAI API key for Codex calls |
 | `MIMO_API_KEY` | - | MiMo Platform key for OpenCode, MiMo Code, and optionally task planning via `UC_LLM_*` |
 | `XIAOMI_API_KEY` | - | MiMo key for OMP's Xiaomi provider; OMP can also use `MIMO_API_KEY` |
-| `DEEPSEEK_API_KEY` | - | DeepSeek V4 Flash fallback for OMP; the other two MiMo-backed CLIs have no native model failover |
+| `DEEPSEEK_API_KEY` | - | DeepSeek key for the `deepseek-harness` agent and the `dsec` sandbox environment; also the OMP V4 Flash fallback |
+| `DEEPSEEK_BASE_URL` | - | Optional DeepSeek endpoint override for proxy gateways (read by `dsh`) |
 | `UC_CODEX_OPENROUTER` | `false` | Enable OpenRouter as the Codex CLI provider (requires `UC_CODING_AGENT=codex`) |
 | `UC_OPENROUTER_MODEL` | `stealth/ox-alpha` | OpenRouter model slug used by the opt-in Codex provider |
 | `UC_CODEX_WEB_SEARCH` | `disabled` | Codex native web-search mode; keep `disabled` for `stealth/ox-alpha`, which rejects that OpenAI-specific tool |

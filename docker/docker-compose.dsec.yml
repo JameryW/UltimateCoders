@@ -1,0 +1,43 @@
+# dsec sandbox environment — compose override.
+#
+# Layers the DeepSeek sandbox environment on top of the full stack: every
+# coding-agent slot is pinned to UC_CODING_AGENT=dsec (the DeepSeek Harness
+# environment — dsh --profile headless; see docs/dsec-sandbox.md), and the
+# DeepSeek credential/endpoint variables are forwarded explicitly so a dsec
+# deployment never depends on another agent's key happening to be set.
+#
+# Usage (normally via ./run-dsec.sh):
+#   docker compose \
+#     -f docker/docker-compose.yml \
+#     -f docker/docker-compose.dsec.yml \
+#     --profile app up --build
+#
+# Credentials live in docker/.env (git-ignored) — copy
+# docker/.env.dsec.example as a starting point:
+#   DEEPSEEK_API_KEY=sk-...          (required)
+#   DEEPSEEK_BASE_URL=...            (optional; proxy/gateway override)
+#
+# Doctor (boot diagnosis, no API cost, no other services needed):
+#   ./run-dsec.sh doctor
+
+services:
+  # Task planning + dispatch coordinator.
+  orchestrator:
+    environment:
+      UC_CODING_AGENT: "dsec"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-}"
+
+  # Python Worker + Sandbox — the service that actually spawns dsh.
+  worker:
+    environment:
+      UC_CODING_AGENT: "dsec"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-}"
+
+  # NATS-connected worker variant (same sandbox layer, different transport).
+  nats-worker:
+    environment:
+      UC_CODING_AGENT: "dsec"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-}"

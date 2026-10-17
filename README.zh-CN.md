@@ -366,6 +366,30 @@ Worker 可以在容器中运行，并从外部 Git remote（GitHub/GitLab）同�
 
 `DistributedConflictDetector` 只是进程内调度提示，不是分布式锁。跨 Worker 的权威冲突点在 Git merge-time（`MergeArbiter`）。`docker compose --scale worker=N` 只扩展同一主机上的 Worker；跨主机部署需要 Docker Swarm、远程 Docker context 或按主机部署 Gateway。
 
+### DeepSeek 沙箱环境（dsec）
+
+`dsec` 是一个具名沙箱环境，编码 agent 为官方 DeepSeek Harness（`dsh --profile headless`，worker 镜像已预装）。它与其他 agent 共用同一套插件注册表沙箱层——`dsec` 只是用环境名来选择它（`UC_CODING_AGENT=dsec`；`deepseek-harness` 是同一 adapter 的规范名，两者等价）。
+
+```bash
+cp docker/.env.dsec.example docker/.env   # 然后填入 DEEPSEEK_API_KEY
+./run-dsec.sh doctor                      # 启动诊断，不调用 API
+./run-dsec.sh up                          # 启动全栈，所有 worker 使用 dsh
+# Dashboard: http://localhost:8081/dashboard
+```
+
+嵌入使用（不走 Docker）：
+
+```python
+from ultimate_coders.agent.sandbox_dsec import dsec_sandbox_config, preflight_dsec
+from ultimate_coders.agent.sandbox import SandboxManager
+
+ok, message = preflight_dsec()   # 未就绪时返回 (False, "<修复建议>")
+manager = SandboxManager(dsec_sandbox_config(project_path="/repo"))
+output = await manager.execute("修复 main.rs 中失败的测试")
+```
+
+`python -m ultimate_coders.agent.sandbox_dsec [--check] [--json]` 打印与 doctor 相同的环境报告。凭证经沙箱的 deny-by-default 环境白名单流入（`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 会到达 agent，主机密钥不会）。完整参考、排障与测试映射见 [docs/dsec-sandbox.md](docs/dsec-sandbox.md)。
+
 ## CI
 
 共有十一套独立工作流，其中十套面向 `main` 的推送与 PR 运行，`metainfer-release-gate.yml` 仅手动触发。除 `ci-scripts.yml` 与手动门禁外都是路径过滤的 —— 只有列出的路径发生变化才会运行；工作流文件本身是权威来源：
