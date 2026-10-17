@@ -390,6 +390,56 @@ output = await manager.execute("修复 main.rs 中失败的测试")
 
 `python -m ultimate_coders.agent.sandbox_dsec [--check] [--json]` 打印与 doctor 相同的环境报告。凭证经沙箱的 deny-by-default 环境白名单流入（`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 会到达 agent，主机密钥不会）。完整参考、排障与测试映射见 [docs/dsec-sandbox.md](docs/dsec-sandbox.md)。
 
+### Hy-Memory 认知记忆后端
+
+[Hy-Memory](https://github.com/Tencent-Hunyuan/Hy-Memory)（腾讯混元，Apache-2.0，PyPI：`hy-memory`）是**认知记忆后端**：它从编码 Agent 的工具调用轨迹中自动抽取事实与可复用经验，并在 `coding` 场景下维护一条**代码版本演化链**（diff chain）——“最终保留了哪个实现”这类问题可以跨会话回答。它**不是编码 Agent**（`UC_CODING_AGENT` 没有它的取值），任何 Agent 都可以使用。它与仓库既有的 `ultimate_coders.memory` 层互补而非重复：那一层存放 Agent **显式写入**的内容，Hy-Memory 从轨迹**自动抽取**并附加版本链。
+
+```bash
+pip install "hy-memory==2.0.2"    # 可选依赖；未安装时所有入口优雅降级
+```
+
+配置（OpenAI 兼容端点；官方推荐 DeepSeek + DashScope 组合）：
+
+```bash
+export MEMORY_LLM_API_KEY="sk-..."       # 必填（或 OPENAI_API_KEY）
+export MEMORY_LLM_BASE_URL="https://api.deepseek.com"
+export MEMORY_LLM_MODEL="deepseek-chat"
+
+export MEMORY_EMBEDDER_API_KEY="sk-..."
+export MEMORY_EMBEDDER_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+export MEMORY_EMBEDDER_MODEL="text-embedding-v3"
+
+export MEMORY_MODE="pro"                 # lite / pro / ultra
+export MEMORY_DATA_DIR="/data/hy-memory"
+```
+
+进程内使用：
+
+```python
+from ultimate_coders.agent.hy_memory import CodingMemory
+
+mem = CodingMemory(user_id="jameryw",
+                   workspace_id="github.com/JameryW/UltimateCoders",
+                   branch="feat/hy-memory")
+mem.remember(messages)                   # {"success": True, "fact_ids": [...], ...}
+hits = mem.recall("search 超时最终用的哪个实现？")   # 永不抛异常
+mem.close()
+```
+
+`python -m ultimate_coders.agent.hy_memory --check [--json]` 打印启动报告（包安装、版本底线、端点存在性、客户端构造并关闭——无 API 费用；JSON 输出中密钥脱敏）。
+
+Docker 部署时合并 override，为每个服务转发 `MEMORY_*` 并在 `hymemory_data` 命名卷中持久化记忆。它**不钉任何 Agent**，因此可与 dsec 环境叠加（DeepSeek 同时充当记忆后端的 LLM 提供方）：
+
+```bash
+cp docker/.env.hymemory.example docker/.env   # 然后填入两个 key
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.hymemory.yml \
+  --profile app up --build
+```
+
+SDK 安装后，沙箱 MCP server 还会暴露 `recall_coding_memory` / `remember_coding_memory` 两个工具（`mcp` 与 `hy-memory` 包均可导入时才注册）。`MEMORY_*` 变量经与 `UC_*` 同一套 deny-by-default 白名单到达 agent 子进程。完整参考、排障表与测试映射见 [docs/hy-memory.md](docs/hy-memory.md)。
+
 ## CI
 
 共有十一套独立工作流，其中十套面向 `main` 的推送与 PR 运行，`metainfer-release-gate.yml` 仅手动触发。除 `ci-scripts.yml` 与手动门禁外都是路径过滤的 —— 只有列出的路径发生变化才会运行；工作流文件本身是权威来源：
@@ -441,6 +491,20 @@ output = await manager.execute("修复 main.rs 中失败的测试")
 | `UC_CODEX_WEB_SEARCH` | `disabled` | Codex 原生 web-search 模式；`stealth/ox-alpha` 会拒绝该 OpenAI 专属工具，应保持禁用 |
 | `UC_OPENROUTER_REASONING_EFFORT` | `low` | Codex 推理强度；`stealth/ox-alpha` 要求启用 reasoning |
 | `OPENROUTER_API_KEY` | - | opt-in Codex provider 使用的 OpenRouter API key |
+| `MEMORY_LLM_API_KEY` | - | Hy-Memory 认知记忆后端的抽取 LLM key（缺失时回退 `OPENAI_API_KEY`） |
+| `MEMORY_LLM_BASE_URL` | - | Hy-Memory 的 OpenAI 兼容 LLM 端点（推荐 DeepSeek） |
+| `MEMORY_LLM_MODEL` | - | Hy-Memory 事实/经验抽取的模型名 |
+| `MEMORY_EMBEDDER_API_KEY` | - | Hy-Memory 向量化 key（缺失时回退 `OPENAI_API_KEY`） |
+| `MEMORY_EMBEDDER_BASE_URL` | - | Hy-Memory 的 OpenAI 兼容 Embedder 端点 |
+| `MEMORY_EMBEDDER_MODEL` | - | Hy-Memory 向量化模型名 |
+| `MEMORY_EMBEDDING_DIMS` | - | Hy-Memory 向量维度（需与 Embedder 模型匹配） |
+| `MEMORY_MODE` | `pro` | Hy-Memory 模式：`lite`（仅原文向量化）/ `pro`（抽取 + reconcile）/ `ultra`（强制开图） |
+| `MEMORY_DATA_DIR` | - | Hy-Memory 本地存储根目录；Compose 将 `/data/hy-memory` 挂到持久卷 |
+| `MEMORY_ENABLE_GRAPH` | - | `pro` 模式下可选开启关系图（`ultra` 强制开启） |
+| `MEMORY_LOG_LEVEL` | - | Hy-Memory SDK 日志级别；`--json` doctor 路径默认设为 `ERROR` 以保 stdout 纯净 |
+| `UC_MEMORY_USER_ID` | `default` | MCP 工具的 Hy-Memory 一级隔离坐标 |
+| `UC_MEMORY_WORKSPACE` | - | MCP 工具的 Hy-Memory 仓库坐标 |
+| `UC_MEMORY_BRANCH` | - | MCP 工具的 Hy-Memory 分支坐标 |
 | `UC_SANDBOX_ENV_EXTRA` | - | 额外透传给 agent 子进程的环境变量，逗号分隔（`*` 后缀 = 前缀匹配）。agent 子进程采用 deny-by-default 白名单——仅基础系统变量、`UC_*`、代理变量与上表所列各 agent 凭据会从宿主环境继承。用该变量放宽白名单，启动时会记录日志。 |
 
 Docker Compose 默认凭据：
