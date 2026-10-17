@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/10-17-deepseek-search-fetch/prd.md", "reason": "Approved MVP: UC Search/Fetch client, Worker+OMP, key-gated, public HTTPS fetch"}
+{"file": ".trellis/tasks/10-17-deepseek-search-fetch/research/deepseek-responses-search-api.md", "reason": "Official /v1/tools/search and /v1/tools/fetch schemas, auth, errors, pricing"}
+{"file": ".trellis/tasks/10-17-deepseek-search-fetch/research/dsh-web-capability-and-uc.md", "reason": "Existing DeepSeek harness wiring to leave unchanged; env patterns"}
+{"file": ".trellis/spec/backend/omp-tools-spec.md", "reason": "OMP tool registration/schema conventions for bridge tools"}
+{"file": ".trellis/spec/backend/omp-rpc-server-spec.md", "reason": "Python↔TypeScript UCOrchestrator RPC bridge constraints"}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Worker capability advertising patterns"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error mapping and fail-closed conventions"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Python/TS test and naming standards"}

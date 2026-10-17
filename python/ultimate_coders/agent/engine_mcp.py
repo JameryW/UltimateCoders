@@ -38,6 +38,18 @@ except ImportError:
     Tool = None  # type: ignore[assignment,misc]
     TextContent = None  # type: ignore[assignment,misc]
 
+from ultimate_coders.agent.deepseek_web import (
+    FETCH_QPS,
+    SEARCH_QPS,
+    TOOL_FETCH,
+    TOOL_SEARCH,
+    DeepSeekWebError,
+    fetch_tool_text,
+    search_tool_text,
+)
+from ultimate_coders.agent.deepseek_web import (
+    is_configured as deepseek_web_configured,
+)
 from ultimate_coders.agent.hy_memory import CodingMemory, hy_memory_available
 from ultimate_coders.engine import Engine
 
@@ -65,6 +77,70 @@ def _memory_backend() -> CodingMemory | None:
         branch=os.environ.get("UC_MEMORY_BRANCH") or None,
     )
     return _MEMORY_BACKEND
+
+
+def _deepseek_web_tools() -> list:
+    """DeepSeek Search/Fetch tools — advertised only when DEEPSEEK_API_KEY is set."""
+    if not deepseek_web_configured() or Server is None:
+        return []
+    return [
+        Tool(
+            name=TOOL_SEARCH,
+            description=(
+                "Search the public web via DeepSeek's official Search API "
+                "(POST /v1/tools/search). Returns ranked titles, URLs, snippets. "
+                f"Account QPS {SEARCH_QPS}/{FETCH_QPS}; "
+                "billed per successful request when grace ends. "
+                "Requires DEEPSEEK_API_KEY."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Search query (1–128 chars). Supports site:, -site:, "
+                            'quoted phrases, lang:, after:/before:'
+                        ),
+                    },
+                    "count": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Number of results (1–50, default 10)",
+                    },
+                    "ori_question": {
+                        "type": "string",
+                        "description": "Original user question (optional, 1–128 chars)",
+                    },
+                    "need_content": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Include page content when available",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name=TOOL_FETCH,
+            description=(
+                "Fetch one public https URL via DeepSeek's official Fetch API "
+                "(POST /v1/tools/fetch). Returns title + Markdown. "
+                "UC rejects non-https, userinfo, and private/metadata targets. "
+                "Requires DEEPSEEK_API_KEY."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Public https URL to fetch (no username/password)",
+                    },
+                },
+                "required": ["url"],
+            },
+        ),
+    ]
 
 
 def _memory_tools() -> list:
@@ -235,6 +311,7 @@ def _create_server(engine: Engine) -> object:
                 },
             ),
             *_memory_tools(),
+            *_deepseek_web_tools(),
         ]
 
     @server.call_tool()
@@ -249,9 +326,34 @@ def _create_server(engine: Engine) -> object:
             return await _read_memory(engine, arguments)
         if name == "write_memory":
             return await _write_memory(engine, arguments)
+        if name == TOOL_SEARCH:
+            return await _deepseek_web_search(arguments)
+        if name == TOOL_FETCH:
+            return await _deepseek_web_fetch(arguments)
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
     return server
+
+
+async def _deepseek_web_search(args: dict) -> list[TextContent]:
+    try:
+        text = search_tool_text(
+            query=args["query"],
+            count=int(args.get("count") or 10),
+            ori_question=args.get("ori_question"),
+            need_content=bool(args.get("need_content") or False),
+        )
+    except (DeepSeekWebError, KeyError, TypeError, ValueError) as exc:
+        return [TextContent(type="text", text=f"DeepSeek web search error: {exc}")]
+    return [TextContent(type="text", text=text)]
+
+
+async def _deepseek_web_fetch(args: dict) -> list[TextContent]:
+    try:
+        text = fetch_tool_text(args["url"])
+    except (DeepSeekWebError, KeyError, TypeError, ValueError) as exc:
+        return [TextContent(type="text", text=f"DeepSeek web fetch error: {exc}")]
+    return [TextContent(type="text", text=text)]
 
 
 async def _search_code(engine: Engine, args: dict) -> list[TextContent]:

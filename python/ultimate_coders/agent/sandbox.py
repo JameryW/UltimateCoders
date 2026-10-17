@@ -20,6 +20,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from ultimate_coders.agent.deepseek_web import (
+    DEEPSEEK_WEB_ENV_ALLOWLIST as _DEEPSEEK_WEB_ENV_ALLOWLIST,
+)
 from ultimate_coders.agent.hy_memory import HY_MEMORY_ENV_ALLOWLIST as _HY_MEMORY_ENV_ALLOWLIST
 from ultimate_coders.agent.types import ChangeType, FileChange, StepUsage, SubtaskUsage
 
@@ -82,13 +85,18 @@ SHARED_ENV_ALLOWLIST: tuple[str, ...] = (
 #: whose in-sandbox MCP tools talk to the coding-memory backend needs them,
 #: exactly like the UC_* control plane. The tuple is imported from the
 #: integration module so the two copies can never drift apart.
-SHARED_ENV_ALLOWLIST = (*SHARED_ENV_ALLOWLIST, *_HY_MEMORY_ENV_ALLOWLIST)
+SHARED_ENV_ALLOWLIST = (
+    *SHARED_ENV_ALLOWLIST,
+    *_HY_MEMORY_ENV_ALLOWLIST,
+    # DeepSeek Search/Fetch MCP tools (engine_mcp) need the key on every
+    # coding-agent subprocess, not only deepseek-harness / dsec.
+    *_DEEPSEEK_WEB_ENV_ALLOWLIST,
+)
 
-#: DeepSeek credential/endpoint variables. Single-sourced: both the
-#: ``deepseek-harness`` agent and the ``dsec`` sandbox environment (same
-#: adapter, registered by ``ultimate_coders.agent.sandbox_dsec``) map to this
-#: tuple so the two entries can never drift apart.
-_DEEPSEEK_ENV_ALLOWLIST: tuple[str, ...] = ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL")
+#: DeepSeek credential/endpoint variables for the harness / dsec adapters.
+#: Same names as DEEPSEEK_WEB_ENV_ALLOWLIST; kept as an alias so adapter
+#: entries stay explicit and never drift from the shared web-tool list.
+_DEEPSEEK_ENV_ALLOWLIST: tuple[str, ...] = _DEEPSEEK_WEB_ENV_ALLOWLIST
 
 #: Per-adapter credential / endpoint extensions, keyed by CANONICAL agent
 #: name (aliases are normalised through the plugin registry first).
