@@ -624,7 +624,7 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_MEMORY_USER_ID` | `default` | Hy-Memory isolation coordinate (level 1) for the MCP tools |
 | `UC_MEMORY_WORKSPACE` | - | Hy-Memory workspace coordinate (repository) for the MCP tools |
 | `UC_MEMORY_BRANCH` | - | Hy-Memory branch coordinate for the MCP tools |
-| `UC_SANDBOX_ENV_EXTRA` | - | Extra env vars passed to agent subprocesses, comma-separated (`*` suffix = prefix match). Agent subprocesses get a deny-by-default allowlist — only base system vars, `UC_*`, proxy vars, and the per-agent credentials listed above are inherited from the host environment. Use this to widen the list; it is logged at worker startup. |
+| `UC_SANDBOX_ENV_EXTRA` | - | Extra env vars passed to agent subprocesses, comma-separated (`*` suffix = prefix match). Agent subprocesses get a deny-by-default allowlist — only base system vars, `UC_*`, `MEMORY_*` (the hy-memory backend), proxy vars, and the per-agent credentials listed above are inherited from the host environment. Use this to widen the list; it is logged at worker startup. |
 
 Docker Compose default credentials:
 
@@ -651,16 +651,52 @@ cargo test --features indexing
 # Rust tests with real storage (requires Docker Compose)
 cargo test --features storage
 
-# Python tests and runtime dependencies
+# Python tests — the maturin build backend compiles the Rust extension
+# as part of the install, so this one command is enough:
 python -m pip install -e ".[test]"
 pytest tests/python/ -v
-
-# Python tests with Rust extension
-python -m pip install -e ".[test]" && pytest tests/python/ -v
 
 # UC Orchestrator tests
 cd packages/uc-orchestrator && npx tsc --noEmit
 ```
+
+The editable install needs the Rust toolchain (`cargo`), `protobuf-compiler`
+(`sudo apt-get install -y protobuf-compiler`) and `patchelf` (maturin bundles
+libssl/libcrypto beside the extension). CI runs the no-install equivalent:
+preinstall the runtime dependencies, build the extension into a venv, then
+`PYTHONPATH=python pytest tests/python/ -v` — this is also how you run the
+tests against a source tree without installing the project.
+
+#### Integration tests (opt-in)
+
+Tests marked `@pytest.mark.integration` skip unless `--integration` is
+passed. They exercise real infrastructure; the same tests run for real in
+CI's "Live NATS dispatch tests" step:
+
+```bash
+# 8 dispatch/dedup tests against a live JetStream broker
+nats-server -js -sd /tmp/nats-js -p 4222 -m 8222 &
+PYTHONPATH=python pytest tests/python/test_nats_live_dispatch.py \
+    tests/python/test_nats_dedup_integration.py --integration
+
+# PostgreSQL cold start + concurrent records (creates/drops a throwaway
+# database; needs the project install, which brings psycopg[pool])
+docker run -d --name uc-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16
+UC_RUNTIME_TEST_PG_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres \
+    PYTHONPATH=python pytest tests/python/test_runtime_state.py --integration
+
+# Full-stack terminal-outbox durability: Rust Gateway + NATS + PostgreSQL
+UC_NATS_URL=nats://127.0.0.1:4222 \
+UC_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/uc_gateway_test \
+UC_TASK_BACKEND=postgres ./target/debug/uc-grpc-server &
+UC_RUNTIME_TEST_NATS_URL=nats://127.0.0.1:4222 \
+UC_RUNTIME_TEST_GATEWAY_DB=postgresql://postgres:postgres@127.0.0.1:5432/uc_gateway_test \
+    PYTHONPATH=python pytest tests/python/test_inference_runtime_live.py --integration
+```
+
+Two tests in `test_runtime_state.py` are additionally gated on
+`sys.platform == "win32"` — Windows file sharing-violation semantics do not
+exist on Linux, so those only execute on Windows.
 
 ### Linting
 

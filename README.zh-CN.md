@@ -505,7 +505,7 @@ SDK 安装后，沙箱 MCP server 还会暴露 `recall_coding_memory` / `remembe
 | `UC_MEMORY_USER_ID` | `default` | MCP 工具的 Hy-Memory 一级隔离坐标 |
 | `UC_MEMORY_WORKSPACE` | - | MCP 工具的 Hy-Memory 仓库坐标 |
 | `UC_MEMORY_BRANCH` | - | MCP 工具的 Hy-Memory 分支坐标 |
-| `UC_SANDBOX_ENV_EXTRA` | - | 额外透传给 agent 子进程的环境变量，逗号分隔（`*` 后缀 = 前缀匹配）。agent 子进程采用 deny-by-default 白名单——仅基础系统变量、`UC_*`、代理变量与上表所列各 agent 凭据会从宿主环境继承。用该变量放宽白名单，启动时会记录日志。 |
+| `UC_SANDBOX_ENV_EXTRA` | - | 额外透传给 agent 子进程的环境变量，逗号分隔（`*` 后缀 = 前缀匹配）。agent 子进程采用 deny-by-default 白名单——仅基础系统变量、`UC_*`、`MEMORY_*`（hy-memory 后端）、代理变量与上表所列各 agent 凭据会从宿主环境继承。用该变量放宽白名单，启动时会记录日志。 |
 
 Docker Compose 默认凭据：
 
@@ -532,13 +532,49 @@ cargo test --features indexing
 # 使用真实存储（需要 Docker Compose）
 cargo test --features storage
 
-# Python 测试
+# Python 测试——maturin 构建后端会在安装时编译 Rust 扩展，
+# 这一条命令即可：
 python -m pip install -e ".[test]"
 pytest tests/python/ -v
 
 # UC Orchestrator 测试
 cd packages/uc-orchestrator && npx tsc --noEmit
 ```
+
+可编辑安装需要 Rust 工具链（`cargo`）、`protobuf-compiler`
+（`sudo apt-get install -y protobuf-compiler`）与 `patchelf`（maturin 会把
+libssl/libcrypto 捆绑到扩展旁）。CI 走的是不安装项目的等价路径：先显式装好
+运行时依赖、在 venv 中构建扩展，再 `PYTHONPATH=python pytest tests/python/ -v`
+——不安装项目、直接对源码树跑测试时也用这个方式。
+
+#### 集成测试（opt-in）
+
+标记为 `@pytest.mark.integration` 的测试在不传 `--integration` 时一律跳过。
+它们依赖真实基础设施；CI 的 "Live NATS dispatch tests" 步骤跑的正是其中
+真实 broker 部分：
+
+```bash
+# 对真实 JetStream broker 跑 8 个派发/去重测试
+nats-server -js -sd /tmp/nats-js -p 4222 -m 8222 &
+PYTHONPATH=python pytest tests/python/test_nats_live_dispatch.py \
+    tests/python/test_nats_dedup_integration.py --integration
+
+# PostgreSQL 冷启动 + 并发记录（自动建库/删库；需项目安装，自带 psycopg[pool]）
+docker run -d --name uc-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16
+UC_RUNTIME_TEST_PG_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres \
+    PYTHONPATH=python pytest tests/python/test_runtime_state.py --integration
+
+# 全栈终态 outbox 持久化：Rust Gateway + NATS + PostgreSQL
+UC_NATS_URL=nats://127.0.0.1:4222 \
+UC_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/uc_gateway_test \
+UC_TASK_BACKEND=postgres ./target/debug/uc-grpc-server &
+UC_RUNTIME_TEST_NATS_URL=nats://127.0.0.1:4222 \
+UC_RUNTIME_TEST_GATEWAY_DB=postgresql://postgres:postgres@127.0.0.1:5432/uc_gateway_test \
+    PYTHONPATH=python pytest tests/python/test_inference_runtime_live.py --integration
+```
+
+`test_runtime_state.py` 中另有 2 个测试额外按 `sys.platform == "win32"`
+门控——Windows 文件共享冲突语义在 Linux 上不存在，因此只在 Windows 上执行。
 
 ### Lint
 
