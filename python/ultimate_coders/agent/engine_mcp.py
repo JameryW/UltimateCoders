@@ -29,10 +29,112 @@ try:
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent, Tool
 except ImportError:
-    # ponytail: mcp package is optional — only needed for sandbox agent tools
+    # ponytail: mcp package is optional — only needed for sandbox agent tools.
+    # The module contract must stay total: every name the handlers and
+    # descriptors reference is defined either way (None when the package is
+    # missing), so a function-level caller never hits a NameError — the gates
+    # below hide the tools instead.
     Server = None  # type: ignore[assignment,misc]
+    Tool = None  # type: ignore[assignment,misc]
+    TextContent = None  # type: ignore[assignment,misc]
 
+from ultimate_coders.agent.hy_memory import CodingMemory, hy_memory_available
 from ultimate_coders.engine import Engine
+
+#: Lazily-built coding-memory backend for the hy-memory MCP tools. None
+#: until the first tool call; stays None (tools hidden) when the optional
+#: hy-memory package is not installed.
+_MEMORY_BACKEND: CodingMemory | None = None
+
+
+def _memory_backend() -> CodingMemory | None:
+    """Build (once) the CodingMemory for this MCP server process.
+
+    Isolation coordinates come from the environment, with per-call
+    overrides in the tool arguments. Returns None when hy-memory is not
+    installed — the tools are then hidden from list_tools().
+    """
+    global _MEMORY_BACKEND
+    if _MEMORY_BACKEND is not None or not hy_memory_available():
+        return _MEMORY_BACKEND
+    import os
+
+    _MEMORY_BACKEND = CodingMemory(
+        user_id=os.environ.get("UC_MEMORY_USER_ID", "default"),
+        workspace_id=os.environ.get("UC_MEMORY_WORKSPACE") or None,
+        branch=os.environ.get("UC_MEMORY_BRANCH") or None,
+    )
+    return _MEMORY_BACKEND
+
+
+def _memory_tools() -> list:
+    """Tool descriptors for the hy-memory backend (empty when unavailable).
+
+    Hidden both when the optional ``hy-memory`` package is missing AND when
+    the optional ``mcp`` package is missing (``Server`` is None then, and
+    ``Tool`` / ``TextContent`` are None too — the import guard defines them
+    either way so callers never hit a NameError).
+    """
+    if not hy_memory_available() or Server is None:
+        return []
+    return [
+        Tool(
+            name="recall_coding_memory",
+            description="Recall coding memory for this repository: extracted "
+            "facts, reusable experiences and the code version-evolution "
+            "chain. Use before starting a task that resembles earlier work.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What to recall (natural language)",
+                    },
+                    "workspace_id": {
+                        "type": "string",
+                        "description": "Repo scope, e.g. github.com/org/repo "
+                        "(defaults to UC_MEMORY_WORKSPACE)",
+                    },
+                    "branch": {
+                        "type": "string",
+                        "description": "Branch scope (defaults to UC_MEMORY_BRANCH)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Max facts/experiences",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="remember_coding_memory",
+            description="Record a completed task trace (messages including "
+            "tool calls) into coding memory. The backend extracts the fact "
+            "of what was done plus reusable experiences, and appends real "
+            "diffs to the version-evolution chain.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "messages": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "OpenAI-format messages including tool calls",
+                    },
+                    "workspace_id": {
+                        "type": "string",
+                        "description": "Repo scope (defaults to UC_MEMORY_WORKSPACE)",
+                    },
+                    "branch": {
+                        "type": "string",
+                        "description": "Branch scope (defaults to UC_MEMORY_BRANCH)",
+                    },
+                },
+                "required": ["messages"],
+            },
+        ),
+    ]
 
 
 def _create_server(engine: Engine) -> object:
@@ -132,12 +234,17 @@ def _create_server(engine: Engine) -> object:
                     "required": ["key", "content"],
                 },
             ),
+            *_memory_tools(),
         ]
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         if name == "search_code":
             return await _search_code(engine, arguments)
+        if name == "recall_coding_memory":
+            return await _recall_coding_memory(engine, arguments)
+        if name == "remember_coding_memory":
+            return await _remember_coding_memory(engine, arguments)
         if name == "read_memory":
             return await _read_memory(engine, arguments)
         if name == "write_memory":
@@ -207,6 +314,72 @@ async def _write_memory(engine: Engine, args: dict) -> list[TextContent]:
     )
     status = "ok" if result else "failed"
     return [TextContent(type="text", text=f"Memory '{key}' written ({status}).")]
+
+
+async def _recall_coding_memory(engine: Engine, args: dict) -> list[TextContent]:
+    backend = _memory_backend()
+    if backend is None:
+        return [TextContent(type="text", text="hy-memory backend unavailable.")]
+    query = args["query"]
+    workspace_id = args.get("workspace_id") or backend.workspace_id
+    branch = args.get("branch") or backend.branch
+    limit = int(args.get("limit") or 5)
+    scoped = CodingMemory(
+        user_id=backend.user_id,
+        workspace_id=workspace_id,
+        branch=branch,
+        client=backend.client,
+    )
+    hits = scoped.recall(query, limit=limit)
+    if not hits["ok"]:
+        return [TextContent(type="text", text=f"Coding memory recall failed: {hits['error']}")]
+
+    lines: list[str] = []
+    for fact in hits["facts"]:
+        statement = fact.get("statement") or fact.get("content") or str(fact)
+        lines.append(f"[fact] {statement}")
+    for exp in hits["experiences"]:
+        task = exp.get("task") or exp.get("content") or str(exp)
+        solution = exp.get("solution", "")
+        lines.append(f"[experience] {task}" + (f" -> {solution}" if solution else ""))
+    chain = hits.get("chain_block")
+    if chain:
+        text = chain.get("text") or chain.get("summary") or str(chain)
+        lines.append(f"[chain] {text}")
+    if not lines:
+        return [TextContent(type="text", text="No coding memory matched this query.")]
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _remember_coding_memory(engine: Engine, args: dict) -> list[TextContent]:
+    backend = _memory_backend()
+    if backend is None:
+        return [TextContent(type="text", text="hy-memory backend unavailable.")]
+    messages = args.get("messages") or []
+    if not messages:
+        return [TextContent(type="text", text="No messages to remember.")]
+    workspace_id = args.get("workspace_id") or backend.workspace_id
+    branch = args.get("branch") or backend.branch
+    scoped = CodingMemory(
+        user_id=backend.user_id,
+        workspace_id=workspace_id,
+        branch=branch,
+        client=backend.client,
+    )
+    result = scoped.remember(messages)
+    if not result.get("success"):
+        return [TextContent(type="text", text=f"Coding memory write failed: {result}")]
+    facts = len(result.get("fact_ids") or [])
+    experiences = len(result.get("experience_ids") or [])
+    return [
+        TextContent(
+            type="text",
+            text=(
+                f"Remembered (scene={result.get('scene')}): "
+                f"{facts} fact(s), {experiences} experience(s)."
+            ),
+        )
+    ]
 
 
 def main() -> None:

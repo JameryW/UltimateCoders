@@ -20,6 +20,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from ultimate_coders.agent.hy_memory import HY_MEMORY_ENV_ALLOWLIST as _HY_MEMORY_ENV_ALLOWLIST
 from ultimate_coders.agent.types import ChangeType, FileChange, StepUsage, SubtaskUsage
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,13 @@ SHARED_ENV_ALLOWLIST: tuple[str, ...] = (
     "https_proxy",
     "no_proxy",
 )
+
+#: Hy-Memory backend variables (see ultimate_coders.agent.hy_memory). These
+#: are shared infrastructure, not per-agent credentials: any sandboxed agent
+#: whose in-sandbox MCP tools talk to the coding-memory backend needs them,
+#: exactly like the UC_* control plane. The tuple is imported from the
+#: integration module so the two copies can never drift apart.
+SHARED_ENV_ALLOWLIST = (*SHARED_ENV_ALLOWLIST, *_HY_MEMORY_ENV_ALLOWLIST)
 
 #: DeepSeek credential/endpoint variables. Single-sourced: both the
 #: ``deepseek-harness`` agent and the ``dsec`` sandbox environment (same

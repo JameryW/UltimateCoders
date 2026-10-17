@@ -481,6 +481,77 @@ sandbox's deny-by-default env allowlist (`DEEPSEEK_API_KEY`,
 troubleshooting (credentials file shape, `DEEPSEEK_BASE_URL` gateways) and
 the test map.
 
+### Hy-Memory Cognitive Memory Backend
+
+[Hy-Memory](https://github.com/Tencent-Hunyuan/Hy-Memory) (Tencent Hunyuan,
+Apache-2.0, PyPI: `hy-memory`) is the **cognitive memory backend**: it
+extracts facts and reusable experiences from coding agents' tool-call
+trajectures automatically, and in the `coding` scene maintains a **code
+version-evolution chain** (diff chain) — questions like "which implementation
+survived in the end?" can be answered across sessions. It is **not a coding
+agent** (there is no `UC_CODING_AGENT` value for it); every agent can use it.
+It complements — not duplicates — the existing `ultimate_coders.memory`
+layer: that one stores what agents *explicitly* write, Hy-Memory extracts
+from traces *automatically* plus the version chain.
+
+```bash
+pip install "hy-memory==2.0.2"    # optional dependency; every entry point
+                                  # degrades gracefully when it is missing
+```
+
+Configuration (OpenAI-compatible endpoints; DeepSeek + DashScope is the
+recommended pairing):
+
+```bash
+export MEMORY_LLM_API_KEY="sk-..."       # required (or OPENAI_API_KEY)
+export MEMORY_LLM_BASE_URL="https://api.deepseek.com"
+export MEMORY_LLM_MODEL="deepseek-chat"
+
+export MEMORY_EMBEDDER_API_KEY="sk-..."
+export MEMORY_EMBEDDER_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+export MEMORY_EMBEDDER_MODEL="text-embedding-v3"
+
+export MEMORY_MODE="pro"                 # lite / pro / ultra
+export MEMORY_DATA_DIR="/data/hy-memory"
+```
+
+In-process use:
+
+```python
+from ultimate_coders.agent.hy_memory import CodingMemory
+
+mem = CodingMemory(user_id="jameryw",
+                   workspace_id="github.com/JameryW/UltimateCoders",
+                   branch="feat/hy-memory")
+mem.remember(messages)                   # {"success": True, "fact_ids": [...], ...}
+hits = mem.recall("which search-timeout implementation survived?")  # never raises
+mem.close()
+```
+
+`python -m ultimate_coders.agent.hy_memory --check [--json]` prints the boot
+report (package, version floor, endpoint presence, client construct-and-close
+— no API cost; keys masked in JSON output).
+
+With Docker, merge the override to forward `MEMORY_*` to every service and
+persist memory in the `hymemory_data` volume. It pins **no agent**, so it
+stacks with the dsec environment (DeepSeek doubles as the memory backend's
+LLM provider):
+
+```bash
+cp docker/.env.hymemory.example docker/.env   # then set the two keys
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.hymemory.yml \
+  --profile app up --build
+```
+
+When the SDK is installed, the sandbox MCP server also exposes
+`recall_coding_memory` / `remember_coding_memory` (gated on both `mcp` and
+`hy-memory` being importable). `MEMORY_*` variables reach agent subprocesses
+through the same deny-by-default allowlist as `UC_*`. See
+[docs/hy-memory.md](docs/hy-memory.md) for the full reference, the
+troubleshooting table and the test map.
+
 ## CI
 
 Eleven independent workflows are defined. Ten run on pushes and pull requests targeting `main`; `metainfer-release-gate.yml` is manual-only. All but `ci-scripts.yml` and the manual gate are path-filtered, so they only run when one of the listed paths changes; the workflow files themselves are the source of truth:
@@ -539,6 +610,20 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_CODEX_WEB_SEARCH` | `disabled` | Codex native web-search mode; keep `disabled` for `stealth/ox-alpha`, which rejects that OpenAI-specific tool |
 | `UC_OPENROUTER_REASONING_EFFORT` | `low` | Codex reasoning effort; `stealth/ox-alpha` requires reasoning to be enabled |
 | `OPENROUTER_API_KEY` | - | OpenRouter API key used by the opt-in Codex provider |
+| `MEMORY_LLM_API_KEY` | - | Hy-Memory cognitive-memory extraction LLM key (falls back to `OPENAI_API_KEY`) |
+| `MEMORY_LLM_BASE_URL` | - | OpenAI-compatible LLM endpoint for Hy-Memory (DeepSeek recommended) |
+| `MEMORY_LLM_MODEL` | - | LLM model slug for Hy-Memory fact/experience extraction |
+| `MEMORY_EMBEDDER_API_KEY` | - | Hy-Memory embedder key (falls back to `OPENAI_API_KEY`) |
+| `MEMORY_EMBEDDER_BASE_URL` | - | OpenAI-compatible embedder endpoint for Hy-Memory |
+| `MEMORY_EMBEDDER_MODEL` | - | Embedder model slug for Hy-Memory |
+| `MEMORY_EMBEDDING_DIMS` | - | Embedding dimension for Hy-Memory (match the embedder model) |
+| `MEMORY_MODE` | `pro` | Hy-Memory mode: `lite` (raw embedding only) / `pro` (extraction + reconcile) / `ultra` (graph always on) |
+| `MEMORY_DATA_DIR` | - | Hy-Memory local storage root; Compose mounts `/data/hy-memory` on a persistent volume |
+| `MEMORY_ENABLE_GRAPH` | - | Optional relation graph in `pro` mode (`ultra` forces it on) |
+| `MEMORY_LOG_LEVEL` | - | Hy-Memory SDK log level; the `--json` doctor path defaults it to `ERROR` to keep stdout pure |
+| `UC_MEMORY_USER_ID` | `default` | Hy-Memory isolation coordinate (level 1) for the MCP tools |
+| `UC_MEMORY_WORKSPACE` | - | Hy-Memory workspace coordinate (repository) for the MCP tools |
+| `UC_MEMORY_BRANCH` | - | Hy-Memory branch coordinate for the MCP tools |
 | `UC_SANDBOX_ENV_EXTRA` | - | Extra env vars passed to agent subprocesses, comma-separated (`*` suffix = prefix match). Agent subprocesses get a deny-by-default allowlist — only base system vars, `UC_*`, proxy vars, and the per-agent credentials listed above are inherited from the host environment. Use this to widen the list; it is logged at worker startup. |
 
 Docker Compose default credentials:
