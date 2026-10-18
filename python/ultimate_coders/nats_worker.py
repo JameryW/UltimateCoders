@@ -605,6 +605,10 @@ class NatsWorker:
         # Capacity semaphore — lazy-constructed in _init_components (Semaphore
         # binds a loop on Py3.9). Caps concurrent subtask executions.
         self._exec_semaphore: asyncio.Semaphore | None = None
+        # Task-level caps (F7). Read once from the environment on first use so
+        # a long-lived worker cannot change its budget mid-flight by editing
+        # the env; explicit assignment wins (tests and embeddings).
+        self._budget_limits_obj: Any | None = None
         # ponytail: F53 — consecutive gRPC heartbeat failures; at the threshold
         # the worker forces gateway re-registration (see _heartbeat_loop).
         self._consecutive_heartbeat_failures: int = 0
@@ -2999,6 +3003,65 @@ class NatsWorker:
                 logger.warning("Result outbox replay deferred", exc_info=True)
             await asyncio.sleep(5)
 
+    def _budget_limits(self) -> Any:
+        """Caps for task-level budgets, resolved once per worker."""
+        if self._budget_limits_obj is None:
+            from ultimate_coders.budget import BudgetLimits
+
+            self._budget_limits_obj = BudgetLimits.from_env()
+        return self._budget_limits_obj
+
+    async def _report_refusal(
+        self,
+        *,
+        state: Any,
+        key: str,
+        attempt: int,
+        task_id: str,
+        subtask_id: str,
+        summary: str,
+        data: dict[str, Any],
+        js_msg: Any | None,
+    ) -> None:
+        """Publish a terminal refusal for work that never executed.
+
+        Refusals (contract changed, budget exhausted) share one shape: a
+        ``subtask_failed`` with ``retryable`` false, persisted under the
+        logical outcome key so a redelivery does not re-decide, ACKed so the
+        broker stops resending, and delivered when it is still current.
+        """
+        from ultimate_coders.outbox import OutcomeOutbox, outcome_fingerprint
+
+        payload = {
+            "worker_id": self._worker.worker_id if self._worker else "",
+            "summary": summary,
+            "success": False,
+            "error": summary,
+            "attempt_id": attempt,
+            "retryable": False,
+            **data,
+        }
+        event = _make_task_event_payload("subtask_failed", task_id, subtask_id, payload)
+        failed_task = self._make_subtask_result_task(
+            task_id, subtask_id, "Failed", summary, dispatch_retry_count=attempt
+        )
+        update = _make_task_update_payload(failed_task, partial=True)
+        fingerprint = outcome_fingerprint(event, update)
+        event["message_id"] = f"outcome:{key}:{attempt}:{fingerprint[:12]}"
+        update["message_id"] = f"outcome-update:{key}:{attempt}:{fingerprint[:12]}"
+        record = await asyncio.to_thread(
+            OutcomeOutbox(state).store,
+            key,
+            attempt=attempt,
+            fingerprint=fingerprint,
+            event=event,
+            update=update,
+        )
+        if js_msg is not None:
+            await self._js_ack_safe(js_msg, ack=True)
+        if record.get("attempt") == attempt and not record.get("delivered"):
+            await self._deliver_outcome(key, record)
+
     async def _execute_and_report_body(
         self,
         subtask: Subtask,
@@ -3042,37 +3105,20 @@ class NatsWorker:
                     f"Task contract changed (v{contract.previous_version} -> "
                     f"v{contract.version}); re-acceptance required"
                 )
-                data = {
-                    "worker_id": self._worker.worker_id if self._worker else "",
-                    "summary": summary,
-                    "success": False,
-                    "error": summary,
-                    "attempt_id": attempt,
-                    "retryable": False,
-                    "contract_changed": True,
-                    "contract_version": contract.version,
-                    "contract_previous_version": contract.previous_version,
-                }
-                event = _make_task_event_payload("subtask_failed", task_id, subtask_id, data)
-                failed_task = self._make_subtask_result_task(
-                    task_id, subtask_id, "Failed", summary, dispatch_retry_count=attempt
-                )
-                update = _make_task_update_payload(failed_task, partial=True)
-                fp = outcome_fingerprint(event, update)
-                event["message_id"] = f"outcome:{key}:{attempt}:{fp[:12]}"
-                update["message_id"] = f"outcome-update:{key}:{attempt}:{fp[:12]}"
-                record = await asyncio.to_thread(
-                    outbox.store,
-                    key,
+                await self._report_refusal(
+                    state=state,
+                    key=key,
                     attempt=attempt,
-                    fingerprint=fp,
-                    event=event,
-                    update=update,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    summary=summary,
+                    data={
+                        "contract_changed": True,
+                        "contract_version": contract.version,
+                        "contract_previous_version": contract.previous_version,
+                    },
+                    js_msg=js_msg,
                 )
-                if js_msg is not None:
-                    await self._js_ack_safe(js_msg, ack=True)
-                if record.get("attempt") == attempt and not record.get("delivered"):
-                    await self._deliver_outcome(key, record)
                 logger.warning(
                     "Subtask %s refused: contract changed v%s -> v%s",
                     subtask_id,
@@ -3094,6 +3140,42 @@ class NatsWorker:
                 if js_msg is not None:
                     await self._js_ack_safe(js_msg, ack=True)
                 return
+            # Budget gate (F7). Checked before a sandbox is created, not after
+            # the spend: the point is to not start work that cannot be paid
+            # for. With no cap configured the gate is skipped entirely -- the
+            # default path stays byte-identical and pays no state-store write
+            # per subtask (admission is a durable read-modify-write, and one
+            # per subtask would serialize concurrent starts).
+            from ultimate_coders.budget import TaskBudgetLedger
+
+            ledger = None
+            limits = self._budget_limits()
+            if not limits.unlimited:
+                ledger = TaskBudgetLedger(state, limits)
+                budget = await asyncio.to_thread(ledger.admit, task_id)
+                if budget.exhausted:
+                    summary = (
+                        f"Task budget exhausted ({budget.reason}); "
+                        f"{budget.tokens_used} tokens, {budget.cost_used_usd:.4f} USD, "
+                        f"{budget.elapsed_seconds:.0f}s spent over {budget.executions} "
+                        "executions; raise the limit and re-dispatch"
+                    )
+                    await self._report_refusal(
+                        state=state,
+                        key=key,
+                        attempt=attempt,
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        summary=summary,
+                        data={
+                            "budget_exhausted": True,
+                            "budget_reason": budget.reason,
+                            "budget": budget.to_dict(),
+                        },
+                        js_msg=js_msg,
+                    )
+                    logger.warning("Subtask %s refused: %s", subtask_id, summary)
+                    return
             import socket
 
             from ultimate_coders.runtime_state import process_identity, process_matches
@@ -3155,6 +3237,16 @@ class NatsWorker:
                 result = SubtaskResult(
                     subtask_id=subtask_id, success=False, summary=str(exc)[:2000]
                 )
+            # Record the spend even when the task was cancelled below: the
+            # tokens were burned either way, and a ledger that only counts
+            # successes under-reports precisely the expensive failures.
+            if ledger is not None:
+                try:
+                    await asyncio.to_thread(
+                        ledger.record, task_id, result.usage, subtask_id=subtask_id
+                    )
+                except Exception:  # pragma: no cover - accounting must not fail work
+                    logger.warning("Budget accounting failed for %s", task_id, exc_info=True)
             if task_id in self._cancelled_task_ids:
                 if js_msg is not None:
                     await self._js_ack_safe(js_msg, ack=True)

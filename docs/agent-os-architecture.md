@@ -92,6 +92,14 @@
   循环，把 `loop_detected` 写入终态失败事件并关闭外层 dispatch 重试
   （`tests/python/test_progress_detector.py`）。它只判定「是否还值得再试」，
   不决定「改做什么」——本仓库没有 replan 原语，编造一个只是装饰。
+- **任务级预算账本**：`budget.py` 在每次执行前做一次准入、执行后按上报记一笔账，
+  三种维度独立（token / 成本 / 墙钟时间，`UC_TASK_TOKEN_BUDGET` /
+  `UC_TASK_COST_BUDGET_USD` / `UC_TASK_TIME_BUDGET_SECS`）。耗尽时**在沙箱创建前**
+  拒绝，终态事件带 `budget_exhausted` 与用量，账本本身保留——提高上限后用更高
+  attempt 重新派发即可继续（`tests/python/test_budget_ledger.py`）。两条诚实边界：
+  未上报的 usage 计入 `unreported` 而**不当作 0**，因此所有总量都是下界；准入在
+  执行前检查，已在飞的 N 个子任务仍会完成，最坏超额为「每在飞子任务一份」。
+  未配置任何上限时完全不读写状态账本，默认路径零开销。
 - **终态 outbox 的逻辑身份**：`result_outbox` 的键收敛为 `task:subtask`，
   attempt 存于记录内——更高 attempt 取代旧结果、迟到的低 attempt 不覆盖、
   同 attempt 同内容指纹视为重发。消息 id 含（attempt, 内容指纹），因此新结果
@@ -101,7 +109,6 @@
 
 | 缺口 | 现状 | 升级方向 |
 |---|---|---|
-| **预算与配额** | 无任务级预算账本 | 预算耗尽停止新执行并保存状态（F7） |
 | **模型路由** | 每阶段固定 agent/模型 | 按阶段与风险选择模型与推理预算；失败分类决定是否值得再调模型 |
 
 ## 6. Context Compiler（P1b，第一切片已落地）
@@ -139,7 +146,7 @@
 | F4 | 外部工具返回恶意指令 | env allowlist 与凭证隔离测试 | 部分（注入内容本身未测） |
 | F5 | 两个 Agent 改同一资源 | `test_merge_arbiter.py`、`test_merge_gate.py` | 覆盖 |
 | F6 | 执行中修改目标 | `tests/python/test_contract_versioning.py`（契约摘要变化 → 拒绝执行并报 `contract_changed`） | 覆盖 |
-| F7 | 预算耗尽 | — | 缺失 |
+| F7 | 预算耗尽 | `tests/python/test_budget_ledger.py`（准入拒绝 → 不创建沙箱；账本保留，提高上限后更高 attempt 继续；未上报 usage 记 `unreported` 不记 0） | 覆盖 |
 | F8 | Verifier 错误放行 | Oracle 拒绝噪声基准的测试 | 部分 |
 
 F2 是生产级平台的必测项：它检验的是系统是否理解分布式执行，而不只是实现了
