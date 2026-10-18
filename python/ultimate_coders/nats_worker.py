@@ -1487,6 +1487,7 @@ class NatsWorker:
         if arbitrate_enabled and repo_url:
             try:
                 from ultimate_coders.agent.merge_arbiter import MergeArbiter
+                from ultimate_coders.effect_ledger import EffectLedger
 
                 repo_base_branch = os.environ.get("UC_REPO_BASE_BRANCH", "main")
                 merge_arbiter = MergeArbiter(
@@ -1494,6 +1495,10 @@ class NatsWorker:
                     remote_url=repo_url,
                     base_branch=repo_base_branch,
                     llm_client=llm_client,
+                    # Durable publish record: a dropped push connection is
+                    # reconciled against the remote instead of being
+                    # retried as if it had not happened.
+                    ledger=EffectLedger(await self._state_store()),
                 )
                 logger.info(
                     "MergeArbiter initialized (remote=%s, base=%s)",
