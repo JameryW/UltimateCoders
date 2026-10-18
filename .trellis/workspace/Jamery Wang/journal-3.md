@@ -1489,3 +1489,36 @@ opposite of the tree, and delivered the branch as `d96f1ca7`.
   spellings on a real 3.9.22 interpreter; the rule and the evidence are in
   `.trellis/spec/frontend/type-safety.md`. Removing the suppression would be a
   3.9 regression, not a cleanup.
+
+
+## Session 61: Archive DeepSeek Search/Fetch on main
+
+**Date**: 2026-10-18
+**Task**: Archive DeepSeek Search/Fetch on main
+**Branch**: `cursor/archive-deepseek-search-fetch-3239`
+
+### Summary
+
+Archive Trellis task after PR #722 merge left the active task directory on main.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `82af89d9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
