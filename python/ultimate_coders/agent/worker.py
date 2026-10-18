@@ -30,6 +30,7 @@ from ultimate_coders.agent.llm import (
     LLMRetryExhaustedError,
     _classify_llm_error,
 )
+from ultimate_coders.agent.progress import AttemptEvidence, ProgressTracker
 from ultimate_coders.agent.review import REVIEW_INSTRUCTIONS, parse_review
 from ultimate_coders.agent.sandbox import (
     AgentOutput,
@@ -996,6 +997,7 @@ class Worker:
 
             # ── Retry loop with backoff ────────────────────────────────
             result: SubtaskResult | None = None
+            progress_tracker = ProgressTracker(stall_limit=self._progress_stall_limit())
             for attempt in range(self.MAX_RETRIES):
                 # Re-acquire workspace each attempt: prior attempt released it
                 # (or never had one). Without this, retry runs against a freed
@@ -1146,11 +1148,25 @@ class Worker:
                             result.error or result.summary,
                             retry_count=subtask.retry_count,
                         )
+                        # A retry that repeats the same failure verbatim is
+                        # budget burn, not persistence: gate it on evidence
+                        # movement, not on the attempt counter alone.
+                        verdict = progress_tracker.observe(
+                            AttemptEvidence.from_result(result, attempt=attempt)
+                        )
+                        failure_data["progress"] = {
+                            "action": verdict.action,
+                            "stalled_streak": verdict.stalled_streak,
+                            "reason": verdict.reason,
+                        }
+                        if verdict.action == "stop":
+                            failure_data["loop_detected"] = True
                         if (
                             attempt < self.MAX_RETRIES - 1
                             and result.retryable
                             and not result.cleanup_pending
                             and failure_class.kind != "permanent"
+                            and verdict.action == "retry"
                         ):
                             subtask.retry_count += 1
                             result.retry_count = subtask.retry_count
@@ -1190,6 +1206,16 @@ class Worker:
                             continue  # retry loop
 
                         # Final failure — no more retries
+                        if failure_data.get("loop_detected"):
+                            # Stop the *outer* dispatch retry too: it would
+                            # replay the same evidence and hit the same wall.
+                            result.retryable = False
+                            result.summary = (
+                                (result.summary or "")
+                                + " (retry loop stopped: no new evidence for "
+                                + f"{failure_data['progress']['stalled_streak']} attempts)"
+                            )
+                            result.error = (result.error or result.summary)[:2000]
                         await self._publish_event(
                             "subtask_failed",
                             task_id=subtask.parent_id,
@@ -2376,6 +2402,19 @@ class Worker:
 
     def release_edit_intent(self, file_path: str) -> None:
         self.conflict_detector.remove_intent(file_path, self.worker_id)
+
+    def _progress_stall_limit(self) -> int:
+        """Consecutive no-evidence attempts before the retry loop stops.
+
+        ``UC_PROGRESS_STALL_LIMIT`` overrides the default (2). Values below
+        1 are clamped: with a limit of 0 every repeated failure would stop
+        immediately, including one that a single retry would have fixed.
+        """
+        try:
+            value = int(os.environ.get("UC_PROGRESS_STALL_LIMIT", "2"))
+        except ValueError:
+            value = 2
+        return max(1, value)
 
     def _context_budget_tokens(self) -> int:
         """Token budget shared by the local context sources.
