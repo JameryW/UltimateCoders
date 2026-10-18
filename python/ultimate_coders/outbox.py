@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 import uuid
 from dataclasses import dataclass
@@ -16,9 +18,82 @@ class OutcomeClaim:
     record: dict
 
 
+def outcome_fingerprint(event: dict, update: dict) -> str:
+    """Content hash of one terminal outcome (message ids excluded).
+
+    Message ids embed this hash, so it must be computed before they are
+    set. Two resends of the same outcome hash identically; a retry with a
+    different result does not.
+    """
+    body = json.dumps({"event": event, "update": update}, sort_keys=True, default=str)
+    return hashlib.sha1(body.encode("utf-8")).hexdigest()
+
+
+def outcome_key(task_id: str, subtask_id: str) -> str:
+    """Logical identity of one subtask's terminal outcome.
+
+    Deliberately excludes the attempt number: a subtask has one current
+    outcome, and a retry supersedes it rather than minting a second
+    terminal record. The attempt is stored *inside* the record so the
+    supersession rule stays checkable.
+    """
+    return f"{task_id}:{subtask_id}"
+
+
 class OutcomeOutbox:
     def __init__(self, state: RuntimeState):
         self.state = state
+
+    def store(
+        self,
+        key: str,
+        *,
+        attempt: int,
+        fingerprint: str,
+        event: dict,
+        update: dict,
+    ) -> dict:
+        """Record one attempt's terminal outcome under the logical key.
+
+        Rules, all decided inside the transaction:
+
+        * no record -> store it (undelivered);
+        * higher attempt -> replace it (the newer attempt is the truth);
+        * same attempt + same fingerprint -> keep the existing record and
+          its delivery state (a resend, not a new fact);
+        * same attempt + different fingerprint -> keep the first (two
+          different results for one attempt is a bug, not a race to win);
+        * lower attempt -> ignore (a late finisher must not overwrite a
+          newer outcome).
+
+        The caller decides to publish by comparing the returned record's
+        ``attempt``/``fingerprint`` with its own.
+        """
+
+        def change(old: dict) -> dict:
+            if not old:
+                return {
+                    "event": event,
+                    "update": update,
+                    "delivered": False,
+                    "attempt": attempt,
+                    "fingerprint": fingerprint,
+                }
+            stored = int(old.get("attempt", -1))
+            if attempt < stored:
+                return old
+            if attempt == stored:
+                return old
+            return {
+                "event": event,
+                "update": update,
+                "delivered": False,
+                "attempt": attempt,
+                "fingerprint": fingerprint,
+                "superseded_attempt": stored,
+            }
+
+        return self.state.mutate("result_outbox", key, change)
 
     def pending(self, limit: int = 100) -> list[dict]:
         return self.state.query("result_outbox", status="pending", limit=limit, due=True)

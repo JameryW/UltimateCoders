@@ -80,12 +80,15 @@
   （`MergeArbiter` 与 `WorkspaceManager.release()`）：以（远端、分支、
   待发布提交）构造稳定 effect id，推送报错时用 `ls-remote` 对账，
   已落地则报 `already_pushed` 而非重试。
+- **终态 outbox 的逻辑身份**：`result_outbox` 的键收敛为 `task:subtask`，
+  attempt 存于记录内——更高 attempt 取代旧结果、迟到的低 attempt 不覆盖、
+  同 attempt 同内容指纹视为重发。消息 id 含（attempt, 内容指纹），因此新结果
+  不会被 NATS 去重窗口折叠，而真正的重发仍会被折叠。
 
 ## 5. 差距（按优先级）
 
 | 缺口 | 现状 | 升级方向 |
 |---|---|---|
-| **outbox 的 effect 身份** | 终态 outbox 仍按 `task:subtask:attempt` 分键，重试会生成新记录 | 收敛为逻辑 effect 键（与 §4 的账本共用身份语义） |
 | **Progress Detector** | retry 只看次数与错误类型 | 以「新信息/证据增量」判定无效循环，连续同错触发 replan |
 | **任务契约版本化** | 目标在任务中途变化无显式语义 | 契约带版本，变更需重新验收（F6） |
 | **预算与配额** | 无任务级预算账本 | 预算耗尽停止新执行并保存状态（F7） |
@@ -121,7 +124,7 @@
 | 编号 | 注入故障 | 现有证据 | 状态 |
 |---|---|---|---|
 | F1 | LLM 调用期间崩溃 | `test_unconfirmed_writer_preserves_checkpoint_and_original_baseline` | 覆盖 |
-| F2 | 工具成功但响应丢失 | `test_lost_submission_response_never_creates_another_job`、去重集成测试、`tests/python/test_merge_arbiter_effects.py` 与 `tests/python/test_workspace_push_effects.py`（已推送但响应丢失 → `already_pushed`，不重试） | 覆盖 |
+| F2 | 工具成功但响应丢失 | `test_lost_submission_response_never_creates_another_job`、去重集成测试、`tests/python/test_merge_arbiter_effects.py`、`tests/python/test_workspace_push_effects.py`（已推送但响应丢失 → `already_pushed`，不重试）、`tests/python/test_outbox_effect_identity.py`（重试只取代一条终态记录，消息 id 随内容变化） | 覆盖 |
 | F3 | 沙箱/工作区被销毁 | inference delivery 的 worktree 接管与恢复测试 | 覆盖 |
 | F4 | 外部工具返回恶意指令 | env allowlist 与凭证隔离测试 | 部分（注入内容本身未测） |
 | F5 | 两个 Agent 改同一资源 | `test_merge_arbiter.py`、`test_merge_gate.py` | 覆盖 |
