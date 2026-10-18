@@ -657,8 +657,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # (run-omp.sh, run-gateway.sh, run-cluster.sh) from docs/architecture.md:
     # 275 -> 272; the launch commands remain documented in both READMEs.
     # 278 -> 285 -> 290 -> 291 -> 290 -> 291 -> 297 -> 305 -> 308 -> 309 -> 322
-    # -> 324 -> 325 -> 326 -> 328 -> 331. The 328 -> 331 move is the contract
-    # section naming contract.py and its test (twice: section + F6 row).
+    # -> 324 -> 325 -> 326 -> 328 -> 331 -> 334. The 331 -> 334 move is the
+    # budget section naming budget.py and its test (twice: section + F7 row).
+    # The 328 -> 331 move is the contract section naming contract.py and its
+    # test (twice: section + F6 row).
     # The 326 -> 328 move is the progress-detector section naming progress.py
     # and its test. The 325 -> 326 move is the
     # outbox-identity test named in the same doc section. The 324 -> 325 is the
@@ -696,7 +698,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # count is untouched. Upstream file paths are named WITHOUT their extension
     # so the guard resolves them against this repo rather than calling them
     # dangling -- `test_app_core` rather than `metainfer/server/tests/...py`.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 331
+    assert sum(1 for r in rows if r["kind"] == "mention") == 334
 
 
 def test_real_corpus_has_no_false_content_mismatch():
