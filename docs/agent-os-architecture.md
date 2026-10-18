@@ -80,6 +80,12 @@
   （`MergeArbiter` 与 `WorkspaceManager.release()`）：以（远端、分支、
   待发布提交）构造稳定 effect id，推送报错时用 `ls-remote` 对账，
   已落地则报 `already_pushed` 而非重试。
+- **任务契约版本化**：`contract.py` 以「原始请求文本」的归一化摘要为契约身份
+  （仅折叠 CRLF/行尾空白/首尾空行，措辞变化——哪怕一个否定词——必须改变摘要），
+  按任务记录版本。同一任务的两次派发若契约摘要不同，Worker **拒绝执行**并上报
+  `contract_changed`（含 v旧→v新），由编排层重新规划；不携带 `user_request` 的
+  旧式派发没有契约可比，直接放行——subtask 描述不是契约，兄弟子任务本就不同
+  （`tests/python/test_contract_versioning.py`）。
 - **Progress Detector**：`progress.py` 以「证据增量」而非尝试次数判定重试价值——
   归一化错误签名（数字/十六进制/ANSI/空白折叠）、stderr 签名与文件集合三项全部
   未变即视为停滞；连续 N 次（`UC_PROGRESS_STALL_LIMIT`，默认 2）无增量则停止
@@ -95,7 +101,6 @@
 
 | 缺口 | 现状 | 升级方向 |
 |---|---|---|
-| **任务契约版本化** | 目标在任务中途变化无显式语义 | 契约带版本，变更需重新验收（F6） |
 | **预算与配额** | 无任务级预算账本 | 预算耗尽停止新执行并保存状态（F7） |
 | **模型路由** | 每阶段固定 agent/模型 | 按阶段与风险选择模型与推理预算；失败分类决定是否值得再调模型 |
 
@@ -133,7 +138,7 @@
 | F3 | 沙箱/工作区被销毁 | inference delivery 的 worktree 接管与恢复测试 | 覆盖 |
 | F4 | 外部工具返回恶意指令 | env allowlist 与凭证隔离测试 | 部分（注入内容本身未测） |
 | F5 | 两个 Agent 改同一资源 | `test_merge_arbiter.py`、`test_merge_gate.py` | 覆盖 |
-| F6 | 执行中修改目标 | — | 缺失 |
+| F6 | 执行中修改目标 | `tests/python/test_contract_versioning.py`（契约摘要变化 → 拒绝执行并报 `contract_changed`） | 覆盖 |
 | F7 | 预算耗尽 | — | 缺失 |
 | F8 | Verifier 错误放行 | Oracle 拒绝噪声基准的测试 | 部分 |
 
