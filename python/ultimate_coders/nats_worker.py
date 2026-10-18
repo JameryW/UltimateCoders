@@ -2992,13 +2992,25 @@ class NatsWorker:
     ) -> None:
         assert self._worker is not None
         task_id, subtask_id = subtask.parent_id, subtask.id
-        key = f"{task_id}:{subtask_id}:{subtask.dispatch_retry_count}"
+        from ultimate_coders.outbox import OutcomeOutbox, outcome_fingerprint, outcome_key
+
+        attempt = int(subtask.dispatch_retry_count)
+        # Two identities, deliberately different: the *outcome* belongs to
+        # the subtask (one terminal fact, retries supersede it), while the
+        # *lease* belongs to this attempt (a redelivery of the same attempt
+        # must not execute twice).
+        key = outcome_key(task_id, subtask_id)
+        claim_key = f"{key}:{attempt}"
         claim = uuid.uuid4().hex
         owned = False
         try:
             state = await self._state_store()
+            outbox = OutcomeOutbox(state)
             existing = await asyncio.to_thread(state.get, "result_outbox", key)
-            if existing:
+            if existing and int(existing.get("attempt", -1)) >= attempt:
+                # A newer or equal attempt already produced this subtask's
+                # terminal outcome: redelivery must not re-execute or mint a
+                # second record.
                 if not existing.get("delivered"):
                     await self._deliver_outcome(key, existing)
                 if js_msg is not None:
@@ -3034,14 +3046,14 @@ class NatsWorker:
                     "process_identity": process_identity(os.getpid()),
                 }
 
-            lease = await asyncio.to_thread(state.mutate, "execution_claims", key, acquire)
+            lease = await asyncio.to_thread(state.mutate, "execution_claims", claim_key, acquire)
             if lease.get("claim") != claim:
                 if js_msg is not None:
                     await self._js_ack_safe(js_msg, nak=True)
                 return
             owned = True
             existing = await asyncio.to_thread(state.get, "result_outbox", key)
-            if existing:
+            if existing and int(existing.get("attempt", -1)) >= attempt:
                 if not existing.get("delivered"):
                     await self._deliver_outcome(key, existing)
                 if js_msg is not None:
@@ -3092,7 +3104,6 @@ class NatsWorker:
                 ],
             }
             event = _make_task_event_payload(event_type, task_id, subtask_id, data)
-            event["message_id"] = "outcome:" + key
             task = self._make_subtask_result_task(
                 task_id,
                 subtask_id,
@@ -3104,16 +3115,34 @@ class NatsWorker:
                 step_usages=result.step_usages,
             )
             update = _make_task_update_payload(task, partial=True)
-            update["message_id"] = "outcome-update:" + key
-            record = {"event": event, "update": update, "delivered": False}
+            # Message ids embed (attempt, content hash) so a *new* result is
+            # never folded by the broker's dedup window, while a genuine
+            # resend of the same outcome still is.
+            fingerprint = outcome_fingerprint(event, update)
+            event["message_id"] = f"outcome:{key}:{attempt}:{fingerprint[:12]}"
+            update["message_id"] = f"outcome-update:{key}:{attempt}:{fingerprint[:12]}"
             record = await asyncio.to_thread(
-                state.mutate, "result_outbox", key, lambda old: old or record
+                outbox.store,
+                key,
+                attempt=attempt,
+                fingerprint=fingerprint,
+                event=event,
+                update=update,
             )
             # Persisting the outcome makes dispatch ACK safe, even while offline.
             # Independent replay delivers it; dispatch redelivery never reruns code.
             if js_msg is not None:
                 await self._js_ack_safe(js_msg, ack=True)
-            await self._deliver_outcome(key, record)
+            if record.get("attempt") == attempt and record.get("fingerprint") == fingerprint:
+                if not record.get("delivered"):
+                    await self._deliver_outcome(key, record)
+            else:
+                logger.info(
+                    "Outcome for %s attempt %s ignored: record holds attempt %s",
+                    key,
+                    attempt,
+                    record.get("attempt"),
+                )
         except asyncio.CancelledError:
             # An uncertain remote writer must retain its lease and dispatch.
             raise

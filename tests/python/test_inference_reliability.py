@@ -101,7 +101,10 @@ async def test_simultaneous_dispatches_execute_once_and_publish_saved_outcome(st
     finish.set()
     await first
     worker._worker.execute_subtask.assert_awaited_once()
-    stored = state.get("result_outbox", "graph:node:0")
+    # One logical outcome per subtask: the key no longer includes the
+    # attempt; the attempt lives inside the record.
+    stored = state.get("result_outbox", "graph:node")
+    assert stored["attempt"] == 0
     assert stored["event"]["data"]["success"]
     assert worker._publisher.publish_terminal.call_args.args == (stored["event"], stored["update"])
 
@@ -286,7 +289,7 @@ async def test_result_outbox_survives_disconnect_and_worker_restart(state, monke
     subtask = Subtask(id="node", parent_id="graph")
     await worker._execute_and_report_body(subtask, js_msg=message)
     message.ack.assert_awaited_once()
-    assert state.get("result_outbox", "graph:node:0")["delivered"] is False
+    assert state.get("result_outbox", "graph:node")["delivered"] is False
 
     replay_time = time.time() + 10
     monkeypatch.setattr("ultimate_coders.outbox.time.time", lambda: replay_time)
@@ -295,7 +298,7 @@ async def test_result_outbox_survives_disconnect_and_worker_restart(state, monke
     restarted._publisher = SimpleNamespace(publish_terminal=AsyncMock(return_value=True))
     await restarted._execute_and_report_body(subtask, js_msg=SimpleNamespace(ack=AsyncMock()))
     execute.assert_awaited_once()
-    assert state.get("result_outbox", "graph:node:0")["delivered"] is True
+    assert state.get("result_outbox", "graph:node")["delivered"] is True
     before = worker._publisher.publish_terminal.call_args.args
     after = restarted._publisher.publish_terminal.call_args.args
     assert before == after
