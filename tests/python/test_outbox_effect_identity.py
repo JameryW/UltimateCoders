@@ -167,8 +167,11 @@ async def test_retry_supersedes_one_record_with_a_new_message_id(state):
 
     async def execute(subtask):
         calls.append(subtask.dispatch_retry_count)
+        # Attempt 0 fails, attempt 1 succeeds: the terminal fact moves.
         return SubtaskResult(
-            subtask_id="node", summary=f"attempt-{subtask.dispatch_retry_count}", success=True
+            subtask_id="node",
+            summary=f"attempt-{subtask.dispatch_retry_count}",
+            success=subtask.dispatch_retry_count > 0,
         )
 
     worker = _worker(state, execute)
@@ -177,6 +180,7 @@ async def test_retry_supersedes_one_record_with_a_new_message_id(state):
     )
     first = state.get("result_outbox", "graph:node")
     assert first["attempt"] == 0
+    assert first["event"]["data"]["success"] is False
 
     await worker._execute_and_report_body(
         Subtask(id="node", parent_id="graph", dispatch_retry_count=1),
@@ -187,8 +191,27 @@ async def test_retry_supersedes_one_record_with_a_new_message_id(state):
     assert calls == [0, 1]
     assert second["attempt"] == 1
     assert second["superseded_attempt"] == 0
+    assert second["event"]["data"]["success"] is True
     assert first["event"]["message_id"] != second["event"]["message_id"]
     assert worker._publisher.publish_terminal.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_successful_outcome_is_not_rerun_by_a_higher_attempt(state):
+    """Re-running completed work can duplicate its side effects."""
+    execute = AsyncMock(
+        return_value=SubtaskResult(subtask_id="node", summary="done", success=True)
+    )
+    worker = _worker(state, execute)
+    await worker._execute_and_report_body(
+        Subtask(id="node", parent_id="graph"), js_msg=SimpleNamespace(ack=AsyncMock())
+    )
+    await worker._execute_and_report_body(
+        Subtask(id="node", parent_id="graph", dispatch_retry_count=1),
+        js_msg=SimpleNamespace(ack=AsyncMock()),
+    )
+    execute.assert_awaited_once()
+    assert state.get("result_outbox", "graph:node")["attempt"] == 0
 
 
 @pytest.mark.asyncio

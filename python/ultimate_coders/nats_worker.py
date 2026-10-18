@@ -92,6 +92,21 @@ NATS_SUBJECT_WINDOW_CLOSED: str = "schedule.window.closed"
 CONTRACT_VERSION: str = "v1"
 
 
+def _outcome_is_settled(existing: dict | None, attempt: int) -> bool:
+    """Whether a stored terminal outcome already answers this dispatch.
+
+    Settled when the stored attempt is at least the incoming one (a
+    redelivery), or when it recorded a success: re-running work that
+    already succeeded can duplicate its side effects, and a higher attempt
+    number alone is not a reason to redo it.
+    """
+    if not existing:
+        return False
+    if int(existing.get("attempt", -1)) >= attempt:
+        return True
+    return bool(((existing.get("event") or {}).get("data") or {}).get("success"))
+
+
 def _execution_envelope(graph_id: str, node_id: str, attempt: int) -> dict[str, str]:
     """Execution-envelope fields for a ``uc.subtask.execute`` dispatch (T1 #637).
 
@@ -3006,8 +3021,67 @@ class NatsWorker:
         try:
             state = await self._state_store()
             outbox = OutcomeOutbox(state)
+            # Contract gate: the dispatch carries the original request text.
+            # If it differs from what earlier dispatches of this task ran
+            # under, the work in flight was aimed at a different goal --
+            # execute nothing and report the change instead of pretending
+            # the old result still answers the question. Dispatches without
+            # a ``user_request`` carry no contract (legacy envelopes): there
+            # is nothing to compare, and the per-subtask description is NOT
+            # a contract -- sibling subtasks differ by design.
+            from ultimate_coders.agent.contract import ContractRegistry
+
+            contract_text = subtask.user_request
+            contract = (
+                ContractRegistry(state).observe(task_id, contract_text)
+                if contract_text.strip()
+                else None
+            )
+            if contract is not None and contract.changed:
+                summary = (
+                    f"Task contract changed (v{contract.previous_version} -> "
+                    f"v{contract.version}); re-acceptance required"
+                )
+                data = {
+                    "worker_id": self._worker.worker_id if self._worker else "",
+                    "summary": summary,
+                    "success": False,
+                    "error": summary,
+                    "attempt_id": attempt,
+                    "retryable": False,
+                    "contract_changed": True,
+                    "contract_version": contract.version,
+                    "contract_previous_version": contract.previous_version,
+                }
+                event = _make_task_event_payload("subtask_failed", task_id, subtask_id, data)
+                failed_task = self._make_subtask_result_task(
+                    task_id, subtask_id, "Failed", summary, dispatch_retry_count=attempt
+                )
+                update = _make_task_update_payload(failed_task, partial=True)
+                fp = outcome_fingerprint(event, update)
+                event["message_id"] = f"outcome:{key}:{attempt}:{fp[:12]}"
+                update["message_id"] = f"outcome-update:{key}:{attempt}:{fp[:12]}"
+                record = await asyncio.to_thread(
+                    outbox.store,
+                    key,
+                    attempt=attempt,
+                    fingerprint=fp,
+                    event=event,
+                    update=update,
+                )
+                if js_msg is not None:
+                    await self._js_ack_safe(js_msg, ack=True)
+                if record.get("attempt") == attempt and not record.get("delivered"):
+                    await self._deliver_outcome(key, record)
+                logger.warning(
+                    "Subtask %s refused: contract changed v%s -> v%s",
+                    subtask_id,
+                    contract.previous_version,
+                    contract.version,
+                )
+                return
             existing = await asyncio.to_thread(state.get, "result_outbox", key)
-            if existing and int(existing.get("attempt", -1)) >= attempt:
+            if _outcome_is_settled(existing, attempt):
                 # A newer or equal attempt already produced this subtask's
                 # terminal outcome: redelivery must not re-execute or mint a
                 # second record.
@@ -3053,7 +3127,7 @@ class NatsWorker:
                 return
             owned = True
             existing = await asyncio.to_thread(state.get, "result_outbox", key)
-            if existing and int(existing.get("attempt", -1)) >= attempt:
+            if _outcome_is_settled(existing, attempt):
                 if not existing.get("delivered"):
                     await self._deliver_outcome(key, existing)
                 if js_msg is not None:
