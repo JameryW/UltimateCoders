@@ -1489,3 +1489,55 @@ opposite of the tree, and delivered the branch as `d96f1ca7`.
   spellings on a real 3.9.22 interpreter; the rule and the evidence are in
   `.trellis/spec/frontend/type-safety.md`. Removing the suppression would be a
   3.9 regression, not a cleanup.
+
+
+## Session 61: Archive DeepSeek Search/Fetch on main
+
+**Date**: 2026-10-18
+**Task**: Archive DeepSeek Search/Fetch on main
+**Branch**: `cursor/archive-deepseek-search-fetch-3239`
+
+### Summary
+
+Archive Trellis task after PR #722 merge left the active task directory on main.
+
+### Main Changes
+
+- After PR #722 merged DeepSeek Search/Fetch to `main`, the Trellis task
+  `10-17-deepseek-search-fetch` was still `in_progress` on `main`. This session
+  archives it under `.trellis/tasks/archive/2026-10/10-17-deepseek-search-fetch/`
+  via `task.py archive` (`ce28b254`).
+- Records this closeout as Session 61 on branch
+  `cursor/archive-deepseek-search-fetch-3239` (PR #723). Journal auto-commit
+  `fcfc2d88` landed the skeleton; this fill-in replaces the unfilled placeholders.
+- No product code changes — archive + ledger only. The feature work itself is
+  already on `main` as `eb579603` (PR #722); `82af89d9` is the pre-merge
+  feature commit referenced from the session index.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `82af89d9` | feat: add DeepSeek Search/Fetch client for Worker MCP and OMP |
+| `ce28b254` | chore(task): archive 10-17-deepseek-search-fetch |
+| `fcfc2d88` | chore: record journal |
+
+### Testing
+
+- [OK] Confirmed task dir moved to
+  `.trellis/tasks/archive/2026-10/10-17-deepseek-search-fetch/` (prd, task.json,
+  research, implement/check jsonl present; no active
+  `10-17-deepseek-search-fetch` under `.trellis/tasks/`)
+- [OK] Archive branch `cursor/archive-deepseek-search-fetch-3239` / PR #723 is
+  chore-only (no product paths in the archive commits)
+- [OK] `python3 scripts/check-journal-ledger.py` exits 0 after this Session 61
+  fill-in (the three skeleton whole-line placeholders are gone)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Merge PR #723 once Journal CI is green; no further archive work for
+  `10-17-deepseek-search-fetch`.

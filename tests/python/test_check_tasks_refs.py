@@ -564,7 +564,8 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     # moving 865 -> 867.
     # DeepSeek Search/Fetch task carriers add implement/check jsonl `.trellis`
     # refs (880 after those carriers are tracked).
-    assert len(refs) in (812, 814, 830, 832, 846, 853, 865, 867, 880), (
+    # journal-fix task archive moved the corpus to 883.
+    assert len(refs) in (812, 814, 830, 832, 846, 853, 865, 867, 880, 883), (
         f"reference count drifted: {len(refs)}"
     )
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
