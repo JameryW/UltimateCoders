@@ -220,6 +220,7 @@ def test_real_repo_is_reconciled() -> None:
         (2050, 2041),  # journal-fix task archive moved the tracked/text counts.
         (2053, 2044),  # Agent OS design doc + context compiler + its tests.
         (2056, 2047),  # Effect ledger module plus its two test files.
+        (2057, 2048),  # Workspace branch-push effect tests.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

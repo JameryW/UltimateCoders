@@ -656,10 +656,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # Architecture refresh removes three duplicate backticked launcher paths
     # (run-omp.sh, run-gateway.sh, run-cluster.sh) from docs/architecture.md:
     # 275 -> 272; the launch commands remain documented in both READMEs.
-    # 278 -> 285 -> 290 -> 291 -> 290 -> 291 -> 297 -> 305 -> 308 -> 309 -> 322 -> 324.
-    # The 322 -> 324 move is the
-    # effect-ledger section in docs/agent-os-architecture.md naming
-    # effect_ledger.py and its arbiter test. The 309 -> 322 move is that
+    # 278 -> 285 -> 290 -> 291 -> 290 -> 291 -> 297 -> 305 -> 308 -> 309 -> 322
+    # -> 324 -> 325. The 324 -> 325 move is the
+    # workspace branch-push test named in the same doc section. The
+    # 322 -> 324 move is the effect-ledger section naming effect_ledger.py
+    # and its arbiter test. The 309 -> 322 move is that
     # doc's first landing, which backtick-names eleven existing files --
     # runtime_state.py and test_merge_arbiter.py twice each. All are
     # MENTION_RESOLVED, so the unclassified count is untouched.
@@ -691,7 +692,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # count is untouched. Upstream file paths are named WITHOUT their extension
     # so the guard resolves them against this repo rather than calling them
     # dangling -- `test_app_core` rather than `metainfer/server/tests/...py`.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 324
+    assert sum(1 for r in rows if r["kind"] == "mention") == 325
 
 
 def test_real_corpus_has_no_false_content_mismatch():
