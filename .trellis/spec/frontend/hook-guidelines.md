@@ -106,7 +106,7 @@ The Orchestrator uses internal method callbacks rather than external callback re
 
 ### Error Handling in Callbacks
 
-Memory persistence failures are logged but do not fail the operation (`python/ultimate_coders/agent/worker.py:1318-1371`, `_save_checkpoint`):
+Memory persistence failures are logged but do not fail the operation (`python/ultimate_coders/agent/worker.py:1343-1396`, `_save_checkpoint`):
 
 ```python
 if self.engine is None:
