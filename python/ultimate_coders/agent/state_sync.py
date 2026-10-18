@@ -200,6 +200,18 @@ class ContextInjector:
             context = context[: self._max_context_chars - 50] + "\n... (context truncated)"
         return context
 
+    def dependency_items(self, depends_on: list[str]) -> list:
+        """Matching results as compiler items (P3 trace), in dependency order.
+
+        ``build_context`` remains the legacy string renderer; this accessor
+        exposes the same results to ``context_compiler`` so a caller can
+        compile them together with other sources under one budget.
+        """
+        from ultimate_coders.agent.context_compiler import from_dependency_results
+
+        matched = [self._results[dep] for dep in depends_on if dep in self._results]
+        return from_dependency_results(matched)
+
     def get_file_state(self, depends_on: list[str]) -> dict[str, str]:
         """Get the expected file state after dependencies complete.
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from ultimate_coders.agent.context_compiler import ContextItem, Tier
 from ultimate_coders.agent.types import Subtask, SubtaskResult
 from ultimate_coders.agent.worker import Worker, _render_gateway_context_block
 
@@ -88,6 +89,12 @@ def _make_worker(captured: list[str]) -> _CaptureWorker:
     w._execute_in_sandbox = _fake_execute_in_sandbox  # type: ignore[assignment]
     w._context_injector = MagicMock()
     w._context_injector.build_context.return_value = "LOCAL"
+    # The local fallback path now compiles dependency results (item view)
+    # together with the search block under one budget; ``build_context``
+    # stays for callers that still need the plain string renderer.
+    w._context_injector.dependency_items.return_value = [
+        ContextItem(item_id="n-0", tier=Tier.TRACE, content="LOCAL", source_version="ok")
+    ]
 
     async def _capture_event(event_type, **kw):
         return None
@@ -122,8 +129,17 @@ async def test_missing_gateway_block_falls_back_to_local_injector():
     await w.execute_subtask(
         Subtask(id="s1", parent_id="t1", description="d", depends_on=["n-0"]),
     )
-    assert captured[0] == "LOCAL"
-    w._context_injector.build_context.assert_called_once_with(["n-0"])
+    assert captured[0] == (
+        "## Context from completed subtasks\n"
+        "\n"
+        "The following subtasks have completed. Use their results as context:\n"
+        "\n"
+        "### Subtask n-0 (✓)\n"
+        "\n"
+        "LOCAL\n"
+        "\n"
+    )
+    w._context_injector.dependency_items.assert_called_once_with(["n-0"])
 
 
 async def test_present_but_empty_gateway_block_is_authoritative():
