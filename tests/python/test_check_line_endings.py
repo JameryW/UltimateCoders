@@ -222,6 +222,7 @@ def test_real_repo_is_reconciled() -> None:
         (2056, 2047),  # Effect ledger module plus its two test files.
         (2057, 2048),  # Workspace branch-push effect tests.
         (2058, 2049),  # Outbox logical-identity tests.
+        (2060, 2051),  # Progress detector module and its tests.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

@@ -80,6 +80,12 @@
   （`MergeArbiter` 与 `WorkspaceManager.release()`）：以（远端、分支、
   待发布提交）构造稳定 effect id，推送报错时用 `ls-remote` 对账，
   已落地则报 `already_pushed` 而非重试。
+- **Progress Detector**：`progress.py` 以「证据增量」而非尝试次数判定重试价值——
+  归一化错误签名（数字/十六进制/ANSI/空白折叠）、stderr 签名与文件集合三项全部
+  未变即视为停滞；连续 N 次（`UC_PROGRESS_STALL_LIMIT`，默认 2）无增量则停止
+  循环，把 `loop_detected` 写入终态失败事件并关闭外层 dispatch 重试
+  （`tests/python/test_progress_detector.py`）。它只判定「是否还值得再试」，
+  不决定「改做什么」——本仓库没有 replan 原语，编造一个只是装饰。
 - **终态 outbox 的逻辑身份**：`result_outbox` 的键收敛为 `task:subtask`，
   attempt 存于记录内——更高 attempt 取代旧结果、迟到的低 attempt 不覆盖、
   同 attempt 同内容指纹视为重发。消息 id 含（attempt, 内容指纹），因此新结果
@@ -89,7 +95,6 @@
 
 | 缺口 | 现状 | 升级方向 |
 |---|---|---|
-| **Progress Detector** | retry 只看次数与错误类型 | 以「新信息/证据增量」判定无效循环，连续同错触发 replan |
 | **任务契约版本化** | 目标在任务中途变化无显式语义 | 契约带版本，变更需重新验收（F6） |
 | **预算与配额** | 无任务级预算账本 | 预算耗尽停止新执行并保存状态（F7） |
 | **模型路由** | 每阶段固定 agent/模型 | 按阶段与风险选择模型与推理预算；失败分类决定是否值得再调模型 |
