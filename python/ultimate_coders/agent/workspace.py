@@ -515,26 +515,13 @@ class WorkspaceManager:
                 and handle.branch_name
                 and result_info.get("status") in ("merged", "no_changes")
             ):
-                push_result = await self._git(
-                    [
-                        "push",
-                        self._remote_name,
-                        f"{handle.branch_name}:refs/heads/{handle.branch_name}",
-                    ],
-                    cwd=self._project_path,
-                )
-                if push_result["exit_code"] != 0:
-                    logger.warning(
-                        "release: push of branch %s failed (non-fatal): %s",
-                        handle.branch_name,
-                        push_result["stderr"][:200],
-                    )
-                    result_info["push_status"] = "failed"
-                    result_info["push_error"] = push_result["stderr"][:200]
-                else:
-                    result_info["push_status"] = "pushed"
+                await self._push_subtask_branch(handle, result_info)
 
-        if result_info.get("status") == "conflict" or result_info.get("push_status") == "failed":
+        if result_info.get("status") == "conflict" or result_info.get("push_status") in (
+            "failed",
+            "unknown",
+            "busy",
+        ):
             handle.status = "failed"
             await self._lease_update(handle, result_info)
             return result_info
@@ -625,6 +612,132 @@ class WorkspaceManager:
                     cleaned += 1
 
         return cleaned
+
+    async def _push_subtask_branch(
+        self, handle: WorkspaceHandle, result_info: dict[str, Any]
+    ) -> None:
+        """Publish one subtask branch, with the effect ledger when bound.
+
+        The ledger treats the publish as one durable effect keyed by
+        (remote, branch, commit): a dropped connection becomes UNKNOWN and
+        is reconciled with ``ls-remote`` before any retry, and a publish
+        that already landed is reported as ``already_pushed``. Without a
+        bound RuntimeState the behaviour stays the historical one.
+        """
+        from ultimate_coders.effect_ledger import (
+            EffectBusyError,
+            EffectLedger,
+            stable_effect_id,
+        )
+
+        branch = handle.branch_name
+        ledger = EffectLedger(self._state) if self._state is not None else None
+        head = ""
+        if ledger is not None:
+            head_res = await self._git(["rev-parse", branch], cwd=self._project_path)
+            head = head_res["stdout"].strip() if head_res["exit_code"] == 0 else ""
+        effect_id = (
+            stable_effect_id("push-branch", self._remote_name, branch, head)
+            if ledger is not None and head
+            else None
+        )
+
+        if ledger is not None and effect_id:
+            try:
+                record = ledger.prepare(
+                    effect_id,
+                    kind="push-branch",
+                    request={"branch": branch, "remote": self._remote_name},
+                    expected_after=head,
+                )
+            except EffectBusyError as exc:
+                result_info["push_status"] = "busy"
+                result_info["push_error"] = str(exc)
+                return
+            status = record.get("status")
+            if status == "CONFIRMED":
+                result_info["push_status"] = "already_pushed"
+                result_info["effect_id"] = effect_id
+                return
+            if status in ("UNKNOWN", "RECONCILING"):
+                verdict = await self._settle_branch_push(ledger, effect_id, branch, head)
+                if verdict == "applied":
+                    result_info["push_status"] = "already_pushed"
+                    result_info["effect_id"] = effect_id
+                    return
+                if verdict == "inconclusive":
+                    result_info["push_status"] = "unknown"
+                    result_info["effect_id"] = effect_id
+                    result_info["push_error"] = "push outcome unknown; awaiting reconciliation"
+                    return
+            ledger.mark_in_flight(effect_id, owner=f"release:{handle.workspace_id}")
+
+        push_result = await self._git(
+            ["push", self._remote_name, f"{branch}:refs/heads/{branch}"],
+            cwd=self._project_path,
+        )
+        if push_result["exit_code"] == 0:
+            result_info["push_status"] = "pushed"
+            if ledger is not None and effect_id:
+                ledger.confirm(effect_id, result={"branch": branch, "head": head})
+                result_info["effect_id"] = effect_id
+            return
+
+        stderr = push_result["stderr"][:200]
+        result_info["push_error"] = stderr
+        if ledger is None or not effect_id:
+            logger.warning("release: push of branch %s failed (non-fatal): %s", branch, stderr)
+            result_info["push_status"] = "failed"
+            return
+
+        result_info["effect_id"] = effect_id
+        from ultimate_coders.agent.merge_arbiter import _ambiguous_push_failure
+
+        if not _ambiguous_push_failure(push_result["stderr"]):
+            ledger.fail(effect_id, error=stderr)
+            result_info["push_status"] = "failed"
+            return
+
+        ledger.mark_unknown(effect_id, reason=stderr)
+        verdict = await self._settle_branch_push(ledger, effect_id, branch, head)
+        if verdict == "applied":
+            result_info["push_status"] = "already_pushed"
+        elif verdict == "inconclusive":
+            result_info["push_status"] = "unknown"
+        else:
+            result_info["push_status"] = "failed"
+
+    async def _settle_branch_push(self, ledger, effect_id: str, branch: str, head: str) -> str:
+        """Ask the remote whether a subtask-branch publish landed."""
+        record = ledger.get(effect_id) or {}
+        if record.get("status") == "PREPARED":
+            ledger.mark_in_flight(effect_id, owner="release-reconcile")
+        if record.get("status") != "RECONCILING":
+            ledger.begin_reconcile(effect_id, owner="release-reconcile")
+
+        before = await self._git(
+            ["rev-parse", f"{self._remote_name}/{branch}"], cwd=self._project_path
+        )
+        expected_before = before["stdout"].strip() if before["exit_code"] == 0 else ""
+        remote = await self._git(
+            ["ls-remote", self._remote_name, f"refs/heads/{branch}"],
+            cwd=self._project_path,
+        )
+        if remote["exit_code"] != 0:
+            ledger.mark_unknown(effect_id, reason="reconcile could not reach the remote")
+            return "inconclusive"
+        parts = remote["stdout"].split()
+        current = parts[0] if parts else ""
+        if head and current == head:
+            ledger.confirm(effect_id, result={"branch": branch, "head": current})
+            return "applied"
+        if current in (expected_before, ""):
+            ledger.resolve_reconcile(
+                effect_id, applied=False, reason="remote does not have the commit"
+            )
+            return "absent"
+        ledger.mark_unknown(effect_id, reason="remote moved to an unexpected head")
+        return "inconclusive"
 
     async def _git(self, args: list[str], cwd: str = "") -> dict[str, Any]:
         """Run a git command and return stdout/stderr/exit_code."""
