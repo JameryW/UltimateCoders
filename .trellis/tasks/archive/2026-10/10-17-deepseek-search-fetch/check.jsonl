@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/archive/2026-10/10-17-deepseek-search-fetch/prd.md", "reason": "Acceptance criteria for Worker+OMP Search/Fetch MVP"}
+{"file": ".trellis/tasks/archive/2026-10/10-17-deepseek-search-fetch/research/deepseek-responses-search-api.md", "reason": "Contract checks against official Search/Fetch schemas"}
+{"file": ".trellis/spec/backend/omp-tools-spec.md", "reason": "OMP tool contract compliance"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Test/lint quality bar"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Fail-closed and error surface review"}
