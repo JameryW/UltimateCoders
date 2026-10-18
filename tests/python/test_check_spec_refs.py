@@ -656,8 +656,12 @@ def test_real_corpus_unanchored_census_is_reported():
     # Architecture refresh removes three duplicate backticked launcher paths
     # (run-omp.sh, run-gateway.sh, run-cluster.sh) from docs/architecture.md:
     # 275 -> 272; the launch commands remain documented in both READMEs.
-    # 278 -> 285 -> 290 -> 291 -> 290 -> 291 -> 297 -> 305 -> 308 -> 309.
-    # The 308 -> 309 move is the DeepSeek Search/Fetch OMP tools note in
+    # 278 -> 285 -> 290 -> 291 -> 290 -> 291 -> 297 -> 305 -> 308 -> 309 -> 322.
+    # The 309 -> 322 move is the Agent OS architecture doc
+    # (docs/agent-os-architecture.md), which backtick-names eleven existing
+    # files -- runtime_state.py and test_merge_arbiter.py twice each -- all
+    # MENTION_RESOLVED, so the unclassified count is untouched.
+    # The move before that is the DeepSeek Search/Fetch OMP tools note in
     # omp-tools-spec.md (deepseek-web-bridge / deepseek_web). The 305 -> 308
     # move is the hy-memory cognitive-memory backend doc (docs/hy-memory.md),
     # which backtick-names three implementation files (sandbox.py,
@@ -685,7 +689,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # count is untouched. Upstream file paths are named WITHOUT their extension
     # so the guard resolves them against this repo rather than calling them
     # dangling -- `test_app_core` rather than `metainfer/server/tests/...py`.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 309
+    assert sum(1 for r in rows if r["kind"] == "mention") == 322
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -721,7 +725,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     `orchestrator.py:149-161, refresh_heartbeat` for a `write_memory`
     best-effort pattern that no longer exists in that file at all -- the row had
     drifted from "slightly late" to "citing code that is not there". It now
-    names the site that actually does it, `worker.py:1318-1371, _save_checkpoint`,
+    names the site that actually does it, `worker.py:1343-1396, _save_checkpoint`,
     and the range covers the definition so the anchor holds.
     """
     guard = _load_guard()
@@ -744,7 +748,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            1318,
+            1343,
         ),
     }
     rows = [
@@ -1182,7 +1186,7 @@ def test_real_corpus_moves_only_where_predicted():
     # hook-guidelines.md:109 row drifted out of range when a helper was added
     # above `refresh_heartbeat` and was then found to be citing a `write_memory`
     # pattern that no longer exists in that file at all -- it now names
-    # `worker.py:1318-1371, _save_checkpoint`, which is where the best-effort
+    # `worker.py:1343-1396, _save_checkpoint`, which is where the best-effort
     # persistence actually lives. That repair is what keeps OK at 112.
     assert sum(1 for r in rows if r["verdict"] == "OK") == 112
     assert sum(1 for r in rows if r["verdict"] == "STALE") == 9

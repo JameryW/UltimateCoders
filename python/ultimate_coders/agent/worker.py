@@ -25,6 +25,7 @@ from ultimate_coders.agent.conflict import (
     EditType,
     LineRange,
 )
+from ultimate_coders.agent.context_compiler import compile_context, from_search_block
 from ultimate_coders.agent.llm import (
     LLMRetryExhaustedError,
     _classify_llm_error,
@@ -418,6 +419,9 @@ class Worker:
 
         # Context injection — completed subtask summaries flow to dependents
         self._context_injector = ContextInjector()
+        # Compact description (counts, drops, cost; never content) of the
+        # last compiled context manifest, surfaced on subtask_started.
+        self._last_context_manifest: dict[str, Any] | None = None
 
         # Self-heartbeat monitoring — track last heartbeat timestamp
         # so stale_worker_cleanup can detect local worker stalls
@@ -898,18 +902,30 @@ class Worker:
             # the gateway-composed block (committed graph outputs) when the
             # dispatch carried one; fall back to the local injector otherwise
             # (in-flight envelopes / legacy gateway — behavior unchanged).
+            self._last_context_manifest = None
             if gateway_context_block is not None:
                 context_block = _render_gateway_context_block(gateway_context_block)
+                # The gateway block is authoritative for dependencies; the
+                # local search block still needs a bound of its own.
+                search_block = await self._build_search_context(subtask)
+                if search_block:
+                    context_block = (
+                        f"{context_block}\n\n{search_block}" if context_block else search_block
+                    )
             else:
-                context_block = self._context_injector.build_context(subtask.depends_on)
-
-            # Auto-inject cross-repo search context (when engine is available)
-            search_block = await self._build_search_context(subtask)
-            if search_block:
-                if context_block:
-                    context_block = f"{context_block}\n\n{search_block}"
-                else:
-                    context_block = search_block
+                # One budget across every local source: dependency results
+                # (P3) and search hits (P2) compete for the same tokens
+                # instead of truncating independently. The rendered text
+                # matches the legacy injector wording.
+                search_block = await self._build_search_context(subtask)
+                manifest = compile_context(
+                    self._context_injector.dependency_items(subtask.depends_on)
+                    + from_search_block(search_block),
+                    budget_tokens=self._context_budget_tokens(),
+                    risk="normal",
+                )
+                context_block = manifest.render_legacy()
+                self._last_context_manifest = manifest.summary()
 
             # Acquire workspace if this subtask modifies files
             from ultimate_coders.inference.agent import InferenceInfraAgent
@@ -951,11 +967,20 @@ class Worker:
                         workspace_handle.workspace_id,
                     )
 
+            started_data: dict[str, Any] = {
+                "description": subtask.description,
+                "worker_id": self.worker_id,
+            }
+            if self._last_context_manifest is not None:
+                # Provenance evidence: budget, per-tier counts and drop
+                # reasons for the prompt this attempt will run with. No
+                # content — the manifest summary is log-safe.
+                started_data["context"] = self._last_context_manifest
             await self._publish_event(
                 "subtask_started",
                 task_id=subtask.parent_id,
                 subtask_id=subtask.id,
-                data={"description": subtask.description, "worker_id": self.worker_id},
+                data=started_data,
             )
 
             # ── Progress helper ─────────────────────────────────────────
@@ -2351,6 +2376,21 @@ class Worker:
 
     def release_edit_intent(self, file_path: str) -> None:
         self.conflict_detector.remove_intent(file_path, self.worker_id)
+
+    def _context_budget_tokens(self) -> int:
+        """Token budget shared by the local context sources.
+
+        ``UC_CONTEXT_BUDGET_TOKENS`` overrides the default. 2000 tokens is
+        roughly twice the old dependency-only cap (4000 characters ~= 1000
+        tokens) and gives the previously unbounded search block a ceiling.
+        Values below 256 are clamped: a smaller prompt cannot carry the
+        dependency results the graph plane exists to deliver.
+        """
+        try:
+            value = int(os.environ.get("UC_CONTEXT_BUDGET_TOKENS", "2000"))
+        except ValueError:
+            value = 2000
+        return max(256, value)
 
     async def _build_search_context(self, subtask: Subtask) -> str | None:
         """Search across repos for code relevant to the subtask description.

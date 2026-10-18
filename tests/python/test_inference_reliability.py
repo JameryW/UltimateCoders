@@ -303,7 +303,13 @@ async def test_result_outbox_survives_disconnect_and_worker_restart(state, monke
 
 @pytest.mark.asyncio
 async def test_unconfirmed_writer_preserves_checkpoint_and_original_baseline(tmp_path):
-    from tests.python.test_inference_workflow import _make_repository
+    # Relative import, matching the metainfer_fixture convention: pytest
+    # imports this module as ``python.test_inference_reliability`` (basedir
+    # ``tests/``), so ``tests.python...`` is only importable when the repo
+    # root happens to be on sys.path. pytest 9 stopped inserting it for the
+    # console script, which reddened this test on Python 3.12 while the
+    # pytest-8 job stayed green.
+    from .test_inference_workflow import _make_repository
 
     root = _make_repository(tmp_path)
     artifact_dir = str(tmp_path / "artifacts")
