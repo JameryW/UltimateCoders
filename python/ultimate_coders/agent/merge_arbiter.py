@@ -38,6 +38,31 @@ from ultimate_coders.agent.conflict import ConflictResolver, ResolutionTier
 
 logger = logging.getLogger(__name__)
 
+#: Substrings that mark a push failure as *transport-level*: the request may
+#: or may not have reached the remote, so the outcome is UNKNOWN, not
+#: failed. A rejection (non-fast-forward, hook declined, auth) is definite
+#: and deliberately absent from this list.
+_AMBIGUOUS_PUSH_MARKERS = (
+    "could not resolve host",
+    "failed to connect",
+    "connection timed out",
+    "connection reset",
+    "connection refused",
+    "network is unreachable",
+    "unable to access",
+    "early eof",
+    "rpc failed",
+    "tls",
+    "ssl",
+    "broken pipe",
+)
+
+
+def _ambiguous_push_failure(stderr: str) -> bool:
+    """True when a non-zero push exit may still have applied the change."""
+    lowered = (stderr or "").lower()
+    return any(marker in lowered for marker in _AMBIGUOUS_PUSH_MARKERS)
+
 
 # Repo-level git identity used when no global user config exists (e.g. CI
 # runners, fresh worker containers). ``git merge --no-edit`` creates a merge
@@ -72,6 +97,7 @@ class MergeArbiter:
         base_branch: str = "main",
         remote_name: str = "origin",
         llm_client: Any = None,
+        ledger: Any = None,
     ) -> None:
         self._project_path = project_path or os.getcwd()
         self._remote_url = remote_url
@@ -80,6 +106,11 @@ class MergeArbiter:
         # ConflictResolver is the escalation path for text-level conflicts
         # that git's own merge cannot auto-resolve.
         self._resolver = ConflictResolver(llm_client)
+        # Optional effect ledger (effect_ledger.EffectLedger). When present,
+        # the publish of the base branch is recorded as one durable effect:
+        # a dropped connection becomes UNKNOWN and is reconciled against the
+        # remote before any retry, instead of being reported as a failure.
+        self._ledger = ledger
         # Serialize concurrent arbitrate() calls on the same clone: two
         # tasks finishing at once would interleave checkout/merge/push on a
         # single working tree and corrupt state. ponytail: per-instance lock,
@@ -383,6 +414,70 @@ class MergeArbiter:
         # lease and silently overwrite that concurrent work. Instead reject
         # safely; the caller re-runs arbitrate (re-fetch + re-merge is
         # idempotent — subtask branches persist on the remote).
+        return await self._push_base_branch(result)
+
+    async def _push_base_branch(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Publish the merged base branch, optionally through the ledger.
+
+        Without a ledger the behaviour is the historical one (exit code ->
+        pushed/failed). With a ledger the publish is one durable effect
+        keyed by (remote, branch, commit being published):
+
+        1. ``prepare`` records the intent; a CONFIRMED record means this
+           exact publish already happened -- return ``already_pushed``
+           without touching the remote.
+        2. An UNKNOWN/RECONCILING record is settled first: applied ->
+           ``already_pushed``, definitely absent -> safe to retry,
+           inconclusive -> stop and report ``unknown``.
+        3. A transport-level push failure becomes UNKNOWN and is
+           reconciled with ``ls-remote`` before any retry; only a definite
+           rejection is reported as ``failed``.
+        """
+        effect_id = await self._push_effect_id()
+        if self._ledger is not None and effect_id is None:
+            # Cannot name the effect (rev-parse failed) -- skip the ledger
+            # rather than record under a guessed identity.
+            self._ledger = None
+
+        if self._ledger is not None:
+            from ultimate_coders.effect_ledger import EffectBusyError
+
+            try:
+                record = self._ledger.prepare(
+                    effect_id,
+                    kind="push-main",
+                    request={"branch": self._base_branch, "remote": self._remote_name},
+                    expected_after=await self._head(),
+                )
+            except EffectBusyError as exc:
+                result["status"] = "failed"
+                result["push_status"] = "busy"
+                result["effect_id"] = effect_id
+                result["error"] = str(exc)
+                logger.error("MergeArbiter: %s", exc)
+                return result
+            status = record.get("status")
+            if status == "CONFIRMED":
+                result["status"] = "merged"
+                result["push_status"] = "already_pushed"
+                result["effect_id"] = effect_id
+                return result
+            if status in ("UNKNOWN", "RECONCILING"):
+                verdict = await self._reconcile_push(effect_id)
+                if verdict == "applied":
+                    result["status"] = "merged"
+                    result["push_status"] = "already_pushed"
+                    result["effect_id"] = effect_id
+                    return result
+                if verdict == "inconclusive":
+                    result["status"] = "failed"
+                    result["push_status"] = "unknown"
+                    result["effect_id"] = effect_id
+                    result["error"] = "push outcome unknown; awaiting reconciliation"
+                    return result
+                # verdict == "absent": the retry below is safe.
+            self._ledger.mark_in_flight(effect_id, owner="merge-arbiter")
+
         push_res = await self._git(
             ["push", self._remote_name, self._base_branch],
             cwd=self._project_path,
@@ -390,18 +485,111 @@ class MergeArbiter:
         if push_res["exit_code"] == 0:
             result["status"] = "merged"
             result["push_status"] = "pushed"
-            logger.info(
-                "MergeArbiter: pushed %s (%d branches merged)",
-                self._base_branch,
-                len(merged),
-            )
-        else:
-            result["status"] = "failed"
-            result["push_status"] = "failed"
-            result["error"] = f"push failed: {push_res['stderr'][:200]}"
-            logger.error("MergeArbiter: %s", result["error"])
+            if self._ledger is not None:
+                self._ledger.confirm(effect_id, result={"branch": self._base_branch})
+                result["effect_id"] = effect_id
+            logger.info("MergeArbiter: pushed %s", self._base_branch)
+            return result
 
+        stderr = push_res["stderr"][:200]
+        result["status"] = "failed"
+        result["error"] = f"push failed: {stderr}"
+        if self._ledger is None:
+            result["push_status"] = "failed"
+            logger.error("MergeArbiter: %s", result["error"])
+            return result
+
+        result["effect_id"] = effect_id
+        if not _ambiguous_push_failure(push_res["stderr"]):
+            self._ledger.fail(effect_id, error=stderr)
+            result["push_status"] = "failed"
+            logger.error("MergeArbiter: %s", result["error"])
+            return result
+
+        # Transport failure: the remote may already have the commit.
+        self._ledger.mark_unknown(effect_id, reason=stderr)
+        verdict = await self._reconcile_push(effect_id)
+        if verdict == "applied":
+            result["status"] = "merged"
+            result["push_status"] = "already_pushed"
+            result["error"] = ""
+            logger.info(
+                "MergeArbiter: push reported an error but %s already has the commit",
+                self._base_branch,
+            )
+            return result
+        if verdict == "absent":
+            result["push_status"] = "failed"
+            logger.error("MergeArbiter: %s (reconciled: not applied)", result["error"])
+            return result
+        result["push_status"] = "unknown"
+        logger.error(
+            "MergeArbiter: %s (outcome unknown; needs reconciliation)", result["error"]
+        )
         return result
+
+    # ── push effect helpers ─────────────────────────────────────
+
+    async def _head(self) -> str:
+        head = await self._git(["rev-parse", "HEAD"], cwd=self._project_path)
+        return head["stdout"].strip() if head["exit_code"] == 0 else ""
+
+    async def _push_effect_id(self) -> str | None:
+        """Stable id for publishing the current HEAD to the base branch."""
+        if self._ledger is None:
+            return None
+        from ultimate_coders.effect_ledger import stable_effect_id
+
+        head = await self._head()
+        if not head:
+            return None
+        return stable_effect_id("push-main", self._remote_name, self._base_branch, head)
+
+    async def _reconcile_push(self, effect_id: str) -> str:
+        """Ask the remote whether the publish landed.
+
+        Returns ``"applied"``, ``"absent"`` or ``"inconclusive"``. Only
+        ``absent`` authorises a retry; ``inconclusive`` leaves the effect
+        UNKNOWN for an operator or a later pass.
+        """
+        record = self._ledger.get(effect_id) or {}
+        if record.get("status") == "PREPARED":
+            self._ledger.mark_in_flight(effect_id, owner="merge-arbiter")
+        if record.get("status") != "RECONCILING":
+            self._ledger.begin_reconcile(effect_id, owner="merge-arbiter")
+
+        expected_after = await self._head()
+        before = await self._git(
+            ["rev-parse", f"{self._remote_name}/{self._base_branch}"],
+            cwd=self._project_path,
+        )
+        expected_before = before["stdout"].strip() if before["exit_code"] == 0 else ""
+
+        remote = await self._git(
+            ["ls-remote", self._remote_name, f"refs/heads/{self._base_branch}"],
+            cwd=self._project_path,
+        )
+        if remote["exit_code"] != 0:
+            # The reconciler could not ask either: hand the effect back as
+            # UNKNOWN so a later pass (or an operator) picks it up instead
+            # of leaving a RECONCILING record nobody owns.
+            self._ledger.mark_unknown(effect_id, reason="reconcile could not reach the remote")
+            return "inconclusive"
+        parts = remote["stdout"].split()
+        current = parts[0] if parts else ""
+
+        if expected_after and current == expected_after:
+            self._ledger.confirm(
+                effect_id, result={"branch": self._base_branch, "head": current}
+            )
+            return "applied"
+        if current in (expected_before, ""):
+            self._ledger.resolve_reconcile(
+                effect_id, applied=False, reason="remote does not have the commit"
+            )
+            return "absent"
+        self._ledger.mark_unknown(effect_id, reason="remote moved to an unexpected head")
+        return "inconclusive"
 
     async def _try_resolve_conflicts(self) -> bool:
         """Attempt to resolve all conflicted files via ConflictResolver.

@@ -71,13 +71,20 @@
 - **权限面**：`tests/python/test_sandbox_env_allowlist.py` 与 hy-memory 的
   allowlist 测试证明未知身份拿不到额外凭证，`OPENAI_API_KEY` 不因记忆后端
   而进入共享层。
+- **副作用账本**：`python/ultimate_coders/effect_ledger.py` 把「一次逻辑外部
+  操作」与「多次执行尝试」分开。状态机 `PREPARED → IN_FLIGHT →
+  {CONFIRMED, FAILED, UNKNOWN}`，`UNKNOWN → RECONCILING →
+  {CONFIRMED, PREPARED}`。**`UNKNOWN` 不等于 `FAILED`**：传输中断只能先对账，
+  只有确定未生效才回到 `PREPARED` 允许重试；`CONFIRMED` 终态下重复调用返回
+  记录结果而不是再次执行。合并发布已接入：`MergeArbiter` 以
+  （远端、分支、待发布提交）构造稳定 effect id，推送报错时用 `ls-remote`
+  对账，已落地则报 `already_pushed` 而非重试。
 
 ## 5. 差距（按优先级）
 
 | 缺口 | 现状 | 升级方向 |
 |---|---|---|
-| **Effect Ledger 的 UNKNOWN 语义** | outbox 只有 pending/delivered；推送/合并失败一律视为可重试 | 引入 `PREPARED → IN_FLIGHT → CONFIRMED`，网络超时进入 `UNKNOWN` 并**先对账再重试**；按 attempt 分键改为按逻辑 effect 分键 |
-| **Context Compiler** | `ContextInjector` 仅按字符截断，无来源、无预算、无丢弃记录 | 本 PR 落地第一切片：分层（P0–P5）+ 统一 token 预算 + provenance + 兼容渲染（见 §6） |
+| **Effect 账本覆盖面** | 合并发布已接入（见 §4）；Worker 的分支推送仍只记 exit code | 把 `release()` 的分支推送也走账本；outbox 的键从 `task:subtask:attempt` 收敛为逻辑 effect |
 | **Progress Detector** | retry 只看次数与错误类型 | 以「新信息/证据增量」判定无效循环，连续同错触发 replan |
 | **任务契约版本化** | 目标在任务中途变化无显式语义 | 契约带版本，变更需重新验收（F6） |
 | **预算与配额** | 无任务级预算账本 | 预算耗尽停止新执行并保存状态（F7） |
@@ -113,7 +120,7 @@
 | 编号 | 注入故障 | 现有证据 | 状态 |
 |---|---|---|---|
 | F1 | LLM 调用期间崩溃 | `test_unconfirmed_writer_preserves_checkpoint_and_original_baseline` | 覆盖 |
-| F2 | 工具成功但响应丢失 | `test_lost_submission_response_never_creates_another_job`、去重集成测试 | 覆盖 |
+| F2 | 工具成功但响应丢失 | `test_lost_submission_response_never_creates_another_job`、去重集成测试、`tests/python/test_merge_arbiter_effects.py`（已推送但响应丢失 → `already_pushed`，不重试） | 覆盖 |
 | F3 | 沙箱/工作区被销毁 | inference delivery 的 worktree 接管与恢复测试 | 覆盖 |
 | F4 | 外部工具返回恶意指令 | env allowlist 与凭证隔离测试 | 部分（注入内容本身未测） |
 | F5 | 两个 Agent 改同一资源 | `test_merge_arbiter.py`、`test_merge_gate.py` | 覆盖 |
