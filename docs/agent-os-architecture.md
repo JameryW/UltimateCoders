@@ -151,8 +151,13 @@
   状态机），best-effort——落库失败只记日志，不会让它描述的子任务失败。
   事件流丢失后，「这次为什么少了东西」仍可按 subtask 扫回
   （`tests/python/test_context_outbox.py`）。读取面：
-  `GET /dashboard/api/context/manifests?task_id=…&subtask_id=…`（auth 与
-  分页同其他 dashboard 端点；返回 summary 原文，不含 prompt 内容）。
+  `GET /dashboard/api/context/manifests?task_id=…[&subtask_id=…]`（auth 与
+  分页同其他 dashboard 端点；返回 summary 原文，不含 prompt 内容）。带
+  `subtask_id` 看一个子任务的历代编译；只给 `task_id` 时跨该任务全部
+  子任务扫回——单次编译的 key 自带 attempt，但跨子任务时纯字符串序会把
+  `:10` 排在 `:2` 前，故按（子任务前缀, attempt 数值）重排；任务前缀
+  带冒号，`task-1` 不会吞掉 `task-10`
+  （`tests/python/test_dashboard_context_manifests.py`）。
   gateway 组合块路径不本地
   编译，因而不留记录——空历史而非伪造记录。
 

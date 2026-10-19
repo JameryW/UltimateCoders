@@ -709,8 +709,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # more (python/ultimate_coders/context_outbox.py and
     # tests/python/test_context_outbox.py, both resolved): 338 -> 340. The
     # cache-affinity slice named tests/python/test_context_compiler.py again
-    # in its §6 note (already counted once, now twice): 340 -> 341.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 341
+    # in its §6 note (already counted once, now twice): 340 -> 341. The
+    # task-wide manifest scan named
+    # tests/python/test_dashboard_context_manifests.py in the same note
+    # (resolved): 341 -> 342.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 342
 
 
 def test_real_corpus_has_no_false_content_mismatch():
