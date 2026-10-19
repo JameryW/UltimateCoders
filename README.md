@@ -560,7 +560,7 @@ Eleven independent workflows are defined. Ten run on pushes and pull requests ta
 |----------|--------------|--------|
 | **Rust CI** (`ci-rust.yml`) | `crates/**`, `Cargo.toml`, `Cargo.lock`, `docker/docker-compose.yml` | check, clippy, fmt, test (3 feature combos), postgres integration |
 | **Python CI** (`ci-python.yml`) | `python/**`, `tests/**`, `pyproject.toml`, `dashboard/**`, `crates/uc-python/**`, `crates/uc-types/**`, `crates/uc-engine/**`, `crates/uc-grpc/**`, `Cargo.toml`, `Cargo.lock` | ruff lint, dashboard build, pytest (3.9 + 3.12) |
-| **Dashboard CI** (`ci-dashboard.yml`) | `dashboard/**` | typecheck, build |
+| **Dashboard CI** (`ci-dashboard.yml`) | `dashboard/**` | typecheck, build, `node test` (lib + SSR render) |
 | **TypeScript CI** (`ci-typescript.yml`) | `packages/uc-orchestrator/**`, `vendor/oh-my-pi/packages/mnemopi/**`, `vendor/oh-my-pi/packages/coding-agent/**` | `bun test` for each package |
 | **Scripts CI** (`ci-scripts.yml`) | *(no paths filter)* | spec-refs, tasks-refs, ruff lint |
 | **Trellis CI** (`ci-trellis.yml`) | `.trellis/scripts/**`, `tests/python/test_task_finish_fallback.py`, `tests/python/test_archive_repoints_refs.py` | framework-scripts tests |

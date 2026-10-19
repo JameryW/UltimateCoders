@@ -56,3 +56,26 @@ jobs:
           version: 9
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec vite build
+
+  tests:
+    # The .test.mjs suite is real coverage (lib ordering/parsing and SSR
+    # render checks) and had no CI job at all -- a test that never runs is
+    # not evidence. Node 22 because the tests import .ts sources directly
+    # (type stripping); Node 20 cannot.
+    name: node test (lib + SSR render)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test

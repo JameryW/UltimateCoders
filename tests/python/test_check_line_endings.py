@@ -228,6 +228,7 @@ def test_real_repo_is_reconciled() -> None:
         (2066, 2057),  # Model routing module and its tests: two text files.
         (2068, 2059),  # Context manifest outbox module and its tests: two text files.
         (2069, 2060),  # The dashboard read surface for context manifests: one test file.
+        (2072, 2063),  # Context manifest dashboard panel: lib, panel and its .mjs tests.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

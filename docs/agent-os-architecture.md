@@ -157,7 +157,12 @@
   子任务扫回——单次编译的 key 自带 attempt，但跨子任务时纯字符串序会把
   `:10` 排在 `:2` 前，故按（子任务前缀, attempt 数值）重排；任务前缀
   带冒号，`task-1` 不会吞掉 `task-10`
-  （`tests/python/test_dashboard_context_manifests.py`）。
+  （`tests/python/test_dashboard_context_manifests.py`）。任务详情面板把
+  这条痕迹渲染成可扫读的文本
+  （`dashboard/src/components/panels/ContextManifestPanel.tsx`）：逐条显示
+  subtask · attempt、预算/总量/稳定量、risk 与丢弃原因；渲染器只读
+  summary 的已知字段，未知字段（哪怕混进了内容）永不输出
+  （`dashboard/tests/contextManifests.test.mjs` 以带毒字段断言这一点）。
   gateway 组合块路径不本地
   编译，因而不留记录——空历史而非伪造记录。
 

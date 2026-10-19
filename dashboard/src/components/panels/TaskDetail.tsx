@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import DOMPurify from "dompurify";
 import type { TaskSummary, SubtaskSummary, TaskEvent } from "@/types/dashboard";
 import { InteractionLog } from "@/components/panels/InteractionLog";
+import { ContextManifestTrail } from "@/components/panels/ContextManifestPanel";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { renderMermaid } from "@/lib/mermaid";
 import { cn, shortId, truncate, statusBadgeClass } from "@/lib/utils";
@@ -382,6 +383,9 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: Tas
 
       {/* Mermaid DAG */}
       <SubtaskDAG subtasks={subtasks} />
+
+      {/* Context compilation trail — what this task's prompts were built from */}
+      <ContextManifestTrail taskId={task.id} />
     </div>
   );
 }
