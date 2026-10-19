@@ -70,3 +70,13 @@ class ContextManifestOutbox:
         return self.state.query(
             NAMESPACE, prefix=f"{task_id}:{subtask_id}:", limit=limit
         )
+
+    def task_history(self, task_id: str, *, limit: int = 100) -> list[dict]:
+        """Every recorded compile for one task, across all its subtasks.
+
+        Ordering is key order, which is subtask-lexicographic then
+        attempt-lexicographic (``s10`` sorts before ``s2``); callers that
+        need attempt-numeric order re-sort. The trailing ``:`` in the
+        prefix keeps ``task-1`` from swallowing ``task-10``.
+        """
+        return self.state.query(NAMESPACE, prefix=f"{task_id}:", limit=limit)

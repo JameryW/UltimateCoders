@@ -66,6 +66,16 @@ def _unavailable(message: str, exc: Exception) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=503)
 
 
+def _manifest_sort_key(record: dict) -> tuple[str, int]:
+    """Order manifest keys by (task:subtask, numeric attempt).
+
+    Plain string order puts ``s1:10`` before ``s1:2``; auditors asking
+    "what did attempt 2 look like" should not have to know that.
+    """
+    prefix, _, attempt = str(record.get("key", "")).rpartition(":")
+    return prefix, int(attempt) if attempt.isdigit() else 0
+
+
 # ── NATS subject constants (must match nats_worker.py + Rust server.rs) ──
 
 NATS_SUBJECT_TASK_SUBMIT: str = "uc.task.submit"
@@ -288,31 +298,33 @@ class DashboardApp:
 
             P1b increment 2 wrote one snapshot per compile (budget, tier
             counts, drop reasons, risk, stable_tokens -- never prompt
-            content); this makes the trail readable. Query one subtask's
-            history; ``attempt`` is part of each key, so retries that
-            recompiled are separate records.
+            content); this makes the trail readable. With ``subtask_id``
+            the answer is one subtask's history; without it, every
+            subtask of the task (attempt shown in each key, sorted
+            numerically within a subtask).
             """
             if (resp := self._check_auth(request)) is not None:
                 return resp
             task_id = request.query_params.get("task_id", "")
             subtask_id = request.query_params.get("subtask_id", "")
-            if not task_id or not subtask_id:
-                return JSONResponse(
-                    {"error": "task_id and subtask_id are required"}, status_code=400
-                )
+            if not task_id:
+                return JSONResponse({"error": "task_id is required"}, status_code=400)
             try:
                 limit = int(request.query_params.get("limit", "100"))
                 if not 1 <= limit <= 1000:
                     raise ValueError("limit must be between 1 and 1000")
                 from ultimate_coders.context_outbox import ContextManifestOutbox
 
-                state = await experiment_state()
-                manifests = await asyncio.to_thread(
-                    ContextManifestOutbox(state).history,
-                    task_id,
-                    subtask_id,
-                    limit=limit,
-                )
+                outbox = ContextManifestOutbox(await experiment_state())
+                if subtask_id:
+                    manifests = await asyncio.to_thread(
+                        outbox.history, task_id, subtask_id, limit=limit
+                    )
+                else:
+                    manifests = await asyncio.to_thread(
+                        outbox.task_history, task_id, limit=limit
+                    )
+                    manifests.sort(key=_manifest_sort_key)
             except ValueError:
                 return JSONResponse({"error": "Invalid pagination"}, status_code=400)
             except Exception as e:

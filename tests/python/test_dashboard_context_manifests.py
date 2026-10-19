@@ -60,14 +60,70 @@ def _summary(budget: int = 100) -> dict:
     }
 
 
-async def test_requires_task_and_subtask_ids(app_and_state):
+async def test_requires_task_id(app_and_state):
     app, _state = app_and_state
     endpoint = _endpoint(app)
 
-    for query in ("", "task_id=t1", "subtask_id=s1"):
+    for query in ("", "subtask_id=s1", "limit=10"):
         resp = await endpoint(_request(query))
         assert resp.status_code == 400, query
-        assert "task_id and subtask_id" in resp.body.decode()
+        assert "task_id is required" in resp.body.decode()
+
+
+async def test_task_only_query_spans_every_subtask(app_and_state):
+    app, state = app_and_state
+    outbox = ContextManifestOutbox(state)
+    outbox.record(manifest_key("t1", "s1", 0), summary=_summary(100))
+    outbox.record(manifest_key("t1", "s2", 0), summary=_summary(200))
+    outbox.record(manifest_key("t1", "s2", 1), summary=_summary(300))
+    outbox.record(manifest_key("t-other", "s1", 0), summary=_summary(400))
+
+    resp = await _endpoint(app)(_request("task_id=t1"))
+    payload = json.loads(resp.body)
+
+    assert resp.status_code == 200
+    assert payload["count"] == 3
+    assert [m["key"] for m in payload["manifests"]] == [
+        "t1:s1:0",
+        "t1:s2:0",
+        "t1:s2:1",
+    ]
+
+
+async def test_task_scan_sorts_attempts_numerically(app_and_state):
+    # Plain key order would put ":10" before ":2"; the endpoint re-sorts so
+    # "what did attempt 2 look like" does not require knowing that.
+    app, state = app_and_state
+    outbox = ContextManifestOutbox(state)
+    for attempt in (0, 2, 10):
+        outbox.record(manifest_key("t1", "s1", attempt), summary=_summary(attempt))
+
+    payload = json.loads((await _endpoint(app)(_request("task_id=t1"))).body)
+
+    assert [m["key"] for m in payload["manifests"]] == [
+        "t1:s1:0",
+        "t1:s1:2",
+        "t1:s1:10",
+    ]
+
+
+async def test_task_prefix_does_not_swallow_a_longer_task_id(app_and_state):
+    app, state = app_and_state
+    outbox = ContextManifestOutbox(state)
+    outbox.record(manifest_key("task-1", "s1", 0), summary=_summary(100))
+    outbox.record(manifest_key("task-10", "s1", 0), summary=_summary(200))
+
+    payload = json.loads((await _endpoint(app)(_request("task_id=task-1"))).body)
+
+    assert [m["key"] for m in payload["manifests"]] == ["task-1:s1:0"]
+
+
+async def test_unknown_task_yields_an_empty_scan(app_and_state):
+    app, _state = app_and_state
+
+    payload = json.loads((await _endpoint(app)(_request("task_id=nope"))).body)
+
+    assert payload == {"manifests": [], "count": 0}
 
 
 async def test_rejects_unbounded_or_non_numeric_limit(app_and_state):
