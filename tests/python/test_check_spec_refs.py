@@ -707,8 +707,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # tests/python/test_model_routing.py (both exist, so still 0 unclassified),
     # which moved the census 336 -> 338. The manifest-outbox slice added two
     # more (python/ultimate_coders/context_outbox.py and
-    # tests/python/test_context_outbox.py, both resolved): 338 -> 340.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 340
+    # tests/python/test_context_outbox.py, both resolved): 338 -> 340. The
+    # cache-affinity slice named tests/python/test_context_compiler.py again
+    # in its §6 note (already counted once, now twice): 340 -> 341.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 341
 
 
 def test_real_corpus_has_no_false_content_mismatch():

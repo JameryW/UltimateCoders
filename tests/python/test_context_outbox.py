@@ -80,6 +80,7 @@ def test_record_stores_only_the_summary_no_content(state):
     assert set(record["summary"]) == {
         "budget_tokens",
         "total_tokens",
+        "stable_tokens",
         "risk",
         "over_budget",
         "items_by_tier",
