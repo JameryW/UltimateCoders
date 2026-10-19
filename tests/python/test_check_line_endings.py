@@ -225,6 +225,7 @@ def test_real_repo_is_reconciled() -> None:
         (2060, 2051),  # Progress detector module and its tests.
         (2062, 2053),  # Contract versioning module and its tests.
         (2064, 2055),  # Task budget ledger module and its tests.
+        (2066, 2057),  # Model routing module and its tests: two text files.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
