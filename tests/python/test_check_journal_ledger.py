@@ -416,8 +416,10 @@ def test_real_corpus_conforms(capsys):
     # count of THIS ledger's files is 3, not 2. This literal has to move in
     # the same change as the rotation -- the same rule as the corpus pin in
     # test_check_tasks_refs.py.  It stayed at 2 for 44 sessions only because
-    # a rotation had never happened before.
-    assert "this ledger: 3 file(s)" in out
+    # a rotation had never happened before. It moved again at session 68:
+    # journal-4.md opened when journal-3.md crossed the 2000-line threshold,
+    # so the ledger now holds 4 files (journal-1 / -2 / -3 / -4).
+    assert "this ledger: 4 file(s)" in out
     assert "legacy (pinned, not fixed here): 3 file(s)" in out
 
 
@@ -431,7 +433,7 @@ def test_real_clean_ledger_is_red_under_the_substring_criterion(capsys):
     journals, error = guard.iter_journal_paths()
     assert error is None and journals
     ours = [p for p in journals if guard.journal_key(p) not in guard.LEGACY_JOURNALS]
-    assert len(ours) == 3  # the T-series ledger: journal-1 / -2 / -3
+    assert len(ours) == 4  # the T-series ledger: journal-1 / -2 / -3 / -4
     loose = 0
     strict = 0
     for path in ours:
