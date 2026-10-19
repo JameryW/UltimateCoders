@@ -30,6 +30,11 @@ from .runtime_state import RuntimeState
 #: query for terminal outcomes never picks up audit snapshots.
 NAMESPACE = "context_manifest"
 
+#: Rows per ``state.query`` call while ``recent()`` walks the key cursor.
+#: ``query`` caps ``limit`` at 1000, so this is the widest legal page; the
+#: pagination test narrows it to prove the walk crosses pages.
+SCAN_PAGE = 1000
+
 
 def manifest_key(task_id: str, subtask_id: str, attempt: int) -> str:
     """Identity of one compile: the subtask *and* the attempt.
@@ -80,3 +85,39 @@ class ContextManifestOutbox:
         prefix keeps ``task-1`` from swallowing ``task-10``.
         """
         return self.state.query(NAMESPACE, prefix=f"{task_id}:", limit=limit)
+
+    def recent(
+        self, task_id: str, *, subtask_id: str | None = None, limit: int = 100
+    ) -> list[dict]:
+        """The newest compiles by ``recorded_at``, newest first.
+
+        This is a *time* window, not a key window. ``RuntimeState.query``
+        truncates in key order (``ORDER BY record_key LIMIT n``), so a
+        "fetch ``limit`` rows, then sort by time" implementation answers
+        "the newest of the first ``limit`` keys" and drops exactly the
+        record this method exists to surface: the one whose key sorts
+        last while its ``recorded_at`` is newest. So the scan walks the
+        whole ``task:``/``task:subtask:`` prefix on the key cursor and
+        truncates only *after* the time sort -- ``limit`` bounds the
+        response, never the scan (one pass over the task's compiles,
+        which an audit read can pay).
+
+        Ordering is the total key ``(-recorded_at, key)``: newest first,
+        ties by key ascending. ``subtask_id`` of ``None``/empty scans the
+        whole task; the trailing-``:`` prefix boundary is the same one
+        ``task_history`` documents (``task-1`` never swallows
+        ``task-10``).
+        """
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("Query limit must be between 1 and 1000")
+        prefix = f"{task_id}:{subtask_id}:" if subtask_id else f"{task_id}:"
+        window: list[dict] = []
+        after = ""
+        while True:
+            page = self.state.query(NAMESPACE, prefix=prefix, after=after, limit=SCAN_PAGE)
+            window.extend(page)
+            if len(page) < SCAN_PAGE:
+                break
+            after = page[-1]["key"]
+        window.sort(key=lambda r: (-r["recorded_at"], r["key"]))
+        return window[:limit]

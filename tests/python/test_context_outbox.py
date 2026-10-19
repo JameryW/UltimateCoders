@@ -134,6 +134,108 @@ def test_history_isolates_subtasks_and_orders_by_key(state):
     assert [r["key"] for r in outbox.history("t", "s10")] == ["t:s10:0"]
 
 
+# ── recency ordering ─────────────────────────────────────────────
+
+
+def test_recent_is_a_time_window_not_a_key_window(state, monkeypatch):
+    # THE honesty pin for ``recent``. ``RuntimeState.query`` truncates in
+    # key order, so "fetch limit rows, then sort by recorded_at" answers
+    # "the newest of the first limit keys" -- and drops exactly the record
+    # this method exists to surface: here the NEWEST compile holds the
+    # LAST key, so under limit=1/2 a key-truncating implementation can
+    # never return it. limit bounds the response, never the scan.
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for subtask, budget, at in (("a", 100, 1000.0), ("m", 200, 2000.0), ("z", 300, 3000.0)):
+        clock["now"] = at
+        outbox.record(manifest_key("t", subtask, 0), summary=_summary(budget))
+
+    assert [r["key"] for r in outbox.recent("t", limit=1)] == ["t:z:0"]
+    assert [r["key"] for r in outbox.recent("t", limit=2)] == ["t:z:0", "t:m:0"]
+
+
+def test_recent_orders_by_recorded_at_then_key(state, monkeypatch):
+    # The documented total order is (-recorded_at, key). The injected scan
+    # window is deliberately NOT in key order and carries a recorded_at
+    # tie, so every element of that sort key is observable: dropping the
+    # tie-break hands the tie to Python's stable sort, which would keep
+    # the injected s2-before-s1 order and break the contract.
+    outbox = ContextManifestOutbox(state)
+    scrambled = [
+        {"key": "t:s2:0", "summary": {}, "recorded_at": 100.0},
+        {"key": "t:s1:0", "summary": {}, "recorded_at": 100.0},
+        {"key": "t:s3:0", "summary": {}, "recorded_at": 300.0},
+        {"key": "t:s4:0", "summary": {}, "recorded_at": 200.0},
+    ]
+    monkeypatch.setattr(outbox.state, "query", lambda *a, **k: list(scrambled))
+
+    assert [r["key"] for r in outbox.recent("t")] == [
+        "t:s3:0",
+        "t:s4:0",
+        "t:s1:0",
+        "t:s2:0",
+    ]
+
+
+def test_recent_scan_walks_past_one_query_page(state, monkeypatch):
+    # One state.query page must not be the window. With SCAN_PAGE narrowed
+    # to 2, five compiles whose newest record holds the last key require
+    # three cursor pages; a single-page scan keeps only the first two keys
+    # and misses the newest.
+    monkeypatch.setattr("ultimate_coders.context_outbox.SCAN_PAGE", 2)
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for subtask, at in zip("abcde", (1000.0, 2000.0, 3000.0, 4000.0, 5000.0)):
+        clock["now"] = at
+        outbox.record(manifest_key("t", subtask, 0), summary=_summary())
+
+    assert [r["key"] for r in outbox.recent("t", limit=1)] == ["t:e:0"]
+
+
+def test_recent_scopes_subtasks_and_keeps_the_colon_boundary(state, monkeypatch):
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for key, budget, at in (
+        (manifest_key("t", "s1", 0), 100, 1000.0),
+        (manifest_key("t", "s1", 1), 200, 2000.0),
+        (manifest_key("t", "s10", 0), 300, 3000.0),
+        (manifest_key("task-1", "s1", 0), 400, 4000.0),
+        (manifest_key("task-10", "s1", 0), 500, 5000.0),
+    ):
+        clock["now"] = at
+        outbox.record(key, summary=_summary(budget))
+
+    assert [r["key"] for r in outbox.recent("t", subtask_id="s1")] == [
+        "t:s1:1",
+        "t:s1:0",
+    ]
+    # "s10" shares s1's string prefix, "task-10" shares task-1's; both
+    # trailing-":" boundaries must hold in the recency scan too.
+    assert [r["key"] for r in outbox.recent("task-1")] == ["task-1:s1:0"]
+    assert [r["key"] for r in outbox.recent("task-1", subtask_id="s1")] == [
+        "task-1:s1:0"
+    ]
+
+
+def test_recent_rejects_limits_outside_1_to_1000(state):
+    # Same strictness as RuntimeState.query: type(limit) is int and within
+    # range (``True`` is an int subclass, so the type check is strict on
+    # purpose and must keep rejecting it).
+    outbox = ContextManifestOutbox(state)
+    for bad in (0, -1, 1001, "100", 2.5, True):
+        with pytest.raises(ValueError):
+            outbox.recent("t", limit=bad)
+
+
 # ── worker integration ───────────────────────────────────────────
 
 

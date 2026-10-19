@@ -301,14 +301,21 @@ class DashboardApp:
             content); this makes the trail readable. With ``subtask_id``
             the answer is one subtask's history; without it, every
             subtask of the task (attempt shown in each key, sorted
-            numerically within a subtask).
+            numerically within a subtask). ``order=recent`` switches from
+            key order to ``recorded_at`` newest-first -- a real time
+            window (``ContextManifestOutbox.recent`` scans the whole
+            prefix before truncating), not "newest of the first ``limit``
+            keys".
             """
             if (resp := self._check_auth(request)) is not None:
                 return resp
             task_id = request.query_params.get("task_id", "")
             subtask_id = request.query_params.get("subtask_id", "")
+            order = request.query_params.get("order", "key")
             if not task_id:
                 return JSONResponse({"error": "task_id is required"}, status_code=400)
+            if order not in ("key", "recent"):
+                return JSONResponse({"error": "Invalid order"}, status_code=400)
             try:
                 limit = int(request.query_params.get("limit", "100"))
                 if not 1 <= limit <= 1000:
@@ -316,7 +323,14 @@ class DashboardApp:
                 from ultimate_coders.context_outbox import ContextManifestOutbox
 
                 outbox = ContextManifestOutbox(await experiment_state())
-                if subtask_id:
+                if order == "recent":
+                    manifests = await asyncio.to_thread(
+                        outbox.recent,
+                        task_id,
+                        subtask_id=subtask_id or None,
+                        limit=limit,
+                    )
+                elif subtask_id:
                     manifests = await asyncio.to_thread(
                         outbox.history, task_id, subtask_id, limit=limit
                     )

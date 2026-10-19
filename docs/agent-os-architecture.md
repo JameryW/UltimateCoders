@@ -165,6 +165,14 @@
   （`dashboard/tests/contextManifests.test.mjs` 以带毒字段断言这一点）。
   gateway 组合块路径不本地
   编译，因而不留记录——空历史而非伪造记录。
+  按时间读「最近 N 次编译」另有显式序：`order=recent`（或直接调
+  `ContextManifestOutbox.recent()`）按 `recorded_at` 新在前返回。
+  `RuntimeState.query` 的截断发生在 key 序（`ORDER BY record_key
+  LIMIT n`），「取 N 条再按时间排」得到的只是「key 窗口里的最新」，
+  key 靠后而时间最新的那条恰好会被截掉——正是该方法要放上来的那条；
+  故 recent 用 key 游标扫完整个前缀后才按时间序截断，`limit` 只约束
+  响应、不约束扫描；排序键 `(-recorded_at, key)` 全序，同刻按 key 升序
+  （`tests/python/test_context_outbox.py`）。
 
 预算配比已跟随路由风险落地：`compile_context` 在
 `RISK_RESERVED_SHARE` 命中时（今天是 high）为 (P0, P2) 组——任务契约与

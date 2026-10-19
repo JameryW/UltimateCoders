@@ -162,6 +162,61 @@ async def test_unknown_subtask_yields_an_empty_history_not_an_error(app_and_stat
     assert payload == {"manifests": [], "count": 0}
 
 
+async def test_order_recent_is_a_time_window_not_a_key_window(app_and_state, monkeypatch):
+    # Same honesty pin as ContextManifestOutbox.recent, one layer up: the
+    # newest compile holds the LAST key, so under limit=1 an endpoint that
+    # truncated in key order (or sorted after a key-limited fetch) could
+    # never return it.
+    app, state = app_and_state
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for subtask, budget, at in (("a", 100, 1000.0), ("z", 300, 3000.0)):
+        clock["now"] = at
+        outbox.record(manifest_key("t1", subtask, 0), summary=_summary(budget))
+
+    payload = json.loads(
+        (await _endpoint(app)(_request("task_id=t1&order=recent&limit=1"))).body
+    )
+    assert [m["key"] for m in payload["manifests"]] == ["t1:z:0"]
+
+    payload = json.loads(
+        (await _endpoint(app)(_request("task_id=t1&order=recent"))).body
+    )
+    assert [m["key"] for m in payload["manifests"]] == ["t1:z:0", "t1:a:0"]
+
+
+async def test_order_recent_respects_the_subtask_scope(app_and_state, monkeypatch):
+    app, state = app_and_state
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for key, budget, at in (
+        (manifest_key("t1", "s1", 0), 100, 1000.0),
+        (manifest_key("t1", "s2", 0), 200, 2000.0),
+    ):
+        clock["now"] = at
+        outbox.record(key, summary=_summary(budget))
+
+    payload = json.loads(
+        (await _endpoint(app)(_request("task_id=t1&subtask_id=s1&order=recent"))).body
+    )
+    assert [m["key"] for m in payload["manifests"]] == ["t1:s1:0"]
+
+
+async def test_rejects_unknown_order_value(app_and_state):
+    app, _state = app_and_state
+
+    for order in ("recorded_at", "RECENT", "anything"):
+        resp = await _endpoint(app)(_request(f"task_id=t1&order={order}"))
+        assert resp.status_code == 400, order
+        assert b"Invalid order" in resp.body
+
+
 async def test_payload_carries_the_summary_never_prompt_content(app_and_state):
     app, state = app_and_state
     ContextManifestOutbox(state).record(manifest_key("t1", "s1", 0), summary=_summary())

@@ -787,8 +787,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # ledgers being the other real extension in the same condition) made both
     # citations count: 343 -> 345, both resolved. The mechanism is pinned by
     # test_mjs_and_jsonl_citations_count_as_mentions, and the non-addition of
-    # `lock` by test_a_lock_suffix_is_still_not_a_path.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 345
+    # `lock` by test_a_lock_suffix_is_still_not_a_path. The manifest recency
+    # read (ContextManifestOutbox.recent / order=recent) named
+    # tests/python/test_context_outbox.py a second time in the same §6 note
+    # (already counted once, now twice): 345 -> 346, resolved.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 346
 
 
 def test_real_corpus_has_no_false_content_mismatch():
