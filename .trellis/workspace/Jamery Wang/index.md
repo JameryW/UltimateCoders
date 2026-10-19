@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-4.md`
-- **Total Sessions**: 72
+- **Total Sessions**: 73
 - **Last Active**: 2026-10-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-4.md` | ~424 | Active |
+| `journal-4.md` | ~523 | Active |
 | `journal-3.md` | ~1973 | Archived |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
@@ -32,6 +32,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 73 | 2026-10-20 | The attempt in the key was a constant | `c62d328`, `99efcfb` | `fix/manifest-attempt-identity` |
 | 72 | 2026-10-20 | A "N recorded" that was not N | `c10bf3b`, `88b9429` | `feat/window-vs-total` |
 | 71 | 2026-10-20 | A "most recent N" that was not recent | `ca78cd8` | `feat/manifest-recency-window` |
 | 70 | 2026-10-19 | The same blind spot, one guard over | `454dd03`, `d8a1fc2` | `fix/workflow-inputs-suffixes` |
