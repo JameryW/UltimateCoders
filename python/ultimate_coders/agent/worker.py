@@ -952,6 +952,10 @@ class Worker:
                 )
                 context_block = manifest.render_legacy()
                 self._last_context_manifest = manifest.summary()
+                # Audit trail: the same summary that rides the started
+                # event also lands in the runtime state, so the "why was
+                # the prompt smaller" question outlives the event stream.
+                await self._record_context_manifest(subtask, self._last_context_manifest)
 
             # Acquire workspace if this subtask modifies files
             from ultimate_coders.inference.agent import InferenceInfraAgent
@@ -1422,6 +1426,26 @@ class Worker:
                     item["experiment_id"],
                     lambda old: {**old, "delivery": delivery},
                 )
+
+    async def _record_context_manifest(self, subtask: Subtask, summary: dict) -> None:
+        """Persist this attempt's context-compilation summary for audit.
+
+        Best-effort by design: the snapshot answers "why was the prompt
+        smaller than expected" after the fact, so losing it must never
+        fail the subtask it describes. The gateway-composed context block
+        path compiles nothing locally and records nothing.
+        """
+        try:
+            from ultimate_coders.context_outbox import ContextManifestOutbox, manifest_key
+
+            state = await self._domain_state()
+            await asyncio.to_thread(
+                ContextManifestOutbox(state).record,
+                manifest_key(subtask.parent_id, subtask.id, 0),
+                summary=summary,
+            )
+        except Exception:
+            logger.debug("context manifest persistence failed", exc_info=True)
 
     @staticmethod
     def _is_inference(subtask: Subtask) -> bool:
