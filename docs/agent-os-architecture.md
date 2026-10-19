@@ -124,7 +124,7 @@
 
 （模型路由已于 P2 落地，见 §4；本表现在为空——新增差距在此登记，按优先级排序。）
 
-## 6. Context Compiler（P1b，第一切片已落地）
+## 6. Context Compiler（P1b，risk 配比与 manifest 审计落库已落地）
 
 `python/ultimate_coders/agent/context_compiler.py` 把「拼 prompt」变成可测试的
 编译过程：
@@ -144,6 +144,14 @@
   仅在预算真正丢弃内容时追加截断标记。
 - **可观测**：`subtask_started` 事件携带 manifest 摘要（预算、各层计数、
   丢弃原因），排障时能看到「这次 prompt 为什么少了东西」。
+- **审计落库**：同一份摘要同时写入 runtime state 的 `context_manifest`
+  命名空间（`ContextManifestOutbox`，`python/ultimate_coders/context_outbox.py`），
+  key 为 `task:subtask:attempt`。与终态 outbox「一个 subtask 一条」相反，
+  manifest 是历史快照：重试若重编译，两条都留存；写入即投递（无重放
+  状态机），best-effort——落库失败只记日志，不会让它描述的子任务失败。
+  事件流丢失后，「这次为什么少了东西」仍可按 subtask 扫回
+  （`tests/python/test_context_outbox.py`）。gateway 组合块路径不本地
+  编译，因而不留记录——空历史而非伪造记录。
 
 预算配比已跟随路由风险落地：`compile_context` 在
 `RISK_RESERVED_SHARE` 命中时（今天是 high）为 (P0, P2) 组——任务契约与
@@ -156,8 +164,8 @@
 与 `tests/python/test_model_routing.py` 的
 `TestWorkerContextRiskRouting`）。
 
-后续增量：manifest 持久化到 outbox 供事后审计、稳定前缀/易变尾部的缓存
-亲和（`render_parts()` 已给出结构，等待推理侧消费）。
+后续增量：稳定前缀/易变尾部的缓存亲和（`render_parts()` 已给出结构，
+等待推理侧消费）。
 
 ## 7. 故障注入矩阵（F1–F8）与本仓库覆盖
 
