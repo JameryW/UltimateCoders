@@ -299,13 +299,16 @@ class DashboardApp:
             P1b increment 2 wrote one snapshot per compile (budget, tier
             counts, drop reasons, risk, stable_tokens -- never prompt
             content); this makes the trail readable. With ``subtask_id``
-            the answer is one subtask's history; without it, every
+            the answer is one subtask's history; without it, each
             subtask of the task (attempt shown in each key, sorted
             numerically within a subtask). ``order=recent`` switches from
             key order to ``recorded_at`` newest-first -- a real time
             window (``ContextManifestOutbox.recent`` scans the whole
             prefix before truncating), not "newest of the first ``limit``
-            keys".
+            keys". ``count`` is the window size (what came back);
+            ``total`` is the scan count (what exists in scope), so a
+            truncated window says so instead of passing itself off as
+            the whole trail.
             """
             if (resp := self._check_auth(request)) is not None:
                 return resp
@@ -339,11 +342,16 @@ class DashboardApp:
                         outbox.task_history, task_id, limit=limit
                     )
                     manifests.sort(key=_manifest_sort_key)
+                total = await asyncio.to_thread(
+                    outbox.total, task_id, subtask_id=subtask_id or None
+                )
             except ValueError:
                 return JSONResponse({"error": "Invalid pagination"}, status_code=400)
             except Exception as e:
                 return _unavailable("Context manifest state unavailable", e)
-            return JSONResponse({"manifests": manifests, "count": len(manifests)})
+            return JSONResponse(
+                {"manifests": manifests, "count": len(manifests), "total": total}
+            )
 
         @app.get("/dashboard/api/experiments/{experiment_id}/artifacts/{name}")
         async def experiment_artifact_api(experiment_id: str, name: str, request: Request):

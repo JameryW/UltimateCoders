@@ -4,6 +4,7 @@ import {
   compareManifestRecords,
   parseManifestKey,
   manifestHeadline,
+  manifestCountLine,
   tierCountsLine,
   droppedLine,
 } from "@/lib/contextManifests";
@@ -73,6 +74,7 @@ interface ContextManifestTrailProps {
  */
 export function ContextManifestTrail({ taskId }: ContextManifestTrailProps) {
   const [records, setRecords] = useState<ContextManifestRecord[] | null>(null);
+  const [total, setTotal] = useState<number | undefined>(undefined);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -87,8 +89,16 @@ export function ContextManifestTrail({ taskId }: ContextManifestTrailProps) {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled) return;
-        if (Array.isArray(data?.manifests)) setRecords(data.manifests);
-        else setFailed(true);
+        if (Array.isArray(data?.manifests)) {
+          setRecords(data.manifests);
+          // `total` is the scan count; the window may be smaller. Absent
+          // (older backend) leaves it undefined and the label degrades.
+          setTotal(
+            typeof data.total === "number" && Number.isFinite(data.total)
+              ? data.total
+              : undefined,
+          );
+        } else setFailed(true);
       })
       .catch(() => {
         if (!cancelled) setFailed(true);
@@ -104,7 +114,7 @@ export function ContextManifestTrail({ taskId }: ContextManifestTrailProps) {
         Context compiles{" "}
         <span className="text-[var(--text-muted)]">
           {records
-            ? `${records.length} recorded`
+            ? manifestCountLine(records.length, total)
             : failed
               ? "unavailable"
               : "loading…"}
