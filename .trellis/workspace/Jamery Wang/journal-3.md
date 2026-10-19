@@ -1619,3 +1619,67 @@ unconfigured path stays byte-identical (identity decisions), mirroring
 
 - P1b (Context Compiler) is the next roadmap item per
   `docs/agent-os-architecture.md`
+
+---
+
+## Session 63: Context compiler risk-aware budget allocation (P1b increment)
+
+**Date**: 2026-10-19
+**Task**: Risk-aware budget allocation for the context compiler (P1b)
+**Branch**: `feat/p1b-risk-aware-context`
+
+### Summary
+
+The (stage, risk) router (P2, Session 62) already decides how much reasoning
+budget a call gets, but `compile_context` accepted `risk` and allocated
+nothing with it -- a high-risk management task could lose its verified
+evidence to a long state dump. Landed the first P1b increment: the (P0, P2)
+group -- task contract and verified evidence -- now reserves a share of the
+prompt budget under a risk profile.
+
+### Main Changes
+
+- `python/ultimate_coders/agent/context_compiler.py`: `RISK_RESERVED_SHARE`
+  (today `{"high": 0.5}`) keyed on `routing.RiskLevel`'s vocabulary; two-pass
+  allocation when a reservation applies. The reservation is a floor, not a
+  cap: unclaimed tokens flow back and deferred evidence still competes in
+  the ordinary tier order. Risks outside the table (including the default
+  `"normal"`) compile byte-identically to the unprofiled path
+- `python/ultimate_coders/agent/worker.py`: the attempt-0 route now runs
+  before context compilation (pure, no side effects) and `compile_context`
+  consumes `route.risk` instead of a hardcoded `"normal"`
+- Guard pins re-measured, not guessed: `_save_checkpoint` def 1427 -> 1433
+  (route block moved above it; hook-guidelines.md:109 range updated to
+  1433-1487), spec-refs mention census 336 -> 338 (the doc §6 note names the
+  two new test files)
+- Docs §6: the risk-allocation item moved from 后续增量 to landed; manifest
+  persistence and cache affinity remain
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `80a8393` | feat(context): risk-aware budget allocation for high-risk work |
+| `5e00b96` | Merge pull request #733 from JameryW/feat/p1b-risk-aware-context |
+
+### Testing
+
+- [OK] 10 new tests (7 allocation cases + 3 worker-integration cases), all
+  green; full suite 1922 passed / 12 skipped / 0 failed
+- [OK] Mutation-checked before commit: empty reservation table (4 red),
+  wrong share 0.5 -> 0.1 (4 red), deferred-evidence dropped instead of
+  deferred (3 red), worker reverted to `risk="normal"` (3 red)
+- [OK] PR #733 CI: 11/11 SUCCESS (test jobs slow -- runner 正值
+  ubuntu-latest migration window); merged to main; local main synced to
+  `5e00b96`, local + remote feature branches deleted
+- [OK] All 7 guard scripts green; `ruff check python/ tests/` clean
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Remaining P1b increments per docs §6: manifest persistence to outbox for
+  post-hoc audit; stable-prefix/volatile-tail cache affinity
+  (`render_parts()` structure exists, waiting on inference-side consumption)
