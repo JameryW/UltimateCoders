@@ -1966,3 +1966,8 @@ request per subtask, enumerated from somewhere else.
   only, the coding loop lives in an external CLI subprocess), and a React
   panel for the manifest endpoint
 - #656 stays open (market scheduling blocked on the external plan §21)
+
+---
+
+**End of journal-3.md** (1968 lines at the Session 67 entry's close;
+this note added at the rollover). Sessions continue in **journal-4.md**.
