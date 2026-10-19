@@ -1824,3 +1824,69 @@ remember it. This closes the third and last P1b increment in §6.
   for manifests (PR #735) and inference-side consumption of
   `render_parts()` (this PR's honest boundary)
 - #656 stays open (market scheduling blocked on the external plan §21)
+
+---
+
+## Session 66: The manifest audit trail becomes readable (P1b follow-on)
+
+**Date**: 2026-10-19
+**Task**: Dashboard read surface for context manifests — close PR #735's write-only boundary
+**Branch**: `feat/dashboard-context-manifests-api`
+
+### Summary
+
+P1b is complete, so the next step is whichever honest boundary costs
+least to close. PR #735 left the manifest trail write-only; PR #737
+needs inference-side wiring and is therefore bigger. Landed the read
+surface where every other runtime-state endpoint already lives.
+
+### Main Changes
+
+- `GET /dashboard/api/context/manifests?task_id=…&subtask_id=…` — one
+  subtask's compile history in key order; `attempt` is part of each key,
+  so a retry that recompiled shows both snapshots
+- Same contract as every dashboard route: auth first (localhost bypasses
+  by design), ids required (400), limit bounded 1..1000 (400), store
+  failure → 503 rather than a half-filled payload
+- Payload is the compiler's summary verbatim — budget, tier counts,
+  drop reasons, risk, `stable_tokens` — never prompt content
+- docs §6 names the route as the way to read the trail
+- Guard pin: line-endings 2068/2059 → 2069/2060 (one new test file),
+  synced **before** the run this time; spec-refs census unchanged (341)
+  because the doc names a route, not a file
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6d966ae` | feat(dashboard): expose the context-manifest audit trail over HTTP |
+| `07e05ca` | Merge pull request #739 from JameryW/feat/dashboard-context-manifests-api |
+
+### Testing
+
+- [OK] 6 new tests: required ids (empty / task-only / subtask-only),
+  unbounded and non-numeric limits, key-ordered history isolated per
+  subtask, unknown subtask → 200 with an empty list, payload key set
+  carries no content, auth enforced
+- [OK] Mutation-checked before commit: required-id check removed (1 red),
+  auth gate removed (1 red) — both restored byte-identically
+- [OK] A lesson re-learned while writing the tests: the first versions
+  asserted `'"count": 2'` against `JSONResponse` output (no spaces) and
+  read `self._dashboard_password` from a fixture-built app (the password
+  is read at construction). Both were fixed by testing the real contract
+  (JSON parsing; rebuild the app after setting the env)
+- [OK] PR #739 CI: 11/11 SUCCESS (both runs watched to completion)
+- [OK] On merged main: all 7 guards green (line-endings 2069/2060);
+  `--collect-only` = 1956 (1950 + 6)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Remaining optional follow-ons, unchanged: inference-side consumption of
+  `render_parts()` (the only path that turns `stable_tokens` into real
+  cache hits), a React panel for the new endpoint, task-wide manifest
+  scanning (prefix query on `task_id:`)
+- #656 stays open (market scheduling blocked on the external plan §21)
