@@ -79,8 +79,29 @@ TOP_LEVEL_DIRS = (
     "vendor",
 )
 
+# File shapes a `run:` step can name as an input.  Measured 2026-10-19 over the
+# 76 run bodies in this repo: `js`, `jsonl`, `mjs` and `proto` were missing
+# while tracked files of every one of those shapes exist (`js`: 1 --
+# dashboard/eslint.config.js; `jsonl`: 633 -- the Trellis task ledgers; `mjs`:
+# 9 -- the dashboard test suite; `proto`: 1 -- crates/uc-grpc/proto/engine.proto)
+# -- so a run step naming any of them extracted NOTHING and the coverage
+# judgment could never fire for it.  Adding all four moves the corpus count
+# 21 -> 21 (not one run body names one today), so the real-repo summary pin is
+# deliberately insensitive to this class; the teeth are the synthetic rows in
+# test_check_workflow_inputs.py, and the next run step that names one.
+# Same registration rule as TOP_LEVEL_DIRS: `jsx` and `sql` are NOT here because
+# zero tracked files carry those shapes (0/0, measured) -- they are added in the
+# change that adds the first such file.
+# Deliberately NOT added despite tracked/untracked being irrelevant to them,
+# each with the phantom shape it would create (measured with this very
+# extractor on synthetic run text):
+#   `lock`  `rm -f scripts/build.lock` would demand path coverage for a
+#           coordination artifact the step itself creates;
+#   `exe`   `vendor/bin/protoc.exe` is a foreign binary, not a repo input;
+#   `env`   `docker/config/.env` is operator-supplied local config.
 FILE_SUFFIXES = (
-    "conf", "json", "md", "py", "rs", "sh", "toml", "ts", "tsx", "yaml", "yml",
+    "conf", "js", "json", "jsonl", "md", "mjs", "proto", "py",
+    "rs", "sh", "toml", "ts", "tsx", "yaml", "yml",
 )
 
 # A reference is `<top-level dir>/<...>/<name>.<known suffix>`. The lookbehind

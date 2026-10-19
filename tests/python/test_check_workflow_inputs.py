@@ -14,6 +14,10 @@ things are pinned here:
   * the two hand-written components -- the `paths` matcher and the `run:`
     reference extractor -- carry positive AND negative controls, and the matcher
     agrees with the copy `check-readme-ci-table.py` carries.
+  * the declared constants -- `TOP_LEVEL_DIRS` and `FILE_SUFFIXES` -- carry
+    their contents as a pin (the guard's header promises this of the directory
+    list), so registering a directory or a suffix shape moves a test in the
+    same change that registers it.
 
 MEASURED, NOT ASSUMED
 ---------------------
@@ -24,6 +28,16 @@ Compared against the README guard's matcher it disagreed on exactly two inputs:
 have made judgments 2/3 here disagree with the README guard about the same YAML,
 so the matcher was corrected, and `test_the_two_path_matchers_agree` now pins the
 two copies together.
+
+The suffix table had the same class of hole (2026-10-19): `js`, `jsonl`, `mjs`
+and `proto` were absent while tracked files of those shapes exist (1 / 633 / 9 /
+1), so a `run:` step naming one extracted nothing and judgment 2/3 could never
+fire for it. Adding the four moves the real-corpus summary by exactly 0 (no run
+body names one today -- the pin is insensitive to this class on purpose), so the
+teeth live in `test_parsers_are_pinned_both_ways`'s new rows and in
+`test_the_declared_tables_are_pinned`. `lock`, `exe` and `env` stay out: each
+has a phantom shape a run step would legitimately contain
+(`scripts/build.lock`, `vendor/bin/protoc.exe`, `docker/config/.env`).
 
 ANCHORS ARE MATCHED WITH AN EXPECTED COUNT
 ------------------------------------------
@@ -363,7 +377,34 @@ def test_parsers_are_pinned_both_ways() -> None:
             "maturin build --manifest-path crates/uc-python/Cargo.toml",
             {"crates/uc-python/Cargo.toml"},
         ),
+        # The 2026-10-19 suffix rows: each of these was extracted as NOTHING
+        # before the extension joined FILE_SUFFIXES, so a run step naming such
+        # a file was invisible to judgment 2/3. The paths are real repo shapes
+        # (the dashboard test suite, a Trellis task ledger, the ESLint config,
+        # the gRPC engine contract).
+        (
+            "node --test dashboard/tests/contextManifests.test.mjs",
+            {"dashboard/tests/contextManifests.test.mjs"},
+        ),
+        (
+            "cat .trellis/tasks/10-02-metainfer-architecture/implement.jsonl",
+            {".trellis/tasks/10-02-metainfer-architecture/implement.jsonl"},
+        ),
+        ("node dashboard/eslint.config.js", {"dashboard/eslint.config.js"}),
+        (
+            "grpc_tools.protoc -I crates/uc-grpc/proto crates/uc-grpc/proto/engine.proto",
+            {"crates/uc-grpc/proto/engine.proto"},
+        ),
+        # Deliberate non-additions, pinned rather than commented: each of
+        # these tokens is a shape a run step legitimately contains, and would
+        # become a phantom reference demanding path coverage if its suffix
+        # were added (the guard's header names all three).
+        ("rm -f scripts/build.lock", set()),
+        ("vendor/bin/protoc.exe --version", set()),
+        ("cp docker/config/.env docker/.env.local", set()),
         ("curl https://example.com/scripts/x.py", set()),
+        # Negative because `tools/` is not a TOP_LEVEL_DIRS entry -- NOT because
+        # of its suffix (`js` is a known suffix since 2026-10-19).
         ("node tools/build.js", set()),
         ("echo 'no file here'", set()),
     ]
@@ -389,6 +430,27 @@ def test_parsers_are_pinned_both_ways() -> None:
     )
     assert bodies == ["echo ok", "python -m pytest tests/python/real.py"], bodies
     assert guard.references(bodies) == {"tests/python/real.py"}
+
+
+def test_the_declared_tables_are_pinned() -> None:
+    """`TOP_LEVEL_DIRS` and `FILE_SUFFIXES` are declarations -- pin both.
+
+    The guard's header says the directory list is "printed, so an omission is
+    visible, and the test pins its contents", and the suffix list decides which
+    `run:`-named files exist at all for judgment 2/3. Either table growing or
+    shrinking is a behaviour change: it must move this pin in the same change,
+    the way the real-repo summary does for corpus shape. Both tuples are
+    compared as tuples (order included) so a re-sort cannot slip through.
+    """
+    guard = _load(GUARD, "check_workflow_inputs")
+    assert guard.TOP_LEVEL_DIRS == (
+        ".agents", ".github", ".trellis", "crates", "dashboard", "docker",
+        "docs", "packages", "python", "scripts", "tests", "vendor",
+    )
+    assert guard.FILE_SUFFIXES == (
+        "conf", "js", "json", "jsonl", "md", "mjs", "proto", "py",
+        "rs", "sh", "toml", "ts", "tsx", "yaml", "yml",
+    )
 
 
 def test_the_two_path_matchers_agree() -> None:
