@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 65
+- **Total Sessions**: 66
 - **Last Active**: 2026-10-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~1826 | Active |
+| `journal-3.md` | ~1892 | Active |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 66 | 2026-10-19 | The manifest audit trail becomes readable (P1b follow-on) | `6d966ae`, `07e05ca` | `feat/dashboard-context-manifests-api` |
 | 65 | 2026-10-19 | Cache affinity — the stable prefix becomes real (P1b increment 3, closing the track) | `64b6f00`, `73b920d` | `feat/p1b-context-cache-affinity` |
 | 64 | 2026-10-19 | Context-compilation manifests persisted to the runtime state (P1b increment 2) | `ab2aafc`, `4ca3299`, `0ba1087` | `feat/p1b-context-manifest-outbox` |
 | 63 | 2026-10-19 | Context compiler risk-aware budget allocation (P1b increment) | `80a8393`, `5e00b96` | `feat/p1b-risk-aware-context` |
