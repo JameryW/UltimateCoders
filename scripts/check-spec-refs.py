@@ -205,11 +205,11 @@ SPEC_ROOTS: tuple[pathlib.Path, ...] = (ROOT / ".trellis" / "spec", ROOT / "docs
 EXCLUDE_DIRS = {".git", ".scratch", "target", "node_modules", "vendor", ".venv",
                 "__pycache__", "dist", "build", ".pytest_cache"}
 
-CODE_EXT = {".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".proto", ".toml",
-            ".yml", ".yaml", ".json", ".sql", ".sh", ".md"}
+CODE_EXT = {".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".jsonl",
+            ".proto", ".toml", ".yml", ".yaml", ".json", ".sql", ".sh", ".md"}
 
 REF_RE = re.compile(
-    r"([A-Za-z0-9_][A-Za-z0-9_./\\-]*\.(?:py|rs|ts|tsx|js|jsx|proto|toml|yml|yaml|json|sql|sh))"
+    r"([A-Za-z0-9_][A-Za-z0-9_./\\-]*\.(?:py|rs|ts|tsx|js|jsx|mjs|jsonl|proto|toml|yml|yaml|json|sql|sh))"
     r":(\d+)(?:\s*[-\u2013]\s*(\d+))?"
 )
 TICK_RE = re.compile(r"`([^`\n]+)`")
@@ -231,7 +231,7 @@ CONTENT_TOKEN_RE = re.compile(r"[_.=\"]")
 # the content-candidate branch and produced a permanent false
 # CONTENT_MISMATCH.
 PATH_SPAN_RE = re.compile(
-    r"^[\w./\\:-]+\.(?:py|rs|ts|tsx|js|jsx|proto|toml|yml|yaml|json|sql|sh|md)"
+    r"^[\w./\\:-]+\.(?:py|rs|ts|tsx|js|jsx|mjs|jsonl|proto|toml|yml|yaml|json|sql|sh|md)"
     r"(?::\d+(?:\s*[-\u2013]\s*\d+)?)?$"
 )
 
@@ -248,9 +248,17 @@ FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
 #     and `/app/docker/...` are operator-supplied or container-side paths, not
 #     repo-relative references (excluded by starting the pattern with `\w`);
 #   * `:` is not allowed at all, so a `path:line` span can never also be a mention.
+#   * `mjs` and `jsonl` are included as of this note: the dashboard test suite is
+#     `.mjs` and the Trellis task ledgers are `.jsonl`, and a citation to either
+#     was INVISIBLE -- not counted, not checked, and (for `path:line`) not even
+#     recognised as a pointer. Deliberately NOT added, measured against the
+#     corpus: `lock` (prose contains `task_store.lock()` -- a Rust method call,
+#     which the regex would turn into a phantom mention of `task_store.lock`),
+#     `exe` (`wsl.exe` names a foreign binary, not a repo path) and `env`
+#     (`docker/.env` is operator-supplied and starts inside a real directory).
 MENTION_PATH_RE = re.compile(
     r"[A-Za-z0-9_][A-Za-z0-9_./\\-]*\."
-    r"(?:py|rs|ts|tsx|js|jsx|proto|toml|yml|yaml|json|sql|sh|md)"
+    r"(?:py|rs|ts|tsx|js|jsx|mjs|jsonl|proto|toml|yml|yaml|json|sql|sh|md)"
 )
 
 # Mention verdicts.  Distinct names from the reference verdicts so that the

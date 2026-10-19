@@ -202,6 +202,72 @@ def test_an_untriaged_dangling_mention_is_not_a_problem(guard):
 
 
 # --------------------------------------------------------------------------
+# Extensions the corpus actually uses must be visible (measured, not assumed)
+# --------------------------------------------------------------------------
+
+
+def test_mjs_and_jsonl_citations_count_as_mentions(guard):
+    """A citation the suffix list does not know is not a citation at all.
+
+    Measured on the real corpus before this test: `dashboard/tests/
+    contextManifests.test.mjs` was named in docs/agent-os-architecture.md and
+    the census did not move, because `mjs` was in no suffix list -- the row
+    never existed, so nothing could go stale and no pin could notice. Same
+    shape for the Trellis `*.jsonl` ledgers. Dropping either suffix from
+    MENTION_PATH_RE reddens this test.
+    """
+    _write_files(
+        guard.ROOT,
+        {
+            ALPHA_PATH: "See `helper.test.mjs` and `ledger.jsonl`.\n",
+            "dashboard/tests/helper.test.mjs": "export {};\n",
+            ".trellis/tasks/ledger.jsonl": "{}\n",
+        },
+    )
+    mentions = {r["ref"]: r for r in guard.collect() if r["kind"] == "mention"}
+    assert set(mentions) == {"helper.test.mjs", "ledger.jsonl"}
+    for ref, row in mentions.items():
+        assert row["verdict"] == guard.MENTION_OK, ref
+
+
+def test_a_mjs_line_pointer_is_a_reference_not_prose(guard):
+    """`x.mjs:3` must enter the line-numbered pipeline, or its line cannot age.
+
+    Before `mjs` was added to REF_RE the span matched nothing at all -- not a
+    reference (no line check), and MENTION_PATH_RE rejects `:`, so it also was
+    not a mention. A stale line number in such a citation was undetectable.
+    """
+    _write_files(
+        guard.ROOT,
+        {
+            ALPHA_PATH: "See `helper.test.mjs:3` for the assertion.\n",
+            "dashboard/tests/helper.test.mjs": "one\ntwo\nthree\n",
+        },
+    )
+    refs = [r for r in guard.collect() if r["kind"] == "ref"]
+    assert [r["ref"] for r in refs] == ["helper.test.mjs"]
+    assert refs[0]["start"] == 3
+    assert refs[0]["verdict"] == "OK"
+
+
+def test_a_lock_suffix_is_still_not_a_path(guard):
+    """Deliberate non-addition, pinned so it cannot drift in by accident.
+
+    Prose quotes Rust lock-taking as `task_store.lock` (and calls it as
+    `task_store.lock()`); teaching the suffix list `lock` would manufacture a
+    phantom mention of `task_store.lock` out of ordinary code text -- one more
+    dangling row for the exemption table to explain. The exclusion is a
+    decision, and decisions that live only in a comment are the ones undone by
+    the next well-meaning edit. Adding `lock` to MENTION_PATH_RE reddens this.
+    """
+    _write_files(
+        guard.ROOT,
+        {ALPHA_PATH: "Hold `task_store.lock` while writing.\n"},
+    )
+    assert [r for r in guard.collect() if r["kind"] == "mention"] == []
+
+
+# --------------------------------------------------------------------------
 # A bold span is an anchor only when the span IS an identifier (T24; pinned T29)
 # --------------------------------------------------------------------------
 
@@ -714,10 +780,15 @@ def test_real_corpus_unanchored_census_is_reported():
     # tests/python/test_dashboard_context_manifests.py in the same note
     # (resolved): 341 -> 342. The dashboard panel slice named
     # dashboard/src/components/panels/ContextManifestPanel.tsx (resolved):
-    # 342 -> 343. Its test file dashboard/tests/contextManifests.test.mjs is
-    # a `.mjs` path, which the mention regex does not recognise at all -- so
-    # that citation is invisible to this census rather than counted.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 343
+    # 342 -> 343. Its test file dashboard/tests/contextManifests.test.mjs was
+    # at that point INVISIBLE to this census -- `mjs` was in no suffix list,
+    # which is exactly how the gap surfaced: a doc named a real file and the
+    # count did not move. Teaching the regexes `mjs` and `jsonl` (the Trellis
+    # ledgers being the other real extension in the same condition) made both
+    # citations count: 343 -> 345, both resolved. The mechanism is pinned by
+    # test_mjs_and_jsonl_citations_count_as_mentions, and the non-addition of
+    # `lock` by test_a_lock_suffix_is_still_not_a_path.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 345
 
 
 def test_real_corpus_has_no_false_content_mismatch():
