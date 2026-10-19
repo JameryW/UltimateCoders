@@ -422,3 +422,102 @@ window" mutation would not redden a 3-record pin.
 
 - Unchanged: inference-side consumption of `render_parts()` (needs the
   external CLI adapter), and #656 (blocked on the external plan §21).
+
+## Session 73: The attempt in the key was a constant
+
+**Date**: 2026-10-20
+**Task**: Make the audit trail's attempt-scoped manifest key real — the only
+production writer hardcoded attempt `0`
+**Branch**: `fix/manifest-attempt-identity`
+
+### Summary
+
+The manifest outbox is attempt-scoped on purpose: its module docstring
+promises "a manifest is a historical snapshot, so if a retry ever
+recompiles, both snapshots must survive", and `manifest_key` puts the
+attempt in the key. But the **only production writer** called
+`manifest_key(parent, id, 0)` while every other attempt identity it stamps
+(`_delivery_identity`, the checkpoint key, `attempt_id` on events, the
+execution envelope) comes from `subtask.dispatch_retry_count`. So a
+re-dispatch wrote the **same key** as the first attempt, `record()`
+replaced the earlier attempt's summary in place — and by design kept the
+**first** `recorded_at`, so the surviving row mixed the new attempt's
+content with the old attempt's timestamp. Net effect in production: at
+most one manifest per subtask, the attempt component dead, and the
+"attempt" column the panel and the endpoint sort by could only ever read
+`0`. Sessions 71/72's recency and scan-count reads were correct about a
+trail whose identity scheme never existed.
+
+The writer now keys on `subtask.dispatch_retry_count` — the same identity
+the checkpoint and terminal-delivery keys use. The in-process
+`retry_count` is deliberately **not** the identity: the compiler runs once
+per dispatch (before the retry loop), so a re-dispatch must land beside
+the earlier snapshot. Rows written before this change are genuinely
+attempt 0, so no migration is needed. Two worker-level pins: a non-zero
+dispatch attempt lands in the key (with a different `retry_count` set, so
+the wrong field cannot pass), and two dispatches keep both snapshots
+(`total("t1") == 2`).
+
+The writer's docstring grew by eight lines, which moved the
+`_save_checkpoint` definition `1457 -> 1465`; the spec-refs
+repaired-reference pin and the `hook-guidelines.md:109` cited range were
+re-measured together (`1465-1519`) in the same change. Mentions census
+stays `347` (no new path citation) and line-endings `(2073, 2064)` is
+unchanged (no new tracked files).
+
+### Main Changes
+
+- `worker._record_context_manifest` — key the snapshot on
+  `dispatch_retry_count`, the same attempt identity as the checkpoint and
+  terminal-delivery keys; record the reason in the docstring.
+- `context_outbox.manifest_key` — state which attempt the parameter is
+  (dispatch attempt, not the in-process retry counter).
+- `docs/agent-os-architecture.md` §6 — the manifest key's attempt is the
+  dispatch attempt; the only writer used to hardcode it away, so
+  "attempt-scoped history" never happened in production.
+- `tests/python/test_context_outbox.py` — two worker-level pins
+  (non-zero attempt carried; both snapshots survive a re-dispatch).
+- Spec-refs repaired-reference pin `_save_checkpoint` `1457 -> 1465`; the
+  `hook-guidelines.md:109` citation re-measured to `1465-1519`.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c62d328` | fix(context): key the manifest on the dispatch attempt (Session 73) |
+| `99efcfb` | Merge pull request #753 from JameryW/fix/manifest-attempt-identity |
+
+### Testing
+
+- [OK] Mutations one at a time, sha256-restored, judgment only from disk
+  (2/2 `ALL_OK`, red sets pairwise distinct, assertion-red, extra-red
+  empty): M1 restore the hardcoded `0` → exactly
+  `{test_worker_records_the_manifest_under_the_dispatch_attempt,
+  test_a_redispatch_keeps_the_earlier_attempts_manifest}`; M2 key on the
+  in-dispatch `retry_count` → exactly
+  `test_worker_records_the_manifest_under_the_dispatch_attempt` (the
+  second pin sets `retry_count == dispatch_retry_count` on purpose so M2
+  cannot redden it). Pristine sha256 `73d61563…` restored and re-verified
+  from a separate process.
+- [OK] PR #753 CI: Python CI + Scripts CI both `completed/success` on
+  headSha `c62d3280` (11 checks, 0 fail; the two Python legs took
+  9m42s/10m15s and `test (Python 3.9)` passed).
+- [OK] Seven guards green on this tree: spec-refs 48 tests (audit
+  `112 ok / 9 stale / 9 ambiguous`, mentions `347`), tasks-refs
+  `883 ok / 0 dangling` + selftest, line-endings `(2073, 2064)`
+  unchanged, workflow-inputs `21 refs / 13 covered`, readme-ci-table
+  `11 workflows`, journal-ledger 27, codex-flow; `ruff check scripts/`,
+  `python/`, `tests/` clean; py39 compat scan `165 files, 0 problems`.
+- [OK] Affected suites: `test_context_outbox.py` **22 passed** (was 20),
+  `test_dashboard_context_manifests.py` 15 passed,
+  `test_context_compiler.py` 29 passed. Collect-only measured
+  `1980 -> 1982` (+2 = the two new pins).
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Unchanged: inference-side consumption of `render_parts()` (needs the
+  external CLI adapter), and #656 (blocked on the external plan §21).
