@@ -26,6 +26,15 @@ tokenizer call: the compiler must stay dependency-free and cheap enough to
 run at every subtask start. Budgets are therefore approximate on purpose --
 they bound the prompt at the right order of magnitude, and the manifest
 reports the estimate rather than pretending to be exact.
+
+Budget *allocation* can follow the routed risk (``routing.RiskLevel``):
+under a profile in ``RISK_RESERVED_SHARE`` (today: high-risk work), the
+(P0, P2) group -- the task contract and verified evidence -- claims a
+reserved share of the budget before state, trace, memory or background may
+consume it, so a management task cannot lose its evidence to a long error
+log. The reservation is a floor, not a cap: unclaimed tokens flow back, and
+every risk outside the table (including the default ``"normal"``) compiles
+byte-identically to the unprofiled path.
 """
 
 from __future__ import annotations
@@ -54,6 +63,20 @@ class Tier(IntEnum):
 #: silently changes what the agent is asked to do (or what it knows it has
 #: already done), which is worse than exceeding the budget and saying so.
 PROTECTED_TIERS = (Tier.POLICY,)
+
+#: Risk-keyed share of the budget reserved for the (POLICY, EVIDENCE) group
+#: before lower tiers may consume it -- a high-risk management task gets a
+#: higher guarantee for the contract and for verified evidence, so a large
+#: state dump or execution trace cannot crowd them out. Keys follow
+#: ``routing.RiskLevel``'s vocabulary; any other risk string (including the
+#: default ``"normal"``) reserves nothing and compiles byte-identically to
+#: the unprofiled path. The reservation is a floor, not a cap: whatever the
+#: group does not use flows back to the remaining tiers.
+RISK_RESERVED_SHARE = {"high": 0.5}
+
+#: The group a risk reservation applies to: the task contract (P0) and
+#: verified evidence (P2), the two things a management task must not lose.
+_RESERVED_TIERS = (Tier.POLICY, Tier.EVIDENCE)
 
 #: Section titles for the tier-ordered renderer.
 _TIER_TITLES = {
@@ -227,6 +250,12 @@ def compile_context(
     4. Ties inside a tier order by ``verified`` desc, ``relevance`` desc,
        ``item_id`` asc -- never by input order, so reordering the caller's
        input cannot change the prompt.
+    5. A risk profile in ``RISK_RESERVED_SHARE`` (today: high-risk work)
+       reserves a share of the budget for the (P0, P2) group before lower
+       tiers may consume it. The reservation is a floor, not a cap: what the
+       group does not use flows back, and items deferred past it still
+       compete in the ordinary tier order. Unrecognized risks (including
+       the default ``"normal"``) reserve nothing.
     """
     now = time.time() if now is None else now
     manifest = ContextManifest(budget_tokens=budget_tokens, risk=risk)
@@ -246,18 +275,23 @@ def compile_context(
             manifest.dropped.append(DroppedItem(item.item_id, item.tier, "duplicate"))
 
     ordered = sorted(deduped.values(), key=_packing_key)
-    remaining = budget_tokens
-    for item in ordered:
-        cost = item.tokens()
-        if item.tier in PROTECTED_TIERS:
-            manifest.items.append(item)
-            remaining -= cost
-            continue
-        if cost <= remaining:
-            manifest.items.append(item)
-            remaining -= cost
-        else:
-            manifest.dropped.append(DroppedItem(item.item_id, item.tier, "budget"))
+    reserved = int(budget_tokens * RISK_RESERVED_SHARE.get(risk, 0.0))
+    if reserved > 0:
+        # High-risk pass: the (P0, P2) group claims the reserved share first
+        # (P0 protected as always), so a large state dump or execution trace
+        # cannot crowd out the contract or verified evidence.
+        group = [i for i in ordered if i.tier in _RESERVED_TIERS]
+        rest = [i for i in ordered if i.tier not in _RESERVED_TIERS]
+        deferred = _pack_first_fit(group, reserved, manifest)
+        # Whatever the group left unclaimed flows back; the remaining tiers
+        # (deferred evidence included) then pack in the ordinary tier order.
+        leftover = budget_tokens - manifest.total_tokens
+        remainder = sorted(deferred + rest, key=_packing_key)
+    else:
+        remainder = ordered
+        leftover = budget_tokens
+    for item in _pack_first_fit(remainder, leftover, manifest):
+        manifest.dropped.append(DroppedItem(item.item_id, item.tier, "budget"))
 
     if manifest.total_tokens > budget_tokens:
         manifest.over_budget = True
@@ -341,6 +375,29 @@ def _packing_key(item: ContextItem) -> tuple:
         0 if item.stable else 1,
         item.item_id,
     )
+
+
+def _pack_first_fit(
+    items: list[ContextItem], remaining: int, manifest: ContextManifest
+) -> list[ContextItem]:
+    """Append every item that fits ``remaining``; return the ones that did not.
+
+    Protected tiers are appended regardless (the caller reports
+    ``over_budget`` afterwards); ``remaining`` may go negative on their
+    account, which simply excludes everything after them.
+    """
+    not_fit: list[ContextItem] = []
+    for item in items:
+        cost = item.tokens()
+        if item.tier in PROTECTED_TIERS:
+            manifest.items.append(item)
+            remaining -= cost
+        elif cost <= remaining:
+            manifest.items.append(item)
+            remaining -= cost
+        else:
+            not_fit.append(item)
+    return not_fit
 
 
 def _render_items(items: list[ContextItem], *, include_header: bool = False) -> str:

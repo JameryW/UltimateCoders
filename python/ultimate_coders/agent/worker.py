@@ -917,6 +917,16 @@ class Worker:
             # the gateway-composed block (committed graph outputs) when the
             # dispatch carried one; fall back to the local injector otherwise
             # (in-flight envelopes / legacy gateway — behavior unchanged).
+            # Route the first attempt before compiling context: the routing
+            # decision carries the risk level that sizes the context budget
+            # allocation (high risk reserves a share for verified evidence).
+            # Retries re-route inside the loop (recovery stage).
+            self._last_route = self._model_router.route_subtask(
+                subtask.description,
+                attempt=0,
+                file_constraints=subtask.file_constraints,
+                capabilities=subtask.required_capabilities,
+            )
             self._last_context_manifest = None
             if gateway_context_block is not None:
                 context_block = _render_gateway_context_block(gateway_context_block)
@@ -931,13 +941,14 @@ class Worker:
                 # One budget across every local source: dependency results
                 # (P3) and search hits (P2) compete for the same tokens
                 # instead of truncating independently. The rendered text
-                # matches the legacy injector wording.
+                # matches the legacy injector wording. The routed risk
+                # decides how that budget is allocated between tiers.
                 search_block = await self._build_search_context(subtask)
                 manifest = compile_context(
                     self._context_injector.dependency_items(subtask.depends_on)
                     + from_search_block(search_block),
                     budget_tokens=self._context_budget_tokens(),
-                    risk="normal",
+                    risk=self._last_route.risk,
                 )
                 context_block = manifest.render_legacy()
                 self._last_context_manifest = manifest.summary()
@@ -982,14 +993,9 @@ class Worker:
                         workspace_handle.workspace_id,
                     )
 
-            # Route the first attempt now so the started event can carry the
-            # decision; retries re-route inside the loop (recovery stage).
-            self._last_route = self._model_router.route_subtask(
-                subtask.description,
-                attempt=0,
-                file_constraints=subtask.file_constraints,
-                capabilities=subtask.required_capabilities,
-            )
+            # The first attempt's route was computed before context
+            # compilation (its risk sizes the budget allocation); the
+            # started event below carries it.
             started_data: dict[str, Any] = {
                 "description": subtask.description,
                 "worker_id": self.worker_id,

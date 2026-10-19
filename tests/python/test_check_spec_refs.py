@@ -702,7 +702,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # count is untouched. Upstream file paths are named WITHOUT their extension
     # so the guard resolves them against this repo rather than calling them
     # dangling -- `test_app_core` rather than `metainfer/server/tests/...py`.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 336
+    # The context-compiler risk slice added two more resolved mentions: the
+    # §6 increment note names tests/python/test_context_compiler.py and
+    # tests/python/test_model_routing.py (both exist, so still 0 unclassified),
+    # which moved the census 336 -> 338.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 338
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -738,11 +742,13 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     `orchestrator.py:149-161, refresh_heartbeat` for a `write_memory`
     best-effort pattern that no longer exists in that file at all -- the row had
     drifted from "slightly late" to "citing code that is not there". It now
-    names the site that actually does it, `worker.py:1427-1481, _save_checkpoint`,
+    names the site that actually does it, `worker.py:1433-1487, _save_checkpoint`,
     and the range covers the definition so the anchor holds. The model-routing
     slice moved the definition from 1369 to 1427 (per-attempt routing and the
-    failure-action gates landed above it); the spec's cited range and this pin
-    were re-measured together, not guessed.
+    failure-action gates landed above it); the context-compiler risk slice
+    moved it again, 1427 -> 1433 (the attempt-0 route now runs before context
+    compilation so its risk sizes the budget allocation). The spec's cited
+    range and this pin were re-measured together, not guessed.
     """
     guard = _load_guard()
     want = {
@@ -764,7 +770,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            1427,
+            1433,
         ),
     }
     rows = [

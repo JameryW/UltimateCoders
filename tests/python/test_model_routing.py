@@ -19,6 +19,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
+from ultimate_coders.agent.context_compiler import compile_context
 from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.routing import (
     DEFAULT_REPAIR_SCALE,
@@ -528,3 +529,49 @@ class TestWorkerFailureActions:
 
 def test_env_table_name_is_stable():
     assert ENV_ROUTE_TABLE == "UC_ROUTE_TABLE"
+
+
+# ── worker: the routed risk reaches the context compiler ───────────
+
+
+class TestWorkerContextRiskRouting:
+    """Integration: ``compile_context`` sees the routed risk, not a constant."""
+
+    def _run_capturing(self, description: str, caps: tuple[str, ...] = ()) -> dict:
+        worker = _worker(ModelRouter(RoutingTable()))
+        subtask = _subtask(description, caps=caps)
+        captured: dict = {}
+
+        def _capture(items, *, budget_tokens, risk, now=None):
+            captured["risk"] = risk
+            captured["budget_tokens"] = budget_tokens
+            return compile_context(items, budget_tokens=budget_tokens, risk=risk)
+
+        async def _ok(*args, **kwargs):
+            return SubtaskResult(subtask_id="st-route-1", success=True, summary="ok")
+
+        async def _record(event_type, task_id=None, subtask_id=None, data=None, **kwargs):
+            return None
+
+        async def _instant_sleep(*args, **kwargs):
+            return None
+
+        worker._publish_event = _record  # type: ignore[assignment]
+        with patch.object(worker, "_execute_in_sandbox", side_effect=_ok):
+            with patch("ultimate_coders.agent.worker.asyncio.sleep", side_effect=_instant_sleep):
+                with patch("ultimate_coders.agent.worker.compile_context", side_effect=_capture):
+                    asyncio.run(worker.execute_subtask(subtask))
+        return captured
+
+    def test_high_risk_subtask_compiles_context_at_high_risk(self):
+        captured = self._run_capturing("Deploy the service to production")
+        assert captured["risk"] == "high"
+        assert captured["budget_tokens"] > 0
+
+    def test_ordinary_subtask_compiles_context_at_medium_risk(self):
+        captured = self._run_capturing("Fix the login bug")
+        assert captured["risk"] == "medium"
+
+    def test_read_only_review_compiles_context_at_low_risk(self):
+        captured = self._run_capturing("Review the auth flow for gaps", caps=("review",))
+        assert captured["risk"] == "low"
