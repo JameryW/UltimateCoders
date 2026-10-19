@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-4.md`
-- **Total Sessions**: 70
+- **Total Sessions**: 71
 - **Last Active**: 2026-10-19
 <!-- @@@/auto:current-status -->
 
@@ -33,6 +33,7 @@
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
 | 70 | 2026-10-19 | The same blind spot, one guard over | `454dd03`, `d8a1fc2` | `fix/workflow-inputs-suffixes` |
+| 71 | 2026-10-20 | A "most recent N" that was not recent | `ca78cd8` | `feat/manifest-recency-window` |
 | 69 | 2026-10-19 | The census could not see whole classes of citations | `2f578b6`, `0ddede5` | `fix/spec-refs-mjs-jsonl` |
 | 68 | 2026-10-19 | The compile trail becomes visible (P1b follow-on) | `88970ea`, `b0b16e0` | `feat/context-manifest-panel` |
 | 67 | 2026-10-19 | A task's whole manifest trail in one scan (P1b follow-on) | `a074908`, `f840da5` | `feat/context-manifests-task-scan` |

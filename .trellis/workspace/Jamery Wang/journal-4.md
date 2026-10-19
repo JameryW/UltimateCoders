@@ -239,3 +239,82 @@ true for both declared tables.
 
 - Unchanged: inference-side consumption of `render_parts()` (needs the
   external CLI adapter), and #656 (blocked on the external plan §21).
+## Session 71: A "most recent N" that was not recent
+
+**Date**: 2026-10-20
+**Task**: Make the manifest recency read honest — `recent()` /
+`order=recent` is a time window, not a key window
+**Branch**: `feat/manifest-recency-window`
+
+### Summary
+
+The recon that opened this session found the defect before any code was
+written: `RuntimeState.query` ends `ORDER BY record_key LIMIT n`, so the
+truncation happens in *key* order. A "fetch N, then sort by `recorded_at`"
+implementation therefore answers "the newest of the first N keys" — and
+drops exactly the record a recency read exists to surface: the one whose
+key sorts last while its `recorded_at` is newest. Calling that "the most
+recent N" would have been a lie with a correct-looking sort on top.
+
+`ContextManifestOutbox.recent()` walks the whole `task:`/`task:subtask:`
+prefix on the key cursor (`SCAN_PAGE` per `state.query` call) and truncates
+only *after* the time sort: `limit` bounds the response, never the scan.
+The documented total order is `(-recorded_at, key)` — newest first, ties by
+key ascending — pinned with a deliberately non-key-ordered, tie-carrying
+window so a dropped tie-break cannot hide behind Python's stable sort. The
+dashboard endpoint gains `order=key|recent` (default `key`, existing
+behaviour untouched; anything else is a 400 "Invalid order").
+
+The doc note names `tests/python/test_context_outbox.py` a second time in
+§6, so the spec-refs mentions census moved `345 -> 346` and the pin moved
+in the same commit. Honest re-measurement also corrected a stale memory
+baseline: collect-only is `1964 -> 1972` (+8 tests), not "1960 + 8" — the
+old `1960` was measured before earlier merges and should not have been
+carried forward unchallenged.
+
+### Main Changes
+
+- `ContextManifestOutbox.recent(task_id, *, subtask_id, limit)` — key-cursor
+  scan of the whole prefix, truncate after the time sort; same strict limit
+  validation as `query` (1..1000, `type is int` so `True` is rejected);
+  trailing-`:` boundary preserved (`task-1` never swallows `task-10`).
+- `GET /dashboard/api/context/manifests?order=recent` — wired to `recent()`
+  (M6 in the battery pins the wiring itself).
+- `docs/agent-os-architecture.md` §6 documents the recency read and why
+  sort-after-fetch is a fake "most recent N".
+- Spec-refs mentions pin `345 -> 346`; line-endings `(2073, 2064)` untouched
+  (no new files).
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ca78cd8` | feat(context): manifest recent() is a time window, not a key window |
+| `05b2471` | Merge pull request #749 from JameryW/feat/manifest-recency-window |
+
+### Testing
+
+- [OK] Mutations one at a time, sha256-restored (8/8, each red at its own
+  assertion row, red sets pairwise distinct): M1 naive fetch-limit-then-sort
+  (the headline defect) → the two time-window pins and the endpoint pin red;
+  M2 drop key tie-break → exactly the tie-pin red; M3 sort ascending → the
+  five order-sensitive pins red; M4 drop colon boundary → exactly the scope
+  pin red; M5 drop limit validation → exactly the limits pin red; M6 `recent`
+  wired to `history` → exactly the endpoint time-window pin red; M7 accept
+  any `order` → exactly the unknown-order pin red; M8 ignore subtask scope →
+  exactly the endpoint scope pin red.
+- [OK] PR #749 CI: Python + Scripts + Dashboard all SUCCESS
+  (`completed/success` on headSha `ca78cd83`, 11 checks, 0 fail) on both
+  Python 3.9 and 3.12 legs.
+- [OK] Seven guards green on merged main; spec-refs census `346` (pin moved
+  in the same commit as the doc note) and line-endings `(2073, 2064)`
+  unchanged — no new files. Collect-only measured `1964 -> 1972` (+8).
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Unchanged: inference-side consumption of `render_parts()` (needs the
+  external CLI adapter), and #656 (blocked on the external plan §21).
