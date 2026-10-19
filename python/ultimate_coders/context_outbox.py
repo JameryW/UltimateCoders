@@ -40,7 +40,12 @@ def manifest_key(task_id: str, subtask_id: str, attempt: int) -> str:
     """Identity of one compile: the subtask *and* the attempt.
 
     Unlike ``outbox.outcome_key`` the attempt is part of the key on
-    purpose -- see the module docstring.
+    purpose -- see the module docstring. ``attempt`` is the *dispatch*
+    attempt (the worker passes ``dispatch_retry_count`` -- the same
+    identity its checkpoint and terminal-delivery keys use), not an
+    in-process retry counter: the compiler runs once per dispatch, so a
+    re-dispatch must land beside the earlier snapshot instead of
+    overwriting it.
     """
     return f"{task_id}:{subtask_id}:{attempt}"
 

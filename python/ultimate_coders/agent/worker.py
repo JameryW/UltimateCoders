@@ -1428,7 +1428,15 @@ class Worker:
                 )
 
     async def _record_context_manifest(self, subtask: Subtask, summary: dict) -> None:
-        """Persist this attempt's context-compilation summary for audit.
+        """Persist this dispatch attempt's context-compilation summary for audit.
+
+        The key carries the attempt on purpose: the compiler runs once per
+        dispatch, so a re-dispatch recompiles and both snapshots must
+        survive as history. The attempt is ``dispatch_retry_count`` -- the
+        same identity the checkpoint and the terminal-delivery keys use.
+        Hardcoding 0 here collapsed every re-dispatch onto attempt 0, so
+        ``record()`` replaced the earlier attempt's snapshot instead of
+        preserving it and the attempt component was dead in production.
 
         Best-effort by design: the snapshot answers "why was the prompt
         smaller than expected" after the fact, so losing it must never
@@ -1441,7 +1449,7 @@ class Worker:
             state = await self._domain_state()
             await asyncio.to_thread(
                 ContextManifestOutbox(state).record,
-                manifest_key(subtask.parent_id, subtask.id, 0),
+                manifest_key(subtask.parent_id, subtask.id, subtask.dispatch_retry_count),
                 summary=summary,
             )
         except Exception:
