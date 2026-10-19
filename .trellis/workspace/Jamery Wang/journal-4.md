@@ -93,3 +93,73 @@ evidence, so the panel's tests would have been exactly that.
   the external adapter to consume the split, so it cannot be closed from
   inside this repository.
 - #656 stays open (market scheduling blocked on the external plan §21)
+
+---
+
+## Session 69: The census could not see whole classes of citations
+
+**Date**: 2026-10-19
+**Task**: Teach the spec-reference guard the `.mjs` / `.jsonl` extensions
+it was silently ignoring
+**Branch**: `fix/spec-refs-mjs-jsonl`
+
+### Summary
+
+The previous session's own footnote was the lead: "`.mjs` 提及对 spec-refs
+普查隐形". Taken seriously, that is not a footnote — it is a checker that
+reports green over a class of citations it cannot see. Measured before
+touching anything: of all backticked path-like spans in the spec corpus,
+exactly two real repo extensions were invisible — `mjs` (the dashboard
+test suite) and `jsonl` (the Trellis ledgers). Everything else the regex
+missed was either a dotted identifier (`pytest.raises`), a foreign binary
+(`wsl.exe`) or an operator-supplied path (`docker/.env`).
+
+### Main Changes
+
+- `mjs` and `jsonl` added to all four places that answer "is this a path":
+  `CODE_EXT` (basename index), `REF_RE` (`path:line` pointers),
+  `PATH_SPAN_RE` (quoted-span predicate), `MENTION_PATH_RE` (citations).
+- Corpus effect measured, not assumed: mentions `343 → 345`, both resolved;
+  `path:line` counts unchanged (130 scanned / 121 located) so those pins
+  did not move.
+- Three synthetic tests: the two extensions count as mentions; `x.mjs:3`
+  enters the line-checked pipeline; **`lock` stays out** — prose quotes
+  `task_store.lock`, and adding it would manufacture a phantom mention.
+  The exclusion is pinned, not left to a comment.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2f578b6` | fix(guard): let the spec-reference census see .mjs and .jsonl citations |
+| `0ddede5` | Merge pull request #745 from JameryW/fix/spec-refs-mjs-jsonl |
+
+### Testing
+
+- [OK] Mutations one at a time, sha256-restored: A drop `mjs|jsonl` from
+  `MENTION_PATH_RE` → exactly the synthetic mention test **and** the real
+  census pin red (same rule at two layers); B drop from `REF_RE` → exactly
+  the line-pointer test red; C add `lock` → exactly the non-addition test
+  red. `48 passed` after each restore.
+- [OK] PR #745 CI: Scripts + Python both SUCCESS; the three new tests
+  logged `PASSED` individually and the suite `48 passed`.
+- [OK] On merged main: seven guards green, census 345, `48 passed`.
+- [NOTE] **The most instructive failure of the session was my own edit.**
+  The first change updated the comment above `MENTION_PATH_RE` and left the
+  regex untouched — the prose then claimed a fix the code did not have. It
+  was the `345` census pin that went red and exposed it: the exact failure
+  mode this guard exists for, reproduced in the commit that fixes it.
+- [NOTE] Mutation scripts got double-executed by the sandbox again (the
+  recorded trap): the first run mutates, the second run's pre-assert dies
+  and the visible output looks like "nothing happened" while the file is
+  already changed. Fixed the way the memory prescribes — idempotent
+  preconditions, and judgment only from the disk (`sha256`, `grep`).
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Unchanged: inference-side consumption of `render_parts()` (needs the
+  external CLI adapter), and #656 (blocked on the external plan §21).
