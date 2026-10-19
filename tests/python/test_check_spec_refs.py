@@ -790,8 +790,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # `lock` by test_a_lock_suffix_is_still_not_a_path. The manifest recency
     # read (ContextManifestOutbox.recent / order=recent) named
     # tests/python/test_context_outbox.py a second time in the same §6 note
-    # (already counted once, now twice): 345 -> 346, resolved.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 346
+    # (already counted once, now twice): 345 -> 346, resolved. The
+    # window-vs-total note named dashboard/tests/contextManifests.test.mjs a
+    # second time: 346 -> 347, resolved.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 347
 
 
 def test_real_corpus_has_no_false_content_mismatch():

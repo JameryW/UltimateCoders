@@ -122,3 +122,21 @@ export function droppedLine(
     .map(([reason, count]) => (count > 1 ? `${reason} (${count})` : reason))
     .join(" · ");
 }
+
+/**
+ * The count line under the trail header. `shown` is the window size (how
+ * many records came back); `total` is the scan count (how many exist in
+ * scope, from the endpoint's `total` field). When they differ the window
+ * is truncated and the line must say so -- rendering `shown` as "N
+ * recorded" understates the trail exactly when it is long enough to
+ * matter. A missing/undefined `total` (older backend) degrades to the
+ * shown count with no "of N" claim invented.
+ */
+export function manifestCountLine(
+  shown: number,
+  total: number | undefined,
+): string {
+  if (typeof total !== "number" || !Number.isFinite(total)) return `${shown} recorded`;
+  if (total > shown) return `${shown} of ${total} recorded`;
+  return `${total} recorded`;
+}

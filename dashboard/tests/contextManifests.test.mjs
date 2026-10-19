@@ -5,6 +5,7 @@ import {
   parseManifestKey,
   manifestOrderKey,
   manifestHeadline,
+  manifestCountLine,
   tierCountsLine,
   droppedLine,
 } from "../src/lib/contextManifests.ts";
@@ -76,6 +77,23 @@ test("drop reasons are aggregated with their counts", () => {
     { reason: "budget" }, { reason: "budget" }, { reason: "ttl" }, {},
   ]), "budget (2) · ttl · unspecified");
   assert.equal(droppedLine([]), "");
+});
+
+test("the count line never reports a truncated window as the whole trail", () => {
+  // THE honesty pin: shown is the window size, total the scan count.
+  // Rendering `shown` as "N recorded" understates the trail exactly when
+  // it was truncated -- the case the line exists to distinguish.
+  assert.equal(manifestCountLine(3, 3), "3 recorded");
+  assert.equal(manifestCountLine(1, 3), "1 of 3 recorded");
+  assert.equal(manifestCountLine(0, 0), "0 recorded");
+});
+
+test("the count line degrades without inventing an 'of N' claim", () => {
+  // No total from the backend (older wire): the shown count stands alone.
+  // An implementation that interpolates `total` unconditionally renders
+  // "2 of undefined recorded" here -- this pin and the truncation pin
+  // above redden on different mutations, so neither is decorative.
+  assert.equal(manifestCountLine(2, undefined), "2 recorded");
 });
 
 test("the rendered trail shows attempts in order and no prompt content", async () => {

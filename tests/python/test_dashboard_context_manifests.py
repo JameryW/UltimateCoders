@@ -123,7 +123,7 @@ async def test_unknown_task_yields_an_empty_scan(app_and_state):
 
     payload = json.loads((await _endpoint(app)(_request("task_id=nope"))).body)
 
-    assert payload == {"manifests": [], "count": 0}
+    assert payload == {"manifests": [], "count": 0, "total": 0}
 
 
 async def test_rejects_unbounded_or_non_numeric_limit(app_and_state):
@@ -159,7 +159,53 @@ async def test_unknown_subtask_yields_an_empty_history_not_an_error(app_and_stat
     payload = json.loads(resp.body)
 
     assert resp.status_code == 200
-    assert payload == {"manifests": [], "count": 0}
+    assert payload == {"manifests": [], "count": 0, "total": 0}
+
+
+async def test_total_is_the_scan_count_not_the_window(app_and_state, monkeypatch):
+    # The wire used to carry only count == len(manifests) -- a window size
+    # naming itself "N recorded" understates the trail the moment limit
+    # truncates. total is the scan count; a truncated window must be able
+    # to say so.
+    app, state = app_and_state
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for attempt, at in ((0, 1000.0), (1, 2000.0), (2, 3000.0)):
+        clock["now"] = at
+        outbox.record(manifest_key("t1", "s1", attempt), summary=_summary(at))
+
+    payload = json.loads(
+        (await _endpoint(app)(_request("task_id=t1&limit=1"))).body
+    )
+    assert payload["count"] == 1
+    assert payload["total"] == 3
+
+    payload = json.loads((await _endpoint(app)(_request("task_id=t1"))).body)
+    assert payload["count"] == 3
+    assert payload["total"] == 3
+
+
+async def test_total_respects_the_subtask_scope(app_and_state, monkeypatch):
+    app, state = app_and_state
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for key, at in (
+        (manifest_key("t1", "s1", 0), 1000.0),
+        (manifest_key("t1", "s2", 0), 2000.0),
+    ):
+        clock["now"] = at
+        outbox.record(key, summary=_summary())
+
+    payload = json.loads(
+        (await _endpoint(app)(_request("task_id=t1&subtask_id=s1"))).body
+    )
+    assert payload["total"] == 1
 
 
 async def test_order_recent_is_a_time_window_not_a_key_window(app_and_state, monkeypatch):

@@ -236,6 +236,127 @@ def test_recent_rejects_limits_outside_1_to_1000(state):
             outbox.recent("t", limit=bad)
 
 
+# ── window vs scan count ─────────────────────────────────────────
+
+
+def test_history_limit_is_an_oldest_key_window(state, monkeypatch):
+    # The docstring contract: truncation keeps the OLDEST records and
+    # drops the newest attempts. Unpinned, "every recorded compile" (the
+    # pre-2026-10-20 wording) reads as if nothing were dropped, and a
+    # newest-first window would silently satisfy a caller asking for the
+    # trail as written.
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for attempt, at in ((0, 1000.0), (1, 2000.0), (2, 3000.0)):
+        clock["now"] = at
+        outbox.record(manifest_key("t", "s", attempt), summary=_summary(at))
+
+    assert [r["key"] for r in outbox.history("t", "s", limit=1)] == ["t:s:0"]
+
+
+def test_task_history_limit_is_an_oldest_key_window(state, monkeypatch):
+    # Same contract one level up, pinned on its own so each window
+    # direction has a mutation of its own (a shared test would make one
+    # of the two mutations decorative).
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for attempt, at in ((0, 1000.0), (1, 2000.0), (2, 3000.0)):
+        clock["now"] = at
+        outbox.record(manifest_key("t", "s", attempt), summary=_summary(at))
+
+    assert [r["key"] for r in outbox.task_history("t", limit=2)] == [
+        "t:s:0",
+        "t:s:1",
+    ]
+
+
+def test_total_counts_the_scan_not_the_window(state, monkeypatch):
+    # THE honesty pin for ``total``, sized so the two answers diverge:
+    # history/task_history's default window is 100, so 101 compiles make
+    # "count the window" answer 100 and "count the scan" answer 101. A
+    # pin with fewer records could not tell them apart -- "N recorded"
+    # computed from a window size understates the trail exactly when it
+    # is long enough to truncate (law 3's shape).
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for i in range(101):
+        clock["now"] = 1000.0 + i
+        outbox.record(manifest_key("t", "s", i), summary={"n": i})
+
+    assert outbox.total("t") == 101
+    assert outbox.total("t", subtask_id="s") == 101
+    assert len(outbox.task_history("t")) == 100  # the window is capped...
+    assert len(outbox.history("t", "s", limit=1)) == 1  # ...or tiny.
+
+
+def test_total_walks_past_one_query_page(state, monkeypatch):
+    # One state.query page must not cap the count: SCAN_PAGE narrowed to 2
+    # and five compiles mean a single-page count reports 2.
+    monkeypatch.setattr("ultimate_coders.context_outbox.SCAN_PAGE", 2)
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for subtask, at in zip("abcde", (1000.0, 2000.0, 3000.0, 4000.0, 5000.0)):
+        clock["now"] = at
+        outbox.record(manifest_key("t", subtask, 0), summary=_summary())
+
+    assert outbox.total("t") == 5
+
+
+def test_total_scopes_to_one_subtask(state, monkeypatch):
+    # Subtask ids deliberately share no string prefix (sa/sb, not s1/s10)
+    # so the colon-boundary mutation cannot also redden this pin -- one
+    # mutation per failure mode, or one of them is decorative.
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for key, at in (
+        (manifest_key("t", "sa", 0), 1000.0),
+        (manifest_key("t", "sa", 1), 2000.0),
+        (manifest_key("t", "sb", 0), 3000.0),
+    ):
+        clock["now"] = at
+        outbox.record(key, summary=_summary())
+
+    assert outbox.total("t", subtask_id="sa") == 2
+    assert outbox.total("t", subtask_id="sb") == 1
+    assert outbox.total("t") == 3
+    assert outbox.total("nope") == 0
+
+
+def test_total_keeps_the_colon_boundary(state, monkeypatch):
+    # "task-1" must not swallow "task-10" in the count either; pinned on
+    # its own so the boundary mutation reddens here and the scoping
+    # mutation reddens above (a shared test would make one decorative).
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for key, at in (
+        (manifest_key("task-1", "s1", 0), 1000.0),
+        (manifest_key("task-10", "s1", 0), 2000.0),
+    ):
+        clock["now"] = at
+        outbox.record(key, summary=_summary())
+
+    assert outbox.total("task-1") == 1
+    assert outbox.total("task-10") == 1
+
+
 # ── worker integration ───────────────────────────────────────────
 
 

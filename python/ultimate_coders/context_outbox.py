@@ -67,7 +67,14 @@ class ContextManifestOutbox:
         return self.state.mutate(NAMESPACE, key, change)
 
     def history(self, task_id: str, subtask_id: str, *, limit: int = 100) -> list[dict]:
-        """Every recorded compile for one subtask, oldest key first.
+        """Up to ``limit`` recorded compiles for one subtask, oldest key first.
+
+        Truncation is in key order, so when the trail is longer than
+        ``limit`` the window holds the *oldest* records and drops the
+        newest attempts -- "every recorded compile" was the old wording
+        and is false past the limit. Callers that need the newest
+        compiles want ``recent``; callers that need to know how many
+        exist want ``total``.
 
         Returns the raw records (``key``, ``summary``, ``recorded_at``);
         decoding is the auditor's job.
@@ -77,14 +84,38 @@ class ContextManifestOutbox:
         )
 
     def task_history(self, task_id: str, *, limit: int = 100) -> list[dict]:
-        """Every recorded compile for one task, across all its subtasks.
+        """Up to ``limit`` recorded compiles for one task, across its subtasks.
 
-        Ordering is key order, which is subtask-lexicographic then
-        attempt-lexicographic (``s10`` sorts before ``s2``); callers that
-        need attempt-numeric order re-sort. The trailing ``:`` in the
-        prefix keeps ``task-1`` from swallowing ``task-10``.
+        Same oldest-key window as ``history``: past ``limit`` the newest
+        records are the ones dropped. Ordering is key order, which is
+        subtask-lexicographic then attempt-lexicographic (``s10`` sorts
+        before ``s2``); callers that need attempt-numeric order re-sort.
+        The trailing ``:`` in the prefix keeps ``task-1`` from swallowing
+        ``task-10``.
         """
         return self.state.query(NAMESPACE, prefix=f"{task_id}:", limit=limit)
+
+    def total(self, task_id: str, *, subtask_id: str | None = None) -> int:
+        """How many compiles exist in scope -- the scan count, not a window.
+
+        ``history``/``task_history`` return at most ``limit`` rows and
+        ``count == len(manifests)`` on the wire is a window size, so a
+        caller displaying either as "N recorded" overstates nothing when
+        the trail is short and understates it (silently) when it is not.
+        This counts the whole ``task:``/``task:subtask:`` prefix on the
+        key cursor -- the same bounded walk ``recent`` documents, one
+        pass over the task's compiles.
+        """
+        prefix = f"{task_id}:{subtask_id}:" if subtask_id else f"{task_id}:"
+        counted = 0
+        after = ""
+        while True:
+            page = self.state.query(NAMESPACE, prefix=prefix, after=after, limit=SCAN_PAGE)
+            counted += len(page)
+            if len(page) < SCAN_PAGE:
+                break
+            after = page[-1]["key"]
+        return counted
 
     def recent(
         self, task_id: str, *, subtask_id: str | None = None, limit: int = 100

@@ -173,6 +173,12 @@
   故 recent 用 key 游标扫完整个前缀后才按时间序截断，`limit` 只约束
   响应、不约束扫描；排序键 `(-recorded_at, key)` 全序，同刻按 key 升序
   （`tests/python/test_context_outbox.py`）。
+  窗口与总数必须分开报：`history`/`task_history` 是**最旧 key 窗口**
+  （截断丢的是最新那几条），响应里的 `count` 是窗口大小、`total` 是
+  扫描计数——把窗口大小显示成「N recorded」会在恰好值得看的长痕迹上
+  低估总数；面板计数行走 `manifestCountLine`（截断时显示「N of M」，
+  缺 `total` 时降级不编造「of N」，
+  `dashboard/tests/contextManifests.test.mjs`）。
 
 预算配比已跟随路由风险落地：`compile_context` 在
 `RISK_RESERVED_SHARE` 命中时（今天是 high）为 (P0, P2) 组——任务契约与
