@@ -16,7 +16,7 @@ Covers the last gap row of ``docs/agent-os-architecture.md`` §5:
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from ultimate_coders.agent.orchestrator import Orchestrator
@@ -27,7 +27,6 @@ from ultimate_coders.agent.routing import (
     ModelRouter,
     ReasoningBudget,
     RiskLevel,
-    RouteDecision,
     RoutingTable,
     Stage,
     classify_failure,
@@ -55,7 +54,10 @@ class TestDeriveRisk:
     def test_declared_read_only_capability_outranks_keywords(self):
         # Reviewing a deploy script is still read-only work: the capability
         # is enforced by the tool allowlist, the keyword is only prose.
-        assert derive_risk("Review the deploy script", capabilities=["review"]) == RiskLevel.LOW.value
+        assert (
+            derive_risk("Review the deploy script", capabilities=["review"])
+            == RiskLevel.LOW.value
+        )
 
     def test_dangerous_keywords_are_high(self):
         assert derive_risk("Deploy the service to production") == RiskLevel.HIGH.value
@@ -128,7 +130,9 @@ class TestRoutingTable:
         assert not RoutingTable.from_env("[1, 2, 3]")
 
     def test_unknown_stage_or_risk_key_is_ignored(self):
-        table = RoutingTable.from_env('{"nonsense:high": {"max_tokens": 10}, "planning:extreme": {}}')
+        table = RoutingTable.from_env(
+            '{"nonsense:high": {"max_tokens": 10}, "planning:extreme": {}}'
+        )
         assert not table
 
     def test_non_object_cell_is_ignored(self):
@@ -243,7 +247,8 @@ class TestModelRouter:
 
     def test_configured_cell_is_used_verbatim(self):
         table = RoutingTable.from_env(
-            '{"implementation:high": {"model": "strong", "max_tokens": 8000, "max_tool_rounds": 10}}'
+            '{"implementation:high":'
+            ' {"model": "strong", "max_tokens": 8000, "max_tool_rounds": 10}}'
         )
         decision = ModelRouter(table).route(Stage.IMPLEMENTATION, RiskLevel.HIGH)
         assert decision.model == "strong"
@@ -253,7 +258,8 @@ class TestModelRouter:
 
     def test_schema_failure_escalates_to_recovery_with_a_reduced_budget(self):
         table = RoutingTable.from_env(
-            '{"implementation:high": {"model": "strong", "max_tokens": 8000, "max_tool_rounds": 10}}'
+            '{"implementation:high":'
+            ' {"model": "strong", "max_tokens": 8000, "max_tool_rounds": 10}}'
         )
         decision = ModelRouter(table).route(
             Stage.IMPLEMENTATION, RiskLevel.HIGH, failure="400 bad request"
@@ -348,17 +354,22 @@ class _RecordingLLM:
     async def complete(self, messages=None, system=None, max_tokens=None, **kwargs):
         self.calls.append({"max_tokens": max_tokens, **kwargs})
         if len(self.calls) == 1:
-            return _text("this is not a json array")
-        return _text('[{"description": "step one", "depends_on": [], "expected_output": "x"}]')
+            return _TextResponse("this is not a json array")
+        return _TextResponse(
+            '[{"description": "step one", "depends_on": [], "expected_output": "x"}]'
+        )
 
 
-class _text:
+class _TextResponse:
     def __init__(self, text: str) -> None:
         self.text = text
 
 
 def _orchestrator(llm: _RecordingLLM, table_json: str | None) -> Orchestrator:
-    router = ModelRouter(RoutingTable.from_env(table_json)) if table_json else ModelRouter(RoutingTable())
+    if table_json:
+        router = ModelRouter(RoutingTable.from_env(table_json))
+    else:
+        router = ModelRouter(RoutingTable())
     return Orchestrator(llm_client=llm, model_router=router)
 
 
@@ -466,7 +477,9 @@ class TestWorkerFailureActions:
         assert started and "route" not in started[0]
 
     def test_configured_table_records_the_route_on_started(self):
-        table = RoutingTable.from_env('{"implementation:medium": {"model": "m", "max_tokens": 2048}}')
+        table = RoutingTable.from_env(
+            '{"implementation:medium": {"model": "m", "max_tokens": 2048}}'
+        )
         worker = _worker(ModelRouter(table))
         subtask = _subtask("Fix the login bug")
         _, events, _ = _run_with_recorder(worker, subtask, "503 system is busy")
@@ -498,7 +511,6 @@ class TestWorkerFailureActions:
             raise RuntimeError("403 forbidden by policy")
 
         events: list[tuple[str, dict]] = []
-        counter = [0]
 
         async def _record(event_type, task_id=None, subtask_id=None, data=None, **kwargs):
             events.append((event_type, data or {}))

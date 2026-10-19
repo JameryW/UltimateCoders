@@ -366,10 +366,14 @@ def _repair_scale_from_env() -> float:
     try:
         scale = float(raw)
     except (TypeError, ValueError):
-        logger.warning("%s=%r is not a number; using %s", ENV_REPAIR_SCALE, raw, DEFAULT_REPAIR_SCALE)
+        logger.warning(
+            "%s=%r is not a number; using %s", ENV_REPAIR_SCALE, raw, DEFAULT_REPAIR_SCALE
+        )
         return DEFAULT_REPAIR_SCALE
     if not 0.0 < scale < 1.0:
-        logger.warning("%s=%r is not in (0, 1); using %s", ENV_REPAIR_SCALE, raw, DEFAULT_REPAIR_SCALE)
+        logger.warning(
+            "%s=%r is not in (0, 1); using %s", ENV_REPAIR_SCALE, raw, DEFAULT_REPAIR_SCALE
+        )
         return DEFAULT_REPAIR_SCALE
     return scale
 
@@ -517,7 +521,14 @@ class ModelRouter:
         self.table = table if table is not None else RoutingTable.from_env()
         self.repair_scale = repair_scale if repair_scale is not None else _repair_scale_from_env()
 
-    def route(self, stage: Any, risk: Any, *, failure: str = "", base_stage: Any = None) -> RouteDecision:
+    def route(
+        self,
+        stage: Any,
+        risk: Any,
+        *,
+        failure: str = "",
+        base_stage: Any = None,
+    ) -> RouteDecision:
         """The decision for one call.
 
         A schema failure escalates the stage to ``RECOVERY`` and reduces the
