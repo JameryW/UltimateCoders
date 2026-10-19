@@ -163,3 +163,79 @@ missed was either a dotted identifier (`pytest.raises`), a foreign binary
 
 - Unchanged: inference-side consumption of `render_parts()` (needs the
   external CLI adapter), and #656 (blocked on the external plan §21).
+
+## Session 70: The same blind spot, one guard over
+
+**Date**: 2026-10-19
+**Task**: Teach `check-workflow-inputs.py` the `.js` / `.jsonl` / `.mjs` /
+`.proto` extensions its extractor could not see
+**Branch**: `fix/workflow-inputs-suffixes`
+
+### Summary
+
+Session 69 fixed one instance of "a checker that cannot see a class of
+paths reports green"; this session found the same class one guard over and
+closed it. `check-workflow-inputs.py` decides whether a `run:` step's named
+inputs are covered by that workflow's `paths` (the T35 rule), but
+`FILE_SUFFIXES` knew neither `.js`, `.jsonl`, `.mjs` nor `.proto` while
+tracked files of those shapes exist (1 / 633 / 9 / 1). A run step naming
+one extracted nothing, so judgment 2/3 could never fire for it.
+
+Measured before touching anything: zero run bodies name any of the four
+today, so the corpus summary moves `21 -> 21` and the real-repo pin is
+insensitive to this class on purpose — the teeth are synthetic rows, and
+the comment says exactly that instead of implying a corpus effect.
+
+While writing the pin: the guard's header already claimed "the test pins
+its contents" about `TOP_LEVEL_DIRS`, and no test did. Prose promising a
+pin that does not exist is the #745 failure mode one layer up — so
+`test_the_declared_tables_are_pinned` was added and the promise became
+true for both declared tables.
+
+### Main Changes
+
+- `js`, `jsonl`, `mjs`, `proto` added to `FILE_SUFFIXES`. Corpus effect
+  measured, not assumed: summary stays `21 run-step references / 13
+  subject to coverage`.
+- Four positive extractor rows (real repo shapes: the dashboard `.mjs`
+  suite, a Trellis `.jsonl` ledger, the ESLint `.js` config, the gRPC
+  `.proto` contract) and three negative rows pinning the deliberate
+  non-additions by their phantom shapes (`scripts/build.lock`,
+  `vendor/bin/protoc.exe`, `docker/config/.env`).
+- New `test_the_declared_tables_are_pinned`: `TOP_LEVEL_DIRS` and
+  `FILE_SUFFIXES` compared as ordered tuples — the header's claim about
+  pinning now has a test behind it.
+- The `node tools/build.js` row annotated: its negative reason moved from
+  "js is not a suffix" to "tools/ is not a top-level dir".
+- `lock` / `exe` / `env` stay out; `jsx` / `sql` stay unregistered (0
+  tracked files each) under the same registration rule as
+  `TOP_LEVEL_DIRS`.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `454dd03` | fix(guard): let the workflow-inputs extractor see .js/.jsonl/.mjs/.proto |
+| `d8a1fc2` | Merge pull request #747 from JameryW/fix/workflow-inputs-suffixes |
+
+### Testing
+
+- [OK] Mutations one at a time, sha256-restored (8/8, each red at its own
+  assertion row): A-D drop each of `js`/`jsonl`/`mjs`/`proto` → exactly
+  the matching positive row red; E-G add `lock`/`exe`/`env` → exactly the
+  matching negative row red; H drop `vendor` from `TOP_LEVEL_DIRS` →
+  exactly the new declared-tables pin red.
+- [OK] PR #747 CI: Python + Scripts + Workflow Inputs all SUCCESS
+  (`completed/success`, 0 fail). `test_check_workflow_inputs.py`
+  `7 passed` (was 6) on both Python 3.9 and 3.12 legs.
+- [OK] Seven guards green on merged main; spec-refs census `345` and
+  line-endings `(2073, 2064)` unchanged — no new files.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Unchanged: inference-side consumption of `render_parts()` (needs the
+  external CLI adapter), and #656 (blocked on the external plan §21).
