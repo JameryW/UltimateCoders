@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-4.md`
-- **Total Sessions**: 68
+- **Total Sessions**: 69
 - **Last Active**: 2026-10-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-4.md` | ~95 | Active |
+| `journal-4.md` | ~165 | Active |
 | `journal-3.md` | ~1973 | Archived |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
@@ -32,6 +32,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 69 | 2026-10-19 | The census could not see whole classes of citations | `2f578b6`, `0ddede5` | `fix/spec-refs-mjs-jsonl` |
 | 68 | 2026-10-19 | The compile trail becomes visible (P1b follow-on) | `88970ea`, `b0b16e0` | `feat/context-manifest-panel` |
 | 67 | 2026-10-19 | A task's whole manifest trail in one scan (P1b follow-on) | `a074908`, `f840da5` | `feat/context-manifests-task-scan` |
 | 66 | 2026-10-19 | The manifest audit trail becomes readable (P1b follow-on) | `6d966ae`, `07e05ca` | `feat/dashboard-context-manifests-api` |
