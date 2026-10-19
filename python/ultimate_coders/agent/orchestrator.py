@@ -30,6 +30,7 @@ from typing import Any
 from ultimate_coders.agent.aggregator import ResultAggregator
 from ultimate_coders.agent.conflict import ConflictDetector
 from ultimate_coders.agent.event_emitter import TaskEventEmitter
+from ultimate_coders.agent.routing import ModelRouter, Stage, derive_risk
 from ultimate_coders.agent.types import (
     Subtask,
     SubtaskResult,
@@ -174,6 +175,7 @@ class Orchestrator:
         codegraph_client: Any = None,
         merge_arbiter: Any = None,
         merge_gate: Any = None,
+        model_router: Any = None,
     ) -> None:
         self.engine = engine
         self.nats_publisher = nats_publisher
@@ -207,6 +209,14 @@ class Orchestrator:
         self.config = OrchestratorConfig()
         self.conflict_detector = ConflictDetector()
         self.event_emitter: TaskEventEmitter | Any = TaskEventEmitter()
+
+        # Model routing (agent-os-architecture.md §5): an explicit
+        # (stage, risk) table for the model and reasoning budget of each
+        # planning call. With no UC_ROUTE_TABLE configured every decision
+        # is the identity, so the decompose calls below are byte-identical
+        # to the pre-routing behavior. ``model_router`` is injectable so
+        # tests describe a table instead of the process environment.
+        self._model_router = model_router if model_router is not None else ModelRouter()
 
         # Task + worker state
         self.tasks: dict[str, Task] = {}
@@ -432,6 +442,13 @@ class Orchestrator:
         # caller's newline-split fallback -- we ask twice, not until it passes.
         problem: str | None = None
         items: list[dict[str, Any]] = []
+        # Route the planning call by the task's risk, and route the re-ask as
+        # the recovery it is: a rejected plan is a malformed result, so the
+        # second call carries a reduced budget instead of repeating the
+        # request verbatim. With no table configured both decisions are the
+        # identity and the numbers are the historical env defaults.
+        risk = derive_risk(description)
+        route = self._model_router.route(Stage.PLANNING, risk)
         for attempt in (1, 2):
             prompt = (
                 f"Decompose this task into ordered subtasks as a JSON array.\n"
@@ -443,14 +460,36 @@ class Orchestrator:
                     f"\n\nYour previous decomposition was rejected: {problem}.\n"
                     f"Fix that specific defect. Keep the same JSON shape."
                 )
+                decision = self._model_router.route(Stage.PLANNING, risk, failure="schema")
+            else:
+                decision = route
             # ponytail: thinking-style local models (Qwen3 distills) can burn
             # 1-3k tokens on reasoning BEFORE the JSON -- the old hard 2048 cap
-            # truncated them to empty output. Env-tunable, default 4096.
-            decompose_max_tokens = int(os.environ.get("UC_LLM_DECOMPOSE_MAX_TOKENS", "4096"))
+            # truncated them to empty output. Env-tunable, default 4096; a
+            # configured route overrides it per call.
+            decompose_max_tokens = (
+                decision.budget.max_tokens
+                if decision.budget.max_tokens is not None
+                else int(os.environ.get("UC_LLM_DECOMPOSE_MAX_TOKENS", "4096"))
+            )
+            if not decision.is_identity:
+                logger.info(
+                    "Decompose task %s attempt %d routed: stage=%s risk=%s "
+                    "model=%s max_tokens=%d (%s)",
+                    task_id,
+                    attempt,
+                    decision.stage,
+                    decision.risk,
+                    decision.model or "default",
+                    decompose_max_tokens,
+                    decision.reason,
+                )
+            extra: dict[str, Any] = {"model": decision.model} if decision.model else {}
             result = await self.llm_client.complete(
                 messages=[{"role": "user", "content": prompt}],
                 system=self._DECOMPOSE_SYSTEM,
                 max_tokens=decompose_max_tokens,
+                **extra,
             )
 
             # LLMClient.complete returns LLMResponse (has .text). Be defensive

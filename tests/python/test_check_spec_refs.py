@@ -657,7 +657,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # (run-omp.sh, run-gateway.sh, run-cluster.sh) from docs/architecture.md:
     # 275 -> 272; the launch commands remain documented in both READMEs.
     # 278 -> 285 -> 290 -> 291 -> 290 -> 291 -> 297 -> 305 -> 308 -> 309 -> 322
-    # -> 324 -> 325 -> 326 -> 328 -> 331 -> 334. The 331 -> 334 move is the
+    # -> 324 -> 325 -> 326 -> 328 -> 331 -> 334 -> 336. The 334 -> 336 move is
+    # the model-routing section naming routing.py and its test. (Both resolve
+    # only once tracked: the guard indexes with `git ls-files`, so an
+    # untracked routing.py shows as dangling until the commit lands.)
+    # The 331 -> 334 move is the
     # budget section naming budget.py and its test (twice: section + F7 row).
     # The 328 -> 331 move is the contract section naming contract.py and its
     # test (twice: section + F6 row).
@@ -698,7 +702,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # count is untouched. Upstream file paths are named WITHOUT their extension
     # so the guard resolves them against this repo rather than calling them
     # dangling -- `test_app_core` rather than `metainfer/server/tests/...py`.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 334
+    assert sum(1 for r in rows if r["kind"] == "mention") == 336
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -734,8 +738,11 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     `orchestrator.py:149-161, refresh_heartbeat` for a `write_memory`
     best-effort pattern that no longer exists in that file at all -- the row had
     drifted from "slightly late" to "citing code that is not there". It now
-    names the site that actually does it, `worker.py:1369-1422, _save_checkpoint`,
-    and the range covers the definition so the anchor holds.
+    names the site that actually does it, `worker.py:1427-1481, _save_checkpoint`,
+    and the range covers the definition so the anchor holds. The model-routing
+    slice moved the definition from 1369 to 1427 (per-attempt routing and the
+    failure-action gates landed above it); the spec's cited range and this pin
+    were re-measured together, not guessed.
     """
     guard = _load_guard()
     want = {
@@ -757,7 +764,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            1369,
+            1427,
         ),
     }
     rows = [

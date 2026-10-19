@@ -32,6 +32,7 @@ from ultimate_coders.agent.llm import (
 )
 from ultimate_coders.agent.progress import AttemptEvidence, ProgressTracker
 from ultimate_coders.agent.review import REVIEW_INSTRUCTIONS, parse_review
+from ultimate_coders.agent.routing import ModelRouter, classify_failure
 from ultimate_coders.agent.sandbox import (
     AgentOutput,
     SandboxConfig,
@@ -346,6 +347,7 @@ class Worker:
         event_emitter: Any | None = None,
         nats_publisher: Any | None = None,
         workspace_manager: WorkspaceManager | None = None,
+        model_router: Any = None,
     ):
         self.worker_id = worker_id or os.environ.get("UC_WORKER_ID") or str(uuid.uuid4())
         self.engine = engine
@@ -423,6 +425,18 @@ class Worker:
         # Compact description (counts, drops, cost; never content) of the
         # last compiled context manifest, surfaced on subtask_started.
         self._last_context_manifest: dict[str, Any] | None = None
+
+        # Model routing (agent-os-architecture.md §5). The router answers
+        # two questions per attempt: which model/budget this (stage, risk)
+        # should use, and whether a failure is worth another LLM call. The
+        # decision is recorded on subtask_started / retry events so the
+        # routing choice is auditable even where the sandboxed agent owns
+        # the actual call; with no UC_ROUTE_TABLE configured every decision
+        # is the identity and the event fields are omitted entirely.
+        # ``model_router`` is injectable so tests describe a table instead
+        # of the process environment.
+        self._model_router: Any = model_router if model_router is not None else ModelRouter()
+        self._last_route: Any = None
 
         # Self-heartbeat monitoring — track last heartbeat timestamp
         # so stale_worker_cleanup can detect local worker stalls
@@ -968,6 +982,14 @@ class Worker:
                         workspace_handle.workspace_id,
                     )
 
+            # Route the first attempt now so the started event can carry the
+            # decision; retries re-route inside the loop (recovery stage).
+            self._last_route = self._model_router.route_subtask(
+                subtask.description,
+                attempt=0,
+                file_constraints=subtask.file_constraints,
+                capabilities=subtask.required_capabilities,
+            )
             started_data: dict[str, Any] = {
                 "description": subtask.description,
                 "worker_id": self.worker_id,
@@ -977,6 +999,11 @@ class Worker:
                 # reasons for the prompt this attempt will run with. No
                 # content — the manifest summary is log-safe.
                 started_data["context"] = self._last_context_manifest
+            if self._last_route is not None and not self._last_route.is_identity:
+                # Which (stage, risk) this attempt was routed at, with the
+                # model and budget the router chose. Omitted entirely when
+                # no table is configured, so the default event is unchanged.
+                started_data["route"] = self._last_route.to_dict()
             await self._publish_event(
                 "subtask_started",
                 task_id=subtask.parent_id,
@@ -997,8 +1024,23 @@ class Worker:
 
             # ── Retry loop with backoff ────────────────────────────────
             result: SubtaskResult | None = None
+            #: The previous attempt's error text, consumed by the router:
+            #: a schema failure re-routes at the recovery stage with a
+            #: reduced budget instead of repeating the failed request.
+            last_failure = ""
             progress_tracker = ProgressTracker(stall_limit=self._progress_stall_limit())
             for attempt in range(self.MAX_RETRIES):
+                if attempt > 0:
+                    # Re-route: every attempt after the first is recovery,
+                    # and a schema failure shrinks the budget for the
+                    # re-issue (lightweight repair, not an identical retry).
+                    self._last_route = self._model_router.route_subtask(
+                        subtask.description,
+                        attempt=attempt,
+                        last_failure=last_failure,
+                        file_constraints=subtask.file_constraints,
+                        capabilities=subtask.required_capabilities,
+                    )
                 # Re-acquire workspace each attempt: prior attempt released it
                 # (or never had one). Without this, retry runs against a freed
                 # worktree and double-releases. ponytail: per-attempt acquire
@@ -1143,11 +1185,12 @@ class Worker:
                         # permanent auth/configuration failures immediately.
                         # A missing CLI login is deterministic and retrying it
                         # three times only burns time before showing the same
-                        # actionable error in the dashboard.
-                        failure_class = _classify_llm_error(
-                            result.error or result.summary,
-                            retry_count=subtask.retry_count,
-                        )
+                        # actionable error in the dashboard. A schema failure
+                        # is worth ONE reduced retry (routing.py classifies
+                        # it as a lightweight repair) -- the request was
+                        # malformed, not the goal.
+                        failure_action = classify_failure(result.error or result.summary)
+                        failure_data["failure_action"] = failure_action.action
                         # A retry that repeats the same failure verbatim is
                         # budget burn, not persistence: gate it on evidence
                         # movement, not on the attempt counter alone.
@@ -1165,7 +1208,7 @@ class Worker:
                             attempt < self.MAX_RETRIES - 1
                             and result.retryable
                             and not result.cleanup_pending
-                            and failure_class.kind != "permanent"
+                            and failure_action.worth_another_call
                             and verdict.action == "retry"
                         ):
                             subtask.retry_count += 1
@@ -1178,6 +1221,20 @@ class Worker:
                             failure_data["retry"] = True
                             failure_data["retry_attempt"] = attempt + 1
                             failure_data["retry_delay"] = delay
+                            last_failure = result.error or result.summary
+                            # The route the next attempt will run at:
+                            # recovery stage, budget shrunk on a schema
+                            # failure. Same omission rule as
+                            # subtask_started -- no table, no field.
+                            next_route = self._model_router.route_subtask(
+                                subtask.description,
+                                attempt=attempt + 1,
+                                last_failure=last_failure,
+                                file_constraints=subtask.file_constraints,
+                                capabilities=subtask.required_capabilities,
+                            )
+                            if not next_route.is_identity:
+                                failure_data["route"] = next_route.to_dict()
                             await self._publish_event(
                                 "subtask_failed",
                                 task_id=subtask.parent_id,
@@ -1193,6 +1250,7 @@ class Worker:
                                     "max_retries": self.MAX_RETRIES,
                                     "delay": delay,
                                     "worker_id": self.worker_id,
+                                    "failure_action": failure_action.action,
                                 },
                             )
                             logger.info(
@@ -1245,14 +1303,13 @@ class Worker:
                         await self._workspace_manager.release(workspace_handle, merge=False)
                         workspace_handle = None  # ponytail: freed; re-acquire next attempt
 
-                    # Retry transient/unknown exceptions. Permanent provider
+                    # Retry transient/unknown exceptions, and give a schema
+                    # failure its one reduced retry. Permanent provider
                     # auth/configuration errors cannot recover by waiting.
-                    exception_class = _classify_llm_error(
-                        e,
-                        retry_count=subtask.retry_count,
-                    )
-                    if attempt < self.MAX_RETRIES - 1 and exception_class.kind != "permanent":
+                    exception_action = classify_failure(e)
+                    if attempt < self.MAX_RETRIES - 1 and exception_action.worth_another_call:
                         subtask.retry_count += 1
+                        last_failure = str(e)
                         delay = (
                             self.RETRY_DELAYS[attempt]
                             if attempt < len(self.RETRY_DELAYS)
@@ -1268,6 +1325,7 @@ class Worker:
                                 "delay": delay,
                                 "worker_id": self.worker_id,
                                 "error": str(e)[:200],
+                                "failure_action": exception_action.action,
                             },
                         )
                         logger.info(

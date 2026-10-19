@@ -104,12 +104,25 @@
   attempt 存于记录内——更高 attempt 取代旧结果、迟到的低 attempt 不覆盖、
   同 attempt 同内容指纹视为重发。消息 id 含（attempt, 内容指纹），因此新结果
   不会被 NATS 去重窗口折叠，而真正的重发仍会被折叠。
+- **模型路由**：`routing.py` 把「用哪个模型、给多少推理预算」变成显式的
+  (阶段, 风险) 查表。阶段取文档词汇表（planning / tool-selection /
+  implementation / verification / recovery）；风险由工作形态推导而非模型
+  判断——声明的只读能力（review 模板禁写）高于一切关键词，危险关键词
+  （deploy/release/migrate…）或 ≥3 个文件约束为 high，只读关键词为 low，
+  其余（含无法识别的形态）为 medium：未知工作不假定便宜，这是唯一无法事后
+  挽回的方向。失败分类回答「还值不值得再调模型」：传输/过载 → 原样重试；
+  凭证/权限/端点配置 → 交网关，不重试；请求畸形（schema 错）→ 一次降档
+  重试（lightweight repair，预算按 `UC_ROUTE_REPAIR_SCALE` 收缩，默认减半，
+  且始终从工作的常规阶段单元格推导，不会逐次 compounding）；未分类 →
+  重试，但由 Progress Detector 的证据门限界定——这是当日行为，分类器不
+  假装知道更多。两条诚实边界：未配置 `UC_ROUTE_TABLE` 时每个决策都是恒等，
+  默认路径零行为变化；沙箱 agent 的子进程自有工具循环，worker 侧只把路由
+  决策记入 `subtask_started` / 重试事件（适配器尚无按子任务选型的键），
+  缺口留在事件流里可见而不是被粉饰（`tests/python/test_model_routing.py`）。
 
 ## 5. 差距（按优先级）
 
-| 缺口 | 现状 | 升级方向 |
-|---|---|---|
-| **模型路由** | 每阶段固定 agent/模型 | 按阶段与风险选择模型与推理预算；失败分类决定是否值得再调模型 |
+（模型路由已于 P2 落地，见 §4；本表现在为空——新增差距在此登记，按优先级排序。）
 
 ## 6. Context Compiler（P1b，第一切片已落地）
 
