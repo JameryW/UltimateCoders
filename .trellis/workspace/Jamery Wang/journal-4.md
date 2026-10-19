@@ -318,3 +318,107 @@ carried forward unchallenged.
 
 - Unchanged: inference-side consumption of `render_parts()` (needs the
   external CLI adapter), and #656 (blocked on the external plan §21).
+
+## Session 72: A "N recorded" that was not N
+
+**Date**: 2026-10-20
+**Task**: Make the history side honest — `history`/`task_history` are
+oldest-key windows, and `count`/the panel label must not present a window
+as the whole trail
+**Branch**: `feat/window-vs-total`
+
+### Summary
+
+Session 71 fixed the recency read; this session closes its mirror image on
+the history side. `history()`/`task_history()` truncate in *key* order, so
+when the trail is longer than `limit` the window holds the **oldest**
+records and silently drops the newest attempts — while the docstring said
+"Every recorded compile" and the endpoint returned `count ==
+len(manifests)`, which the panel printed as "N recorded". The reported
+number and the thing it claimed to count were not the same source (law 3):
+`count` is a window size, and displaying it as a total understates the
+trail exactly when the trail is long enough to truncate.
+
+`ContextManifestOutbox.total()` walks the whole prefix on the key cursor
+(same `SCAN_PAGE` pagination as `recent()`) and returns the scan count —
+what exists in scope, not what came back. The endpoint response gains
+`"total"` beside `"count"` (computed inside the try block, so a scan
+failure is a 503 via `_unavailable` like the rest of the endpoint). The
+panel's count line goes through a new pure `manifestCountLine(shown,
+total)`: "1 of 3 recorded" when truncated, "3 recorded" when the window is
+the whole trail, and "2 recorded" with **no invented "of N"** when `total`
+is absent or non-finite — degrade honestly, never fabricate the missing
+denominator. The docstrings now say what the functions actually do: "Up to
+``limit`` recorded compiles… Truncation is in key order, so when the trail
+is longer than ``limit`` the window holds the *oldest* records and drops
+the newest attempts".
+
+The §6 note names `dashboard/tests/contextManifests.test.mjs` a second
+time, so the spec-refs mentions census moved `346 -> 347` and the pin moved
+in the same commit. Tests were split until every failure mode had its own
+red set (law 2's "打红同一集合 ⇒ 一条是装饰"): history and task_history got
+separate window-direction pins, the scope pin uses `sa`/`sb` (no shared
+prefix) so a colon-boundary mutation cannot also redden it, the colon
+boundary is its own pin, and the mjs count line is two pins — truncation
+vs degradation. The scan-vs-window pin is sized to **101 records** so the
+scan (101) diverges observably from the default window (100); a "reuse the
+window" mutation would not redden a 3-record pin.
+
+### Main Changes
+
+- `ContextManifestOutbox.total(task_id, *, subtask_id)` — full key-cursor
+  scan count (`SCAN_PAGE` per page, colon boundary kept); the scan count,
+  not a window.
+- `history`/`task_history` docstrings corrected from "Every recorded
+  compile" to the window semantics they actually have (oldest-key
+  truncation).
+- `GET /dashboard/api/context/manifests` response gains `"total"` (inside
+  the try block → 503 on failure), `"count"` stays the window size.
+- `manifestCountLine(shown, total)` in `dashboard/src/lib/contextManifests.ts`
+  with the degrade path; `ContextManifestPanel.tsx` tracks `total` state
+  and uses it for the header label.
+- Spec-refs mentions pin `346 -> 347`; line-endings `(2073, 2064)`
+  untouched (no new files).
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c10bf3b` | fix(context): report the scan total beside the window (Session 72) |
+| `88b9429` | Merge pull request #751 from JameryW/feat/window-vs-total |
+
+### Testing
+
+- [OK] Mutations one at a time, sha256-restored (10/10, each red at its own
+  assertion row, red sets pairwise distinct, extra-red empty everywhere):
+  M1 total-as-window-count → exactly `test_total_counts_the_scan_not_the_window`
+  (the 101-record pin); M2 single-page scan → exactly
+  `test_total_walks_past_one_query_page`; M3 history flipped to a newest
+  window → exactly `test_history_limit_is_an_oldest_key_window`; M4 same on
+  `task_history` → exactly `test_task_history_limit_is_an_oldest_key_window`
+  (split so M3/M4 don't share a red set); M5 total ignores subtask scope →
+  `{test_total_scopes_to_one_subtask, test_total_respects_the_subtask_scope}`;
+  M6 colon boundary dropped → exactly `test_total_keeps_the_colon_boundary`;
+  M7 endpoint `total = len(manifests)` → exactly
+  `test_total_is_the_scan_count_not_the_window`; M8 endpoint drops scope →
+  exactly `test_total_respects_the_subtask_scope`; M9 mjs always-"N
+  recorded" → exactly the truncation pin; M10 mjs drops the typeof guard →
+  exactly the degradation pin.
+- [OK] PR #751 CI: Python + Scripts + Dashboard all `completed/success` on
+  headSha `c10bf3b6` (14 checks, 0 fail), both Python 3.9 and 3.12 legs.
+- [OK] Six guards green: spec-refs 48 (mentions `347`, moved in the same
+  commit as the doc note), line-endings 5 (`(2073, 2064)` unchanged),
+  journal-ledger 27, tasks-refs 14, workflow-inputs 7, readme-ci-table 4;
+  ruff clean on `python/ tests/`. Affected suites: `test_context_outbox.py`
+  20 pass, `test_dashboard_context_manifests.py` 15 pass,
+  `contextManifests.test.mjs` 12 pass. Collect-only measured `1972 -> 1980`
+  (+8 = 6 outbox + 2 dashboard tests) on the merged tree.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Unchanged: inference-side consumption of `render_parts()` (needs the
+  external CLI adapter), and #656 (blocked on the external plan §21).
