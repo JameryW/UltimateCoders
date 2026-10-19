@@ -1683,3 +1683,76 @@ prompt budget under a risk profile.
 - Remaining P1b increments per docs §6: manifest persistence to outbox for
   post-hoc audit; stable-prefix/volatile-tail cache affinity
   (`render_parts()` structure exists, waiting on inference-side consumption)
+
+---
+
+## Session 64: Context-compilation manifests persisted to the runtime state (P1b increment 2)
+
+**Date**: 2026-10-19
+**Task**: P1b increment 2 — manifest persistence to outbox for post-hoc audit
+**Branch**: `feat/p1b-context-manifest-outbox`
+
+### Summary
+
+The compiler's `summary()` existed only inside the `subtask_started`
+event: miss the event and "why was this prompt smaller than expected"
+was gone with the worker. Landed the second P1b increment: the same
+summary now also lands in the runtime state's `context_manifest`
+namespace, one record per compile.
+
+### Main Changes
+
+- `python/ultimate_coders/context_outbox.py` (new): `ContextManifestOutbox`
+  over `RuntimeState`. Key is `task:subtask:attempt` — deliberately unlike
+  the terminal outbox's one-fact-per-subtask key, because a manifest is a
+  historical snapshot (a retry that recompiles keeps both). No delivery
+  state machine: writing the record is the delivery. Same content
+  re-recorded is a no-op; different content replaces it. Only the summary
+  is stored — no prompt content, ever
+- `worker.py`: after a local compile the summary is recorded best-effort
+  (a persistence failure logs and moves on; it must not fail the subtask
+  it describes). The gateway-composed block path compiles nothing locally
+  and records nothing — an empty history, not a fabricated record
+- Docs §6: the audit-landing item moved from 后续增量 to landed; cache
+  affinity remains the only open increment
+- Guard pins re-measured with the change: spec-refs mention census
+  338 → 340; `_save_checkpoint` def 1433 → 1457 (the new helper landed
+  above `_is_inference`); line-endings pair (2066, 2057) → (2068, 2059)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ab2aafc` | feat(context): persist compilation manifests to runtime state for audit |
+| `4ca3299` | test(guards): line-endings scan pair (2066, 2057) -> (2068, 2059) |
+| `0ba1087` | Merge pull request #735 from JameryW/feat/p1b-context-manifest-outbox |
+
+### Testing
+
+- [OK] 9 new tests (key identity, round-trip, summary-only storage,
+  no-op vs latest-wins, prefix isolation incl. an `s1`-vs-`s10`
+  boundary, worker integration, gateway path records nothing,
+  persistence failure does not fail the subtask)
+- [OK] Mutation-checked before commit: no-op branch removed (1 red),
+  attempt dropped from the key (7 red), worker wiring removed (1 red,
+  exactly the integration test) — each restored byte-identically
+- [OK] First CI run failed on both matrices: line-endings pin. The local
+  guard run happened before the new files were tracked (2066/2057), CI
+  checked out the committed tree and measured 2068/2059. Fixed by an
+  independent pin-bump commit (`4ca3299`, same shape as #731's
+  `c4fe91d`); second run 11/11 green
+- [OK] On merged main: all 7 guard scripts green (spec-refs census 340,
+  line-endings 2068/2059), key test files 59/59, full suite
+  `--collect-only` = 1943
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Last P1b increment per docs §6: stable-prefix/volatile-tail cache
+  affinity (`render_parts()` structure exists, waiting on inference-side
+  consumption); an audit read surface (dashboard) is an optional
+  follow-on recorded in PR #735's honest boundaries
+- #656 stays open (market scheduling blocked on the external plan §21)
