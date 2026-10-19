@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 61
-- **Last Active**: 2026-10-18
+- **Total Sessions**: 62
+- **Last Active**: 2026-10-19
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~1524 | Active |
+| `journal-3.md` | ~1621 | Active |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 62 | 2026-10-19 | Model routing (P2) — the last gap row of agent-os-architecture §5 | `315bec1`, `c4fe91d`, `4ed3147`, `848ac6f` | `feat/p2-model-routing` |
 | 61 | 2026-10-18 | Archive DeepSeek Search/Fetch on main | `82af89d9` | `cursor/archive-deepseek-search-fetch-3239` |
 | 59 | 2026-10-02 | MetaInfer reliability repair and local verification | `459b62e4`, `22adb90c` | `codex/metainfer-reliability` |
 | 58 | 2026-09-30 | Local Ollama deployment and comprehensive functional verification | `484134c5` | `codex/local-deployment-verification` |
