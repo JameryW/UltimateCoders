@@ -380,3 +380,104 @@ class TestRiskAwareAllocation:
         assert summary["dropped"] == [
             {"item_id": "state-dump", "tier": int(Tier.STATE), "reason": "budget"}
         ]
+
+
+# ── cache affinity (P1b increment 3) ──────────────────────────────
+
+
+class TestCacheAffinity:
+    def test_policy_tier_is_derived_stable_without_a_caller_mark(self):
+        # The production gap: nothing marked items stable, so render_parts()
+        # always returned ("", everything). The policy tier is a contract --
+        # it does not change between attempts -- so the compiler derives it.
+        manifest = compile_context(
+            [
+                _item("contract", Tier.POLICY, "x" * 40),
+                _item("state", Tier.STATE, "s" * 40),
+            ],
+            budget_tokens=10_000,
+        )
+        prefix, tail = manifest.render_parts()
+        assert "xxxx" in prefix
+        assert "ssss" in tail
+        assert "ssss" not in prefix
+        assert manifest.stable_tokens == 10
+        assert manifest.summary()["stable_tokens"] == 10
+
+    def test_unmarked_non_policy_items_stay_volatile(self):
+        # Derivation is policy-tier only; every other tier keeps the
+        # caller's mark, so callers that never heard of `stable` are
+        # byte-identical to before (only the prefix split changes).
+        manifest = compile_context(
+            [
+                _item("state", Tier.STATE, "s" * 40),
+                _item("evidence", Tier.EVIDENCE, "e" * 40, verified=True),
+                _item("bg", Tier.BACKGROUND, "b" * 40),
+            ],
+            budget_tokens=10_000,
+        )
+        prefix, tail = manifest.render_parts()
+        assert prefix == ""
+        assert manifest.stable_tokens == 0
+        assert manifest.total_tokens == 30
+        assert "ssss" in tail and "eeee" in tail and "bbbb" in tail
+
+    def test_caller_marked_items_still_join_the_prefix(self):
+        # Explicit marks keep working: a caller that knows a search hit is
+        # stable gets it into the reusable prefix.
+        manifest = compile_context(
+            [
+                _item("policy", Tier.POLICY, "x" * 40),
+                _item("hit", Tier.EVIDENCE, "e" * 40, verified=True, stable=True),
+                _item("state", Tier.STATE, "s" * 40),
+            ],
+            budget_tokens=10_000,
+        )
+        prefix, tail = manifest.render_parts()
+        assert "xxxx" in prefix and "eeee" in prefix
+        assert "ssss" in tail and "ssss" not in prefix
+
+    def test_derivation_leaves_packing_order_and_drops_untouched(self):
+        # The policy tier already sorts first, so deriving `stable` must
+        # not reorder items, change what fits, or alter the legacy text.
+        items = [
+            _item("contract", Tier.POLICY, "x" * 40),
+            _item("state", Tier.STATE, "s" * 320),
+            _item("evidence", Tier.EVIDENCE, "e" * 120, verified=True),
+        ]
+        baseline = compile_context(items, budget_tokens=100)
+        derived = compile_context(items, budget_tokens=100)
+        assert [i.item_id for i in derived.items] == [i.item_id for i in baseline.items]
+        assert derived.render_legacy() == baseline.render_legacy()
+        assert derived.render() == baseline.render()
+
+    def test_all_stable_manifest_has_an_empty_tail(self):
+        manifest = compile_context(
+            [_item("contract", Tier.POLICY, "x" * 40)],
+            budget_tokens=10_000,
+        )
+        prefix, tail = manifest.render_parts()
+        assert "xxxx" in prefix
+        assert tail == ""
+        assert manifest.stable_tokens == manifest.total_tokens
+
+    def test_empty_manifest_splits_into_two_empty_strings(self):
+        manifest = compile_context([], budget_tokens=1_000)
+        assert manifest.render_parts() == ("", "")
+        assert manifest.summary()["stable_tokens"] == 0
+
+    def test_stable_prefix_survives_a_dropped_item(self):
+        # A stable prefix that itself gets dropped by budget must not
+        # silently claim tokens it does not have (P0 is protected, so this
+        # pins the accounting, not the protection).
+        manifest = compile_context(
+            [
+                _item("contract", Tier.POLICY, "x" * 400),
+                _item("state", Tier.STATE, "s" * 40),
+            ],
+            budget_tokens=50,
+        )
+        assert manifest.over_budget is True
+        assert manifest.stable_tokens == manifest.total_tokens
+        prefix, _tail = manifest.render_parts()
+        assert "xxxx" in prefix

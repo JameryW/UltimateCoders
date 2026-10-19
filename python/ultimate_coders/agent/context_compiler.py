@@ -35,6 +35,13 @@ consume it, so a management task cannot lose its evidence to a long error
 log. The reservation is a floor, not a cap: unclaimed tokens flow back, and
 every risk outside the table (including the default ``"normal"``) compiles
 byte-identically to the unprofiled path.
+
+*Rendering* is split for cache affinity: the policy tier is derived
+``stable`` (it does not change between attempts) and emitted first by
+``render_parts()``, so a cache-aware serving stack can reuse its prefill.
+The stable prefix is an interface plus an observable
+(``summary()['stable_tokens']``); reusing it still requires a consumer on
+the inference side.
 """
 
 from __future__ import annotations
@@ -42,7 +49,7 @@ from __future__ import annotations
 import hashlib
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import IntEnum
 from typing import Any
 
@@ -116,6 +123,10 @@ class ContextItem:
     ttl_seconds: float | None = None
     relevance: float = 0.0
     stable: bool = False
+    """Emit-first flag for cache-affinity. The compiler derives it for the
+    policy tier (a contract does not change between attempts); other tiers
+    stay volatile unless a caller marks them, so unmarked callers see no
+    change. See ``ContextManifest.render_parts``."""
     token_cost: int | None = None
 
     def tokens(self) -> int:
@@ -150,6 +161,17 @@ class ContextManifest:
     def total_tokens(self) -> int:
         return sum(item.tokens() for item in self.items)
 
+    @property
+    def stable_tokens(self) -> int:
+        """Tokens a cache-aware stack could reuse across attempts.
+
+        Only a lower bound on real savings: it assumes the serving side
+        actually consumes ``render_parts()``'s prefix, which the sandbox
+        agent does not do yet (see docs §6). It is the observable that
+        makes the cache-affinity structure worth keeping.
+        """
+        return sum(item.tokens() for item in self.items if item.stable)
+
     def by_tier(self) -> dict[Tier, list[ContextItem]]:
         grouped: dict[Tier, list[ContextItem]] = {}
         for item in self.items:
@@ -165,6 +187,7 @@ class ContextManifest:
         return {
             "budget_tokens": self.budget_tokens,
             "total_tokens": self.total_tokens,
+            "stable_tokens": self.stable_tokens,
             "risk": self.risk,
             "over_budget": self.over_budget,
             "items_by_tier": tiers,
@@ -180,9 +203,11 @@ class ContextManifest:
         """Split the tier-ordered text into (stable prefix, volatile tail).
 
         Stable items are those whose content does not change between attempts
-        (policy, verified evidence); they are emitted first so a cache-aware
+        (the compiler derives this for the policy tier; other tiers may be
+        marked by the caller). They are emitted first so a cache-aware
         serving stack can reuse their prefill. Everything else follows in
-        tier order.
+        tier order. An all-volatile manifest yields an empty prefix; an
+        all-stable one an empty tail.
         """
         stable = [i for i in self.items if i.stable]
         volatile = [i for i in self.items if not i.stable]
@@ -256,9 +281,26 @@ def compile_context(
        group does not use flows back, and items deferred past it still
        compete in the ordinary tier order. Unrecognized risks (including
        the default ``"normal"``) reserve nothing.
+    6. Cache affinity: the policy tier is marked ``stable`` (a contract
+       does not change between attempts), so ``render_parts()`` emits it
+       as a reusable prefix. Other tiers stay volatile unless the caller
+       marks them -- an unmarked caller sees no ordering or rendering
+       change.
     """
     now = time.time() if now is None else now
     manifest = ContextManifest(budget_tokens=budget_tokens, risk=risk)
+
+    # Cache affinity, derived not configured: the policy tier (task
+    # contract) does not change between attempts of one compile, so it is
+    # the natural stable prefix for a cache-aware serving stack. Every
+    # other tier keeps whatever the caller marked -- an unmarked item
+    # stays volatile, so callers that never heard of ``stable`` compile
+    # exactly as before (the policy tier already sorts first, so the
+    # packing order is unchanged too).
+    items = [
+        replace(item, stable=True) if item.tier == Tier.POLICY else item
+        for item in items
+    ]
 
     deduped: dict[str, ContextItem] = {}
     for item in items:

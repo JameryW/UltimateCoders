@@ -124,7 +124,7 @@
 
 （模型路由已于 P2 落地，见 §4；本表现在为空——新增差距在此登记，按优先级排序。）
 
-## 6. Context Compiler（P1b，risk 配比与 manifest 审计落库已落地）
+## 6. Context Compiler（P1b，risk 配比 / manifest 审计 / 缓存亲和已落地）
 
 `python/ultimate_coders/agent/context_compiler.py` 把「拼 prompt」变成可测试的
 编译过程：
@@ -164,8 +164,17 @@
 与 `tests/python/test_model_routing.py` 的
 `TestWorkerContextRiskRouting`）。
 
-后续增量：稳定前缀/易变尾部的缓存亲和（`render_parts()` 已给出结构，
-等待推理侧消费）。
+- **缓存亲和**：`render_parts()` 把编译结果切成（稳定前缀, 易变尾部）。
+  稳定标记由编译器**派生**而非调用方配置——policy 层（任务契约）在一个
+  编译期内不变，天然是稳定前缀；其余 tier 保持调用方显式标记，未标记
+  即易变（未听说 `stable` 的调用方逐字节不变；policy 层本就在 tier 序
+  最前，打包序同样不变）。`summary()` 的 `stable_tokens` 给出可被
+  cache-aware serving 栈复用的 prefill 量——这是可观测指标；**真正复用
+  仍待推理侧消费该分段**（沙箱 agent 尚未接线），接口与度量先就绪
+  （`tests/python/test_context_compiler.py` 的 `TestCacheAffinity`）。
+
+P1b 三项增量（统一预算、risk 配比、manifest 审计落库）连同本缓存亲和
+接口已全部落地；路由（P2）见 §4。
 
 ## 7. 故障注入矩阵（F1–F8）与本仓库覆盖
 
