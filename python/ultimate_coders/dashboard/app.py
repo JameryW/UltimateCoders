@@ -282,6 +282,43 @@ class DashboardApp:
                 }
             )
 
+        @app.get("/dashboard/api/context/manifests")
+        async def context_manifests_api(request: Request):
+            """Audit read surface for compiled context manifests.
+
+            P1b increment 2 wrote one snapshot per compile (budget, tier
+            counts, drop reasons, risk, stable_tokens -- never prompt
+            content); this makes the trail readable. Query one subtask's
+            history; ``attempt`` is part of each key, so retries that
+            recompiled are separate records.
+            """
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            task_id = request.query_params.get("task_id", "")
+            subtask_id = request.query_params.get("subtask_id", "")
+            if not task_id or not subtask_id:
+                return JSONResponse(
+                    {"error": "task_id and subtask_id are required"}, status_code=400
+                )
+            try:
+                limit = int(request.query_params.get("limit", "100"))
+                if not 1 <= limit <= 1000:
+                    raise ValueError("limit must be between 1 and 1000")
+                from ultimate_coders.context_outbox import ContextManifestOutbox
+
+                state = await experiment_state()
+                manifests = await asyncio.to_thread(
+                    ContextManifestOutbox(state).history,
+                    task_id,
+                    subtask_id,
+                    limit=limit,
+                )
+            except ValueError:
+                return JSONResponse({"error": "Invalid pagination"}, status_code=400)
+            except Exception as e:
+                return _unavailable("Context manifest state unavailable", e)
+            return JSONResponse({"manifests": manifests, "count": len(manifests)})
+
         @app.get("/dashboard/api/experiments/{experiment_id}/artifacts/{name}")
         async def experiment_artifact_api(experiment_id: str, name: str, request: Request):
             if (resp := self._check_auth(request)) is not None:

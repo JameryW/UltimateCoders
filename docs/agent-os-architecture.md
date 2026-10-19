@@ -150,7 +150,10 @@
   manifest 是历史快照：重试若重编译，两条都留存；写入即投递（无重放
   状态机），best-effort——落库失败只记日志，不会让它描述的子任务失败。
   事件流丢失后，「这次为什么少了东西」仍可按 subtask 扫回
-  （`tests/python/test_context_outbox.py`）。gateway 组合块路径不本地
+  （`tests/python/test_context_outbox.py`）。读取面：
+  `GET /dashboard/api/context/manifests?task_id=…&subtask_id=…`（auth 与
+  分页同其他 dashboard 端点；返回 summary 原文，不含 prompt 内容）。
+  gateway 组合块路径不本地
   编译，因而不留记录——空历史而非伪造记录。
 
 预算配比已跟随路由风险落地：`compile_context` 在
