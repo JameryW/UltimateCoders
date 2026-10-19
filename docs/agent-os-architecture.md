@@ -146,8 +146,12 @@
   丢弃原因），排障时能看到「这次 prompt 为什么少了东西」。
 - **审计落库**：同一份摘要同时写入 runtime state 的 `context_manifest`
   命名空间（`ContextManifestOutbox`，`python/ultimate_coders/context_outbox.py`），
-  key 为 `task:subtask:attempt`。与终态 outbox「一个 subtask 一条」相反，
-  manifest 是历史快照：重试若重编译，两条都留存；写入即投递（无重放
+  key 为 `task:subtask:attempt`，其中 attempt 是**派发尝试**
+  （`dispatch_retry_count`，与 checkpoint / 终态投递同一身份），不是进程内
+  重试计数。与终态 outbox「一个 subtask 一条」相反，
+  manifest 是历史快照：重派发若重编译，两条都留存；曾经唯一的写入点把
+  attempt 写死为 0，于是重派发覆盖掉第一次的快照、「按 attempt 留痕」在
+  生产里从未发生（写入即投递，无重放
   状态机），best-effort——落库失败只记日志，不会让它描述的子任务失败。
   事件流丢失后，「这次为什么少了东西」仍可按 subtask 扫回
   （`tests/python/test_context_outbox.py`）。读取面：

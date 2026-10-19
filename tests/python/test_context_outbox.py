@@ -420,3 +420,52 @@ async def test_persistence_failure_does_not_fail_the_subtask(monkeypatch, tmp_pa
     result = await worker.execute_subtask(subtask)
     assert result.success is True
     assert result.summary == "ok"
+
+
+async def test_worker_records_the_manifest_under_the_dispatch_attempt(monkeypatch, tmp_path):
+    # The key's attempt is the *dispatch* attempt (``dispatch_retry_count``)
+    # -- the same identity the checkpoint and the terminal delivery use
+    # (``Worker._delivery_identity``). The only production writer used to
+    # hardcode attempt 0, so the attempt component was dead in production
+    # and every re-dispatch recorded over the first attempt's snapshot.
+    # ``retry_count`` is set to a different value on purpose: it counts the
+    # in-dispatch retries, not dispatches, and must not become the identity.
+    worker = _make_worker(monkeypatch, tmp_path)
+    subtask = Subtask(
+        id="s1",
+        parent_id="t1",
+        description="fix the login bug",
+        dispatch_retry_count=3,
+        retry_count=7,
+    )
+    await worker.execute_subtask(subtask)
+
+    rows = ContextManifestOutbox(RuntimeState()).history("t1", "s1")
+    assert [r["key"] for r in rows] == ["t1:s1:3"]
+
+
+async def test_a_redispatch_keeps_the_earlier_attempts_manifest(monkeypatch, tmp_path):
+    # The module docstring's promise: "a manifest is a historical snapshot,
+    # so if a retry ever recompiles, both snapshots must survive". With the
+    # attempt hardcoded to 0 the second dispatch wrote the same key, so
+    # ``record()`` collapsed the trail to one row (and kept the first
+    # ``recorded_at`` for the second attempt's summary). retry_count is kept
+    # equal to dispatch_retry_count here so replacing the attempt source
+    # with the in-dispatch counter would *not* redden this pin -- that
+    # failure mode belongs to the test above, and each mutation needs its
+    # own red set.
+    worker = _make_worker(monkeypatch, tmp_path)
+    first = Subtask(id="s1", parent_id="t1", description="fix the login bug")
+    second = Subtask(
+        id="s1",
+        parent_id="t1",
+        description="fix the login bug",
+        dispatch_retry_count=2,
+        retry_count=2,
+    )
+    await worker.execute_subtask(first)
+    await worker.execute_subtask(second)
+
+    outbox = ContextManifestOutbox(RuntimeState())
+    assert [r["key"] for r in outbox.history("t1", "s1")] == ["t1:s1:0", "t1:s1:2"]
+    assert outbox.total("t1") == 2
