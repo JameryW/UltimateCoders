@@ -244,3 +244,139 @@ def test_empty_sources_compile_to_an_empty_manifest():
     manifest = compile_context([], budget_tokens=1_000)
     assert manifest.items == [] and manifest.total_tokens == 0
     assert manifest.render() == "" and manifest.render_legacy() == ""
+
+
+# ── risk-aware allocation ──────────────────────────────────────────
+
+
+class TestRiskAwareAllocation:
+    def test_high_risk_reserves_budget_for_evidence(self):
+        # A high-risk management task: the state dump (P1) must not crowd
+        # out the contract (P0) or the verified evidence (P2). Under the
+        # normal profile the evidence loses; under high risk the state
+        # dump loses instead, and the drop is recorded, not silent.
+        items = [
+            _item("contract", Tier.POLICY, "x" * 40),  # 10 tokens
+            _item("state-dump", Tier.STATE, "s" * 320),  # 80 tokens
+            _item("evidence-a", Tier.EVIDENCE, "e" * 120, verified=True),  # 30
+            _item("evidence-b", Tier.EVIDENCE, "f" * 120, verified=True),  # 30
+        ]
+        normal = compile_context(items, budget_tokens=100)
+        assert [i.item_id for i in normal.items] == ["contract", "state-dump"]
+        assert {d.item_id: d.reason for d in normal.dropped} == {
+            "evidence-a": "budget",
+            "evidence-b": "budget",
+        }
+
+        high = compile_context(items, budget_tokens=100, risk="high")
+        assert [i.item_id for i in high.items] == [
+            "contract",
+            "evidence-a",
+            "evidence-b",
+        ]
+        assert {d.item_id: d.reason for d in high.dropped} == {"state-dump": "budget"}
+        assert high.total_tokens == 70
+        assert high.over_budget is False
+
+    def test_unrecognized_risks_allocate_like_normal(self):
+        # "low", "medium" and anything unrecognized reserve nothing: the
+        # unprofiled path stays byte-identical.
+        items = [
+            _item("contract", Tier.POLICY, "x" * 40),
+            _item("state-dump", Tier.STATE, "s" * 320),
+            _item("evidence", Tier.EVIDENCE, "e" * 120, verified=True),
+        ]
+        baseline = compile_context(items, budget_tokens=100)
+        for risk in ("normal", "low", "medium", "extreme", ""):
+            other = compile_context(items, budget_tokens=100, risk=risk)
+            assert [i.item_id for i in other.items] == [i.item_id for i in baseline.items]
+            assert other.render() == baseline.render()
+
+    def test_unused_reservation_flows_back_to_lower_tiers(self):
+        # The reservation is a floor, not a cap: when the group needs less
+        # than its share, every lower tier still gets the leftover.
+        items = [
+            _item("contract", Tier.POLICY, "x" * 40),  # 10 tokens
+            _item("evidence", Tier.EVIDENCE, "e" * 80, verified=True),  # 20
+            _item("state", Tier.STATE, "s" * 120),  # 30
+            _item("bg", Tier.BACKGROUND, "b" * 120),  # 30
+        ]
+        manifest = compile_context(items, budget_tokens=100, risk="high")
+        assert [i.item_id for i in manifest.items] == [
+            "contract",
+            "evidence",
+            "state",
+            "bg",
+        ]
+        assert manifest.dropped == []
+
+    def test_deferred_evidence_still_competes_past_the_floor(self):
+        # Evidence that does not fit the reserved share is deferred, not
+        # dropped: it competes for the returned budget in the ordinary
+        # tier order (state first, then evidence, then the rest).
+        items = [
+            _item("contract", Tier.POLICY, "x" * 40),  # 10 tokens
+            _item("state", Tier.STATE, "s" * 40),  # 10
+            _item("evidence-a", Tier.EVIDENCE, "e" * 160, verified=True),  # 40
+            _item("evidence-b", Tier.EVIDENCE, "f" * 160, verified=True),  # 40
+        ]
+        manifest = compile_context(items, budget_tokens=100, risk="high")
+        # Reserved 50: contract (10) + evidence-a (40) fill it; evidence-b
+        # defers. Leftover 50: state (10) then evidence-b (40) both fit.
+        assert [i.item_id for i in manifest.items] == [
+            "contract",
+            "evidence-a",
+            "state",
+            "evidence-b",
+        ]
+        assert manifest.dropped == []
+
+    def test_p0_beyond_the_reservation_is_still_protected(self):
+        # P0 alone exceeding the whole budget is the over_budget case:
+        # included regardless, reported honestly, and the reserved share
+        # does not pretend to protect anything else.
+        items = [
+            _item("contract", Tier.POLICY, "x" * 400),  # 100 tokens
+            _item("evidence", Tier.EVIDENCE, "e" * 120, verified=True),  # 30
+            _item("bg", Tier.BACKGROUND, "b" * 40),
+        ]
+        manifest = compile_context(items, budget_tokens=50, risk="high")
+        assert [i.item_id for i in manifest.items] == ["contract"]
+        assert manifest.over_budget is True
+        assert {d.item_id: d.reason for d in manifest.dropped} == {
+            "evidence": "budget",
+            "bg": "budget",
+        }
+
+    def test_high_risk_allocation_is_deterministic(self):
+        items = [
+            _item("contract", Tier.POLICY, "x" * 40),
+            _item("state-dump", Tier.STATE, "s" * 320),
+            _item("evidence-a", Tier.EVIDENCE, "e" * 120, verified=True),
+            _item("evidence-b", Tier.EVIDENCE, "f" * 120, verified=True),
+            _item("bg", Tier.BACKGROUND, "b" * 120),
+        ]
+        shuffled = items[:]
+        random.Random(11).shuffle(shuffled)
+        a = compile_context(items, budget_tokens=100, risk="high")
+        b = compile_context(shuffled, budget_tokens=100, risk="high")
+        assert [i.item_id for i in a.items] == [i.item_id for i in b.items]
+        assert a.render() == b.render()
+        assert a.summary() == b.summary()
+
+    def test_summary_reports_the_risk_profile_and_its_drops(self):
+        manifest = compile_context(
+            [
+                _item("contract", Tier.POLICY, "x" * 40),
+                _item("state-dump", Tier.STATE, "s" * 320),
+                _item("evidence", Tier.EVIDENCE, "e" * 120, verified=True),
+            ],
+            budget_tokens=100,
+            risk="high",
+        )
+        summary = manifest.summary()
+        assert summary["risk"] == "high"
+        assert summary["items_by_tier"] == {"P0 policy": 1, "P2 evidence": 1}
+        assert summary["dropped"] == [
+            {"item_id": "state-dump", "tier": int(Tier.STATE), "reason": "budget"}
+        ]

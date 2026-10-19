@@ -145,9 +145,19 @@
 - **可观测**：`subtask_started` 事件携带 manifest 摘要（预算、各层计数、
   丢弃原因），排障时能看到「这次 prompt 为什么少了东西」。
 
-后续增量：risk 相关的预算配比（高风险管理任务给 P0/P2 更高保底）、manifest
-持久化到 outbox 供事后审计、稳定前缀/易变尾部的缓存亲和（`render_parts()` 已
-给出结构，等待推理侧消费）。
+预算配比已跟随路由风险落地：`compile_context` 在
+`RISK_RESERVED_SHARE` 命中时（今天是 high）为 (P0, P2) 组——任务契约与
+已验证证据——预留一份预算，P1 状态转储或执行轨迹不能再把它们挤掉；
+预留是保底不是封顶，未用部分回流，延迟的证据仍按常规层级竞争剩余
+预算；词汇表对齐 `routing.RiskLevel`，表外风险（含默认 `normal`）逐字节
+恒等。worker 把 attempt-0 路由前移到编译之前，编译直接消费
+`route.risk`，高风险子任务的 prompt 不再丢证据
+（`tests/python/test_context_compiler.py` 的 `TestRiskAwareAllocation`
+与 `tests/python/test_model_routing.py` 的
+`TestWorkerContextRiskRouting`）。
+
+后续增量：manifest 持久化到 outbox 供事后审计、稳定前缀/易变尾部的缓存
+亲和（`render_parts()` 已给出结构，等待推理侧消费）。
 
 ## 7. 故障注入矩阵（F1–F8）与本仓库覆盖
 
