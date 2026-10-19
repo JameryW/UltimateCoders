@@ -1541,3 +1541,81 @@ Archive Trellis task after PR #722 merge left the active task directory on main.
 
 - Merge PR #723 once Journal CI is green; no further archive work for
   `10-17-deepseek-search-fetch`.
+
+---
+
+## Session 62: Model routing (P2) — the last gap row of agent-os-architecture §5
+
+**Date**: 2026-10-19
+**Task**: Model routing (P2) — stage/risk → model + reasoning budget; failure classification
+**Branch**: `feat/p2-model-routing`
+
+### Summary
+
+Landed the model routing layer, closing the last remaining row of the
+`docs/agent-os-architecture.md` §5 gap table ("每阶段固定 agent/模型" →
+按阶段与风险选择模型与推理预算；失败分类决定是否值得再调模型). Two questions
+are now answered deterministically: (stage, risk) → model + reasoning budget,
+and failure classification → whether another LLM call is worth making. The
+unconfigured path stays byte-identical (identity decisions), mirroring
+`budget.py`'s no-limit discipline.
+
+### Main Changes
+
+- `python/ultimate_coders/agent/routing.py` (new, 606 lines): `Stage` /
+  `RiskLevel` / `FailureKind` enums; `derive_risk` (deterministic, no model
+  involved — declared read-only capability outranks keywords, danger keywords
+  or ≥3 files → HIGH, unknown shape → MEDIUM); `ReasoningBudget` (identity +
+  `shrink` with floor 1); `RoutingTable.from_env` (`UC_ROUTE_TABLE` JSON;
+  malformed input disables routing instead of raising);
+  `ModelRouter.route` / `route_subtask`; `classify_failure` (transient →
+  retry, auth → escalate_gateway, schema → lightweight_repair, unknown →
+  retry bounded by the evidence gate, empty text → abstain)
+- Orchestrator: planning-stage routing on decompose calls; a rejected plan
+  re-asks at the recovery budget (same model, half budget — derived from the
+  ordinary cell, never compounding across attempts)
+- Worker: failure-action gates (`worth_another_call`) replace the
+  permanent-class check; per-attempt route recorded on `subtask_started` /
+  `subtask_failed` events (recording only — the sandbox agent subprocess owns
+  its own tool loop and has no per-subtask model-selection key)
+- Guards: spec-refs mention census 334→336, line-endings pair (2064, 2055) →
+  (2066, 2057), `_save_checkpoint` anchor 1369→1427; architecture doc §4
+  gained the routing entry and §5's gap table is now empty
+- Tests: `tests/python/test_model_routing.py` (new, 64 cases)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `315bec1` | feat(routing): model and budget by stage and risk; failures by what a retry can achieve |
+| `c4fe91d` | test(guards): line-endings census (2064, 2055) -> (2066, 2057) |
+| `4ed3147` | fix(routing): resolve ruff lint failures in CI |
+| `848ac6f` | Merge pull request #731 from JameryW/feat/p2-model-routing |
+
+### Testing
+
+- [OK] 64/64 new routing tests pass (risk derivation, budget shrink, table
+  parsing incl. malformed input, failure classification, schema escalation
+  without compounding, orchestrator planning route, worker failure actions)
+- [OK] Full suite: 1912 passed / 12 skipped / 0 failed
+- [OK] `ruff check python/ tests/` clean (the CI job's scope); the 13 CI
+  violations were style-only (E501/F401/N801/F841), zero behavior change
+- [OK] PR #731 CI: 11/11 checks SUCCESS; merged to main; local main synced to
+  `848ac6f`, local + remote feature branches deleted
+- [OK] All 7 guard scripts green on main after merge; ledger advisory
+  (retired `JameryW` identity, index 119 vs measured 123) is frozen by
+  `LEGACY_JOURNALS` by design — not backfilled
+- [OK] Network incident: github.com direct HTTPS went black-hole mid-session
+  (TCP established, data never ACKed) while api.github.com stayed reachable;
+  the fix commit was pushed through the GitHub Git Database API — rebuilt
+  blob/tree/commit SHA-identical to local `4ed3147`, then fast-forwarded the
+  branch ref; CI re-ran green on the same SHA
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- P1b (Context Compiler) is the next roadmap item per
+  `docs/agent-os-architecture.md`
