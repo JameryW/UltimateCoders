@@ -1756,3 +1756,71 @@ namespace, one record per compile.
   consumption); an audit read surface (dashboard) is an optional
   follow-on recorded in PR #735's honest boundaries
 - #656 stays open (market scheduling blocked on the external plan §21)
+
+---
+
+## Session 65: Cache affinity — the stable prefix becomes real (P1b increment 3, closing the track)
+
+**Date**: 2026-10-19
+**Task**: P1b increment 3 — stable-prefix/volatile-tail cache affinity
+**Branch**: `feat/p1b-context-cache-affinity`
+
+### Summary
+
+`render_parts()` existed since the first compiler slice, but nothing in
+production ever set `stable=True` on an item: the split always returned
+`("", everything)` and had no consumer. The policy tier — the task
+contract — does not change between attempts of one compile, so the
+compiler now derives the mark instead of asking every caller to
+remember it. This closes the third and last P1b increment in §6.
+
+### Main Changes
+
+- `context_compiler.py`: `compile_context` marks policy-tier items
+  `stable` (derived, not configured). Every other tier keeps the
+  caller's mark; an unmarked caller compiles byte-identically (the
+  policy tier already sorts first, so packing order, drops and the
+  legacy render are unchanged — pinned by a dedicated identity test)
+- `ContextManifest.stable_tokens` + `summary()["stable_tokens"]`: the
+  prefill amount a cache-aware serving stack could reuse. An
+  observable, not a promise — the sandbox agent does not consume
+  `render_parts()` yet, and §6 says so verbatim
+- `render_parts()` contract pinned: derived prefix, caller marks still
+  join it, all-stable → empty tail, all-volatile → empty prefix, empty
+  manifest → two empty strings, dropped-item accounting stays honest
+- Docs §6: cache affinity landed; the three P1b increments are all in
+- Guard pin: spec-refs mention census 340 → 341 (the §6 note names the
+  compiler test file); line-endings unchanged (no new files)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `64b6f00` | feat(context): derive the stable prefix for cache affinity |
+| `73b920d` | Merge pull request #737 from JameryW/feat/p1b-context-cache-affinity |
+
+### Testing
+
+- [OK] 7 new tests in `TestCacheAffinity`; mutation-checked before
+  commit: derive neutralized (4 red), derive over-applied to every tier
+  (4 red) — each restored byte-identically
+- [OK] A tautological assertion (`... or True`) I wrote was caught and
+  replaced with a real one; the heredoc append had also duplicated the
+  test class (sandbox double-execution), deduplicated by a guarded
+  script — the "29 passed" before that only counted one copy
+- [OK] PR #737 CI: 11/11 SUCCESS (watched both runs separately — the
+  Scripts run finished in 1m, the Python matrix took 7m)
+- [OK] On merged main: all 7 guards green (census 341, line-endings
+  2068/2059); full suite `--collect-only` = 1950 (1943 + 7)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- P1b is complete. No open roadmap item in §5/§6; the remaining optional
+  follow-ons are recorded where they were found: an audit read surface
+  for manifests (PR #735) and inference-side consumption of
+  `render_parts()` (this PR's honest boundary)
+- #656 stays open (market scheduling blocked on the external plan §21)
