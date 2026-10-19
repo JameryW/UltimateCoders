@@ -1890,3 +1890,79 @@ surface where every other runtime-state endpoint already lives.
   cache hits), a React panel for the new endpoint, task-wide manifest
   scanning (prefix query on `task_id:`)
 - #656 stays open (market scheduling blocked on the external plan §21)
+
+---
+
+## Session 67: A task's whole manifest trail in one scan (P1b follow-on)
+
+**Date**: 2026-10-19
+**Task**: Task-wide manifest scan — make `subtask_id` optional on the read endpoint
+**Branch**: `feat/context-manifests-task-scan`
+
+### Summary
+
+Session 66's Next Steps named this exactly: "task-wide manifest scanning
+(prefix query on `task_id:`)". The endpoint shipped in #739 could only
+answer for one subtask, but an auditor does not know the subtask ids —
+they are generated per plan and are not part of the summary payload. So
+the natural question ("what happened across this task?") required one
+request per subtask, enumerated from somewhere else.
+
+### Main Changes
+
+- `ContextManifestOutbox.task_history(task_id)` — prefix read on
+  `task_id:`. The **trailing colon** is load-bearing: `task-1` must not
+  swallow `task-10`.
+- Endpoint: `subtask_id` is now optional. Without it, every subtask of
+  the task comes back and the list is re-sorted by
+  `(task:subtask, numeric attempt)` — plain string order puts `s1:10`
+  before `s1:2`, which is exactly the kind of thing an auditor should not
+  have to know.
+- An unknown task returns an empty list, not 404: from this store's point
+  of view "no compiles recorded" and "no such task" are the same fact.
+- Honest limits kept in the code and the PR: the scan is still bounded
+  (limit ≤ 1000), and because the sort runs in Python the limit applies
+  **before** sorting, so a task past the limit gets the lowest keys, not
+  the newest. A time-ordered scan needs a `recorded_at` index this
+  namespace does not have.
+- docs §6 documents both read shapes; guard pin: spec-refs census
+  341 → 342 (the note now names
+  `tests/python/test_dashboard_context_manifests.py`), line-endings
+  unchanged at 2069/2060 (no new files)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a074908` | feat(dashboard): scan a whole task's manifest trail, not one subtask at a time |
+| `f840da5` | Merge pull request #741 from JameryW/feat/context-manifests-task-scan |
+
+### Testing
+
+- [OK] 4 new tests: span across subtasks, numeric attempt order (0/2/10),
+  `task-1` vs `task-10` prefix boundary, unknown task → empty scan
+- [OK] Mutation-checked before commit: re-sort removed → exactly the
+  attempt-order test red; trailing colon dropped → exactly the
+  prefix-boundary test red; both restored, `git diff` clean
+- [OK] `test_check_spec_refs.py` 45 passed with the 342 pin
+- [OK] PR #741 CI: both runs SUCCESS on `a0749089`; `test (Python 3.12)`
+  logged `1942 passed, 18 skipped` = 1960 collected, and live NATS
+  `5 passed` — a real run, not a skip
+- [OK] `--collect-only` = 1960 (1956 + 4); seven guard scripts green;
+  `ruff check python/ tests/` clean
+- [NOTE] `ruff format --check` is wired nowhere in CI, and the HEAD
+  versions of all three touched files were already non-compliant. No new
+  formatting debt created, none fixed either — the existing debt is
+  recorded in `ci-codex-flow.yml` / `ci-journal.yml`
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Remaining optional follow-ons: inference-side consumption of
+  `render_parts()` (still no in-repo path — `llm.py` serves planning/Q&A
+  only, the coding loop lives in an external CLI subprocess), and a React
+  panel for the manifest endpoint
+- #656 stays open (market scheduling blocked on the external plan §21)

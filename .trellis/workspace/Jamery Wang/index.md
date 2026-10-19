@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 66
+- **Total Sessions**: 67
 - **Last Active**: 2026-10-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~1892 | Active |
+| `journal-3.md` | ~1968 | Active |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 67 | 2026-10-19 | A task's whole manifest trail in one scan (P1b follow-on) | `a074908`, `f840da5` | `feat/context-manifests-task-scan` |
 | 66 | 2026-10-19 | The manifest audit trail becomes readable (P1b follow-on) | `6d966ae`, `07e05ca` | `feat/dashboard-context-manifests-api` |
 | 65 | 2026-10-19 | Cache affinity — the stable prefix becomes real (P1b increment 3, closing the track) | `64b6f00`, `73b920d` | `feat/p1b-context-cache-affinity` |
 | 64 | 2026-10-19 | Context-compilation manifests persisted to the runtime state (P1b increment 2) | `ab2aafc`, `4ca3299`, `0ba1087` | `feat/p1b-context-manifest-outbox` |
