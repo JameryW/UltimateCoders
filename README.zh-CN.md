@@ -448,7 +448,7 @@ SDK 安装后，沙箱 MCP server 还会暴露 `recall_coding_memory` / `remembe
 | --- | --- | --- |
 | **Rust CI**（`ci-rust.yml`） | `crates/**`、`Cargo.toml`、`Cargo.lock`、`docker/docker-compose.yml` | check、clippy、fmt，3 组 feature 测试，postgres 集成测试 |
 | **Python CI**（`ci-python.yml`） | `python/**`、`tests/**`、`pyproject.toml`、`dashboard/**`、`crates/uc-python/**`、`crates/uc-types/**`、`crates/uc-engine/**`、`crates/uc-grpc/**`、`Cargo.toml`、`Cargo.lock` | ruff lint、dashboard 构建、pytest（Python 3.9 + 3.12） |
-| **Dashboard CI**（`ci-dashboard.yml`） | `dashboard/**` | typecheck、build |
+| **Dashboard CI**（`ci-dashboard.yml`） | `dashboard/**` | typecheck、build、`node test`（lib + SSR 渲染） |
 | **TypeScript CI**（`ci-typescript.yml`） | `packages/uc-orchestrator/**`、`vendor/oh-my-pi/packages/mnemopi/**`、`vendor/oh-my-pi/packages/coding-agent/**` | 每个包的 `bun test` |
 | **Scripts CI**（`ci-scripts.yml`） | *（无 paths 过滤）* | spec-refs、tasks-refs、ruff lint |
 | **Trellis CI**（`ci-trellis.yml`） | `.trellis/scripts/**`、`tests/python/test_task_finish_fallback.py`、`tests/python/test_archive_repoints_refs.py` | framework-scripts 测试 |

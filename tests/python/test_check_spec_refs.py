@@ -712,8 +712,12 @@ def test_real_corpus_unanchored_census_is_reported():
     # in its §6 note (already counted once, now twice): 340 -> 341. The
     # task-wide manifest scan named
     # tests/python/test_dashboard_context_manifests.py in the same note
-    # (resolved): 341 -> 342.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 342
+    # (resolved): 341 -> 342. The dashboard panel slice named
+    # dashboard/src/components/panels/ContextManifestPanel.tsx (resolved):
+    # 342 -> 343. Its test file dashboard/tests/contextManifests.test.mjs is
+    # a `.mjs` path, which the mention regex does not recognise at all -- so
+    # that citation is invisible to this census rather than counted.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 343
 
 
 def test_real_corpus_has_no_false_content_mismatch():
