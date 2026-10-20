@@ -913,3 +913,93 @@ which is a real React 19 lint gate here).
   key order if a consumer ever needs it (deliberately out of scope here).
 - Unchanged: inference-side consumption of `render_parts()` (needs the
   external CLI adapter), and #656 (blocked on the external plan §21).
+
+## Session 78: The verifier accepted an improvement it could not quantify
+
+**Date**: 2026-10-20
+**Task**: Close an F8 (verifier false accept) path — a zero objective baseline
+let any positive delta clear the improvement bar
+**Branch**: `fix/oracle-zero-baseline`
+
+### Summary
+
+The fault matrix's F8 row ("Verifier 错误放行") was recorded as *partial*.
+Recon found a concrete open path: `Oracle.evaluate` computes the relative
+improvement as `100 * delta / before`, undefined when `before` is 0, so `pct`
+was `None` and both the required-improvement gate and the relative noise
+floor were skipped by their own `pct is not None` guards. Any positive delta
+was then accepted.
+
+Measured before touching anything (repro, not inference): baseline
+`throughput_tokens_s` = 0, candidate 125, `OraclePolicy(...,
+min_improvement_pct=20)` → `accepted: True`, `reasons: []`,
+`improvement_pct: None`. "0 → anything" cleared a required 20% bar having
+demonstrated nothing — exactly the class of acceptance a verifier must not
+make.
+
+The Oracle now refuses a non-positive objective baseline with an explicit
+reason and stops evaluating that metric's improvement. The refusal applies
+even when `min_improvement_pct == 0`: a degenerate baseline (0 tokens/s,
+0 ms, 0 GB) is not a measurement an improvement can be established against,
+and the noise floor is relative too. The conservative direction for a
+verifier is to name the missing evidence. `improvement_pct` stays `None` — no
+number is invented.
+
+The F8 row gained this evidence and stays **部分**: closing one false-accept
+path does not disprove the others (the harness-supplied `correctness`
+boolean is still trusted as an attestation, and a positive baseline whose
+candidate measures 0 is still a measurement claim the attestation layers
+own). The journal records that distinction so the row is not read as full
+coverage.
+
+### Main Changes
+
+- `python/ultimate_coders/inference/oracle.py` — zero-baseline refusal in
+  the objective branch.
+- `tests/python/test_inference_oracle.py` — two negative pins: a required
+  relative improvement is refused, and the degenerate baseline is refused
+  even without a required improvement.
+- `docs/agent-os-architecture.md` §7 F8 — evidence updated, status
+  honestly still partial.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3be0cab` | fix(inference): refuse improvements measured from a zero baseline (Session 78) |
+| `0c75c3b` | Merge pull request #763 from JameryW/fix/oracle-zero-baseline |
+
+### Testing
+
+- [OK] Mutations one at a time, file sha256-restored, judgment only from
+  disk (2/2 `ALL_OK`, red sets pairwise distinct, assertion-red, extra-red
+  empty): M1 the guard is removed → exactly {required-improvement pin,
+  no-required-improvement pin} (14/16 passed); M2 the guard only applies
+  when a relative improvement is required → exactly the
+  no-required-improvement pin (15/16). Final sha256 `4660f9b9…` re-verified
+  from a separate process.
+- [OK] PR #763 CI: Python CI + Scripts CI all `completed/success` on headSha `3be0cab` (11 checks, 0 fail; Python legs 10m21s/9m28s).
+- [OK] Suites: `test_inference_oracle.py` **16 passed** (was 14); Oracle
+  consumers `test_inference_workflow.py` + `test_inference_delivery.py`
+  17 passed; `ruff` clean on `python/`, `tests/`.
+- [OK] Seven guards green: spec-refs 48 tests (audit `112 ok / 9 stale /
+  9 ambiguous`, mentions `347` unchanged), tasks-refs
+  `883 ok / 0 dangling`, line-endings `(2073, 2064)` unchanged (no new
+  files), workflow-inputs `21/13`, readme-ci-table `11 workflows`,
+  journal-ledger 27, codex-flow; ruff clean on `scripts/`. Collect-only
+  measured `1990 -> 1992` (+2 pins).
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- F8 stays partial by evidence, not by forgetfulness: the remaining
+  false-accept paths are the harness-supplied correctness attestation and
+  degenerate *candidate* measurements (e.g. a lower-is-better metric
+  measured at 0). Each would need its own decision about which layer owns
+  the claim.
+- F4 (injection content itself untested) remains the other partial row.
+- Unchanged: audit-panel subtask view; inference-side consumption of
+  `render_parts()`; #656 (blocked on external plan §21).
