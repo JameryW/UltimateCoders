@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-4.md`
-- **Total Sessions**: 77
+- **Total Sessions**: 78
 - **Last Active**: 2026-10-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-4.md` | ~915 | Active |
+| `journal-4.md` | ~1005 | Active |
 | `journal-3.md` | ~1973 | Archived |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
@@ -32,6 +32,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 78 | 2026-10-20 | The verifier accepted an improvement it could not quantify | `3be0cab`, `0c75c3b` | `fix/oracle-zero-baseline` |
 | 77 | 2026-10-20 | The remainder becomes reachable | `f434f1f`, `e9560ac` | `feat/manifest-trail-pagination` |
 | 76 | 2026-10-20 | The drops never said which tier starved | `0765df7`, `f6830de` | `fix/manifest-drop-tier-attribution` |
 | 75 | 2026-10-20 | The audit panel showed the oldest end | `a693fda`, `e36fed4` | `fix/audit-panel-newest-window` |
