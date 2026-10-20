@@ -625,3 +625,104 @@ this session's evidence, not an argument.
 
 - Unchanged: inference-side consumption of `render_parts()` (needs the
   external CLI adapter), and #656 (blocked on the external plan §21).
+
+## Session 75: The audit panel showed the oldest end
+
+**Date**: 2026-10-20
+**Task**: Make the task-detail compile trail ask for the newest window — and
+stop re-sorting the backend's order away
+**Branch**: `fix/audit-panel-newest-window`
+
+### Summary
+
+Sessions 71–74 made the manifest trail's data honest — a real time window
+(`order=recent`), a scan-count `total`, attempt-scoped keys, timestamps that
+follow the content. The only product surface (the task-detail panel) had
+never been wired to any of it:
+
+- it fetched the endpoint's **default key order**, which is the *oldest*
+  key window. Past the window limit the panel therefore displayed the oldest
+  compiles and dropped the newest attempts — exactly the end an audit of
+  "why did the latest run see less context" needs. The count line was honest
+  about the truncation ("100 of 137 recorded") but not about *which* 100;
+- `ContextManifestList` re-sorted whatever it received by
+  `(task:subtask, numeric attempt)`, so even a request for `order=recent`
+  would have been turned back into key order by the client: the endpoint's
+  ordering had no consumer at all.
+
+The trail now requests `order=recent` through a pure
+`manifestTrailQuery(taskId, order = "recent")`, renders rows in the order the
+endpoint returned, and shows each compile's time via a new
+`manifestRecordedAt`: epoch seconds → `HH:MM:SSZ`, UTC so the row is
+deterministic across viewers; missing/non-finite → no time rather than
+`Invalid Date`/`NaN` (the count line's degrade rule, one field over). The
+duplicate client comparator is deleted — the backend owns ordering and its
+task scan is pinned Python-side, so a second implementation could only drift
+or, as here, invert the window. The header count line gains "newest first".
+
+The session also retired a stale environment claim the memory carried:
+"local `vite build` is always red because of the `tailwindcss` dependency
+shape" no longer reproduces — measured green (6.15 s) on this checkout, so
+the memory now says so (and CI's `vite build` job independently passes).
+
+### Main Changes
+
+- `manifestTrailQuery(taskId, order = "recent")` — the panel's request as a
+  testable URL contract (task id encoded, order explicit).
+- `manifestRecordedAt(recorded_at)` — UTC `HH:MM:SSZ`, with the
+  missing/non-finite degrade path.
+- `ContextManifestList` — renders the backend's order verbatim (no client
+  re-sort); each row shows its compile time; `compareManifestRecords`
+  removed as a duplicate of the Python task-scan ordering.
+- `ContextManifestTrail` — fetches via the helper; the count line names the
+  window ("newest first").
+- §6 of `docs/agent-os-architecture.md` — the panel takes the newest window
+  and renders the backend's order; the default key order is the oldest one.
+- Memory: the "local `vite build` is always red" note retired (measured).
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a693fda` | fix(dashboard): ask the audit panel for the newest window (Session 75) |
+| `e36fed4` | Merge pull request #757 from JameryW/fix/audit-panel-newest-window |
+
+### Testing
+
+- [OK] Mutations one at a time, sha256-restored, judgment only from disk
+  (4/4 `ALL_OK`, red sets pairwise distinct, assertion-red, extra-red
+  empty): M1 trail query drops `order=recent` → exactly
+  `the panel asks for the newest window, not the default key order`;
+  M2 the list re-sorts by key → exactly
+  `the rendered trail preserves the backend's newest-first order`;
+  M3 local-time formatting → exactly
+  `{the compile time is rendered in UTC, the rendered trail preserves the
+  backend's newest-first order}` (one property asserted at two layers);
+  M4 non-finite timestamp stringified → exactly
+  `the compile time degrades without inventing one`. Both sources restored
+  and re-hashed from a separate process (`f391fd8f…`, `eb08277a…`).
+- [OK] PR #757 CI: Dashboard CI + Scripts CI + Python CI all
+  `completed/success` on headSha `a693fda1` (14 checks, 0 fail; the three
+  source runs each terminal-success; Python legs 7m22s/8m23s).
+- [OK] Dashboard: `node --test` **26 passed** (was 24; the `.mjs` file is
+  14 tests — three new pins, one comparator pin removed);
+  `tsc -p tsconfig.app.json --noEmit` and `tsconfig.node.json --noEmit`
+  exit 0; `eslint` clean; **`vite build` green locally (6.15 s)**.
+- [OK] Seven guards green on this tree: spec-refs 48 tests (audit
+  `112 ok / 9 stale / 9 ambiguous`, mentions `347` unchanged),
+  tasks-refs `883 ok / 0 dangling`, line-endings `(2073, 2064)` unchanged
+  (no new files), workflow-inputs `21/13`, readme-ci-table
+  `11 workflows`, journal-ledger 27, codex-flow; ruff clean on `scripts/`.
+- [OK] Python side untouched: collect-only stays **1984**.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Remaining audit-surface follow-ons: a subtask-scoped view and
+  pagination/"load more" for trails longer than the window (the count line
+  reports the remainder; the panel cannot scroll back yet).
+- Unchanged: inference-side consumption of `render_parts()` (needs the
+  external CLI adapter), and #656 (blocked on the external plan §21).
