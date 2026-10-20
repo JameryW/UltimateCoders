@@ -166,10 +166,14 @@
   带冒号，`task-1` 不会吞掉 `task-10`
   （`tests/python/test_dashboard_context_manifests.py`）。任务详情面板把
   这条痕迹渲染成可扫读的文本
-  （`dashboard/src/components/panels/ContextManifestPanel.tsx`）：逐条显示
-  subtask · attempt、预算/总量/稳定量、risk 与丢弃原因；渲染器只读
+  （`dashboard/src/components/panels/ContextManifestPanel.tsx`）：它取
+  `order=recent` 的**最近窗口**——端点默认的 key 序是最旧窗口，面板若用
+  默认值，截断时恰好藏掉审计要看的最近尝试——并按后端时间序原样渲染、
+  不再自行重排；逐条显示编译时间（UTC）· subtask · attempt、预算/总量/
+  稳定量、risk 与丢弃原因；渲染器只读
   summary 的已知字段，未知字段（哪怕混进了内容）永不输出
-  （`dashboard/tests/contextManifests.test.mjs` 以带毒字段断言这一点）。
+  （`dashboard/tests/contextManifests.test.mjs` 以带毒字段与顺序保持断言
+  这一点）。
   gateway 组合块路径不本地
   编译，因而不留记录——空历史而非伪造记录。
   按时间读「最近 N 次编译」另有显式序：`order=recent`（或直接调

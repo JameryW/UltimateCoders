@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { getStoredToken } from "@/hooks/useAuth";
 import {
-  compareManifestRecords,
   parseManifestKey,
   manifestHeadline,
+  manifestRecordedAt,
+  manifestTrailQuery,
   manifestCountLine,
   tierCountsLine,
   droppedLine,
@@ -16,7 +17,9 @@ interface ContextManifestListProps {
 
 /**
  * The compile trail as text. Pure render — no fetch, no effects — so the
- * SSR tests can check what an auditor actually sees.
+ * SSR tests can check what an auditor actually sees. Rows are rendered in
+ * the order the endpoint returned (newest first): the backend owns the
+ * ordering, and re-sorting here would undo its time window.
  */
 export function ContextManifestList({ records }: ContextManifestListProps) {
   if (records.length === 0) {
@@ -26,11 +29,11 @@ export function ContextManifestList({ records }: ContextManifestListProps) {
       </p>
     );
   }
-  const ordered = [...records].sort(compareManifestRecords);
   return (
     <div className="space-y-0.5" role="list" aria-label="Context compile trail">
-      {ordered.map((record) => {
+      {records.map((record) => {
         const { subtaskId, attempt } = parseManifestKey(record.key);
+        const at = manifestRecordedAt(record.recorded_at);
         const tiers = tierCountsLine(record.summary?.items_by_tier);
         const dropped = droppedLine(record.summary?.dropped);
         return (
@@ -41,6 +44,7 @@ export function ContextManifestList({ records }: ContextManifestListProps) {
           >
             <div className="flex items-center gap-1.5">
               <span className="font-mono text-[10px] text-[var(--text-muted)]">
+                {at ? `${at} · ` : ""}
                 {subtaskId} · attempt {attempt}
               </span>
               <span className="text-[10px] text-[var(--text-primary)] truncate">
@@ -69,8 +73,11 @@ interface ContextManifestTrailProps {
 
 /**
  * Task-scoped compile trail: one request for the whole task, the same
- * surface the HTTP endpoint offers. A task with no compiles shows that,
- * rather than an error -- "nothing recorded" is the fact here.
+ * surface the HTTP endpoint offers. It asks for the endpoint's `order=recent`
+ * window (newest first) on purpose: the default key order is the *oldest*
+ * window, so a truncated trail would hide exactly the attempts an audit is
+ * about. A task with no compiles shows that, rather than an error --
+ * "nothing recorded" is the fact here.
  */
 export function ContextManifestTrail({ taskId }: ContextManifestTrailProps) {
   const [records, setRecords] = useState<ContextManifestRecord[] | null>(null);
@@ -82,7 +89,7 @@ export function ContextManifestTrail({ taskId }: ContextManifestTrailProps) {
     const token = getStoredToken();
     // F69 — authenticate (the backend gates /dashboard/api/* off localhost).
     fetch(
-      `/dashboard/api/context/manifests?task_id=${encodeURIComponent(taskId)}${
+      `${manifestTrailQuery(taskId)}${
         token ? `&token=${encodeURIComponent(token)}` : ""
       }`,
     )
@@ -114,7 +121,7 @@ export function ContextManifestTrail({ taskId }: ContextManifestTrailProps) {
         Context compiles{" "}
         <span className="text-[var(--text-muted)]">
           {records
-            ? manifestCountLine(records.length, total)
+            ? `${manifestCountLine(records.length, total)} · newest first`
             : failed
               ? "unavailable"
               : "loading…"}
