@@ -440,9 +440,13 @@ attempt in the key. But the **only production writer** called
 (`_delivery_identity`, the checkpoint key, `attempt_id` on events, the
 execution envelope) comes from `subtask.dispatch_retry_count`. So a
 re-dispatch wrote the **same key** as the first attempt, `record()`
-replaced the earlier attempt's summary in place — and by design kept the
-**first** `recorded_at`, so the surviving row mixed the new attempt's
-content with the old attempt's timestamp. Net effect in production: at
+replaced the earlier attempt's summary in place — including its
+`recorded_at` — so the first attempt's snapshot (content and time) was
+gone. (This sentence originally said the first `recorded_at` was kept: it
+was quoted from `record()`'s docstring without running it. Session 74
+measures the sentence, finds it false, and corrects the prose — the old
+attempt's snapshot was gone entirely, not half-preserved.) Net effect in
+production: at
 most one manifest per subtask, the attempt component dead, and the
 "attempt" column the panel and the endpoint sort by could only ever read
 `0`. Sessions 71/72's recency and scan-count reads were correct about a
@@ -512,6 +516,106 @@ unchanged (no new tracked files).
   `test_dashboard_context_manifests.py` 15 passed,
   `test_context_compiler.py` 29 passed. Collect-only measured
   `1980 -> 1982` (+2 = the two new pins).
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Unchanged: inference-side consumption of `render_parts()` (needs the
+  external CLI adapter), and #656 (blocked on the external plan §21).
+
+## Session 74: A timestamp quoted from prose
+
+**Date**: 2026-10-20
+**Task**: Measure `record()`'s timestamp contract instead of quoting it —
+the docstring promised the first-seen time, the code re-stamps
+**Branch**: `fix/manifest-timestamp-claim`
+
+### Summary
+
+Session 73's entry claimed `record()` "kept the first `recorded_at`" when a
+re-dispatch overwrote an attempt's snapshot. That sentence was never
+measured: it was read off `record()`'s docstring ("Either way the stored
+record is the summary plus the first time it was seen") and copied into the
+PR body and this journal. Executed as a test, the docstring's own promise
+fails — `assert 5000.0 == 1000.0`: the differing-content branch returns
+`{"summary": summary, "recorded_at": time.time()}`, i.e. the time of the
+content that survived.
+
+The behaviour is the coherent contract, so the prose is what was fixed.
+`recent()` orders by `recorded_at` and claims "the newest compiles by
+recorded_at"; a same-attempt recompile (a redelivered subtask that executes
+again) replaces the earlier snapshot, so keeping the first clock would file
+the newest content under an older time and hide it from the recency read.
+The module docstring's "Every `compile_context` call leaves one snapshot"
+was equally false and now states the real contract: one snapshot per
+compile identity, a same-attempt recompile replaces it, and the replaced
+snapshot is not recoverable. The Session 73 entry above is corrected in
+place (with the provenance of the wrong claim), and PR #753's body carries
+the same correction.
+
+Two pins freeze the measured behaviour: the write side (a differing rewrite
+moves `recorded_at`; an identical rewrite keeps it) and the read side
+(`recent()` surfaces the recompiled record as the newest). The docstring's
+promise was also executed as a test before being rejected — the red run is
+this session's evidence, not an argument.
+
+### Main Changes
+
+- `context_outbox.record` docstring — an identical rewrite is a no-op
+  **and keeps** the time; a differing rewrite replaces the record **and
+  re-stamps** `recorded_at`; the old "first time" wording is named as
+  wrong.
+- Module docstring — one snapshot per compile identity
+  (`task:subtask:attempt`); a same-attempt recompile replaces the earlier
+  snapshot, and `recorded_at` belongs to the summary that survives.
+- `docs/agent-os-architecture.md` §6 — the same statement beside the
+  per-attempt snapshot semantics.
+- `tests/python/test_context_outbox.py` — two pins
+  (`test_repeat_record_with_different_summary_moves_its_recorded_at`,
+  `test_recent_surfaces_the_latest_recompile_as_the_newest`); the existing
+  no-op pin already froze the other branch.
+- Session 73's journal sentence corrected in place; PR #753's body
+  corrected the same claim.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7cbd7d8` | fix(context): let the manifest timestamp follow its content (Session 74) |
+| `8950982` | Merge pull request #755 from JameryW/fix/manifest-timestamp-claim |
+
+### Testing
+
+- [OK] The docstring's promise executed as a test before being rejected:
+  `assert 5000.0 == 1000.0` red on the tree that claimed first-seen; then
+  replaced by the two pins above (behaviour, not prose, is the contract).
+- [OK] Mutations one at a time, sha256-restored, judgment only from disk
+  (3/3 `ALL_OK`, red sets pairwise distinct, assertion-red, extra-red
+  empty): M1 replacement keeps the earlier `recorded_at` → exactly
+  `{test_repeat_record_with_different_summary_moves_its_recorded_at,
+  test_recent_surfaces_the_latest_recompile_as_the_newest}`; M2 an
+  identical rewrite re-stamps → exactly
+  `test_repeat_record_with_same_summary_is_a_no_op`; M3 a differing
+  rewrite returns the stale record → exactly
+  `{test_repeat_record_with_different_summary_keeps_the_latest,
+  test_repeat_record_with_different_summary_moves_its_recorded_at,
+  test_recent_surfaces_the_latest_recompile_as_the_newest}`. Pristine
+  sha256 `de5cc0b7…` restored and re-verified from a separate process.
+- [OK] PR #755 CI: Python CI + Scripts CI both `completed/success` on
+  headSha `7cbd7d8d` (11 checks, 0 fail; Python legs 7m23s/9m14s).
+- [OK] Seven guards green on this tree: spec-refs 48 tests (audit
+  `112 ok / 9 stale / 9 ambiguous`, mentions `347` — unchanged),
+  tasks-refs `883 ok / 0 dangling` + selftest, line-endings
+  `(2073, 2064)` unchanged (no new tracked files), workflow-inputs
+  `21/13`, readme-ci-table `11 workflows`, journal-ledger 27, codex-flow;
+  `ruff check scripts/`, `python/`, `tests/` clean; py39 compat scan
+  `165 files, 0 problems`.
+- [OK] Affected suites: `test_context_outbox.py` 24 passed (was 22),
+  `test_dashboard_context_manifests.py` 15. Collect-only measured
+  `1982 -> 1984` (+2 = the two new pins).
 
 ### Status
 
