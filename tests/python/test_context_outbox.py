@@ -120,6 +120,50 @@ def test_repeat_record_with_different_summary_keeps_the_latest(state):
     assert outbox.history("t", "s")[0]["summary"]["budget_tokens"] == 200
 
 
+def test_repeat_record_with_different_summary_moves_its_recorded_at(state, monkeypatch):
+    # ``record()`` used to document "the first time it was seen" for either
+    # path; executed as a test, that sentence is false: the replacement
+    # branch re-stamps ``recorded_at`` with the content it stores. That is
+    # the coherent contract -- ``recent()`` orders by ``recorded_at``, so
+    # the surviving summary must carry the time it was compiled -- so the
+    # prose was corrected and this pin freezes the measured behaviour.
+    outbox = ContextManifestOutbox(state)
+    key = manifest_key("t", "s", 0)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    outbox.record(key, summary=_summary(budget=100))
+    clock["now"] = 5000.0
+    outbox.record(key, summary=_summary(budget=200))
+
+    record = outbox.history("t", "s")[0]
+    assert record["summary"]["budget_tokens"] == 200
+    assert record["recorded_at"] == 5000.0
+
+
+def test_recent_surfaces_the_latest_recompile_as_the_newest(state, monkeypatch):
+    # The read side of the same contract. ``recent()`` claims "the newest
+    # compiles by recorded_at"; a compile that replaced an earlier summary
+    # is the newest content, so it must sort first. With a first-seen
+    # timestamp the recompiled record would be ordered by the clock of a
+    # summary that no longer exists.
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    outbox.record(manifest_key("t", "s", 0), summary=_summary(budget=100))
+    clock["now"] = 3000.0
+    outbox.record(manifest_key("t", "m", 0), summary=_summary(budget=200))
+    clock["now"] = 5000.0
+    outbox.record(manifest_key("t", "s", 0), summary=_summary(budget=300))
+
+    newest = outbox.recent("t", limit=1)
+    assert [r["key"] for r in newest] == ["t:s:0"]
+    assert newest[0]["summary"]["budget_tokens"] == 300
+
+
 def test_history_isolates_subtasks_and_orders_by_key(state):
     outbox = ContextManifestOutbox(state)
     outbox.record(manifest_key("t", "s1", 0), summary=_summary())
