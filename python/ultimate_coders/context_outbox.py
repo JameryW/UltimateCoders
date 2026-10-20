@@ -1,18 +1,24 @@
-"""Context-compilation manifests: one record per compile, for post-hoc audit.
+"""Context-compilation manifests: one snapshot per compile identity, for audit.
 
 The terminal ``outbox.OutcomeOutbox`` answers "what happened to this
 subtask" with one record per subtask and a delivery state machine. This
 outbox answers a different question: "what did the prompt look like when
-this attempt started". Every ``compile_context`` call leaves one snapshot
--- budget, tier counts, drop reasons, risk profile -- so an auditor can
-reconstruct why a run saw less context than expected after the worker is
-long gone.
+this attempt started". Every ``compile_context`` call writes a snapshot
+under its attempt's key -- budget, tier counts, drop reasons, risk profile
+-- so an auditor can reconstruct why a run saw less context than expected
+after the worker is long gone. The key is ``task:subtask:attempt``: a
+*recompile of the same attempt* (a redelivered subtask that executes
+again) replaces that attempt's earlier snapshot, including its
+``recorded_at``, so the record names the summary the attempt last used and
+when that summary was recorded. The replaced snapshot is not recoverable;
+the box keeps per-attempt history, not per-call history.
 
 Two deliberate differences from the terminal outbox:
 
 * the key includes the attempt. An outcome is one current fact per
-  subtask (a retry supersedes it); a manifest is a historical snapshot,
-  so if a retry ever recompiles, both snapshots must survive.
+  subtask (a retry supersedes it); a manifest is a per-attempt snapshot,
+  so a re-dispatched attempt keeps its own record instead of overwriting
+  the earlier attempt's.
 * there is no delivery state. Writing the record *is* the delivery --
   nothing replays these, the database is the audit trail.
 
@@ -58,10 +64,14 @@ class ContextManifestOutbox:
         """Store one compile's summary under ``key``.
 
         A repeat write with identical content is a no-op (a resend of the
-        same compile is not a new fact); a repeat with different content
-        replaces it, because the latest compile is what the attempt
-        actually used. Either way the stored record is the summary plus
-        the first time it was seen.
+        same compile is not a new fact) and keeps the original
+        ``recorded_at``. A repeat with different content replaces the
+        record *and re-stamps* ``recorded_at``: the latest compile is what
+        the attempt actually used, so the surviving summary carries the
+        time it was compiled, not its predecessor's. (The earlier wording
+        claimed "the first time it was seen" for both paths; the code
+        never did that, and keeping the old clock would file a recompile
+        under a time older than the content it stored.)
         """
 
         def change(old: dict) -> dict:

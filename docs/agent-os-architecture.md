@@ -148,8 +148,11 @@
   命名空间（`ContextManifestOutbox`，`python/ultimate_coders/context_outbox.py`），
   key 为 `task:subtask:attempt`，其中 attempt 是**派发尝试**
   （`dispatch_retry_count`，与 checkpoint / 终态投递同一身份），不是进程内
-  重试计数。与终态 outbox「一个 subtask 一条」相反，
-  manifest 是历史快照：重派发若重编译，两条都留存；曾经唯一的写入点把
+  重试计数。与终态 outbox「一个 subtask 一条」相反，manifest 是**按 attempt
+  的快照**：重派发若重编译，两条都留存；同一 attempt 的重编译（重投递再
+  执行）则替换该 attempt 的快照并**重记 `recorded_at`**——时间属于留下来的
+  那份 summary（identical 重写是 no-op、保留原时间），所以 `recent()` 排的
+  是内容时间而不是首次写入时间。曾经唯一的写入点把
   attempt 写死为 0，于是重派发覆盖掉第一次的快照、「按 attempt 留痕」在
   生产里从未发生（写入即投递，无重放
   状态机），best-effort——落库失败只记日志，不会让它描述的子任务失败。
