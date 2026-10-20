@@ -123,7 +123,12 @@ async def test_unknown_task_yields_an_empty_scan(app_and_state):
 
     payload = json.loads((await _endpoint(app)(_request("task_id=nope"))).body)
 
-    assert payload == {"manifests": [], "count": 0, "total": 0}
+    assert payload == {
+        "manifests": [],
+        "count": 0,
+        "total": 0,
+        "next_cursor": None,
+    }
 
 
 async def test_rejects_unbounded_or_non_numeric_limit(app_and_state):
@@ -159,7 +164,12 @@ async def test_unknown_subtask_yields_an_empty_history_not_an_error(app_and_stat
     payload = json.loads(resp.body)
 
     assert resp.status_code == 200
-    assert payload == {"manifests": [], "count": 0, "total": 0}
+    assert payload == {
+        "manifests": [],
+        "count": 0,
+        "total": 0,
+        "next_cursor": None,
+    }
 
 
 async def test_total_is_the_scan_count_not_the_window(app_and_state, monkeypatch):
@@ -296,3 +306,60 @@ async def test_respects_dashboard_password_auth(app_and_state, monkeypatch):
         _request("task_id=t1&subtask_id=s1", host="10.0.0.1")
     )
     assert resp.status_code == 401
+
+
+async def test_recent_pagination_returns_a_cursor_for_the_next_page(
+    app_and_state, monkeypatch
+):
+    # The panel can only ever fetch one window; without a cursor the trail's
+    # remainder (which the count line already reports) is unreachable. The
+    # cursor is the last row's key -- an anchor in the total time order, not
+    # an offset -- so the next page resumes strictly after it.
+    app, state = app_and_state
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for subtask, at in (("a", 1000.0), ("b", 2000.0), ("c", 3000.0)):
+        clock["now"] = at
+        outbox.record(manifest_key("t1", subtask, 0), summary=_summary())
+
+    endpoint = _endpoint(app)
+    first = json.loads(
+        (await endpoint(_request("task_id=t1&order=recent&limit=2"))).body
+    )
+    assert first["count"] == 2 and first["total"] == 3
+    assert [m["key"] for m in first["manifests"]] == ["t1:c:0", "t1:b:0"]
+    assert first["next_cursor"] == "t1:b:0"
+
+    second = json.loads(
+        (
+            await endpoint(
+                _request(
+                    f"task_id=t1&order=recent&limit=2&before={first['next_cursor']}"
+                )
+            )
+        ).body
+    )
+    assert [m["key"] for m in second["manifests"]] == ["t1:a:0"]
+    # A short page is the end: no cursor to invent.
+    assert second["next_cursor"] is None
+    assert second["total"] == 3
+
+
+async def test_a_cursor_requires_the_time_order(app_and_state):
+    # Key order is a single oldest-key window (LIMIT in key order); paging it
+    # is not implemented, so asking for both must fail loudly rather than
+    # silently ignore the cursor or serve a wrong page.
+    app, _state = app_and_state
+    resp = await _endpoint(app)(_request("task_id=t1&order=key&before=t1:s1:0"))
+    assert resp.status_code == 400
+    assert "order=recent" in resp.body.decode()
+
+
+async def test_an_unknown_cursor_is_a_400(app_and_state):
+    app, _state = app_and_state
+    resp = await _endpoint(app)(_request("task_id=t1&order=recent&before=nope"))
+    assert resp.status_code == 400
+    assert "cursor" in resp.body.decode().lower()

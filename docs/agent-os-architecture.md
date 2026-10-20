@@ -175,7 +175,12 @@
   `P3`，不编造标题）；渲染器只读
   summary 的已知字段，未知字段（哪怕混进了内容）永不输出
   （`dashboard/tests/contextManifests.test.mjs` 以带毒字段与顺序保持断言
-  这一点）。
+  这一点）。窗口有剩余时计数行会如实说「N of M」，`order=recent` 还接受
+  `before` 游标（上一页最后一行的 key，锚在总序里而非偏移，并发写入不会
+  让翻页重复投递；响应带 `next_cursor`，短页为 null 表示到底），面板的
+  「load more」据此续页、按 key 去重并保留已载入行；key 序不分页——它是
+  另一个机制（key 序 LIMIT 窗口），`before` + `order=key` 明确 400 而不是
+  假装成同一件事。
   gateway 组合块路径不本地
   编译，因而不留记录——空历史而非伪造记录。
   按时间读「最近 N 次编译」另有显式序：`order=recent`（或直接调

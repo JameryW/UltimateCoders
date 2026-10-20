@@ -34,6 +34,21 @@ export interface ContextManifestRecord {
   recorded_at?: number;
 }
 
+/** The trail as the panel holds it: loaded rows plus the paging cursor. */
+export interface ManifestTrailState {
+  records: ContextManifestRecord[];
+  total?: number;
+  /** Cursor for the next page; undefined means the trail is exhausted. */
+  nextCursor?: string;
+}
+
+/** One endpoint response (`GET /dashboard/api/context/manifests`). */
+export interface ManifestPagePayload {
+  manifests?: ContextManifestRecord[];
+  total?: number;
+  next_cursor?: string | null;
+}
+
 export interface ManifestKeyParts {
   taskId: string;
   subtaskId: string;
@@ -56,13 +71,49 @@ export function manifestOrderKey(key: string): [string, number] {
  * The panel's request: the newest compiles, newest first. The endpoint's
  * default order is the *oldest* key window, so asking for it would hide the
  * latest attempts exactly when the trail truncates; `order=recent` is the
- * real time window (#751).
+ * real time window (#751). `before` is the previous page's `next_cursor` --
+ * the endpoint resumes strictly after that row key.
  */
 export function manifestTrailQuery(
   taskId: string,
   order: "recent" | "key" = "recent",
+  before?: string,
 ): string {
-  return `/dashboard/api/context/manifests?task_id=${encodeURIComponent(taskId)}&order=${order}`;
+  const cursor = before ? `&before=${encodeURIComponent(before)}` : "";
+  return `/dashboard/api/context/manifests?task_id=${encodeURIComponent(taskId)}&order=${order}${cursor}`;
+}
+
+/**
+ * Append one page to the loaded trail.
+ *
+ * - rows are deduped by `key`: the endpoint's cursor should not overlap
+ *   pages, but a record re-stamped between requests can be served twice and
+ *   the panel must show one row per compile;
+ * - a page that does not report a `total` keeps the loaded one (degrade,
+ *   don't invent) while a reported total replaces it;
+ * - `next_cursor` null/absent means the trail is exhausted: the state
+ *   stores `undefined`, not a cursor the panel would keep requesting.
+ */
+export function appendManifestPage(
+  state: ManifestTrailState,
+  page: ManifestPagePayload,
+): ManifestTrailState {
+  const seen = new Set(state.records.map((record) => record.key));
+  const records = [...state.records];
+  for (const record of page.manifests ?? []) {
+    if (seen.has(record.key)) continue;
+    seen.add(record.key);
+    records.push(record);
+  }
+  const total =
+    typeof page.total === "number" && Number.isFinite(page.total)
+      ? page.total
+      : state.total;
+  const nextCursor =
+    typeof page.next_cursor === "string" && page.next_cursor
+      ? page.next_cursor
+      : undefined;
+  return { records, total, nextCursor };
 }
 
 /**

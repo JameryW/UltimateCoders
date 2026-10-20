@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  appendManifestPage,
   manifestOrderKey,
   manifestHeadline,
   manifestTrailQuery,
@@ -148,6 +149,53 @@ test("the count line degrades without inventing an 'of N' claim", () => {
   // "2 of undefined recorded" here -- this pin and the truncation pin
   // above redden on different mutations, so neither is decorative.
   assert.equal(manifestCountLine(2, undefined), "2 recorded");
+});
+
+test("the trail query carries the paging cursor for the next page", () => {
+  // Without the cursor the endpoint can only ever serve the newest window;
+  // the cursor is the previous page's last row key and must survive URL
+  // encoding (keys contain colons, which are legal but must not be lost).
+  assert.match(
+    manifestTrailQuery("t1", "recent", "t1:s1:3"),
+    /[?&]before=t1%3As1%3A3(&|$)/,
+  );
+  assert.ok(!manifestTrailQuery("t1", "recent").includes("before="));
+});
+
+test("appending a page keeps one row per key", () => {
+  // The endpoint's cursor should not overlap pages, but a record re-stamped
+  // between requests can be served twice; the panel must show one row per
+  // compile, not one per response.
+  const merged = appendManifestPage(
+    { records: [record("t1:b:0", {})] },
+    { manifests: [record("t1:b:0", {}), record("t1:a:0", {})] },
+  );
+  assert.deepEqual(merged.records.map((r) => r.key), ["t1:b:0", "t1:a:0"]);
+});
+
+test("appending a page updates or clears the next cursor", () => {
+  const more = appendManifestPage(
+    { records: [] },
+    { manifests: [record("t1:s1:1", {})], next_cursor: "t1:s1:1" },
+  );
+  assert.equal(more.nextCursor, "t1:s1:1");
+  // null on the wire means "trail exhausted": no cursor is invented.
+  const end = appendManifestPage(more, {
+    manifests: [record("t1:s1:0", {})],
+    next_cursor: null,
+  });
+  assert.equal(end.nextCursor, undefined);
+});
+
+test("a page without a total keeps the loaded total", () => {
+  const merged = appendManifestPage(
+    { records: [], total: 9 },
+    { manifests: [record("t1:s1:0", {})] },
+  );
+  assert.equal(merged.total, 9);
+  // A page that does report a total refreshes it.
+  const refreshed = appendManifestPage(merged, { manifests: [], total: 11 });
+  assert.equal(refreshed.total, 11);
 });
 
 test("the rendered trail preserves the backend's newest-first order", async () => {

@@ -280,6 +280,57 @@ def test_recent_rejects_limits_outside_1_to_1000(state):
             outbox.recent("t", limit=bad)
 
 
+def test_recent_before_cursor_walks_the_sorted_window_once(state, monkeypatch):
+    # The panel can only ever see the newest ``limit`` rows; the cursor is
+    # the key of the last row returned -- an anchor in the total time order,
+    # not an offset. Paging with it must reproduce the whole trail exactly
+    # once: no duplicates, no skipped record, even though keys and times
+    # disagree on order.
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    for subtask, at in (
+        ("d", 4000.0),
+        ("a", 1000.0),
+        ("e", 5000.0),
+        ("b", 2000.0),
+        ("c", 3000.0),
+    ):
+        clock["now"] = at
+        outbox.record(manifest_key("t", subtask, 0), summary=_summary())
+
+    whole = [r["key"] for r in outbox.recent("t")]
+    assert whole == ["t:e:0", "t:d:0", "t:c:0", "t:b:0", "t:a:0"]
+
+    page1 = outbox.recent("t", limit=2)
+    page2 = outbox.recent("t", limit=2, before_key=page1[-1]["key"])
+    page3 = outbox.recent("t", limit=2, before_key=page2[-1]["key"])
+    paged = [r["key"] for r in page1 + page2 + page3]
+
+    assert paged == whole
+    assert len(set(paged)) == len(paged)
+
+
+def test_recent_rejects_a_cursor_outside_the_scan_scope(state, monkeypatch):
+    # A cursor from another task/subtask is not a position in this window;
+    # silently restarting would re-serve the first page (duplicates), so it
+    # is an error the endpoint turns into a 400.
+    outbox = ContextManifestOutbox(state)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "ultimate_coders.context_outbox.time.time", lambda: clock["now"]
+    )
+    outbox.record(manifest_key("t", "s1", 0), summary=_summary())
+    outbox.record(manifest_key("other", "s1", 0), summary=_summary())
+
+    with pytest.raises(ValueError):
+        outbox.recent("t", before_key="other:s1:0")
+    with pytest.raises(ValueError):
+        outbox.recent("t", before_key=123)  # type: ignore[arg-type]
+
+
 # ── window vs scan count ─────────────────────────────────────────
 
 
