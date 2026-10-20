@@ -7,9 +7,10 @@
  * carries no prompt content -- only counts, budgets and drop reasons -- so
  * every formatter here reads known fields and never an arbitrary blob.
  *
- * Ordering mirrors the dashboard endpoint's task scan:
- * (task:subtask, numeric attempt). Plain string order puts `s1:10` before
- * `s1:2`, which is exactly what an auditor should not have to know.
+ * Ordering belongs to the endpoint: this module asks for its `order=recent`
+ * time window and renders it as returned. The default key order is the
+ * *oldest* key window (#751), and re-sorting a time window here would undo
+ * it; `manifestOrderKey` remains for parsing `task:subtask:attempt`.
  */
 
 export interface ContextManifestSummary {
@@ -35,9 +36,9 @@ export interface ManifestKeyParts {
 }
 
 /**
- * The sort key the task scan uses: everything before the last colon, plus a
- * numeric attempt. A non-numeric tail sorts as attempt 0 (the backend's
- * `int(attempt) if attempt.isdigit() else 0`).
+ * Split `task:subtask:attempt` into (prefix, numeric attempt). The backend's
+ * task scan sorts by exactly this key, so parsing reuses it; a non-numeric
+ * tail is attempt 0 (the backend's `int(attempt) if attempt.isdigit() else 0`).
  */
 export function manifestOrderKey(key: string): [string, number] {
   const at = key.lastIndexOf(":");
@@ -46,15 +47,28 @@ export function manifestOrderKey(key: string): [string, number] {
   return [prefix, /^\d+$/.test(tail) ? Number(tail) : 0];
 }
 
-/** Total order used before rendering a task-wide scan. */
-export function compareManifestRecords(
-  a: ContextManifestRecord,
-  b: ContextManifestRecord,
-): number {
-  const [prefixA, attemptA] = manifestOrderKey(a.key);
-  const [prefixB, attemptB] = manifestOrderKey(b.key);
-  if (prefixA !== prefixB) return prefixA < prefixB ? -1 : 1;
-  return attemptA - attemptB;
+/**
+ * The panel's request: the newest compiles, newest first. The endpoint's
+ * default order is the *oldest* key window, so asking for it would hide the
+ * latest attempts exactly when the trail truncates; `order=recent` is the
+ * real time window (#751).
+ */
+export function manifestTrailQuery(
+  taskId: string,
+  order: "recent" | "key" = "recent",
+): string {
+  return `/dashboard/api/context/manifests?task_id=${encodeURIComponent(taskId)}&order=${order}`;
+}
+
+/**
+ * When a compile was recorded, as UTC `HH:MM:SSZ` -- deterministic on every
+ * machine (local time would make the rendered trail depend on the viewer's
+ * zone). A missing/non-finite timestamp is not a time: "" rather than an
+ * invented "Invalid Date"/"NaN".
+ */
+export function manifestRecordedAt(recorded_at?: number): string {
+  if (typeof recorded_at !== "number" || !Number.isFinite(recorded_at)) return "";
+  return new Date(recorded_at * 1000).toISOString().slice(11, 19) + "Z";
 }
 
 /**
