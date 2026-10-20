@@ -726,3 +726,92 @@ the memory now says so (and CI's `vite build` job independently passes).
   reports the remainder; the panel cannot scroll back yet).
 - Unchanged: inference-side consumption of `render_parts()` (needs the
   external CLI adapter), and #656 (blocked on the external plan §21).
+
+## Session 76: The drops never said which tier starved
+
+**Date**: 2026-10-20
+**Task**: Give the manifest's dropped entries the same tier vocabulary as the
+surviving counts — and make the panel actually render the tier
+**Branch**: `fix/manifest-drop-tier-attribution`
+
+### Summary
+
+A compile summary records two sides of the same ledger: what survived per
+tier (`items_by_tier`, keyed by titles like `"P3 trace"`) and what was
+dropped (`dropped[]`). The dropped entries carried the raw tier **enum
+number** (`int(d.tier)`), so the payload answered "some items were dropped,
+for these reasons" but the auditor needed a second lookup table — one that
+is not in the payload — to learn *which tier* was starved. The dashboard
+formatter had the right idea in prose (its docstring promised
+`P3 trace: budget (2)`) but the implementation ignored `tier` entirely and
+aggregated reasons only (`budget (2) · ttl`), and the existing test pinned
+that reason-only aggregation — so the promise and the code never met
+(Sessions 74/75's class: the record carries the fact, the prose promises
+it, the renderer drops it).
+
+The summary now serializes the tier **title** — the same `_TIER_TITLES`
+table that names `items_by_tier` — so new manifests use one vocabulary.
+Old manifests keep their numeric tiers (audit records are immutable); the
+renderer degrades a numeric tier to `P3` rather than inventing a title, and
+entries without any tier keep the previous reason-only form, so the legacy
+shape renders exactly as before. The drop line groups per (tier, reason)
+and sorts by the rendered label, so it does not depend on the record's drop
+order: `P2 evidence: budget (2) · P4 memory: budget`.
+
+### Main Changes
+
+- `context_compiler.summary()` — `dropped[].tier` is the tier title
+  (`"P5 background"`), matching `items_by_tier`; the two exact-summary pins
+  moved in the same change and a new pin asserts the vocabulary match.
+- `dashboard/src/lib/contextManifests.ts` — `droppedLine()` renders
+  `tier: reason (n)` groups, sorted by label; numeric tier → `P3` fallback
+  for pre-vocabulary records; tierless entries unchanged.
+- `dashboard/tests/contextManifests.test.mjs` — tier attribution, tier
+  ordering, pre-vocabulary degradation, and the untouched tierless form
+  are four separate pins.
+- §6 of `docs/agent-os-architecture.md` — the drop line is tier-attributed
+  and shares the surviving side's vocabulary.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0765df7` | fix(context): attribute manifest drops to the tier that lost them (Session 76) |
+| `f6830de` | Merge pull request #759 from JameryW/fix/manifest-drop-tier-attribution |
+
+### Testing
+
+- [OK] Mutations one at a time, every touched file sha256-restored, judgment
+  only from disk (4/4 `ALL_OK`, red sets pairwise distinct, assertion-red,
+  extra-red empty): M1 the Python summary serializes the raw enum again →
+  exactly the two exact-summary pins and the new vocabulary pin (27/30
+  passed); N1 the drop line ignores the tier → exactly the attribution,
+  ordering and degradation pins (14/17); N2 numeric-tier fallback removed →
+  exactly the pre-vocabulary pin (16/17); N3 groups keep record order →
+  exactly the ordering pin (16/17). Final hashes `4e438e71…`/`adb68b17…`
+  re-verified from a separate process.
+- [OK] PR #759 CI: Python CI + Dashboard CI + Scripts CI all `completed/success` on headSha `0765df75` (14 checks, 0 fail; Python legs 7m43s/8m02s).
+- [OK] Suites: `test_context_compiler.py` **30 passed** (was 29),
+  `test_context_outbox.py` 24; dashboard `node --test` **17 passed** in the
+  manifests file / **29** across the dashboard suite (was 26);
+  `tsc -p tsconfig.app.json --noEmit` and `tsconfig.node.json --noEmit`
+  exit 0; `eslint` clean; local `vite build` green (6.56 s).
+- [OK] Seven guards green: spec-refs 48 tests (audit `112 ok / 9 stale /
+  9 ambiguous`, mentions `347` unchanged), tasks-refs
+  `883 ok / 0 dangling`, line-endings `(2073, 2064)` unchanged (no new
+  files), workflow-inputs `21/13`, readme-ci-table `11 workflows`,
+  journal-ledger 27, codex-flow; ruff clean on `python/`, `tests/`,
+  `scripts/`. Collect-only measured `1984 -> 1985` (+1 pin).
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Remaining audit-surface follow-ons: a subtask-scoped view and
+  pagination/"load more" for trails longer than the window; per-item drop
+  listing remains out of scope (the tier+reason aggregate is the panel's
+  audit unit).
+- Unchanged: inference-side consumption of `render_parts()` (needs the
+  external CLI adapter), and #656 (blocked on the external plan §21).
