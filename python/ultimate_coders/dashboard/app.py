@@ -309,39 +309,63 @@ class DashboardApp:
             ``total`` is the scan count (what exists in scope), so a
             truncated window says so instead of passing itself off as
             the whole trail.
+
+            ``order=recent`` pages with ``before`` (the ``next_cursor``
+            of the previous page, i.e. that page's last row key): the
+            response resumes strictly after that anchor in the same total
+            order, so a long trail is reachable without duplicating rows.
+            ``next_cursor`` is ``null`` only when the page was short (the
+            end). Pagination is deliberately not available for ``order=key``
+            -- that order is a single oldest-key window (a LIMIT in key
+            order), so a cursor there would be a different mechanism
+            pretending to be the same one; asking for it is a 400.
             """
             if (resp := self._check_auth(request)) is not None:
                 return resp
             task_id = request.query_params.get("task_id", "")
             subtask_id = request.query_params.get("subtask_id", "")
             order = request.query_params.get("order", "key")
+            before = request.query_params.get("before", "")
             if not task_id:
                 return JSONResponse({"error": "task_id is required"}, status_code=400)
             if order not in ("key", "recent"):
                 return JSONResponse({"error": "Invalid order"}, status_code=400)
+            if before and order != "recent":
+                return JSONResponse(
+                    {"error": "Pagination requires order=recent"}, status_code=400
+                )
             try:
                 limit = int(request.query_params.get("limit", "100"))
                 if not 1 <= limit <= 1000:
                     raise ValueError("limit must be between 1 and 1000")
-                from ultimate_coders.context_outbox import ContextManifestOutbox
+                from ultimate_coders.context_outbox import (
+                    ContextManifestOutbox,
+                    CursorNotFoundError,
+                )
 
                 outbox = ContextManifestOutbox(await experiment_state())
-                if order == "recent":
-                    manifests = await asyncio.to_thread(
-                        outbox.recent,
-                        task_id,
-                        subtask_id=subtask_id or None,
-                        limit=limit,
+                try:
+                    if order == "recent":
+                        manifests = await asyncio.to_thread(
+                            outbox.recent,
+                            task_id,
+                            subtask_id=subtask_id or None,
+                            limit=limit,
+                            before_key=before or None,
+                        )
+                    elif subtask_id:
+                        manifests = await asyncio.to_thread(
+                            outbox.history, task_id, subtask_id, limit=limit
+                        )
+                    else:
+                        manifests = await asyncio.to_thread(
+                            outbox.task_history, task_id, limit=limit
+                        )
+                        manifests.sort(key=_manifest_sort_key)
+                except CursorNotFoundError:
+                    return JSONResponse(
+                        {"error": "Unknown cursor in this scope"}, status_code=400
                     )
-                elif subtask_id:
-                    manifests = await asyncio.to_thread(
-                        outbox.history, task_id, subtask_id, limit=limit
-                    )
-                else:
-                    manifests = await asyncio.to_thread(
-                        outbox.task_history, task_id, limit=limit
-                    )
-                    manifests.sort(key=_manifest_sort_key)
                 total = await asyncio.to_thread(
                     outbox.total, task_id, subtask_id=subtask_id or None
                 )
@@ -349,8 +373,18 @@ class DashboardApp:
                 return JSONResponse({"error": "Invalid pagination"}, status_code=400)
             except Exception as e:
                 return _unavailable("Context manifest state unavailable", e)
+            next_cursor = (
+                manifests[-1]["key"]
+                if order == "recent" and len(manifests) == limit
+                else None
+            )
             return JSONResponse(
-                {"manifests": manifests, "count": len(manifests), "total": total}
+                {
+                    "manifests": manifests,
+                    "count": len(manifests),
+                    "total": total,
+                    "next_cursor": next_cursor,
+                }
             )
 
         @app.get("/dashboard/api/experiments/{experiment_id}/artifacts/{name}")

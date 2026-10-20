@@ -42,6 +42,14 @@ NAMESPACE = "context_manifest"
 SCAN_PAGE = 1000
 
 
+class CursorNotFoundError(ValueError):
+    """The pagination cursor names no record in the scanned window.
+
+    A ``ValueError`` subclass so callers that only guard "bad pagination"
+    still catch it; the dashboard endpoint maps it to its own 400 message.
+    """
+
+
 def manifest_key(task_id: str, subtask_id: str, attempt: int) -> str:
     """Identity of one compile: the subtask *and* the attempt.
 
@@ -133,7 +141,12 @@ class ContextManifestOutbox:
         return counted
 
     def recent(
-        self, task_id: str, *, subtask_id: str | None = None, limit: int = 100
+        self,
+        task_id: str,
+        *,
+        subtask_id: str | None = None,
+        limit: int = 100,
+        before_key: str | None = None,
     ) -> list[dict]:
         """The newest compiles by ``recorded_at``, newest first.
 
@@ -153,9 +166,22 @@ class ContextManifestOutbox:
         whole task; the trailing-``:`` prefix boundary is the same one
         ``task_history`` documents (``task-1`` never swallows
         ``task-10``).
+
+        ``before_key`` pages through that total order: it names the last
+        row of the previous page and the response starts *after* it. The
+        anchor is a record key, not an offset, so records written between
+        pages do not shift the walk (they are newer than the anchor and
+        are simply not re-served; a record re-stamped past the anchor is
+        likewise not seen again until a fresh first page). A key outside
+        this scan's scope raises ``CursorNotFoundError`` instead of silently
+        restarting (which would serve the first page twice).
         """
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("Query limit must be between 1 and 1000")
+        if before_key is not None and (
+            not isinstance(before_key, str) or not before_key
+        ):
+            raise ValueError("Cursor must be a non-empty key string")
         prefix = f"{task_id}:{subtask_id}:" if subtask_id else f"{task_id}:"
         window: list[dict] = []
         after = ""
@@ -166,4 +192,11 @@ class ContextManifestOutbox:
                 break
             after = page[-1]["key"]
         window.sort(key=lambda r: (-r["recorded_at"], r["key"]))
+        if before_key is not None:
+            for position, record in enumerate(window):
+                if record["key"] == before_key:
+                    window = window[position + 1:]
+                    break
+            else:
+                raise CursorNotFoundError(f"Unknown cursor {before_key!r}")
         return window[:limit]
