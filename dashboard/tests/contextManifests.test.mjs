@@ -96,11 +96,41 @@ test("tier counts come out in tier order and skip empty tiers", () => {
   assert.equal(tierCountsLine(undefined), "");
 });
 
-test("drop reasons are aggregated with their counts", () => {
+test("drop reasons are attributed to the tier that lost the item", () => {
+  // The surviving-side counts already name tiers ("P2 evidence 3"); the drop
+  // line used to aggregate reasons only, hiding which tier was starved even
+  // though the record carried it.
+  assert.equal(droppedLine([
+    { tier: "P2 evidence", reason: "budget" },
+    { tier: "P2 evidence", reason: "budget" },
+    { tier: "P4 memory", reason: "budget" },
+  ]), "P2 evidence: budget (2) · P4 memory: budget");
+  assert.equal(droppedLine([]), "");
+});
+
+test("drop lines are ordered by tier, not by the record's drop order", () => {
+  assert.equal(droppedLine([
+    { tier: "P5 background", reason: "ttl" },
+    { tier: "P0 policy", reason: "duplicate" },
+    { tier: "P3 trace", reason: "budget" },
+  ]), "P0 policy: duplicate · P3 trace: budget · P5 background: ttl");
+});
+
+test("pre-vocabulary and tierless drops degrade without inventing a title", () => {
+  // Manifests written before the vocabulary fix store the raw enum number:
+  // render "P3", never a title the record did not carry. No tier at all
+  // keeps the old reason-only form.
+  assert.equal(droppedLine([
+    { tier: 3, reason: "ttl" },
+    { tier: 3, reason: "ttl" },
+    { reason: "budget" },
+  ]), "P3: ttl (2) · budget");
+});
+
+test("tierless drops keep the reason-only form and counts", () => {
   assert.equal(droppedLine([
     { reason: "budget" }, { reason: "budget" }, { reason: "ttl" }, {},
   ]), "budget (2) · ttl · unspecified");
-  assert.equal(droppedLine([]), "");
 });
 
 test("the count line never reports a truncated window as the whole trail", () => {

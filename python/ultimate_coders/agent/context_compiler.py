@@ -191,8 +191,11 @@ class ContextManifest:
             "risk": self.risk,
             "over_budget": self.over_budget,
             "items_by_tier": tiers,
+            # One tier vocabulary: a drop names its tier the way
+            # ``items_by_tier`` names the surviving ones. The raw enum value
+            # needed a second lookup table to answer "which tier starved".
             "dropped": [
-                {"item_id": d.item_id, "tier": int(d.tier), "reason": d.reason}
+                {"item_id": d.item_id, "tier": _TIER_TITLES[d.tier], "reason": d.reason}
                 for d in self.dropped
             ],
         }

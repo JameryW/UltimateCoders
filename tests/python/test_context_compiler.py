@@ -229,9 +229,32 @@ def test_summary_carries_counts_and_drops_but_no_content():
     assert summary["over_budget"] is True
     assert summary["items_by_tier"] == {"P0 policy": 1}
     assert summary["dropped"] == [
-        {"item_id": "bg", "tier": int(Tier.BACKGROUND), "reason": "budget"}
+        {"item_id": "bg", "tier": "P5 background", "reason": "budget"}
     ]
     assert "secret policy text" not in repr(summary)
+
+
+def test_the_summary_names_the_dropped_tier_with_the_items_vocabulary():
+    # The surviving side already names tiers by title ("P0 policy", ...) in
+    # ``items_by_tier``; the dropped side carried a raw int, so an auditor
+    # needed a second lookup table to know which tier was starved -- and the
+    # dashboard formatter, whose docstring promised "P3 trace: budget (2)",
+    # ignored the field entirely. One vocabulary for the same fact: a drop
+    # names its tier the way ``items_by_tier`` does. Old manifests keep their
+    # numeric tiers (audit records are immutable); readers fall back.
+    manifest = compile_context(
+        [
+            _item("policy", Tier.POLICY, "x" * 40),
+            _item("bg", Tier.BACKGROUND, "x" * 400),
+        ],
+        budget_tokens=3,
+    )
+    summary = manifest.summary()
+
+    assert summary["items_by_tier"] == {"P0 policy": 1}
+    assert summary["dropped"] == [
+        {"item_id": "bg", "tier": "P5 background", "reason": "budget"}
+    ]
 
 
 def test_dependency_adapter_marks_success_as_verified():
@@ -378,7 +401,7 @@ class TestRiskAwareAllocation:
         assert summary["risk"] == "high"
         assert summary["items_by_tier"] == {"P0 policy": 1, "P2 evidence": 1}
         assert summary["dropped"] == [
-            {"item_id": "state-dump", "tier": int(Tier.STATE), "reason": "budget"}
+            {"item_id": "state-dump", "tier": "P1 state", "reason": "budget"}
         ]
 
 

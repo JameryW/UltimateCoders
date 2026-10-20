@@ -20,7 +20,12 @@ export interface ContextManifestSummary {
   risk?: string;
   over_budget?: boolean;
   items_by_tier?: Record<string, number>;
-  dropped?: Array<{ item_id?: string; tier?: number; reason?: string }>;
+  /**
+   * `tier` is the tier title ("P3 trace") in summaries written after the
+   * vocabulary fix; earlier (immutable) audit records store the raw enum
+   * number, which the renderer degrades to "P3".
+   */
+  dropped?: Array<{ item_id?: string; tier?: number | string; reason?: string }>;
 }
 
 export interface ContextManifestRecord {
@@ -122,18 +127,39 @@ export function tierCountsLine(
     .join(" · ");
 }
 
-/** Drop reasons as one line: `P3 trace: budget (2)`. */
+/**
+ * The tier a drop belongs to, in the same vocabulary the surviving side uses
+ * ("P3 trace"). Manifests written before the vocabulary fix carry the raw
+ * enum number: render that as `P3` rather than inventing a title. Anything
+ * else yields no prefix (the reason still shows).
+ */
+function droppedTierLabel(tier: number | string | undefined): string {
+  if (typeof tier === "string") return tier;
+  if (typeof tier === "number" && Number.isInteger(tier)) return `P${tier}`;
+  return "";
+}
+
+/**
+ * Drop reasons attributed to the tier that lost the item:
+ * `P3 trace: budget (2) · P4 memory: ttl`. Grouping is per (tier, reason),
+ * sorted by the rendered label so the line does not depend on the record's
+ * drop order; entries without a tier keep the reason-only form. The count
+ * suffix appears only above one.
+ */
 export function droppedLine(
   dropped: ContextManifestSummary["dropped"],
 ): string {
   if (!dropped || dropped.length === 0) return "";
   const counts = new Map<string, number>();
   for (const entry of dropped) {
-    const label = entry.reason ?? "unspecified";
+    const tier = droppedTierLabel(entry.tier);
+    const reason = entry.reason ?? "unspecified";
+    const label = tier ? `${tier}: ${reason}` : reason;
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   return [...counts.entries()]
-    .map(([reason, count]) => (count > 1 ? `${reason} (${count})` : reason))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([label, count]) => (count > 1 ? `${label} (${count})` : label))
     .join(" · ");
 }
 
