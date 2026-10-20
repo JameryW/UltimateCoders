@@ -815,3 +815,101 @@ order: `P2 evidence: budget (2) · P4 memory: budget`.
   audit unit).
 - Unchanged: inference-side consumption of `render_parts()` (needs the
   external CLI adapter), and #656 (blocked on the external plan §21).
+
+## Session 77: The remainder becomes reachable
+
+**Date**: 2026-10-20
+**Task**: Page the manifest audit trail — a cursor for the newest-first window,
+so the rows the count line reports are actually fetchable
+**Branch**: `feat/manifest-trail-pagination`
+
+### Summary
+
+Session 75 pointed the panel at the newest window and made the count line
+honest (`N of M recorded`); Sessions 71/72 made that number a scan count.
+But the endpoint had no cursor: once the trail was longer than the window,
+the remaining compiles were unreachable from the only audit surface — the
+panel could say "100 of 137 recorded" and never show the other 37. The
+follow-on had been listed twice and is now closed end to end.
+
+`order=recent` gains `before`: the previous page's last row **key** — an
+anchor in the total `(-recorded_at, key)` order, not an offset — so records
+written between pages do not shift the walk (they are newer than the anchor
+and are simply not re-served). An unknown or out-of-scope cursor raises
+`CursorNotFoundError` (a `ValueError` subclass) instead of silently
+restarting, which would serve the first page twice. The response gains
+`next_cursor`: the last row key when the page was full, `null` on a short
+page (the end). Pagination is deliberately **not** offered for `order=key`:
+that order is a single oldest-key `LIMIT` window, a different mechanism, and
+`before` + `order=key` is an explicit 400 rather than a second mechanism
+pretending to be the same one.
+
+The panel's "load more" appends the next page through a pure
+`appendManifestPage(state, page)`: dedupe by key (a record re-stamped
+between pages can be served twice and must still be one row), a missing
+`total` degrades to the loaded one instead of inventing a number, and
+`next_cursor: null` clears the cursor rather than asking again. A failed page
+keeps the loaded rows and offers a retry. The loaded state is derived per
+`taskId`, so switching tasks shows "loading…" instead of the previous task's
+trail (the reset-in-effect version tripped `react-hooks/set-state-in-effect`,
+which is a real React 19 lint gate here).
+
+### Main Changes
+
+- `ContextManifestOutbox.recent(..., before_key)` — cursor paging over the
+  time order; `CursorNotFoundError` for a cursor outside the scan scope.
+- `GET /dashboard/api/context/manifests` — `before` on `order=recent`,
+  `next_cursor` in the response, 400 for `before` + `order=key`, 400 for an
+  unknown cursor.
+- `dashboard/src/lib/contextManifests.ts` —
+  `manifestTrailQuery(taskId, order, before)`, `appendManifestPage(state,
+  page)` with dedupe/total-degrade/cursor-clear semantics.
+- `ContextManifestPanel.tsx` — "load more" button + retry state; per-task
+  derived trail state.
+- §6 of `docs/agent-os-architecture.md` — cursor semantics and why key order
+  is not paginated.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f434f1f` | feat(dashboard): page the manifest audit trail with a cursor (Session 77) |
+| `e9560ac` | Merge pull request #761 from JameryW/feat/manifest-trail-pagination |
+
+### Testing
+
+- [OK] Mutations one at a time, every touched file sha256-restored, judgment
+  only from disk (7/7 `ALL_OK`, red sets pairwise distinct, assertion-red,
+  extra-red empty): P1 outbox ignores the cursor → exactly {cursor walk,
+  out-of-scope cursor, endpoint unknown-cursor, endpoint paging} (40/44
+  passed); P2 endpoint never reports `next_cursor` → exactly the endpoint
+  paging pin; P3 endpoint accepts a cursor for key order → exactly the
+  order-guard pin; T1 query drops the cursor → exactly the query pin; T2
+  append does not dedupe → exactly the dedupe pin; T3 append keeps the old
+  cursor → exactly the cursor pin; T4 append ignores a reported total →
+  exactly the total pin. Final hashes `c6ca37ab…`/`34de6e80…`/`e222a2a3…`
+  re-verified from a separate process.
+- [OK] PR #761 CI: Python CI + Dashboard CI + Scripts CI all `completed/success` on headSha `f434f1f6` (14 checks, 0 fail; Python legs 8m11s/9m49s).
+- [OK] Suites: `test_context_outbox.py` **26 passed** (was 24),
+  `test_dashboard_context_manifests.py` **18 passed** (was 15); dashboard
+  `node --test` **21 passed** in the manifests file / **33** across the
+  dashboard suite (was 29); `tsc` app+node, `eslint`, local `vite build`
+  green.
+- [OK] Seven guards green: spec-refs 48 tests (audit `112 ok / 9 stale /
+  9 ambiguous`, mentions `347` unchanged), tasks-refs
+  `883 ok / 0 dangling`, line-endings `(2073, 2064)` unchanged (no new
+  files), workflow-inputs `21/13`, readme-ci-table `11 workflows`,
+  journal-ledger 27, codex-flow; ruff clean on `python/`, `tests/`,
+  `scripts/`. Collect-only measured `1985 -> 1990` (+5 pins).
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Remaining audit-surface follow-ons: a subtask-scoped view (the endpoint
+  already takes `subtask_id`; no UI surface uses it), and a cursor for the
+  key order if a consumer ever needs it (deliberately out of scope here).
+- Unchanged: inference-side consumption of `render_parts()` (needs the
+  external CLI adapter), and #656 (blocked on the external plan §21).
