@@ -126,6 +126,17 @@ class Oracle:
                 reasons.append(f"Performance regression in {metric}: {before} -> {after}")
             if metric == self.policy.objective:
                 improvement = pct
+                if before <= 0:
+                    # A zero baseline has no relative scale: "0 -> anything"
+                    # is an undefined percentage, so neither the required
+                    # improvement nor the relative noise floor can be
+                    # demonstrated. Accepting it would be a verifier false
+                    # accept (F8); refuse and say which evidence is missing.
+                    reasons.append(
+                        f"Objective baseline {metric} is not positive; "
+                        "improvement cannot be quantified"
+                    )
+                    continue
                 noise = self.policy.noise_multiplier * sum(
                     result.statistics.get("dispersion_pct", {}).get(metric, 0)
                     for result in (baseline, candidate)
