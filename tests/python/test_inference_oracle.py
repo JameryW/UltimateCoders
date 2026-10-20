@@ -76,3 +76,45 @@ def test_throughput_objective_improves_in_the_opposite_direction():
 def test_no_change_does_not_count_as_an_optimization():
     measured = BenchmarkResult("fixed", True, True, {"tpot_ms": 43})
     assert not Oracle().evaluate(measured, measured).accepted
+
+
+def _measured(metric: str, value: float) -> BenchmarkResult:
+    """A benchmark result carrying the evidence the oracle requires."""
+    return BenchmarkResult(
+        "fixed",
+        True,
+        True,
+        {metric: value},
+        statistics={"count": 3, "dispersion_pct": {metric: 1.0}},
+        environment_id="fixture",
+    )
+
+
+def test_a_zero_baseline_cannot_prove_a_required_improvement():
+    # F8 (verifier false accept): with a zero objective baseline the
+    # percentage is undefined, so both the required-improvement and the
+    # noise gates were skipped and any positive delta was accepted --
+    # "0 -> 125 tokens/s" cleared a 20% requirement with no quantifiable
+    # improvement to point at.
+    verdict = Oracle(
+        OraclePolicy(objective="throughput_tokens_s", min_improvement_pct=20)
+    ).evaluate(
+        _measured("throughput_tokens_s", 0),
+        _measured("throughput_tokens_s", 125),
+    )
+    assert not verdict.accepted
+    assert verdict.improvement_pct is None
+    assert any("baseline" in reason.lower() for reason in verdict.reasons)
+
+
+def test_a_zero_baseline_is_refused_even_without_a_required_improvement():
+    # No relative bar demanded still does not make a degenerate baseline
+    # evidence: 0 tokens/s is not a measurement an improvement can be
+    # measured against, and the noise floor is relative too. The verifier's
+    # failure direction is false accept, so it refuses and says why.
+    verdict = Oracle(OraclePolicy(objective="throughput_tokens_s")).evaluate(
+        _measured("throughput_tokens_s", 0),
+        _measured("throughput_tokens_s", 125),
+    )
+    assert not verdict.accepted
+    assert any("baseline" in reason.lower() for reason in verdict.reasons)
