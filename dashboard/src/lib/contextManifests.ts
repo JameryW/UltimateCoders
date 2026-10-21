@@ -72,15 +72,30 @@ export function manifestOrderKey(key: string): [string, number] {
  * default order is the *oldest* key window, so asking for it would hide the
  * latest attempts exactly when the trail truncates; `order=recent` is the
  * real time window (#751). `before` is the previous page's `next_cursor` --
- * the endpoint resumes strictly after that row key.
+ * the endpoint resumes strictly after that row key. `subtaskId` scopes the
+ * trail to one subtask (the endpoint takes the same filter); a scoped trail
+ * pages inside that scope, not the task-wide order.
  */
 export function manifestTrailQuery(
   taskId: string,
   order: "recent" | "key" = "recent",
   before?: string,
+  subtaskId?: string,
 ): string {
   const cursor = before ? `&before=${encodeURIComponent(before)}` : "";
-  return `/dashboard/api/context/manifests?task_id=${encodeURIComponent(taskId)}&order=${order}${cursor}`;
+  const scope = subtaskId
+    ? `&subtask_id=${encodeURIComponent(subtaskId)}`
+    : "";
+  return `/dashboard/api/context/manifests?task_id=${encodeURIComponent(taskId)}&order=${order}${cursor}${scope}`;
+}
+
+/**
+ * Header prefix for a scoped trail: "" for the task-wide view, otherwise
+ * the subtask it is showing. An empty id is not a scope (the endpoint treats
+ * empty as task-wide), so the label must not invent one.
+ */
+export function manifestScopeLabel(subtaskId?: string): string {
+  return subtaskId ? `subtask ${subtaskId} · ` : "";
 }
 
 /**
