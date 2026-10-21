@@ -121,7 +121,15 @@ class BenchmarkRunner:
         self._fingerprints = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 
     def verify_harness(self) -> None:
-        for path, expected in (self._fingerprints or {}).items():
+        if not self._fingerprints:
+            # Fail closed: an unarmed runner cannot verify the harness it
+            # claims is immutable. Measuring anyway would silently drop the
+            # protection (and crash later while building the environment
+            # identity), so say what is missing up front.
+            raise RuntimeError(
+                "Benchmark harness is not protected; call protect() before measuring"
+            )
+        for path, expected in self._fingerprints.items():
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
                 raise RuntimeError(f"Benchmark harness changed: {path.name}")
 

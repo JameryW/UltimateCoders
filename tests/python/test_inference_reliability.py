@@ -359,6 +359,31 @@ async def test_noisy_benchmark_is_rejected(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_measure_requires_a_protected_harness(tmp_path):
+    # The runner's promise is that the benchmark harness is immutable. An
+    # unarmed runner cannot verify that, so it must say so instead of
+    # measuring unverified (and crashing later while building the environment
+    # identity, which is not a guard anyone can read).
+    (tmp_path / "bench.py").write_text(
+        "import json; print(json.dumps({'workload_id':'w','correctness':True,"
+        "'compile_success':True,'metrics':{'tpot_ms':37}}))"
+    )
+    runner = BenchmarkRunner(
+        BenchmarkSpec([sys.executable, "-B", "bench.py"], "w", protected_paths=["bench.py"])
+    )
+    with pytest.raises(RuntimeError, match="not protected"):
+        await runner.measure(str(tmp_path))
+
+
+def test_verify_harness_requires_a_protected_harness(tmp_path):
+    runner = BenchmarkRunner(
+        BenchmarkSpec([sys.executable, "-B", "bench.py"], "w", protected_paths=["bench.py"])
+    )
+    with pytest.raises(RuntimeError, match="not protected"):
+        runner.verify_harness()
+
+
+@pytest.mark.asyncio
 async def test_dashboard_artifact_authentication_and_integrity(state, tmp_path, monkeypatch):
     from ultimate_coders.dashboard.app import DashboardApp
 

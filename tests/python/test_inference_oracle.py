@@ -78,14 +78,15 @@ def test_no_change_does_not_count_as_an_optimization():
     assert not Oracle().evaluate(measured, measured).accepted
 
 
-def _measured(metric: str, value: float) -> BenchmarkResult:
+def _measured(metric: str, value: float, **extra: float) -> BenchmarkResult:
     """A benchmark result carrying the evidence the oracle requires."""
+    metrics = {metric: value, **extra}
     return BenchmarkResult(
         "fixed",
         True,
         True,
-        {metric: value},
-        statistics={"count": 3, "dispersion_pct": {metric: 1.0}},
+        metrics,
+        statistics={"count": 3, "dispersion_pct": {key: 1.0 for key in metrics}},
         environment_id="fixture",
     )
 
@@ -141,6 +142,20 @@ def test_a_zero_candidate_measurement_reports_no_improvement():
         _measured("tpot_ms", 0),
     )
     assert verdict.improvement_pct is None
+
+
+def test_a_zero_memory_claim_cannot_prove_a_memory_budget():
+    # The memory constraint is a claim-vs-ceiling check, not a comparison:
+    # "0 GB peak" trivially satisfies any ceiling but is a degenerate
+    # reading (a sampler that saw nothing), not evidence the candidate stays
+    # inside the budget. Before this guard the candidate was accepted on it.
+    policy = OraclePolicy(objective="tpot_ms", max_memory_gb=80)
+    verdict = Oracle(policy).evaluate(
+        _measured("tpot_ms", 43, peak_memory_gb=60),
+        _measured("tpot_ms", 37, peak_memory_gb=0),
+    )
+    assert not verdict.accepted
+    assert any("peak_memory_gb" in reason for reason in verdict.reasons)
 
 
 def test_a_zero_memory_candidate_cannot_win_a_memory_objective():

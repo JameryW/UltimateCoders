@@ -90,6 +90,14 @@ class Oracle:
             memory = result.metrics.get("peak_memory_gb")
             if memory is None or memory > self.policy.max_memory_gb:
                 reasons.append("Missing or excessive peak_memory_gb")
+            elif memory <= 0:
+                # A claim-vs-ceiling check, not a comparison: "0 GB peak"
+                # satisfies any ceiling but is a degenerate reading (a
+                # sampler that saw nothing). Zero is not evidence, so the
+                # bound is unproven (F8).
+                reasons.append(
+                    "Degenerate peak_memory_gb: zero cannot prove a memory bound"
+                )
         if self.policy.max_numerical_error is not None:
             if (
                 result.numerical_error is None

@@ -232,7 +232,7 @@ P1b 三项增量（统一预算、risk 配比、manifest 审计落库）连同�
 | F5 | 两个 Agent 改同一资源 | `test_merge_arbiter.py`、`test_merge_gate.py` | 覆盖 |
 | F6 | 执行中修改目标 | `tests/python/test_contract_versioning.py`（契约摘要变化 → 拒绝执行并报 `contract_changed`） | 覆盖 |
 | F7 | 预算耗尽 | `tests/python/test_budget_ledger.py`（准入拒绝 → 不创建沙箱；账本保留，提高上限后更高 attempt 继续；未上报 usage 记 `unreported` 不记 0） | 覆盖 |
-| F8 | Verifier 错误放行 | Oracle 拒绝噪声基准的测试；零 objective 基线不再能证明改进（即使没有相对门槛——此前 0 → 125 tokens/s 可被放行，百分比与噪声门槛都被跳过）；零候选 objective 测量也不再算无限改进（此前 tpot 43 → 0 被接受并报 100%） | 部分（其余放行路径未逐条反证：harness 自报 correctness 的 attestation、非 objective 约束被零值满足） |
+| F8 | Verifier 错误放行 | Oracle 拒绝噪声基准的测试；零 objective 基线不再能证明改进（即使没有相对门槛——此前 0 → 125 tokens/s 可被放行，百分比与噪声门槛都被跳过）；零候选 objective 测量也不再算无限改进（此前 tpot 43 → 0 被接受并报 100%）；零峰值内存 claim 不再能满足 memory 上限（约束是 claim-vs-ceiling，不是比较）；未武装指纹的基准 runner 拒绝测量（fail closed，而不是静默跳过校验） | 部分（harness 自报 correctness 的 attestation 仍待解决） |
 
 F2 是生产级平台的必测项：它检验的是系统是否理解分布式执行，而不只是实现了
 一个多轮模型循环。
