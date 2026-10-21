@@ -7,6 +7,7 @@ import {
   manifestTrailQuery,
   manifestRecordedAt,
   manifestCountLine,
+  manifestScopeLabel,
   tierCountsLine,
   droppedLine,
   parseManifestKey,
@@ -162,6 +163,30 @@ test("the trail query carries the paging cursor for the next page", () => {
   assert.ok(!manifestTrailQuery("t1", "recent").includes("before="));
 });
 
+test("the trail query carries the subtask scope", () => {
+  // The endpoint already scopes by subtask_id; without the parameter the
+  // panel's "show only this subtask" would silently show the task-wide
+  // trail instead (a filter that does not filter).
+  assert.match(
+    manifestTrailQuery("t1", "recent", undefined, "s1"),
+    /[?&]subtask_id=s1(&|$)/,
+  );
+  // Cursor and scope compose: paging stays inside the scoped trail.
+  const both = manifestTrailQuery("t1", "recent", "t1:s1:3", "s1");
+  assert.match(both, /[?&]before=t1%3As1%3A3/);
+  assert.match(both, /[?&]subtask_id=s1/);
+  assert.ok(!manifestTrailQuery("t1", "recent").includes("subtask_id="));
+  assert.ok(!manifestTrailQuery("t1", "recent", undefined, "").includes("subtask_id="));
+});
+
+test("the scope label names its scope and invents none", () => {
+  // The header must say which subtask the trail is showing; an empty id is
+  // not a scope (the endpoint treats empty as task-wide).
+  assert.equal(manifestScopeLabel("s1"), "subtask s1 · ");
+  assert.equal(manifestScopeLabel(undefined), "");
+  assert.equal(manifestScopeLabel(""), "");
+});
+
 test("appending a page keeps one row per key", () => {
   // The endpoint's cursor should not overlap pages, but a record re-stamped
   // between requests can be served twice; the panel must show one row per
@@ -260,6 +285,65 @@ test("an empty trail says nothing was recorded, not an error", async () => {
       React.createElement(ContextManifestList, { records: [] }));
     assert.match(html, /No compiles recorded/);
     assert.ok(!/error|unavailable/i.test(html));
+  } finally {
+    await vite.close();
+  }
+});
+
+test("the subtask id is a scope selector only when one is offered", async () => {
+  const { createServer } = await import("vite");
+  const React = (await import("react")).default;
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const vite = await createServer({
+    server: { middlewareMode: true },
+    appType: "custom",
+    optimizeDeps: { noDiscovery: true },
+  });
+  try {
+    const { ContextManifestList } = await vite.ssrLoadModule(
+      "/src/components/panels/ContextManifestPanel.tsx");
+    const selectable = renderToStaticMarkup(React.createElement(
+      ContextManifestList,
+      {
+        records: [record("t1:s7:0", {}, 1700000000)],
+        onSelectSubtask: () => {},
+      },
+    ));
+    // The row must be a real button an operator can click to narrow the
+    // trail; a plain span would look selectable but do nothing.
+    assert.match(selectable, /<button[^>]*title="Show only subtask s7"/);
+    assert.match(selectable, /s7 · attempt 0/);
+
+    const readOnly = renderToStaticMarkup(React.createElement(
+      ContextManifestList, { records: [record("t1:s7:0", {}, 1700000000)] }));
+    assert.ok(!readOnly.includes("<button"), readOnly);
+    assert.match(readOnly, /s7 · attempt 0/);
+  } finally {
+    await vite.close();
+  }
+});
+
+test("a scoped empty trail names its scope, not the whole task", async () => {
+  const { createServer } = await import("vite");
+  const React = (await import("react")).default;
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const vite = await createServer({
+    server: { middlewareMode: true },
+    appType: "custom",
+    optimizeDeps: { noDiscovery: true },
+  });
+  try {
+    const { ContextManifestList } = await vite.ssrLoadModule(
+      "/src/components/panels/ContextManifestPanel.tsx");
+    const html = renderToStaticMarkup(React.createElement(
+      ContextManifestList,
+      {
+        records: [],
+        emptyLabel: "No compiles recorded for this subtask.",
+      },
+    ));
+    assert.match(html, /No compiles recorded for this subtask\./);
+    assert.ok(!/for this task\./.test(html), html);
   } finally {
     await vite.close();
   }

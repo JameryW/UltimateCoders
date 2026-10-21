@@ -180,7 +180,10 @@
   让翻页重复投递；响应带 `next_cursor`，短页为 null 表示到底），面板的
   「load more」据此续页、按 key 去重并保留已载入行；key 序不分页——它是
   另一个机制（key 序 LIMIT 窗口），`before` + `order=key` 明确 400 而不是
-  假装成同一件事。
+  假装成同一件事。每行的 subtask 是可点的 scope selector：点它进入该子任务
+  的历史（`subtask_id` 过滤，翻页在同一 scope 内继续），「all subtasks」
+  回到任务视图；scope 属于已载入状态的身份，切任务或切 scope 不会先闪出
+  上一个窗口。
   gateway 组合块路径不本地
   编译，因而不留记录——空历史而非伪造记录。
   按时间读「最近 N 次编译」另有显式序：`order=recent`（或直接调
