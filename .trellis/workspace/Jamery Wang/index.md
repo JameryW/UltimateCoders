@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-4.md`
-- **Total Sessions**: 80
+- **Total Sessions**: 81
 - **Last Active**: 2026-10-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-4.md` | ~1181 | Active |
+| `journal-4.md` | ~1272 | Active |
 | `journal-3.md` | ~1973 | Archived |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
@@ -32,6 +32,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 81 | 2026-10-21 | The poisoned tool result was already only data — now it is pinned | `43787de`, `44e68a6` | `test/f4-poisoned-content-pins` |
 | 80 | 2026-10-21 | The two unverified-claim paths left in F8 | `e4d5b17`, `020f9e6` | `fix/oracle-zero-claim-and-harness-guard` |
 | 79 | 2026-10-21 | The other zero side | `ad7ace3`, `1709083` | `fix/oracle-zero-candidate` |
 | 78 | 2026-10-20 | The verifier accepted an improvement it could not quantify | `3be0cab`, `0c75c3b` | `fix/oracle-zero-baseline` |
