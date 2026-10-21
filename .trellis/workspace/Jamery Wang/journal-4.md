@@ -1003,3 +1003,92 @@ coverage.
 - F4 (injection content itself untested) remains the other partial row.
 - Unchanged: audit-panel subtask view; inference-side consumption of
   `render_parts()`; #656 (blocked on external plan §21).
+
+## Session 79: The other zero side
+
+**Date**: 2026-10-21
+**Task**: Close the candidate-side mirror of F8's zero gate — a measured 0 was
+an "infinite" improvement
+**Branch**: `fix/oracle-zero-candidate`
+
+### Summary
+
+Session 78 closed the zero-**baseline** side: with `before == 0` the relative
+percentage is undefined, so the required-improvement and noise gates were
+skipped by their own `pct is not None` guards. The mirror image was still
+open: a zero **candidate** measurement. There `100 * delta / before` is
+perfectly computable (the baseline is positive), so a candidate reporting 0
+won as a 100% improvement.
+
+Measured before touching anything: `tpot_ms` 43 → 0 accepted with
+`improvement_pct: 100.0` and `reasons: []`; `peak_memory_gb` 60 → 0 accepted
+against `max_memory_gb=80` the same way. A 0 ms latency or 0 GB peak-memory
+reading is a degenerate measurement (a timer that never ran, a sampler that
+saw nothing), not a 100% win — the same class of acceptance the verifier must
+not make.
+
+The Oracle now refuses a non-positive candidate objective measurement with an
+explicit reason and stops evaluating that metric's improvement;
+`improvement_pct` stays `None` because a refused measurement must not also be
+quoted as a 100% win. The guard applies to both metric directions: a zero
+candidate for a lower-is-better objective is the false accept; a zero for a
+higher-is-better objective was already refused as a regression and stays
+refused.
+
+The F8 row now lists both zero-side guards and keeps status **部分**, naming
+the remaining paths: the harness self-reported `correctness` boolean (trusted
+as an attestation; the harness itself is fingerprint-protected) and
+non-objective constraints that a zero claim satisfies trivially (a candidate
+claiming `peak_memory_gb: 0` still passes `max_memory_gb` because that path
+treats the reading as a claim, not a comparison). Recorded, not silently
+called fixed.
+
+### Main Changes
+
+- `python/ultimate_coders/inference/oracle.py` — zero-candidate refusal in
+  the objective branch, symmetric to the zero-baseline guard.
+- `tests/python/test_inference_oracle.py` — three pins: an "infinite"
+  improvement is refused, no percentage is quoted, and a zero memory reading
+  cannot win a memory objective.
+- `docs/agent-os-architecture.md` §7 F8 — both zero-side guards listed,
+  status honestly still partial.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ad7ace3` | fix(inference): refuse a zero candidate measurement as an improvement (Session 79) |
+| `1709083` | Merge pull request #765 from JameryW/fix/oracle-zero-candidate |
+
+### Testing
+
+- [OK] Mutations one at a time, file sha256-restored, judgment only from
+  disk (2/2 `ALL_OK`, red sets pairwise distinct, assertion-red, extra-red
+  empty): M1 the candidate guard is removed → exactly the three new pins
+  (16/19 passed); M2 the guard refuses but still quotes the 100% improvement
+  → exactly the no-improvement-reported pin (18/19). Final sha256
+  `6686384a…` re-verified from a separate process.
+- [OK] PR #765 CI: Python CI + Scripts CI all `completed/success` on headSha `ad7ace3` (11 checks, 0 fail; Python legs 10m00s/9m24s).
+- [OK] Suites: `test_inference_oracle.py` **19 passed** (was 16); wider
+  inference suite (workflow, delivery, reliability, adapter, architecture)
+  72 passed; `ruff` clean on `python/`, `tests/`.
+- [OK] Seven guards green: spec-refs 48 tests (audit `112 ok / 9 stale /
+  9 ambiguous`, mentions `347` unchanged), tasks-refs
+  `883 ok / 0 dangling`, line-endings `(2073, 2064)` unchanged (no new
+  files), workflow-inputs `21/13`, readme-ci-table `11 workflows`,
+  journal-ledger 27, codex-flow; ruff clean on `scripts/`. Collect-only
+  measured `1992 -> 1995` (+3 pins).
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- F8's remaining paths, in the order they would need a decision: the
+  harness self-reported `correctness` attestation (trust boundary is the
+  fingerprint-protected harness), and a zero-claim satisfying a non-objective
+  constraint.
+- F4 (injection content itself untested) remains the other partial row.
+- Unchanged: audit-panel subtask view; inference-side consumption of
+  `render_parts()`; #656 (blocked on external plan §21).
