@@ -228,7 +228,7 @@ P1b 三项增量（统一预算、risk 配比、manifest 审计落库）连同�
 | F1 | LLM 调用期间崩溃 | `test_unconfirmed_writer_preserves_checkpoint_and_original_baseline` | 覆盖 |
 | F2 | 工具成功但响应丢失 | `test_lost_submission_response_never_creates_another_job`、去重集成测试、`tests/python/test_merge_arbiter_effects.py`、`tests/python/test_workspace_push_effects.py`（已推送但响应丢失 → `already_pushed`，不重试）、`tests/python/test_outbox_effect_identity.py`（重试只取代一条终态记录，消息 id 随内容变化） | 覆盖 |
 | F3 | 沙箱/工作区被销毁 | inference delivery 的 worktree 接管与恢复测试 | 覆盖 |
-| F4 | 外部工具返回恶意指令 | env allowlist 与凭证隔离测试 | 部分（注入内容本身未测） |
+| F4 | 外部工具返回恶意指令 | env allowlist 与凭证隔离测试；注入内容侧：毒化的检索块/子任务摘要只进证据/轨迹层、不能自证 verified、也不能伪造 policy 或 P3 计数（内容由 builder 决定信任，文本说了不算） | 覆盖（层内不变量；模型是否遵从注入不在仓内可控） |
 | F5 | 两个 Agent 改同一资源 | `test_merge_arbiter.py`、`test_merge_gate.py` | 覆盖 |
 | F6 | 执行中修改目标 | `tests/python/test_contract_versioning.py`（契约摘要变化 → 拒绝执行并报 `contract_changed`） | 覆盖 |
 | F7 | 预算耗尽 | `tests/python/test_budget_ledger.py`（准入拒绝 → 不创建沙箱；账本保留，提高上限后更高 attempt 继续；未上报 usage 记 `unreported` 不记 0） | 覆盖 |
