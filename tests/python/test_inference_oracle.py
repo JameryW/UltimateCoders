@@ -118,3 +118,39 @@ def test_a_zero_baseline_is_refused_even_without_a_required_improvement():
     )
     assert not verdict.accepted
     assert any("baseline" in reason.lower() for reason in verdict.reasons)
+
+
+def test_a_zero_candidate_measurement_is_not_an_infinite_improvement():
+    # Symmetric to the zero baseline: a measured 0 for a timing objective is
+    # a degenerate measurement (a timer that never ran), not an infinite
+    # speedup. Before this guard it was accepted at 100% improvement with an
+    # empty reason list.
+    verdict = Oracle(OraclePolicy(objective="tpot_ms")).evaluate(
+        _measured("tpot_ms", 43),
+        _measured("tpot_ms", 0),
+    )
+    assert not verdict.accepted
+    assert any("not positive" in reason for reason in verdict.reasons)
+
+
+def test_a_zero_candidate_measurement_reports_no_improvement():
+    # A refused measurement must not also be quoted as a 100% win: the
+    # number would contradict the verdict.
+    verdict = Oracle(OraclePolicy(objective="tpot_ms")).evaluate(
+        _measured("tpot_ms", 43),
+        _measured("tpot_ms", 0),
+    )
+    assert verdict.improvement_pct is None
+
+
+def test_a_zero_memory_candidate_cannot_win_a_memory_objective():
+    # The memory objective compares against a memory budget; "0 GB peak"
+    # satisfies any cap but is a degenerate reading, not evidence.
+    verdict = Oracle(
+        OraclePolicy(objective="peak_memory_gb", max_memory_gb=80)
+    ).evaluate(
+        _measured("peak_memory_gb", 60),
+        _measured("peak_memory_gb", 0),
+    )
+    assert not verdict.accepted
+    assert any("peak_memory_gb" in reason for reason in verdict.reasons)

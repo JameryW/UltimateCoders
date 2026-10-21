@@ -137,6 +137,18 @@ class Oracle:
                         "improvement cannot be quantified"
                     )
                     continue
+                if after <= 0:
+                    # Symmetric on the candidate side: a measured 0 for a
+                    # timing/memory objective is a degenerate reading (a
+                    # timer that never ran, a sampler that saw nothing), not
+                    # an infinite improvement. Refuse and do not quote a
+                    # percentage the measurement cannot support.
+                    improvement = None
+                    reasons.append(
+                        f"Objective measurement {metric} is not positive; "
+                        "improvement cannot be verified"
+                    )
+                    continue
                 noise = self.policy.noise_multiplier * sum(
                     result.statistics.get("dispersion_pct", {}).get(metric, 0)
                     for result in (baseline, candidate)
