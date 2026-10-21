@@ -1092,3 +1092,90 @@ called fixed.
 - F4 (injection content itself untested) remains the other partial row.
 - Unchanged: audit-panel subtask view; inference-side consumption of
   `render_parts()`; #656 (blocked on external plan §21).
+
+## Session 80: The two unverified-claim paths left in F8
+
+**Date**: 2026-10-21
+**Task**: Close the remaining F8 paths — a zero memory claim proving any cap,
+and a benchmark guard that failed as an unreadable crash
+**Branch**: `fix/oracle-zero-claim-and-harness-guard`
+
+### Summary
+
+After Sessions 78/79 (zero baseline, zero candidate) the F8 row still named
+two paths. Both were measured before changing anything.
+
+**(1) A zero memory claim proved any memory ceiling.** The memory limit is a
+claim-vs-cap check, not a comparison, so `peak_memory_gb: 0` satisfied any
+`max_memory_gb`: baseline `tpot_ms` 43 / memory 60 vs candidate tpot 37 /
+memory 0 with `max_memory_gb=80` was accepted (`improvement_pct: 13.95`, no
+reasons, `validate(candidate)` returned `[]`). A 0 GB peak reading is a
+sampler that saw nothing, not evidence of staying inside the budget.
+
+**(2) The harness guard failed as an unreadable crash.** `BenchmarkRunner`
+promises an immutable harness; unarmed, `verify_harness()` iterated an empty
+map (verifying nothing) and `measure()` then died later while building the
+environment identity with `AttributeError: 'NoneType' object has no attribute
+'items'`. The failure was invisible at the guard and unreadable at the
+crash — a fail-open guard whose only symptom is far from its cause.
+
+Both are now closed: `validate` refuses a non-positive memory claim with an
+explicit reason, and `verify_harness` fails closed with a readable
+RuntimeError, so an unarmed runner refuses to measure before running
+anything. The F8 row lists both new guards and keeps status **部分** with
+exactly one remaining path: the harness self-reported `correctness`
+attestation (a trust boundary around the fingerprinted harness, not something
+a unit test can disprove).
+
+### Main Changes
+
+- `python/ultimate_coders/inference/oracle.py` — zero memory claim cannot
+  prove a memory bound.
+- `python/ultimate_coders/inference/benchmark.py` — `verify_harness` fails
+  closed when never protected; `measure()` inherits the readable error.
+- Tests: 1 new oracle pin, 2 new benchmark pins (measure path, direct
+  verify_harness path).
+- Docs: `docs/inference-infra.md` protocol prose (zero readings not
+  evidence; fail-closed runner), §7 F8 row in
+  `docs/agent-os-architecture.md`.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e4d5b17` | fix(inference): refuse zero claims and unarmed harness measurement (Session 80) |
+| `020f9e6` | Merge pull request #767 from JameryW/fix/oracle-zero-claim-and-harness-guard |
+
+### Testing
+
+- [OK] Mutations one at a time, both touched files sha256-restored, judgment
+  only from disk (3/3 `ALL_OK`, red sets pairwise distinct, red-at-pin,
+  extra-red empty): M1 the oracle accepts a zero memory claim again →
+  exactly the memory-claim pin (34/35); M2 verify_harness silently passes
+  when unarmed → exactly the measure + direct-verify pins (33/35); M3 only
+  measure() is guarded → exactly the direct-verify pin (34/35). Final
+  hashes `99fb2256…` / `6e12a729…` re-verified from a separate process.
+- [OK] PR #767 CI: Python CI + Scripts CI all `completed/success` on headSha `e4d5b17` (11 checks, 0 fail; Python legs 11m34s/9m24s).
+- [OK] Suites: `test_inference_oracle.py` **20 passed** (was 19);
+  `test_inference_reliability.py` **15 passed** (was 13); wider inference
+  suite (workflow, delivery, adapter) 42 passed; `ruff` clean on `python/`,
+  `tests/`.
+- [OK] Seven guards green: spec-refs 48 tests (audit `112 ok / 9 stale /
+  9 ambiguous`, mentions `347` unchanged), tasks-refs
+  `883 ok / 0 dangling`, line-endings `(2073, 2064)` unchanged,
+  workflow-inputs `21/13`, readme-ci-table `11 workflows`, journal-ledger
+  27, codex-flow; ruff clean on `scripts/`. Collect-only measured
+  `1995 -> 1998` (+3 pins).
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- F8 now has one recorded remaining path: the harness self-reported
+  `correctness` attestation (trust anchor is the fingerprinted harness). It
+  needs a design decision, not another unit pin.
+- F4 (injection content itself untested) is the other partial row.
+- Unchanged: audit-panel subtask view; inference-side consumption of
+  `render_parts()`; #656 (blocked on external plan §21).
