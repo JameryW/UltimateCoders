@@ -1270,3 +1270,91 @@ decision rather than another pin.
   missing pin.
 - Unchanged: audit-panel subtask view; inference-side consumption of
   `render_parts()`; #656 (blocked on external plan §21).
+
+## Session 82: The trail can be read one subtask at a time
+
+**Date**: 2026-10-21
+**Task**: Wire the endpoint's existing `subtask_id` filter into the audit
+panel — the last listed read-surface follow-on
+**Branch**: `feat/manifest-subtask-scope`
+
+### Summary
+
+The audit panel has read the task-wide compile trail since #735: one
+`order=recent` window, an honest count line, cursor paging, tier-attributed
+drops. The endpoint has *always* accepted `subtask_id` (it was built for the
+per-subtask history in the first place), but nothing in the UI used it — a
+task with many subtasks could only be read as one flat, time-ordered list,
+and narrowing it would have needed a second surface that never existed.
+
+Each row's subtask id is now a scope selector: clicking it refetches
+`order=recent` within that subtask, with cursor paging continuing inside the
+scope; the header names the scope (`subtask s1 · 12 recorded · newest
+first`) and offers "all subtasks" to return to the task-wide window; a
+scoped empty trail says "No compiles recorded for this subtask." instead of
+claiming the task has no compiles. Scope joins `taskId` in the
+loaded/failed/paging state identity, so a task or scope switch cannot flash
+the previous window while the new one is in flight — the same derived-state
+pattern as the task switch, and still no `setState` in an effect body (the
+React 19 `set-state-in-effect` gate stays clean).
+
+The backend needed no change: the filter, the cursor's scope and the scoped
+total were already implemented and pinned by Sessions 73-77. This is the
+consumer for a capability that existed without one — the class the audit
+thread has been closing since Session 68.
+
+### Main Changes
+
+- `dashboard/src/lib/contextManifests.ts` — `manifestTrailQuery` carries the
+  scope; new `manifestScopeLabel` (empty for the task-wide view, never
+  inventing a scope from an empty id).
+- `ContextManifestPanel.tsx` — row-level scope selector, scoped header +
+  "all subtasks", scoped empty state, scope-aware paging state.
+- `dashboard/tests/contextManifests.test.mjs` — 4 pins (query scope + cursor
+  composition, scope label, SSR selector button, scoped empty wording).
+- §6 of `docs/agent-os-architecture.md` — documents the selector and
+  scope-inclusive paging.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fed5065` | feat(dashboard): scope the manifest trail by subtask (Session 82) |
+| `c684431` | Merge pull request #771 from JameryW/feat/manifest-subtask-scope |
+
+### Testing
+
+- [OK] Mutations one at a time, both touched files sha256-restored,
+  judgment only from disk (4/4 `ALL_OK`, red sets pairwise distinct,
+  red-at-pin, extra-red empty): N1 the query drops `subtask_id` → exactly
+  the query-scope pin (24/25); N2 the scope label always renders empty →
+  exactly the label pin (24/25); N3 rows render as plain spans although a
+  selector is offered → exactly the SSR selector pin (24/25); N4 the scoped
+  empty state keeps the task-wide wording → exactly the scope-wording pin
+  (24/25). Final hashes `93244c52…` / `1be02580…` re-verified from a
+  separate process.
+- [OK] PR #771 CI: Python CI + Dashboard CI + Scripts CI all `completed/success` on headSha `fed5065` (14 checks, 0 fail; Python legs 10m14s/9m26s).
+- [OK] Suites: dashboard `node --test` **25 passed** in the manifests file
+  / **37** across the dashboard suite (was 33); `tsc` app+node, `eslint`,
+  local `vite build` (5.13s) green. No Python change: collect-only stays
+  **2001**.
+- [OK] Seven guards green: spec-refs 48 tests (audit `112 ok / 9 stale /
+  9 ambiguous`, mentions `347` unchanged), tasks-refs
+  `883 ok / 0 dangling`, line-endings `(2073, 2064)` unchanged,
+  workflow-inputs `21/13`, readme-ci-table `11 workflows`, journal-ledger
+  27, codex-flow; ruff clean on `scripts/`.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- The audit thread now has no listed follow-ons: task view, newest-first
+  window, honest count line, cursor paging, tier-attributed drops, subtask
+  scoping are all read surfaces of the same trail.
+- Matrix: only F8's harness self-reported `correctness` attestation remains
+  partial — a trust-boundary decision, not a missing pin.
+- Unchanged external blockers: inference-side consumption of
+  `render_parts()` (needs the external CLI adapter) and #656 (external plan
+  §21).
