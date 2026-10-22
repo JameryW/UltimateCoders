@@ -1358,3 +1358,99 @@ thread has been closing since Session 68.
 - Unchanged external blockers: inference-side consumption of
   `render_parts()` (needs the external CLI adapter) and #656 (external plan
   §21).
+
+## Session 83: The event log counted twice and was ordered in two blocks
+
+**Date**: 2026-10-22
+**Task**: Fix the dashboard event read surface — "recent events" returned its
+oldest slice, and the fallback listed every NATS event twice in two orders
+**Branch**: `fix/dashboard-event-log-honesty`
+
+### Summary
+
+Both defects were measured before changing anything, and both are the
+familiar class this repo keeps finding: a read surface whose prose promises
+one thing and whose code does another.
+
+**(1) "Recent events" returned the oldest slice.** `TaskEventEmitter`'s
+`get_recent_events` docstring says "newest first"; the implementation
+returned the ring buffer's natural order (oldest → newest) and sliced from
+the front, so `limit=3` handed back the three **oldest** events of a "recent
+events" buffer — the same window-vs-total mistake `context_outbox.recent`
+documents for manifests. Its own test was named `..._returns_newest_first`
+while asserting the oldest-first order, and its docstring rationalised the
+contradiction in prose.
+
+**(2) The fallback listed every NATS event twice, in two blocks.** The NATS
+handler records each event in both the local `_event_log` (newest-first,
+`appendleft`) and the emitter's ring (oldest-first). The REST fallback
+concatenated them: measured 2 events → `total: 4`, timestamps
+`[12:00:00, 12:00:05, 12:00:05, 12:00:00]`. Besides the duplicates, the
+merged list was "oldest-first block + newest-first block", so the endpoint's
+documented `offset` ("skip from the most recent") could not page coherently
+— and the durable NATS history path (authoritative when configured) is
+newest-first, so the same endpoint behaved differently by transport.
+
+The emitter now returns newest-first with `limit` bounding the newest end.
+The fallback goes through `_merge_event_sources`: dedupe by recorded content
+(object identity is not enough — the log may hold a copy) and sort
+newest-first by parsed timestamp (events without a usable timestamp sort
+last, stable). Both modes now agree; `total` is the deduped count. The
+contradictory emitter pins were rewritten to the documented contract, and
+three fallback pins (dedupe, order, offset paging over one list) were added.
+
+### Main Changes
+
+- `python/ultimate_coders/agent/event_emitter.py` — `get_recent_events`
+  newest-first, `limit` = newest N.
+- `python/ultimate_coders/dashboard/app.py` —
+  `_event_sort_key` / `_dedupe_event_key` / `_merge_event_sources`; endpoint
+  docstring states the fallback contract; `total` = deduped count.
+- Tests: emitter ordering/limit/eviction pins rewritten; 3 fallback pins in
+  `test_dashboard_event_history.py`.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `51e83bb` | fix(dashboard): dedupe and order the fallback event log (Session 83) |
+| `bda9f08` | Merge pull request #773 from JameryW/fix/dashboard-event-log-honesty |
+
+### Testing
+
+- [OK] Mutations one at a time, both touched files sha256-restored,
+  judgment only from disk (3/3 `ALL_OK`, red sets pairwise distinct,
+  red-at-pin): E1 `get_recent_events` returns the oldest slice again →
+  exactly {newest-first, limit, eviction-order, filtered-limit} pins
+  (39/43); D1 the fallback union stops deduping → exactly {dedupe, order,
+  paging} pins (40/43); D2 the fallback sort is reversed → exactly {order,
+  paging} pins (41/43). Final hashes `cf886386…` / `24a3cfe2…` re-verified
+  from a separate process.
+- [OK] PR #773 CI: Python CI + Scripts CI all `completed/success` on headSha `51e83bb` (11 checks, 0 fail; Python legs 11m41s/9m51s).
+- [OK] Repro before/after: 2 NATS events with an emitter wired → `total 4`,
+  order `[00, 05, 05, 00]` before; `total 2`, order `[05, 00]` after.
+- [OK] Suites: `test_event_emitter.py` + `test_dashboard_event_history.py`
+  **43 passed** (was 40); wider dashboard suites (lifecycle, stream, nats
+  binding, metrics, metrics-auth) 63 passed; `ruff` clean on `python/`,
+  `tests/`.
+- [OK] Seven guards green: spec-refs 48 tests (audit `112 ok / 9 stale /
+  9 ambiguous`, mentions `347` unchanged), tasks-refs
+  `883 ok / 0 dangling`, line-endings `(2073, 2064)` unchanged,
+  workflow-inputs `21/13`, readme-ci-table `11 workflows`, journal-ledger
+  27, codex-flow; ruff clean on `scripts/`. Collect-only measured
+  `2001 -> 2004` (+3 pins).
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- The dashboard's other read surfaces were spot-checked while looking for
+  this class; the experiments list still reports a cursor without a total
+  (no UI consumer claims a total, so nothing is mislabelled today) — noted,
+  not scheduled.
+- Matrix: only F8's harness self-reported `correctness` attestation remains
+  partial (trust-boundary decision).
+- Unchanged external blockers: inference-side consumption of
+  `render_parts()`; #656 (external plan §21).

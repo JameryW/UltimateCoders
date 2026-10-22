@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-4.md`
-- **Total Sessions**: 82
-- **Last Active**: 2026-10-21
+- **Total Sessions**: 83
+- **Last Active**: 2026-10-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-4.md` | ~1360 | Active |
+| `journal-4.md` | ~1456 | Active |
 | `journal-3.md` | ~1973 | Archived |
 | `journal-2.md` | ~2000 | Archived |
 | `journal-1.md` | ~1974 | Archived |
@@ -32,6 +32,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 83 | 2026-10-22 | The event log counted twice and was ordered in two blocks | `51e83bb`, `bda9f08` | `fix/dashboard-event-log-honesty` |
 | 82 | 2026-10-21 | The trail can be read one subtask at a time | `fed5065`, `c684431` | `feat/manifest-subtask-scope` |
 | 81 | 2026-10-21 | The poisoned tool result was already only data — now it is pinned | `43787de`, `44e68a6` | `test/f4-poisoned-content-pins` |
 | 80 | 2026-10-21 | The two unverified-claim paths left in F8 | `e4d5b17`, `020f9e6` | `fix/oracle-zero-claim-and-harness-guard` |
