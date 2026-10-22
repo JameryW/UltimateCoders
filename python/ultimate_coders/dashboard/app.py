@@ -76,6 +76,68 @@ def _manifest_sort_key(record: dict) -> tuple[str, int]:
     return prefix, int(attempt) if attempt.isdigit() else 0
 
 
+def _event_sort_key(event: dict[str, Any]) -> tuple[int, float]:
+    """Newest-first ordering key for a dashboard event dict.
+
+    Timestamps are ISO-8601 strings recorded by either the dashboard or the
+    gateway; parse them so mixed fractional precision still sorts correctly.
+    An event without a usable timestamp is ordered last -- it cannot claim to
+    be recent -- while a stable sort keeps its relative position.
+    """
+    raw = event.get("timestamp")
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return 1, 0.0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return 0, -parsed.timestamp()
+    return 1, 0.0
+
+
+def _dedupe_event_key(event: dict[str, Any]) -> str:
+    """Content identity of one dashboard event.
+
+    ``_handle_nats_event`` records the same event dict in both the local
+    event log and the emitter's ring buffer, so the union of the two sources
+    contains each NATS event twice. Identity is the recorded content (not
+    object identity: the log may hold a copy), canonicalised through JSON.
+    """
+    return json.dumps(
+        [
+            event.get("timestamp", ""),
+            event.get("type", ""),
+            event.get("task_id", ""),
+            event.get("subtask_id", ""),
+            event.get("data") or {},
+        ],
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _merge_event_sources(*sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Union of event sources, deduped by content and newest first.
+
+    Concatenating the two sources double-counts every NATS event and mixes
+    their orders (the local log is newest-first, the emitter buffer is
+    oldest-first), which makes the endpoint's ``offset`` -- documented as
+    "skip from the most recent" -- incoherent. One deduped, sorted list.
+    """
+    seen: set[str] = set()
+    merged: list[dict[str, Any]] = []
+    for source in sources:
+        for event in source:
+            key = _dedupe_event_key(event)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(event)
+    merged.sort(key=_event_sort_key)
+    return merged
+
+
 # ── NATS subject constants (must match nats_worker.py + Rust server.rs) ──
 
 NATS_SUBJECT_TASK_SUBMIT: str = "uc.task.submit"
@@ -1022,6 +1084,13 @@ class DashboardApp:
         ):
             """Return recent event log entries with pagination.
 
+            When the durable NATS history is available it is authoritative
+            (newest first). The fallback merges the local event log with the
+            in-process emitter's ring buffer: the union is **deduped** -- the
+            NATS handler records the same event in both sources -- and
+            ordered newest first by recorded timestamp, so ``offset`` keeps
+            its meaning ("skip from the most recent") in both modes.
+
             Args:
                 task_id: Optional filter by task ID.
                 limit: Maximum events to return (default: 100, max: 500).
@@ -1041,16 +1110,20 @@ class DashboardApp:
                     )
                 except EventHistoryUnavailableError:
                     pass
-            # Combine local event log with emitter's recent events
+            # Combine the local event log with the emitter's recent events.
+            # Both sources carry the same NATS events, so dedupe the union;
+            # their orders differ, so merge them into one newest-first list.
             all_events = list(self._event_log)
             if self.event_emitter is not None:
-                all_events = (
+                all_events = _merge_event_sources(
                     self.event_emitter.get_recent_events(
                         task_id=task_id,
                         limit=500,
-                    )
-                    + all_events
+                    ),
+                    all_events,
                 )
+            else:
+                all_events = _merge_event_sources(all_events)
             if task_id:
                 all_events = [e for e in all_events if e.get("task_id") == task_id]
             # Apply pagination

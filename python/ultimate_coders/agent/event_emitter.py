@@ -140,11 +140,11 @@ class TaskEventEmitter:
         task_id: Optional[str] = None,  # noqa: UP045
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Get recent events from the ring buffer.
+        """Get recent events from the ring buffer, newest first.
 
         Args:
             task_id: Optional filter by task ID.
-            limit: Maximum events to return (default: 100).
+            limit: Maximum events to return -- the newest ones.
 
         Returns:
             List of event dicts, newest first.
@@ -152,4 +152,8 @@ class TaskEventEmitter:
         events = list(self._recent)
         if task_id:
             events = [e for e in events if e.get("task_id") == task_id]
-        return events[:limit]
+        # ``_recent`` appends (oldest -> newest); the contract is the reverse,
+        # and ``limit`` bounds the *newest* end. Taking the oldest N of a
+        # "recent events" buffer is the window-vs-total mistake this module
+        # exists to avoid (the same one ``context_outbox.recent`` documents).
+        return events[::-1][:limit]

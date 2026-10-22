@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from nats.js.errors import NotFoundError
+from ultimate_coders.agent.event_emitter import TaskEventEmitter
 from ultimate_coders.dashboard.app import DashboardApp
 from ultimate_coders.dashboard.event_history import list_event_history
 from ultimate_coders.nats_worker import NatsWorker
@@ -141,3 +142,95 @@ def test_rest_events_fall_back_when_stream_is_not_configured():
 
     assert result["total"] == 1
     assert result["events"][0]["type"] == "local_event"
+
+
+class _Msg:
+    """Minimal NATS message for the dashboard's event handler."""
+
+    def __init__(self, payload):
+        self.data = json.dumps(payload).encode()
+
+
+def _emitter_app(emitter):
+    # The dashboard reads the emitter off the orchestrator; no NATS client,
+    # so every request takes the fallback union path.
+    return DashboardApp(orchestrator=SimpleNamespace(event_emitter=emitter))
+
+
+@pytest.mark.asyncio
+async def test_fallback_events_are_deduped():
+    # The NATS handler records the same event in the local log and in the
+    # emitter's ring, so the fallback union used to return every NATS event
+    # twice (measured: 2 events -> total 4). One row per recorded event.
+    emitter = TaskEventEmitter()
+    app = _emitter_app(emitter)
+    for timestamp, event_type in (
+        ("2026-09-24T01:00:00+00:00", "TaskCreated"),
+        ("2026-09-24T02:00:00+00:00", "SubtaskProgress"),
+    ):
+        await app._handle_nats_event(
+            _Msg({"timestamp": timestamp, "type": event_type, "task_id": TASK_ID})
+        )
+    await emitter.emit("LocalNote", task_id=TASK_ID)
+
+    result = TestClient(app._app).get(
+        "/dashboard/api/events", params={"task_id": TASK_ID}
+    ).json()
+
+    types = [e["type"] for e in result["events"]]
+    assert result["total"] == 3
+    assert sorted(types) == ["LocalNote", "SubtaskProgress", "TaskCreated"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_events_are_newest_first():
+    # The fallback concatenated the emitter buffer (oldest-first) before the
+    # local log (newest-first), so the payload began with the oldest events.
+    # One newest-first order, matching the durable history path.
+    emitter = TaskEventEmitter()
+    app = _emitter_app(emitter)
+    for hour in (1, 2, 3):
+        await app._handle_nats_event(
+            _Msg(
+                {
+                    "timestamp": f"2026-09-24T0{hour}:00:00+00:00",
+                    "type": f"ev{hour}",
+                    "task_id": TASK_ID,
+                }
+            )
+        )
+
+    result = TestClient(app._app).get(
+        "/dashboard/api/events", params={"task_id": TASK_ID}
+    ).json()
+
+    assert [e["type"] for e in result["events"]] == ["ev3", "ev2", "ev1"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_offset_pages_one_ordered_list():
+    emitter = TaskEventEmitter()
+    app = _emitter_app(emitter)
+    for hour in (1, 2, 3):
+        await app._handle_nats_event(
+            _Msg(
+                {
+                    "timestamp": f"2026-09-24T0{hour}:00:00+00:00",
+                    "type": f"ev{hour}",
+                    "task_id": TASK_ID,
+                }
+            )
+        )
+    client = TestClient(app._app)
+    first = client.get(
+        "/dashboard/api/events", params={"task_id": TASK_ID, "limit": 2}
+    ).json()
+    rest = client.get(
+        "/dashboard/api/events", params={"task_id": TASK_ID, "limit": 2, "offset": 2}
+    ).json()
+
+    assert first["total"] == rest["total"] == 3
+    # "offset: skip from the most recent" now applies to one list: page 1 is
+    # the newest window, page 2 continues without repeats.
+    assert [e["type"] for e in first["events"]] == ["ev3", "ev2"]
+    assert [e["type"] for e in rest["events"]] == ["ev1"]
