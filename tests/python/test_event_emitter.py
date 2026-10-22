@@ -134,20 +134,16 @@ class TestEmitAndGetRecent:
         assert "data" not in ev
 
     async def test_get_recent_events_returns_newest_first(self):
-        """get_recent_events returns insertion order (newest at front of slice).
-        The deque appends newest to the right; list() preserves that order,
-        and the slice returns from oldest→newest. We assert the documented
-        'newest first' ordering by checking that the last-emitted event is
-        at the END of the returned list (the slice is events[:limit] of the
-        oldest-first list)."""
+        """The documented contract is newest first. The deque appends
+        (oldest -> newest), so the method must reverse the slice; a "recent
+        events" buffer that returns its oldest slice under that name is the
+        window-vs-total trap (the class ``context_outbox.recent`` documents)."""
         emitter = TaskEventEmitter()
         for i in range(5):
             await emitter.emit(f"event_{i}", task_id="t1", subtask_id=f"s{i}")
         events = emitter.get_recent_events()
-        # list(deque) is oldest→newest; the code returns events[:limit]
-        # so index 0 is the oldest and index -1 is the newest.
-        assert events[0]["type"] == "event_0"
-        assert events[-1]["type"] == "event_4"
+        assert events[0]["type"] == "event_4"
+        assert events[-1]["type"] == "event_0"
 
     async def test_emit_is_async_coroutine(self):
         """emit must return a coroutine (awaitable), not a plain value."""
@@ -178,9 +174,8 @@ class TestEmitAndGetRecent:
             await emitter.emit(f"e{i}", task_id="t1", subtask_id=f"s{i}")
         events = emitter.get_recent_events(limit=3)
         assert len(events) == 3
-        # limit takes from the front (oldest) — first 3 emitted
-        assert events[0]["type"] == "e0"
-        assert events[2]["type"] == "e2"
+        # limit takes the *newest* three, newest first
+        assert [e["type"] for e in events] == ["e9", "e8", "e7"]
 
     async def test_get_recent_events_limit_with_task_filter(self):
         emitter = TaskEventEmitter()
@@ -189,6 +184,8 @@ class TestEmitAndGetRecent:
         events = emitter.get_recent_events(task_id="t1", limit=2)
         assert len(events) == 2
         assert all(e["task_id"] == "t1" for e in events)
+        # The limit bounds the newest end of the *filtered* list.
+        assert [e["type"] for e in events] == ["e4", "e2"]
 
     def test_empty_emitter_returns_empty_list(self):
         emitter = TaskEventEmitter()
@@ -215,9 +212,9 @@ class TestBufferOverflow:
             await emitter.emit(f"e{i}", task_id="t1", subtask_id=f"s{i}")
         events = emitter.get_recent_events()
         assert len(events) == 3
-        # e0, e1 evicted; e2, e3, e4 remain
-        assert events[0]["type"] == "e2"
-        assert events[-1]["type"] == "e4"
+        # e0, e1 evicted; e2, e3, e4 remain, newest first
+        assert events[0]["type"] == "e4"
+        assert events[-1]["type"] == "e2"
 
     async def test_buffer_at_exact_capacity_keeps_all(self):
         emitter = TaskEventEmitter(buffer_size=3)
