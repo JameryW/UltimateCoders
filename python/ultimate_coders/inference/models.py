@@ -18,6 +18,7 @@ METRIC_DIRECTIONS = {
 
 EVAL_ROLE_ENFORCE_ENV = "UC_EVAL_ROLE_ENFORCE"
 REPORT_UPLIFT_ENFORCE_ENV = "UC_REPORT_UPLIFT_ENFORCE"
+INDEPENDENT_REEVAL_ENFORCE_ENV = "UC_INDEPENDENT_REEVAL_ENFORCE"
 
 _TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 
@@ -43,6 +44,11 @@ def eval_role_enforce_enabled() -> bool:
 def report_uplift_enforce_enabled() -> bool:
     """Require report remasure for public uplift; default off."""
     return _env_flag_enabled(REPORT_UPLIFT_ENFORCE_ENV)
+
+
+def independent_reeval_enforce_enabled() -> bool:
+    """Require independent correctness re-eval before dual-gate accept; default off."""
+    return _env_flag_enabled(INDEPENDENT_REEVAL_ENFORCE_ENV)
 
 
 class InferenceTaskType(str, Enum):

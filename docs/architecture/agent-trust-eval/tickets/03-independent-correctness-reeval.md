@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t3-independent-reeval-7c92`; flag `UC_INDEPENDENT_REEVAL_ENFORCE` default off)
 
-- [ ] Independent correctness re-eval runs with inputs and execution outside Agent-writable trees
-- [ ] Agent-writable harness self-report alone cannot produce a passing independent re-eval outcome
-- [ ] Protected fingerprint / provenance attestation still fail-closes when unarmed or mismatched
-- [ ] Re-eval outcome is observable to downstream accept / completion callers
-- [ ] Tests cover protect + independent re-eval at the BenchmarkRunner seam
-- [ ] Capability is behind a feature flag that defaults off
+- [x] Independent correctness re-eval runs with inputs and execution outside Agent-writable trees
+- [x] Agent-writable harness self-report alone cannot produce a passing independent re-eval outcome
+- [x] Protected fingerprint / provenance attestation still fail-closes when unarmed or mismatched
+- [x] Re-eval outcome is observable to downstream accept / completion callers
+- [x] Tests cover protect + independent re-eval at the BenchmarkRunner seam
+- [x] Capability is behind a feature flag that defaults off

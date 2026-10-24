@@ -23,14 +23,14 @@ Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏
 P0 (D1–D3) — **ready-for-agent** (docs-tree tickets; GitHub wayfinder publication still pending authorization):
 
 - Spec: [spec-p0.md](spec-p0.md)
-- [01 eval_role on results](tickets/01-eval-role-on-results.md) — Blocked by: none
+- [01 eval_role on results](tickets/01-eval-role-on-results.md) — **implemented** (`UC_EVAL_ROLE_ENFORCE`); was blocked by: none
 - [02 report-only public uplift](tickets/02-report-only-public-uplift.md) — **implemented** (`UC_REPORT_UPLIFT_ENFORCE`); was blocked by 01
-- [03 independent correctness re-eval](tickets/03-independent-correctness-reeval.md) — Blocked by: none
+- [03 independent correctness re-eval](tickets/03-independent-correctness-reeval.md) — **implemented** (`UC_INDEPENDENT_REEVAL_ENFORCE`); was blocked by: none
 - [04 dual-gate accept](tickets/04-dual-gate-accept.md) — Blocked by: 03
 - [05 completion_conditions](tickets/05-completion-conditions.md) — Blocked by: none
 - [06 adapters and re-eval condition](tickets/06-adapters-and-reeval-condition.md) — Blocked by: 05, 03
 
-Frontier for implementers: 01, 03, 05. P1 (D4–D6) and P2 (D7–D8) are **not ticketed yet**.
+Frontier for implementers: 04 (unblocked by 03), 05. P1 (D4–D6) and P2 (D7–D8) are **not ticketed yet**.
 
 ## Decisions so far
 

@@ -157,6 +157,69 @@ Good: select accept, report remasure yields report-tagged uplift used in manifes
 
 Wrong: publish last-iteration select uplift when remasure failed. Correct: fail closed; only `report_verdict` may fill public uplift under enforce.
 
+## 7-independent-reeval. Independent correctness re-eval (Agent Trust P0 / T3)
+
+### 1. Scope / Trigger
+
+Any change to `BenchmarkRunner.protect` / `verify_harness` / `measure`, or to callers that need a sealed-path correctness outcome before dual-gate accept (ticket 04 wires the accept path; this section is the capability only).
+
+### 2. Signatures
+
+```python
+INDEPENDENT_REEVAL_ENFORCE_ENV = "UC_INDEPENDENT_REEVAL_ENFORCE"
+def independent_reeval_enforce_enabled() -> bool  # default off
+
+@dataclass(frozen=True)
+class IndependentReevalOutcome:
+    passed: bool
+    correctness: bool
+    attestation_ok: bool
+    result: BenchmarkResult | None
+    reasons: list[str]
+    eval_root: str
+
+async def BenchmarkRunner.independent_reeval(
+    self,
+    eval_root: str,
+    *,
+    agent_workspace: str | None = None,
+    agent_reported: BenchmarkResult | None = None,
+) -> IndependentReevalOutcome
+```
+
+### 3. Contracts
+
+- Env: `UC_INDEPENDENT_REEVAL_ENFORCE` — same truthy/off parsing as other UC inference enforce flags; default **off**. Product accept wiring (T4) consults the flag; the API itself is always available for tests and future callers.
+- `eval_root` must be a sealed tree. When `agent_workspace` is provided and resolved `eval_root` is that workspace or a descendant, the outcome fail-closes: `attestation_ok=False`, `passed=False`, clear reason — do not treat an Agent-writable path as sealed.
+- Always call `verify_harness()` before measuring. Unarmed or mismatched fingerprints → `attestation_ok=False`, `passed=False` (never swallow into success). Harness failures raised from `measure` are mapped the same way.
+- Correctness comes only from `measure(eval_root)`. `agent_reported` must not flip `passed` (Agent harness self-report is non-authoritative).
+- `passed = attestation_ok and result.compile_success and result.correctness` (mirrors measure short-circuit).
+- Outcome fields are observable for accept / completion callers: `passed`, `correctness`, `attestation_ok`, `result`, `reasons`, `eval_root`.
+- Existing `protect` / `measure` behaviour is unchanged when the flag is off and when callers do not invoke `independent_reeval`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|---|---|
+| Flag off | protect/measure unchanged; API still callable |
+| `eval_root` under `agent_workspace` | `attestation_ok=False`, `passed=False`, reason cites agent workspace |
+| Unarmed runner (`protect` never called) | `attestation_ok=False`, `passed=False`, reason cites not protected |
+| Harness bytes changed after `protect` | `attestation_ok=False`, `passed=False`, reason cites harness changed |
+| Sealed measure `correctness=False` + `agent_reported.correctness=True` | `passed=False`; agent report ignored |
+| Sealed measure compile/correctness both true | `attestation_ok=True`, `passed=True` |
+
+### 5. Good / Base / Bad Cases
+
+Good: protected harness, sealed `eval_root` outside the agent workspace, measure reports correct → passing outcome. Base: flag off; callers that never invoke re-eval keep prior protect/measure behaviour. Bad: trusting Agent-tree self-report, using an Agent-writable `eval_root` as sealed, or treating unarmed/mismatched attestation as success.
+
+### 6. Tests Required
+
+`tests/python/test_independent_reeval.py` plus protect/harness-changed coverage in `test_inference_reliability.py`: flag matrix, sealed pass, agent_reported ignored, workspace containment reject, unarmed/mismatched fail-closed, compile short-circuit.
+
+### 7. Wrong vs Correct
+
+Wrong: mark correctness passed from Agent harness self-report alone, or measure under an Agent-writable tree and call it sealed. Correct: attest fingerprints first, measure only under a root outside Agent-writable trees, and expose `IndependentReevalOutcome` for dual-gate accept (T4).
+
 ## 7a. Gotcha: decoded wire payloads are not `@dataclass` types
 
 **Warning** The dataclass rule in `.trellis/spec/frontend/component-guidelines.md`

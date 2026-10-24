@@ -14,6 +14,27 @@ from .models import BenchmarkResult, nonnegative_number
 from .process import spawn_command
 
 
+def _path_is_under(path: Path, root: Path) -> bool:
+    """True when ``path`` is ``root`` or a descendant (after resolve)."""
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+@dataclass(frozen=True)
+class IndependentReevalOutcome:
+    """Observable result of a sealed-path independent correctness re-eval."""
+
+    passed: bool
+    correctness: bool
+    attestation_ok: bool
+    result: BenchmarkResult | None
+    reasons: list[str] = field(default_factory=list)
+    eval_root: str = ""
+
+
 async def run_command(
     command: list[str],
     cwd: str,
@@ -215,3 +236,80 @@ class BenchmarkRunner:
             self.verify_harness()
             result = replace(result, profile=profile)
         return result
+
+    async def independent_reeval(
+        self,
+        eval_root: str,
+        *,
+        agent_workspace: str | None = None,
+        agent_reported: BenchmarkResult | None = None,
+    ) -> IndependentReevalOutcome:
+        """Re-measure correctness under a sealed ``eval_root``.
+
+        Fingerprint attestation always runs first and fail-closes. ``agent_reported``
+        never flips ``passed`` — only the sealed measure result does. When
+        ``agent_workspace`` is supplied, ``eval_root`` must resolve outside that
+        tree (Agent-writable paths are not sealed). Dual-gate accept wiring is
+        ticket 04; callers may gate on ``independent_reeval_enforce_enabled``.
+        """
+        resolved_root = str(Path(eval_root).resolve())
+        # Intentionally unused for the pass decision (Agent self-report is not
+        # authoritative). Kept on the signature so T4 can pass it for logging.
+        _ = agent_reported
+
+        if agent_workspace is not None and _path_is_under(
+            Path(eval_root), Path(agent_workspace)
+        ):
+            return IndependentReevalOutcome(
+                passed=False,
+                correctness=False,
+                attestation_ok=False,
+                result=None,
+                reasons=[
+                    "eval_root must be outside the agent workspace; "
+                    "a sealed root cannot live under Agent-writable trees"
+                ],
+                eval_root=resolved_root,
+            )
+
+        try:
+            self.verify_harness()
+        except RuntimeError as exc:
+            return IndependentReevalOutcome(
+                passed=False,
+                correctness=False,
+                attestation_ok=False,
+                result=None,
+                reasons=[str(exc)],
+                eval_root=resolved_root,
+            )
+
+        try:
+            result = await self.measure(resolved_root)
+        except RuntimeError as exc:
+            message = str(exc)
+            if "harness" in message.lower() or "not protected" in message.lower():
+                return IndependentReevalOutcome(
+                    passed=False,
+                    correctness=False,
+                    attestation_ok=False,
+                    result=None,
+                    reasons=[message],
+                    eval_root=resolved_root,
+                )
+            raise
+
+        reasons: list[str] = []
+        if not result.compile_success:
+            reasons.append("compile_success is false")
+        if not result.correctness:
+            reasons.append("correctness is false")
+        passed = bool(result.compile_success and result.correctness)
+        return IndependentReevalOutcome(
+            passed=passed,
+            correctness=result.correctness,
+            attestation_ok=True,
+            result=result,
+            reasons=reasons,
+            eval_root=resolved_root,
+        )

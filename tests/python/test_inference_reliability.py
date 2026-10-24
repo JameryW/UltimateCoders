@@ -384,6 +384,34 @@ def test_verify_harness_requires_a_protected_harness(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_measure_fails_when_harness_changes(tmp_path):
+    bench = tmp_path / "bench.py"
+    bench.write_text(
+        "import json; print(json.dumps({'workload_id':'w','correctness':True,"
+        "'compile_success':True,'metrics':{'tpot_ms':37}}))"
+    )
+    runner = BenchmarkRunner(
+        BenchmarkSpec([sys.executable, "-B", "bench.py"], "w", protected_paths=["bench.py"])
+    )
+    runner.protect(str(tmp_path))
+    bench.write_text("# harness mutated after protect\n")
+    with pytest.raises(RuntimeError, match="Benchmark harness changed"):
+        await runner.measure(str(tmp_path))
+
+
+def test_verify_harness_fails_when_harness_changes(tmp_path):
+    bench = tmp_path / "bench.py"
+    bench.write_text("print('ok')\n")
+    runner = BenchmarkRunner(
+        BenchmarkSpec([sys.executable, "-B", "bench.py"], "w", protected_paths=["bench.py"])
+    )
+    runner.protect(str(tmp_path))
+    bench.write_text("print('tampered')\n")
+    with pytest.raises(RuntimeError, match="Benchmark harness changed"):
+        runner.verify_harness()
+
+
+@pytest.mark.asyncio
 async def test_dashboard_artifact_authentication_and_integrity(state, tmp_path, monkeypatch):
     from ultimate_coders.dashboard.app import DashboardApp
 

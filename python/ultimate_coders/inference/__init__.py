@@ -2,7 +2,7 @@
 
 from .adapter import MetaInferAdapter, MetaInferError
 from .agent import InferenceInfraAgent
-from .benchmark import BenchmarkRunner, BenchmarkSpec
+from .benchmark import BenchmarkRunner, BenchmarkSpec, IndependentReevalOutcome
 from .graph import AdaptationEdge, AdaptationNode, AdaptationNodeKind, ExecutionAdaptationGraph
 from .models import (
     BenchmarkResult,
@@ -11,6 +11,7 @@ from .models import (
     MetaInferResult,
     MetaInferTask,
     assert_report_identity,
+    independent_reeval_enforce_enabled,
     mint_report_result,
     published_uplift_verdict,
     report_uplift_enforce_enabled,
@@ -33,12 +34,14 @@ __all__ = [
     "InferenceInfraAgent",
     "BenchmarkRunner",
     "BenchmarkSpec",
+    "IndependentReevalOutcome",
     "AdaptationEdge",
     "AdaptationNode",
     "AdaptationNodeKind",
     "ExecutionAdaptationGraph",
     "OptimizationWorkflow",
     "assert_report_identity",
+    "independent_reeval_enforce_enabled",
     "mint_report_result",
     "published_uplift_verdict",
     "report_uplift_enforce_enabled",
