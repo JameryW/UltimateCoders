@@ -1,8 +1,8 @@
 # D3-completion-conditions-home
 
-Status: open (decision ticket — not implementation)
+Status: **decided** (2026-10-24 — intake round-1 via「继续」adopting Proposed)
 Type: grilling
-Blocked by: _(none — frontier)_
+Blocked by: _(none)_
 Blocks: P0 tickets extending task/subtask contracts; must not fork a second “done” authority
 
 ## Question
@@ -15,16 +15,12 @@ Blocks: P0 tickets extending task/subtask contracts; must not fork a second “d
 - 已有散点：`review.py` JSON `approved`、`step_condition`、`verify_command`。
 - 用户 P0：「在 `contract.py` 里加上完成条件等结构化字段，由模型之外的代码判定。」
 
-## Options
-
-1. **扩展 contract 模块**：同一 registry 增加 machine-checkable `completion_conditions[]`；worker/orchestrator 在模型外求值；模型自报无效。
-2. **节点级 verify only**：完成条件只挂在 verify/review 图节点；contract 保持 digest-only，避免概念过载。
-3. **双写过渡**：digest 仍管「目标变了没」；完成条件新 namespace，但 API 从 `contract` 包导出以匹配用户命名。
-
-## Proposed (from intake — needs human confirm)
-
-➡️ **选项 3**：满足「在 contract.py（包）暴露完成条件」的产品表述，同时不把 digest 身份与完成判定揉成一个模糊结构。判定代码必须非 LLM；与 D2 的独立重跑可组合为一条完成条件类型。
-
 ## Resolution
 
-(fill in when decided)
+**双命名空间，从 `contract` 包导出。**
+
+1. **`contract_digest` / `ContractRegistry`** 继续只回答「目标变了没」（F6）。
+2. 新增 **`completion_conditions`**（结构化、可机器检查）与 digest **分结构**；API 从 `ultimate_coders.agent.contract`（或同包模块）导出，满足「在 contract.py / contract 包落地」的产品表述。
+3. **完成判定必须非 LLM**：worker/orchestrator/runner 求值；模型自报 `done` / `approved` 不能单独过关。
+4. 与 D2 组合：至少支持一类完成条件 =「在 Agent 不可写环境独立重跑通过」。
+5. 现有 `verify_command` / `step_condition` / review 节点应收敛为条件类型或适配器，**不**另立第二套「完成权威」。

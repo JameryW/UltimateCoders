@@ -1,8 +1,8 @@
 # D1-three-benchmark-split
 
-Status: open (decision ticket — not implementation)
+Status: **decided** (2026-10-24 — intake round-1 via「继续」adopting Proposed)
 Type: grilling
-Blocked by: _(none — frontier)_
+Blocked by: _(none)_
 Blocks: D4; P0 implementation tickets for Oracle / MetaInfer uplift reporting
 
 ## Question
@@ -15,16 +15,11 @@ Blocks: D4; P0 implementation tickets for Oracle / MetaInfer uplift reporting
 - 风险类比：Terminal-RSI 式选择偏差——在用来挑赢家的集合上报告提升。
 - 用户 P0：「把用来搜索、用来挑选、用来报告最终结果的三套 benchmark 分开。」
 
-## Options (non-exhaustive)
-
-1. **严格三分**：search / select / report 三套互斥；报告 uplift 只能引用 report 集；search 集可被 Agent 看见。
-2. **两分**：search+select 共用开发集，report 为 hold-out；Oracle 接受门用 select，对外数字只用 report。
-3. **同集 + 披露**：暂不分裂，但所有对外数字标注 `selection-biased` 且禁止进 README 无标记数字。
-
-## Proposed (from intake — needs human confirm)
-
-➡️ **选项 2 作为 P0 MVP，选项 1 为 P1 目标形态**：先强制 hold-out report 集与「挑选/接受」集分离；search 与 select 可暂共用但必须在产物里标记 `eval_role`。对外/README 数字只能来自 report 集。
-
 ## Resolution
 
-(fill in when decided)
+**P0 = 两分；P1 目标 = 严格三分。**
+
+1. **Report（hold-out）** 与 **Select（接受门）** 必须互斥。对外数字、README、发布产物里的 uplift **只能**引用 report 集。
+2. **Search** 与 **Select** 在 P0 可暂共用同一开发集，但产物必须带 `eval_role`（`search` | `select` | `report`），禁止把 search/select 分数写成 report。
+3. UC Oracle 的接受门使用 **select**；报告/对外 uplift 使用 **report**（另一次受保护重跑）。MetaInfer 内部 ranking 不得直接写入对外 uplift。
+4. P1 再把 search 从 select 中拆出，形成严格三分。
