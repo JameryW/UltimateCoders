@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from ultimate_coders.inference import (
     BenchmarkResult,
     EvalRole,
@@ -48,7 +47,9 @@ def test_benchmark_result_round_trips_eval_role():
 
 
 def test_oracle_verdict_round_trips_eval_role():
-    verdict = OracleVerdict(accepted=True, reasons=[], improvement_pct=10.0, eval_role=EvalRole.REPORT)
+    verdict = OracleVerdict(
+        accepted=True, reasons=[], improvement_pct=10.0, eval_role=EvalRole.REPORT
+    )
     data = verdict.to_dict()
     assert data["eval_role"] == "report"
     restored = OracleVerdict.from_dict(data)
