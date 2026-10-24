@@ -4,11 +4,11 @@
 
 **Blocked by:** 01 (eval_role on results).
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t2-report-only-uplift-7c92`; flag `UC_REPORT_UPLIFT_ENFORCE` default off)
 
-- [ ] Public uplift helpers accept only `eval_role=report` results from a protected remeasure
-- [ ] Select- or search-tagged scores cannot populate public uplift fields
-- [ ] Oracle accept remains allowed to use select-role evidence
-- [ ] A failing or missing report remeasure does not fall back to select scores for publication
-- [ ] Tests demonstrate accept-vs-publish separation at the Oracle / result seam
-- [ ] Behaviour is gated by a feature flag that defaults off
+- [x] Public uplift helpers accept only `eval_role=report` results from a protected remeasure
+- [x] Select- or search-tagged scores cannot populate public uplift fields
+- [x] Oracle accept remains allowed to use select-role evidence
+- [x] A failing or missing report remeasure does not fall back to select scores for publication
+- [x] Tests demonstrate accept-vs-publish separation at the Oracle / result seam
+- [x] Behaviour is gated by a feature flag that defaults off
