@@ -1,8 +1,8 @@
 # D5-failure-type-reviewers
 
-Status: open (decision ticket — not implementation)
+Status: **decided** (2026-10-24 — round-2 via「继续」adopting Proposed)
 Type: grilling
-Blocked by: _(none — frontier; parallel to P0)_
+Blocked by: _(none)_
 Blocks: P1 reviewer implementation tickets; may inform review-node graph shape
 
 ## Question
@@ -15,16 +15,11 @@ Blocks: P1 reviewer implementation tickets; may inform review-node graph shape
 - `routing.py` 已有 `classify_failure` → 模型路由，但是路由不是评审阈值。
 - 用户 P1 + 风险：每种评审器需要人工标注。
 
-## Options
-
-1. **对齐 routing taxonomy**：一类失败一个 reviewer + CV 阈值；无标注则该类型保持「人工 / 格式-only」且开关关闭。
-2. **新 taxonomy**：与 routing 解耦，评审器按产品故障模式重划。
-3. **推迟结构化评审**：先只加强 verify_command / D2 独立重跑；LLM review 仍格式门。
-
-## Proposed (from intake — needs human confirm)
-
-➡️ **选项 1**：与 `routing.py` 对齐以降低概念分裂；**无标注 ⇒ 该类型评审器不得启用**（fail closed 到现有格式门或人工）。阈值禁止提交默认 0.5 作为「已校准」。
-
 ## Resolution
 
-(fill in when decided)
+**对齐 routing taxonomy；无标注则该类型关闭。**
+
+1. 失败类型 taxonomy **对齐** `routing.py`，降低概念分裂。
+2. **一类失败一个 reviewer**；阈值**仅**经交叉验证选出。
+3. **无标注数据 ⇒ 该类型评审器不得启用**（fail closed 到现有格式门或人工）。
+4. 禁止把默认 0.5 作为「已校准」阈值提交进仓。
