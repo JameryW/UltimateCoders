@@ -1,0 +1,14 @@
+# 05: completion_conditions
+
+**What to build:** The agent contract package exports structured `completion_conditions` beside the existing digest / registry API. Digest continues to answer only whether goal text changed. Completion evaluation is non-LLM code invoked by worker, orchestrator, or runner; a model claim of done or approved cannot alone satisfy completion. This ticket lands the home and evaluate surface; adapters and the independent-re-eval condition type are ticket 06.
+
+**Blocked by:** None (can start immediately).
+
+**Status:** ready-for-agent
+
+- [ ] `completion_conditions` is a separate structure from contract digest / registry
+- [ ] Evaluate API is exported from the `ultimate_coders.agent.contract` package
+- [ ] Digest behaviour and responsibility remain goal-change detection only
+- [ ] Evaluate runs without an LLM; model self-report alone cannot pass
+- [ ] Tests cover the contract-package seam (digest vs completion namespaces)
+- [ ] Feature flag defaults off

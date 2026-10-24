@@ -800,6 +800,8 @@ def test_real_corpus_unanchored_census_is_reported():
     # unclassified stays 0.
     # D4–D8 decided: map Decisions so far cites routing.py once more (386 -> 387),
     # still resolved; unclassified stays 0.
+    # P0 spec + tickets/01–06 add zero path-shaped backticks (module/interface
+    # names only); mention census stays 387, unclassified stays 0.
     assert sum(1 for r in rows if r["kind"] == "mention") == 387
 
 
