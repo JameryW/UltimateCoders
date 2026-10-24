@@ -17,6 +17,9 @@ METRIC_DIRECTIONS = {
 }
 
 EVAL_ROLE_ENFORCE_ENV = "UC_EVAL_ROLE_ENFORCE"
+REPORT_UPLIFT_ENFORCE_ENV = "UC_REPORT_UPLIFT_ENFORCE"
+
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 
 
 def nonnegative_number(value: Any, name: str) -> float:
@@ -27,10 +30,19 @@ def nonnegative_number(value: Any, name: str) -> float:
     return float(value)
 
 
+def _env_flag_enabled(name: str) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    return raw in _TRUTHY_ENV
+
+
 def eval_role_enforce_enabled() -> bool:
     """Identity enforcement for report-only consumers; default off."""
-    raw = os.environ.get(EVAL_ROLE_ENFORCE_ENV, "").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    return _env_flag_enabled(EVAL_ROLE_ENFORCE_ENV)
+
+
+def report_uplift_enforce_enabled() -> bool:
+    """Require report remasure for public uplift; default off."""
+    return _env_flag_enabled(REPORT_UPLIFT_ENFORCE_ENV)
 
 
 class InferenceTaskType(str, Enum):
@@ -58,10 +70,17 @@ def coerce_eval_role(value: EvalRole | str | None) -> EvalRole:
 
 
 def require_report_role(result_or_verdict: Any) -> None:
-    """Reject non-report identities when ``UC_EVAL_ROLE_ENFORCE`` is on; else no-op."""
-    if not eval_role_enforce_enabled():
+    """Reject non-report identities when eval-role or report-uplift enforce is on.
+
+    ``UC_REPORT_UPLIFT_ENFORCE`` implies this check at publish boundaries even when
+    ``UC_EVAL_ROLE_ENFORCE`` is off. Dicts with an ``eval_role`` key are accepted.
+    """
+    if not (eval_role_enforce_enabled() or report_uplift_enforce_enabled()):
         return
-    role = getattr(result_or_verdict, "eval_role", None)
+    if isinstance(result_or_verdict, dict):
+        role = result_or_verdict.get("eval_role")
+    else:
+        role = getattr(result_or_verdict, "eval_role", None)
     if coerce_eval_role(role) is not EvalRole.REPORT:
         raise ValueError(
             f"report identity required; got eval_role={coerce_eval_role(role).value}"
@@ -71,6 +90,35 @@ def require_report_role(result_or_verdict: Any) -> None:
 def assert_report_identity(result_or_verdict: Any) -> None:
     """Alias for :func:`require_report_role` (ticket 02 uplift consumers)."""
     require_report_role(result_or_verdict)
+
+
+def published_uplift_verdict(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Verdict used for public publication (manifest / report uplift figures).
+
+    When ``UC_REPORT_UPLIFT_ENFORCE`` is on, only ``report_verdict`` may populate
+    public uplift; select/search iteration verdicts are never a fallback. Missing
+    remasure on a successful optimization accept (iterations present) fails closed.
+    Non-optimization successes (analyze/benchmark) publish no uplift verdict.
+    """
+    if report_uplift_enforce_enabled():
+        report = result.get("report_verdict")
+        if isinstance(report, dict):
+            require_report_role(report)
+            return report
+        # Legacy publish path used the last iteration verdict. Under enforce that
+        # select/search score must never become the public uplift figure.
+        iterations = result.get("iterations") or []
+        if result.get("success") and iterations:
+            raise ValueError(
+                "report remasure required for publication under "
+                f"{REPORT_UPLIFT_ENFORCE_ENV}"
+            )
+        return None
+    iterations = result.get("iterations") or []
+    if not iterations:
+        return None
+    verdict = iterations[-1].get("verdict")
+    return verdict if isinstance(verdict, dict) else None
 
 
 def refuse_relabel_to_report(current: EvalRole, new_role: EvalRole) -> None:
@@ -139,6 +187,13 @@ class BenchmarkResult:
         data = asdict(self)
         data["eval_role"] = self.eval_role.value
         return data
+
+
+def mint_report_result(result: BenchmarkResult) -> BenchmarkResult:
+    """Mint a report-role result via explicit construction (not ``with_role`` relabel)."""
+    data = result.to_dict()
+    data["eval_role"] = EvalRole.REPORT.value
+    return BenchmarkResult.from_dict(data)
 
 
 @dataclass(frozen=True)

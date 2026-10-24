@@ -17,7 +17,14 @@ from ultimate_coders.runtime_state import atomic_json, atomic_write
 
 from .benchmark import BenchmarkRunner
 from .graph import ExecutionAdaptationGraph
-from .models import BenchmarkResult, InferenceTaskType, MetaInferResult, MetaInferTask
+from .models import (
+    BenchmarkResult,
+    InferenceTaskType,
+    MetaInferResult,
+    MetaInferTask,
+    mint_report_result,
+    report_uplift_enforce_enabled,
+)
 from .oracle import Oracle
 
 Candidate = Callable[[MetaInferTask], Awaitable[MetaInferResult]]
@@ -314,7 +321,7 @@ class OptimizationWorkflow:
             for name in added.split(b"\0")
             if name
         )
-        return {
+        outcome = {
             "success": accepted,
             "task_type": task.task_type.value,
             "baseline": initial.to_dict(),
@@ -330,3 +337,47 @@ class OptimizationWorkflow:
             },
             "backend": last_backend.to_dict() if last_backend else None,
         }
+        if report_uplift_enforce_enabled() and accepted:
+            report_verdict = await self._report_remeasure(root, benchmark, on_phase=phase)
+            outcome["report_verdict"] = report_verdict.to_dict()
+            outcome["public_uplift"] = {
+                "improvement_pct": report_verdict.improvement_pct,
+                "eval_role": report_verdict.eval_role.value,
+            }
+        return outcome
+
+    async def _report_remeasure(self, root: Path, benchmark: BenchmarkRunner, *, on_phase=None):
+        """Protected baseline + accepted remasure tagged ``eval_role=report``."""
+
+        async def phase(name, **data):
+            if on_phase:
+                await on_phase(name, **data)
+
+        await phase("report_remeasure")
+        # Working tree holds the accepted candidate; remasure it first.
+        try:
+            candidate_raw = await benchmark.measure(str(root))
+            accepted_snap = WorkspaceTransaction(root)
+            _git(root, "restore", "--source=HEAD", "--worktree", "--staged", "--", ".")
+            head_names = {
+                os.fsdecode(name)
+                for name in _git(root, "ls-files", "-z", "--cached").split(b"\0")
+                if name
+            }
+            for name in list(accepted_snap.files):
+                if name in head_names:
+                    continue
+                path = accepted_snap._path(name)
+                if path.is_symlink() or path.is_file():
+                    path.unlink()
+                elif path.is_dir():
+                    shutil.rmtree(path)
+            try:
+                baseline_raw = await benchmark.measure(str(root), baseline=True)
+            finally:
+                accepted_snap.restore()
+            report_baseline = mint_report_result(baseline_raw)
+            report_candidate = mint_report_result(candidate_raw)
+            return self.oracle.evaluate(report_baseline, report_candidate)
+        except Exception as exc:
+            raise RuntimeError(f"report remasure failed: {exc}") from exc
