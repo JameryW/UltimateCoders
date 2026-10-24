@@ -235,6 +235,7 @@ def test_real_repo_is_reconciled() -> None:
         (2091, 2082),  # D4–D8 decision recording Trellis task artifacts (4 text).
         (2098, 2089),  # P0 spec + six tickets (map modified): seven new text files.
         (2102, 2093),  # P0-spec Trellis task artifacts (4 text) on top of docs-only.
+        (2107, 2098),  # T1 eval_role: test_eval_role.py + Trellis task artifacts (5 text).
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
-from .models import METRIC_DIRECTIONS, BenchmarkResult, MetaInferTask, nonnegative_number
+from .models import (
+    METRIC_DIRECTIONS,
+    BenchmarkResult,
+    EvalRole,
+    MetaInferTask,
+    coerce_eval_role,
+    nonnegative_number,
+    refuse_relabel_to_report,
+)
 
 
 @dataclass(frozen=True)
@@ -56,9 +64,29 @@ class OracleVerdict:
     accepted: bool
     reasons: list[str] = field(default_factory=list)
     improvement_pct: float | None = None
+    eval_role: EvalRole = EvalRole.SELECT
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "eval_role", coerce_eval_role(self.eval_role))
+
+    def with_role(self, role: EvalRole | str) -> OracleVerdict:
+        new_role = coerce_eval_role(role)
+        refuse_relabel_to_report(self.eval_role, new_role)
+        return replace(self, eval_role=new_role)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> OracleVerdict:
+        return cls(
+            accepted=data["accepted"],
+            reasons=list(data.get("reasons") or []),
+            improvement_pct=data.get("improvement_pct"),
+            eval_role=coerce_eval_role(data.get("eval_role")),
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["eval_role"] = self.eval_role.value
+        return data
 
 
 class Oracle:
@@ -165,4 +193,9 @@ class Oracle:
                     reasons.append("Improvement does not exceed measurement noise")
                 if delta <= 0 or (pct is not None and pct < self.policy.min_improvement_pct):
                     reasons.append(f"No sufficient improvement in {metric}")
-        return OracleVerdict(not reasons, reasons, improvement)
+        return OracleVerdict(
+            not reasons,
+            reasons,
+            improvement,
+            eval_role=candidate.eval_role,
+        )

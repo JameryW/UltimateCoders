@@ -58,6 +58,55 @@ Exercise Oracle metric direction, missing/nonfinite values, correctness/compile/
 
 Wrong: accept a backend's success string or apply a returned shell command automatically. Correct: use explicit argv import hooks, fixed immutable benchmarks and the shared Oracle. Wrong: describe gen-infer-framework as existing SGLang runtime optimization. Correct: document its generation semantics and configure a genuine optimization plugin when needed. Forced OS termination cannot guarantee remote HTTP cleanup; preserve that limitation in operational docs.
 
+## 7-eval-role. Eval role identity (Agent Trust P0 / T1)
+
+### 1. Scope / Trigger
+
+Any change that constructs, serializes, accepts, or publishes `BenchmarkResult` / `OracleVerdict`, or that writes public uplift / report figures from evaluation products.
+
+### 2. Signatures
+
+```python
+class EvalRole(str, Enum):  # search | select | report
+def eval_role_enforce_enabled() -> bool
+def require_report_role(result_or_verdict) -> None
+def assert_report_identity(result_or_verdict) -> None  # alias
+BenchmarkResult(..., eval_role: EvalRole = EvalRole.SELECT)
+OracleVerdict(..., eval_role: EvalRole = EvalRole.SELECT)
+BenchmarkResult.with_role(role) / OracleVerdict.with_role(role)
+Oracle.evaluate(baseline, candidate) -> OracleVerdict  # verdict.eval_role == candidate.eval_role
+```
+
+### 3. Contracts
+
+- Every `BenchmarkResult` and `OracleVerdict` carries `eval_role ∈ {search, select, report}`.
+- `to_dict` emits the role string; `from_dict` missing key defaults to `select` (legacy).
+- Env: `UC_EVAL_ROLE_ENFORCE` — unset/empty/`0`/`false`/`no`/`off` → enforcement **off** (default). Truthy (`1`/`true`/`yes`/`on`) → on.
+- When enforce is on: `require_report_role` / `assert_report_identity` reject non-report; `with_role` refuses search/select → report relabel. Explicit construction with `eval_role=report` remains allowed.
+- Accept path: Oracle may consume select-role evidence. Public uplift must call report-identity helpers (ticket 02 wires remasure).
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|---|---|
+| Enforce off + non-report passed to `require_report_role` | No-op |
+| Enforce on + select/search passed to `require_report_role` | `ValueError` |
+| Enforce on + `with_role(REPORT)` from search/select | `ValueError` |
+| Enforce on + mint `BenchmarkResult(..., eval_role=REPORT)` | Allowed |
+| `Oracle.evaluate` with select candidate | Verdict inherits `select`; accept rules unchanged |
+
+### 5. Good / Base / Bad Cases
+
+Good: select candidate accepted by Oracle; report remasure later passes `require_report_role` under enforce. Base: legacy dict without `eval_role` loads as select; enforce off → helpers no-op. Bad: under enforce, writing select scores into a report-only consumer or relabeling search→report via `with_role`.
+
+### 6. Tests Required
+
+`tests/python/test_eval_role.py` plus existing `test_inference_oracle.py`: role round-trip, legacy default, enforce flag matrix, refuse relabel, accept still consumes select.
+
+### 7. Wrong vs Correct
+
+Wrong: treat select/search scores as report uplift, or rely on `dataclasses.replace` to bypass `with_role` in product code. Correct: mint report via protected remasure / explicit report construction; call `require_report_role` at publish boundaries when enforce is on.
+
 ## 7a. Gotcha: decoded wire payloads are not `@dataclass` types
 
 **Warning** The dataclass rule in `.trellis/spec/frontend/component-guidelines.md`
