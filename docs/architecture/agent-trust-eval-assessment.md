@@ -1,6 +1,6 @@
 # Agent Trust / Eval 缺口评估件
 
-> 状态：**勘察完成；P0 决策 D1–D3 已拍板（2026-10-24）**；P1/P2 决策仍开。本文件不是实现计划，也不是工单，只回答三个问题：用户列出的缺口与代码现状是否一致、P0–P2 路线上有哪些必须显式拍板的取舍、起步形态建议是什么。
+> 状态：**勘察完成；决策 D1–D8 已拍板（2026-10-24）**（P0 round-1；P1/P2 round-2 via「继续」）。本文件不是实现计划，也不是工单，只回答三个问题：用户列出的缺口与代码现状是否一致、P0–P2 路线上有哪些必须显式拍板的取舍、起步形态建议是什么。
 >
 > 输入：用户提供的缺口清单与优先级（评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏差）。
 > 现状勘察基于 `main` @ `0d580422`。所有「现状」结论均附文件路径，可复核。
@@ -46,24 +46,24 @@ P0 两分（select vs hold-out report）；search 可暂与 select 共用但标 
 **D3 · 完成条件的家（P0）— ✅ 已决**  
 digest 与 `completion_conditions` 分命名空间、从 contract 包导出；非 LLM 判定；与 verify/step_condition/review 收敛为条件类型，不另立权威。详见地图票 D3。
 
-**D4 · 近似评测启用门（P1，阻塞于 D1）**  
-排序一致性检验的统计协议、阈值、复测节奏；近似评测只用于快筛还是也可影响 Oracle？
+**D4 · 近似评测启用门（P1）— ✅ 已决**  
+剪枝-only；Spearman/Kendall 在 report hold-out 过门后才开开关；uplift 禁引近似分；bench/code 变更复测失败则自动关。详见地图票 D4。
 
-**D5 · 失败类型评审器与阈值（P1）**  
-评审器 taxonomy 是否对齐 `routing.py`？阈值是否必须交叉验证选出（禁止默认 0.5）？标注数据谁出？
+**D5 · 失败类型评审器与阈值（P1）— ✅ 已决**  
+taxonomy 对齐 `routing.py`；一类一 reviewer + CV 阈值；无标注则该类型关闭；禁止默认 0.5「已校准」。详见地图票 D5。
 
-**D6 · Hy-Memory 接入形态与合规（P1）**  
-自动注入 Worker 上下文 vs 仅 MCP 自愿调用？「旧事实标记已被取代、不删除」是否为硬约束？外发与版本钉扎策略？
+**D6 · Hy-Memory 接入形态与合规（P1）— ✅ 已决**  
+默认 MCP-only；`UC_HY_MEMORY_AUTO_CONTEXT=1` 才自动注入；supersede-not-delete 硬约束；钉版本、合规前关。详见地图票 D6。
 
-**D7 · 停滞重派 / replan 原语归属（P2）**  
-失败关闭、人工升级，还是自动换 Agent + 新分解？Gateway / Orchestrator / Planner 谁拥有？
+**D7 · 停滞重派 / replan 原语归属（P2）— ✅ 已决**  
+MVP：同契约换 Agent 重派一次后人工；真 replan（新分解）等 D3 完成条件落地。详见地图票 D7。
 
-**D8 · 沙箱隔离目标（P2）**  
-强制现有 `NetworkMode`（Landlock/seccomp 主机子进程）还是容器 egress 白名单？「默认断网」与 LLM/API 出站如何并存？
+**D8 · 沙箱隔离目标（P2）— ✅ 已决**  
+先让 `NetworkMode` None/Restricted/Full 成真（默认偏离线 + LLM allowlist）；Landlock FS 后置同地图票。详见地图票 D8。
 
 ## 五、建议的起步与风险
 
-**起步**：先闭环 D1–D3（P0 决策），再开实现票；D4–D6 可在 P0 决策后进入下一轮地图；D7–D8 与 ontology / README 数字 CI 暂放「尚未写清」或 P2 雾区，直到 P0 路线清晰。
+**起步**：决策 D1–D8 已闭环；经 `$to-spec` / `$to-tickets` 开垂直切片实现票（P0 先于 P1/P2）。ontology MCP / README 数字 CI 仍在雾区，待单独毕业。
 
 **站立偏好（写入地图 Notes）**：
 

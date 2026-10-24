@@ -1,9 +1,9 @@
 # D8-sandbox-isolation-target
 
-Status: open (decision ticket — not implementation)
+Status: **decided** (2026-10-24 — round-2 via「继续」adopting Proposed)
 Type: grilling
-Blocked by: _(none — frontier; P2)_
-Blocks: P2 Landlock/断网 implementation tickets; must decide before wiring dead `NetworkMode`
+Blocked by: _(none)_
+Blocks: P2 NetworkMode enforcement tickets; Landlock FS as a later ticket on the same map
 
 ## Question
 
@@ -15,16 +15,10 @@ Blocks: P2 Landlock/断网 implementation tickets; must decide before wiring dea
 - Worker 容器本身需要 NATS/Gateway；断网必须作用在**Agent 子进程**而非整个 worker。
 - 用户 P2：Landlock + 默认断网。
 
-## Options
-
-1. **主机 Landlock/seccomp + 默认无网**：Agent 子进程默认 `NetworkMode::None`；显式 allowlist 域名/端口给 LLM API。
-2. **容器侧**：每任务短时 sidecar/network namespace；worker 常驻网保留。
-3. **先 enforcement 枚举**：只实现 `None`/`Restricted`/`Full` 的真实语义（可用 seccomp-bpf / netns），Landlock FS 第二阶段。
-
-## Proposed (from intake — needs human confirm)
-
-➡️ **选项 3 → 1**：P2 先消灭「配置了 None 却不通」的假安全感；默认改为 Restricted/None（功能开关），LLM 出站走明确 allowlist。完整 Landlock FS 策略可作为同地图的后续实现票，不阻塞网络 enforcement。
-
 ## Resolution
 
-(fill in when decided)
+**先让 NetworkMode 成真；Landlock FS 后置。**
+
+1. P2 第一步：实现 `None` / `Restricted` / `Full` 的真实语义（可用 seccomp-bpf / netns 等），消灭「配置了 None 却不通」的假安全感。
+2. 默认倾向 **离线**（`None` 或 `Restricted`，功能开关），LLM/API 出站走**显式 allowlist**；NATS/Gateway 属于 worker 常驻面，不与 Agent 子进程断网混为一谈。
+3. 完整 **Landlock FS** 策略作为同地图的后续实现票，不阻塞网络 enforcement。
