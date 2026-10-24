@@ -793,7 +793,12 @@ def test_real_corpus_unanchored_census_is_reported():
     # (already counted once, now twice): 345 -> 346, resolved. The
     # window-vs-total note named dashboard/tests/contextManifests.test.mjs a
     # second time: 346 -> 347, resolved.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 347
+    # Agent Trust/Eval wayfinder docs (assessment + map + D1–D8) add 39
+    # resolved/exempt path mentions under docs/architecture/agent-trust-eval/
+    # (347 -> 386). D2 names the agent-generated correctness harness without a
+    # path-shaped backtick so it does not open an untriaged dangling mention;
+    # unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 386
 
 
 def test_real_corpus_has_no_false_content_mismatch():

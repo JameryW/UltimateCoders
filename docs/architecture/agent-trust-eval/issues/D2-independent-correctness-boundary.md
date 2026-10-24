@@ -7,7 +7,7 @@ Blocks: P0 tickets closing F8 remainder; any “trust agent self-report” remov
 
 ## Question
 
-「正确性」的信任边界画在哪里：Agent 不可写环境里的**独立黄金参考 / UC 自有 verifier**，还是「harness 指纹 + 出处 attestation」就够？Agent 生成的 `correctness_harness.py` 是否仍算信任边界之内？
+「正确性」的信任边界画在哪里：Agent 不可写环境里的**独立黄金参考 / UC 自有 verifier**，还是「harness 指纹 + 出处 attestation」就够？Agent 在工作区里生成的 correctness harness（运行期产物，非仓内源文件）是否仍算信任边界之内？
 
 ## Context
 
@@ -21,5 +21,5 @@ Blocks: P0 tickets closing F8 remainder; any “trust agent self-report” remov
 
 1. Protected harness 指纹 / 出处 attestation **仍然需要**（保留现有 fail-closed 指纹路径）。
 2. Oracle **接受前**必须在 Agent **不可写**路径再跑一次正确性检查；Agent 工作区自报不足以关闭正确性门。
-3. Agent 生成的 `correctness_harness.py` **不得单独**作为接受依据；可作候选输入，最终以独立重跑为准。
+3. Agent 生成的 correctness harness **不得单独**作为接受依据；可作候选输入，最终以独立重跑为准。
 4. 完全自研 golden verifier 可分阶段交付；功能开关默认要求独立重跑。此决议用于关闭 F8 剩余缺口的产品口径。
