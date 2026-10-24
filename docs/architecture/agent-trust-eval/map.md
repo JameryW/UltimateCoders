@@ -1,7 +1,7 @@
 # Wayfinder Map: Agent Trust / Eval
 
 Status: active (versioned under docs/ — GitHub Issues publication pending explicit authorization)
-Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; P0 D1–D3 decided 2026-10-24)
+Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24)
 Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏差) + P0–P2 priorities
 
 本图在为实现票开票之前收敛「Agent 结果是否可信」路线上的决策。决策票**不是**实现工作，不得开 Trellis 任务。全部相关决策闭环后，再经 `$to-spec` / `$to-tickets` 开垂直切片实现票。
@@ -22,14 +22,15 @@ Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏
 - [D1 three-benchmark split](issues/D1-three-benchmark-split.md): P0 两分（select vs hold-out report）；search 可暂共用但标 `eval_role`；对外 uplift 只用 report；P1 再严格三分
 - [D2 independent correctness boundary](issues/D2-independent-correctness-boundary.md): 双闸——指纹 attestation + Agent 不可写环境独立重跑；Agent harness 不能单独关正确性门
 - [D3 completion-conditions home](issues/D3-completion-conditions-home.md): digest 与 `completion_conditions` 分命名空间、从 contract 包导出；非 LLM 判定；不另立第二套完成权威
+- [D4 approx-eval enablement gate](issues/D4-approx-eval-enablement-gate.md): 剪枝-only；Spearman/Kendall 在 report hold-out 过门后才开开关；uplift 禁引近似分；bench/code 变更复测失败则自动关
+- [D5 failure-type reviewers](issues/D5-failure-type-reviewers.md): taxonomy 对齐 `routing.py`；一类一 reviewer + CV 阈值；无标注则该类型关闭；禁止默认 0.5「已校准」
+- [D6 hy-memory wiring](issues/D6-hy-memory-wiring.md): 默认 MCP-only；`UC_HY_MEMORY_AUTO_CONTEXT=1` 才自动注入；supersede-not-delete 硬约束；钉版本、合规前关
+- [D7 stall replan ownership](issues/D7-stall-replan-ownership.md): MVP 同契约换 Agent 重派一次后人工；真 replan 等 D3 完成条件落地
+- [D8 sandbox isolation target](issues/D8-sandbox-isolation-target.md): 先让 `NetworkMode` None/Restricted/Full 成真（默认偏离线 + LLM allowlist）；Landlock FS 后置同地图票
 
 ## Frontier (open, unblocked)
 
-- [D4 approx-eval enablement gate](issues/D4-approx-eval-enablement-gate.md) — grilling（P1；D1 已解阻）
-- [D5 failure-type reviewers](issues/D5-failure-type-reviewers.md) — grilling（P1）
-- [D6 hy-memory wiring](issues/D6-hy-memory-wiring.md) — grilling（P1）
-- [D7 stall replan ownership](issues/D7-stall-replan-ownership.md) — grilling（P2）
-- [D8 sandbox isolation target](issues/D8-sandbox-isolation-target.md) — grilling（P2）
+_(none — decision tickets D1–D8 closed; fog items below are not decision tickets)_
 
 ## Blocked
 
@@ -39,8 +40,8 @@ _(none)_
 
 - 项目本体（EvoOntology 风格）经 MCP 可查的最小词表与权威源
 - README / 文档中的数字由哪条脚本复算、CI 失败策略（漂移告警 vs hard fail）
-- 近似评测与 MetaInfer 内部 ranking 的边界（D4 解决后可能毕业为独立票）
-- 标注数据管线（谁标、存在哪、如何防止泄漏进报告集）— 与 D5 联动
+- 近似评测与 MetaInfer 内部 ranking 的边界（D4 已定 prune-only / uplift 禁引近似；实现票可再毕业细则）
+- 标注数据管线（谁标、存在哪、如何防止泄漏进报告集）— D5 已定无标注则关闭；管线细节仍雾
 
 ## Out of scope
 

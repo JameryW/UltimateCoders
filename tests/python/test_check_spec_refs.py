@@ -798,7 +798,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # (347 -> 386). D2 names the agent-generated correctness harness without a
     # path-shaped backtick so it does not open an untriaged dangling mention;
     # unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 386
+    # D4–D8 decided: map Decisions so far cites routing.py once more (386 -> 387),
+    # still resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 387
 
 
 def test_real_corpus_has_no_false_content_mismatch():

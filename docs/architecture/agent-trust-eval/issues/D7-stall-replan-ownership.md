@@ -1,8 +1,8 @@
 # D7-stall-replan-ownership
 
-Status: open (decision ticket — not implementation)
+Status: **decided** (2026-10-24 — round-2 via「继续」adopting Proposed)
 Type: grilling
-Blocked by: _(none — frontier; P2)_
+Blocked by: _(none — D3 completion conditions unblock true replan later)_
 Blocks: P2 replan implementation tickets
 
 ## Question
@@ -14,17 +14,12 @@ Blocks: P2 replan implementation tickets
 - 文档与 `progress.py`：无 replan 原语；停滞 → 停止重试。
 - `contract.py` 已期望编排层在契约变更时重新规划，但实现侧仍缺原语。
 - 用户 P2：「任务停滞时，换一个新的 Agent 重派一次。」
-
-## Options
-
-1. **单次自动重派**：同一 contract 下换 worker/agent 再跑一轮；仍失败则人工。
-2. **真 replan**：新分解 / 新子图；需新 contract 版本与配额。
-3. **仅人工**：Progress stop 后只发信号，不自动重派。
-
-## Proposed (from intake — needs human confirm)
-
-➡️ **选项 1 作为 P2 MVP**，选项 2 单列后续地图：先满足「换 Agent 重派一次」且可观测；真 replan 等 D3 完成条件与契约版本语义稳定后再做。
+- D3：结构化完成条件与非 LLM 判定已决；真 replan（新分解）宜等其落地后再做。
 
 ## Resolution
 
-(fill in when decided)
+**P2 MVP = 同契约换 Agent 重派一次；真 replan 延后。**
+
+1. MVP：在**同一 contract** 下换 Agent / worker **再派一次**；仍失败则升级人工。
+2. 真 replan（新分解 / 新子图、新 contract 版本与配额）**延后**到 D3 `completion_conditions` 落地且契约版本语义稳定之后，单列后续实现票。
+3. 编排层拥有该单次重派原语的可观测触发与配额；不把「换分解」伪装成同契约重试。
