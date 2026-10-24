@@ -83,7 +83,8 @@ Oracle.evaluate(baseline, candidate) -> OracleVerdict  # verdict.eval_role == ca
 - `to_dict` emits the role string; `from_dict` missing key defaults to `select` (legacy).
 - Env: `UC_EVAL_ROLE_ENFORCE` — unset/empty/`0`/`false`/`no`/`off` → enforcement **off** (default). Truthy (`1`/`true`/`yes`/`on`) → on.
 - When enforce is on: `require_report_role` / `assert_report_identity` reject non-report; `with_role` refuses search/select → report relabel. Explicit construction with `eval_role=report` remains allowed.
-- Accept path: Oracle may consume select-role evidence. Public uplift must call report-identity helpers (ticket 02 wires remasure).
+- `require_report_role` also enforces when `UC_REPORT_UPLIFT_ENFORCE` is on (ticket 02 publish boundary), even if eval-role enforce is off.
+- Accept path: Oracle may consume select-role evidence. Public uplift must call report-identity helpers (see §7-report-uplift).
 
 ### 4. Validation & Error Matrix
 
@@ -106,6 +107,55 @@ Good: select candidate accepted by Oracle; report remasure later passes `require
 ### 7. Wrong vs Correct
 
 Wrong: treat select/search scores as report uplift, or rely on `dataclasses.replace` to bypass `with_role` in product code. Correct: mint report via protected remasure / explicit report construction; call `require_report_role` at publish boundaries when enforce is on.
+
+## 7-report-uplift. Report-only public uplift (Agent Trust P0 / T2)
+
+### 1. Scope / Trigger
+
+Accept-vs-publish separation: `OptimizationWorkflow.run` after a select-role accept, and `runner._execute_inference` before writing `report.json` / manifest `verdict` used for publication.
+
+### 2. Signatures
+
+```python
+REPORT_UPLIFT_ENFORCE_ENV = "UC_REPORT_UPLIFT_ENFORCE"
+def report_uplift_enforce_enabled() -> bool
+def mint_report_result(result: BenchmarkResult) -> BenchmarkResult  # explicit eval_role=report
+def published_uplift_verdict(result: dict) -> dict | None
+# require_report_role also enforces when report-uplift enforce is on
+await OptimizationWorkflow.run(...) -> dict  # may include report_verdict, public_uplift
+```
+
+### 3. Contracts
+
+- Env: `UC_REPORT_UPLIFT_ENFORCE` — same truthy/off parsing as `UC_EVAL_ROLE_ENFORCE`; default **off**.
+- When off: workflow returns select-sourced nested verdicts only (no remasure); `published_uplift_verdict` uses the last iteration verdict (legacy).
+- When on and the workflow **accepts** a candidate: remasure baseline (HEAD) + accepted working tree via the same `BenchmarkRunner`, mint both with `mint_report_result`, `Oracle.evaluate` → `report_verdict`; attach `public_uplift.improvement_pct` from that verdict only. Select `iterations` history stays intact.
+- Publish boundary (`runner` before `report.json` / manifest verdict): call `published_uplift_verdict` → `require_report_role`. Select/search scores must not populate public uplift fields.
+- Missing/failed report remasure: workflow raises (`report remasure failed`); `published_uplift_verdict` raises if optimization `success` with iterations but no `report_verdict` — **no** select fallback. Analyze/benchmark successes (no iterations) publish no uplift verdict.
+- Oracle accept loop remains select-role evidence.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|---|---|
+| Flag off | No remasure; public verdict = last select iteration |
+| Flag on + accept + remasure OK | `report_verdict` / `public_uplift` from report Oracle |
+| Flag on + accept + remasure fails | Raise; publication must not use select uplift |
+| Flag on + optimization success (iterations) without `report_verdict` | `published_uplift_verdict` → `ValueError` |
+| Flag on + non-optimization success (no iterations) | `None` (no uplift published) |
+| Flag on + `report_verdict` with select role | `require_report_role` → `ValueError` |
+
+### 5. Good / Base / Bad Cases
+
+Good: select accept, report remasure yields report-tagged uplift used in manifest. Base: flag off preserves prior nested-verdict publication. Bad: stuffing select `improvement_pct` into public fields under enforce, or falling back to iteration verdicts when remasure is missing.
+
+### 6. Tests Required
+
+`tests/python/test_report_uplift.py` (+ existing eval_role / workflow suites): flag matrix, accept-vs-publish separation, no select fallback, remasure failure fail-closed.
+
+### 7. Wrong vs Correct
+
+Wrong: publish last-iteration select uplift when remasure failed. Correct: fail closed; only `report_verdict` may fill public uplift under enforce.
 
 ## 7a. Gotcha: decoded wire payloads are not `@dataclass` types
 

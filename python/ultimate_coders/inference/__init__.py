@@ -11,6 +11,9 @@ from .models import (
     MetaInferResult,
     MetaInferTask,
     assert_report_identity,
+    mint_report_result,
+    published_uplift_verdict,
+    report_uplift_enforce_enabled,
     require_report_role,
 )
 from .oracle import Oracle, OraclePolicy, OracleVerdict
@@ -36,5 +39,8 @@ __all__ = [
     "ExecutionAdaptationGraph",
     "OptimizationWorkflow",
     "assert_report_identity",
+    "mint_report_result",
+    "published_uplift_verdict",
+    "report_uplift_enforce_enabled",
     "require_report_role",
 ]

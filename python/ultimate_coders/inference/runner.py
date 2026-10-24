@@ -27,7 +27,7 @@ from .artifact_store import ArtifactStore
 from .artifacts import artifact_root as resolve_artifact_root
 from .benchmark import BenchmarkRunner, BenchmarkSpec, run_command
 from .graph import ExecutionAdaptationGraph
-from .models import InferenceTaskType, MetaInferTask
+from .models import InferenceTaskType, MetaInferTask, published_uplift_verdict
 from .oracle import Oracle, OraclePolicy
 from .workflow import OptimizationWorkflow
 
@@ -358,6 +358,8 @@ async def _execute_inference(request: dict[str, Any], artifact_dir: str) -> dict
     result["delivery"] = {"status": "pending" if result.get("patch") else "not_required"}
     if "graph" in result:
         atomic_json(artifacts / "graph.json", result["graph"])
+    # Public uplift identity: fail closed before writing report.json / manifest verdict.
+    public_verdict = published_uplift_verdict(result)
     result.setdefault("artifacts", {})["report"] = str(artifacts / "report.json")
     atomic_json(artifacts / "report.json", result)
     manifest = {
@@ -373,9 +375,7 @@ async def _execute_inference(request: dict[str, Any], artifact_dir: str) -> dict
         "artifacts": _artifact_metadata(artifacts),
         "artifact_state": "pending",
         "remote_id": (result.get("backend") or {}).get("task_id"),
-        "verdict": result.get("iterations", [{}])[-1].get("verdict")
-        if result.get("iterations")
-        else None,
+        "verdict": public_verdict,
         "delivery": result["delivery"],
     }
     atomic_json(artifacts / "manifest.json", manifest)
