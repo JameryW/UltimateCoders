@@ -4,7 +4,7 @@ Status: active (versioned under docs/ — GitHub Issues publication pending expl
 Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24)
 Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏差) + P0–P2 priorities
 
-本图在为实现票开票之前收敛「Agent 结果是否可信」路线上的决策。决策票**不是**实现工作，不得开 Trellis 任务。全部相关决策闭环后，再经 `$to-spec` / `$to-tickets` 开垂直切片实现票。
+本图收敛「Agent 结果是否可信」路线上的决策，并挂接 P0 实现 backlog。决策票**不是**实现工作；P0 垂直切片见下方 Implementation backlog（[spec-p0.md](spec-p0.md) + tickets/01–06）。P1/P2 尚未开实现票。
 
 ## Destination
 
@@ -16,6 +16,21 @@ Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏
 - Skills: `$grilling`, `$domain-modeling`, then `$to-spec` / `$to-tickets` only after this map clears
 - Standing preferences: feature flags off by default; approx↔full rank agreement re-tested when benches change; no CV thresholds without labeled data; Hy-Memory version-pinned + egress compliance
 - Tracker mode: versioned docs tree until user authorizes GitHub map + `wayfinder:*` labels；授权后以 GitHub 为权威，本目录降为镜像
+- P0 implementation backlog is published below; decision tickets remain authority for D1–D8
+
+## Implementation backlog
+
+P0 (D1–D3) — **ready-for-agent** (docs-tree tickets; GitHub wayfinder publication still pending authorization):
+
+- Spec: [spec-p0.md](spec-p0.md)
+- [01 eval_role on results](tickets/01-eval-role-on-results.md) — Blocked by: none
+- [02 report-only public uplift](tickets/02-report-only-public-uplift.md) — Blocked by: 01
+- [03 independent correctness re-eval](tickets/03-independent-correctness-reeval.md) — Blocked by: none
+- [04 dual-gate accept](tickets/04-dual-gate-accept.md) — Blocked by: 03
+- [05 completion_conditions](tickets/05-completion-conditions.md) — Blocked by: none
+- [06 adapters and re-eval condition](tickets/06-adapters-and-reeval-condition.md) — Blocked by: 05, 03
+
+Frontier for implementers: 01, 03, 05. P1 (D4–D6) and P2 (D7–D8) are **not ticketed yet**.
 
 ## Decisions so far
 

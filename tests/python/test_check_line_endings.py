@@ -233,6 +233,8 @@ def test_real_repo_is_reconciled() -> None:
         (2083, 2074),  # Agent Trust/Eval wayfinder: assessment + map + D1–D8 (10 text).
         (2087, 2078),  # CI-fix Trellis task artifacts for that wayfinder PR (4 text).
         (2091, 2082),  # D4–D8 decision recording Trellis task artifacts (4 text).
+        (2098, 2089),  # P0 spec + six tickets (map modified): seven new text files.
+        (2102, 2093),  # P0-spec Trellis task artifacts (4 text) on top of docs-only.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
