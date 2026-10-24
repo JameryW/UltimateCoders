@@ -4,12 +4,21 @@ from .adapter import MetaInferAdapter, MetaInferError
 from .agent import InferenceInfraAgent
 from .benchmark import BenchmarkRunner, BenchmarkSpec
 from .graph import AdaptationEdge, AdaptationNode, AdaptationNodeKind, ExecutionAdaptationGraph
-from .models import BenchmarkResult, InferenceTaskType, MetaInferResult, MetaInferTask
+from .models import (
+    BenchmarkResult,
+    EvalRole,
+    InferenceTaskType,
+    MetaInferResult,
+    MetaInferTask,
+    assert_report_identity,
+    require_report_role,
+)
 from .oracle import Oracle, OraclePolicy, OracleVerdict
 from .workflow import OptimizationWorkflow
 
 __all__ = [
     "BenchmarkResult",
+    "EvalRole",
     "InferenceTaskType",
     "MetaInferResult",
     "MetaInferTask",
@@ -26,4 +35,6 @@ __all__ = [
     "AdaptationNodeKind",
     "ExecutionAdaptationGraph",
     "OptimizationWorkflow",
+    "assert_report_identity",
+    "require_report_role",
 ]

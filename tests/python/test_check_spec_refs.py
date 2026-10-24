@@ -802,7 +802,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # still resolved; unclassified stays 0.
     # P0 spec + tickets/01–06 add zero path-shaped backticks (module/interface
     # names only); mention census stays 387, unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 387
+    # T1 eval_role: inference-infra-spec §7-eval-role names test_eval_role.py and
+    # test_inference_oracle.py (387 -> 389), both resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 389
 
 
 def test_real_corpus_has_no_false_content_mismatch():
