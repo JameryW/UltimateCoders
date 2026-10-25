@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** implemented (`UC_COMPLETION_CONDITIONS_ENFORCE`; evaluate + `evidence_flag` in `ultimate_coders.agent.contract` / `completion_conditions.py`)
 
-- [ ] `completion_conditions` is a separate structure from contract digest / registry
-- [ ] Evaluate API is exported from the `ultimate_coders.agent.contract` package
-- [ ] Digest behaviour and responsibility remain goal-change detection only
-- [ ] Evaluate runs without an LLM; model self-report alone cannot pass
-- [ ] Tests cover the contract-package seam (digest vs completion namespaces)
-- [ ] Feature flag defaults off
+- [x] `completion_conditions` is a separate structure from contract digest / registry
+- [x] Evaluate API is exported from the `ultimate_coders.agent.contract` package
+- [x] Digest behaviour and responsibility remain goal-change detection only
+- [x] Evaluate runs without an LLM; model self-report alone cannot pass
+- [x] Tests cover the contract-package seam (digest vs completion namespaces)
+- [x] Feature flag defaults off

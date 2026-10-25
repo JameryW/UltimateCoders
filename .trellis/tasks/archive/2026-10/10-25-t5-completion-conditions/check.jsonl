@@ -1,0 +1,3 @@
+{"file": "docs/architecture/agent-trust-eval/tickets/05-completion-conditions.md", "reason": "ticket AC"}
+{"file": "docs/architecture/agent-trust-eval/issues/D3-completion-conditions-home.md", "reason": "D3 decision"}
+{"file": ".trellis/spec/backend/completion-conditions-spec.md", "reason": "completion conditions evaluate/gate contracts"}

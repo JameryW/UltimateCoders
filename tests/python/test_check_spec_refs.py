@@ -811,7 +811,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # (392 -> 394), both resolved; unclassified stays 0.
     # T4 dual-gate: §7-dual-gate names test_dual_gate_accept.py
     # (394 -> 395), resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 395
+    # T5 completion_conditions: completion-conditions-spec + ticket 05 status
+    # name contract.py, completion_conditions.py, and the two seam tests
+    # (395 -> 400), all resolved once the new module/test are tracked;
+    # unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 400
 
 
 def test_real_corpus_has_no_false_content_mismatch():

@@ -27,10 +27,10 @@ P0 (D1–D3) — **ready-for-agent** (docs-tree tickets; GitHub wayfinder public
 - [02 report-only public uplift](tickets/02-report-only-public-uplift.md) — **implemented** (`UC_REPORT_UPLIFT_ENFORCE`); was blocked by 01
 - [03 independent correctness re-eval](tickets/03-independent-correctness-reeval.md) — **implemented** (`UC_INDEPENDENT_REEVAL_ENFORCE`); was blocked by: none
 - [04 dual-gate accept](tickets/04-dual-gate-accept.md) — **implemented** (`UC_DUAL_GATE_ENFORCE`); was blocked by 03
-- [05 completion_conditions](tickets/05-completion-conditions.md) — Blocked by: none
+- [05 completion_conditions](tickets/05-completion-conditions.md) — **implemented** (`UC_COMPLETION_CONDITIONS_ENFORCE`); was blocked by: none
 - [06 adapters and re-eval condition](tickets/06-adapters-and-reeval-condition.md) — Blocked by: 05, 03
 
-Frontier for implementers: 05 (unblocked). P1 (D4–D6) and P2 (D7–D8) are **not ticketed yet**.
+Frontier for implementers: 06 (unblocked by 05 + 03). P1 (D4–D6) and P2 (D7–D8) are **not ticketed yet**.
 
 ## Decisions so far
 

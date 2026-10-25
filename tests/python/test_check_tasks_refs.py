@@ -569,8 +569,10 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     # T2 report-uplift task context adds 3 `.trellis` refs (886→889).
     # T3 independent-reeval task context adds 2 `.trellis` refs (889→891).
     # T4 dual-gate-accept task context adds 2 `.trellis` refs (891→893).
+    # T5 completion-conditions task context adds 4 `.trellis` refs (893→897):
+    # implement.jsonl ×3 + check.jsonl ×1 (completion-conditions-spec).
     assert len(refs) in (
-        812, 814, 830, 832, 846, 853, 865, 867, 880, 883, 886, 889, 891, 893
+        812, 814, 830, 832, 846, 853, 865, 867, 880, 883, 886, 889, 891, 893, 897
     ), (
         f"reference count drifted: {len(refs)}"
     )
