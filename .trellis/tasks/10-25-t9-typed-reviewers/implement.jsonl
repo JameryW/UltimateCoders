@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Python test patterns"}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Review / routing adjacent agent contracts"}
+{"file": ".trellis/spec/backend/completion-conditions-spec.md", "reason": "review_verified evidence for completion adapters"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for new typed-review section"}

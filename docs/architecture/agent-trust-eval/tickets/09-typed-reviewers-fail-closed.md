@@ -4,11 +4,11 @@
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t9-typed-reviewers-7c92`; `python/ultimate_coders/agent/typed_review.py` + `UC_TYPED_REVIEW_ENFORCE`; label registry empty by default; stub requires `typed_review_pass is True`; no calibrated mid-score threshold; `parse_review` unchanged)
 
-- [ ] Shared taxonomy with routing FailureKind (no parallel enum names)
-- [ ] One reviewer interface per kind; missing labels ⇒ kind disabled
-- [ ] Existing review JSON parse gate still works when typed path is off
-- [ ] No hardcoded “calibrated” 0.5 threshold shipped as product default
-- [ ] Tests cover disable-without-labels and taxonomy alignment
-- [ ] Feature flag defaults off (`UC_TYPED_REVIEW_ENFORCE`)
+- [x] Shared taxonomy with routing FailureKind (no parallel enum names)
+- [x] One reviewer interface per kind; missing labels ⇒ kind disabled
+- [x] Existing review JSON parse gate still works when typed path is off
+- [x] No hardcoded “calibrated” 0.5 threshold shipped as product default
+- [x] Tests cover disable-without-labels and taxonomy alignment
+- [x] Feature flag defaults off (`UC_TYPED_REVIEW_ENFORCE`)

@@ -821,7 +821,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # test_approx_rank_agreement.py (401 -> 402), resolved; unclassified stays 0.
     # T8 approx prune: §7-approx-prune names metainfer_service/execution.py and
     # test_approx_prune.py (402 -> 404), both resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 404
+    # T9 typed reviewers: typed-review-spec + ticket 09 status name
+    # python/ultimate_coders/agent/typed_review.py, review.py,
+    # tests/python/test_typed_reviewers.py, and the full module path again
+    # (404 -> 408), all resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 408
 
 
 def test_real_corpus_has_no_false_content_mismatch():
