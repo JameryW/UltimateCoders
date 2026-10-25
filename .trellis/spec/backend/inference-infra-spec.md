@@ -298,8 +298,8 @@ def disarm_approx_eval() -> None
 - Metric lock: Spearman ρ only (pure Python midranks + Pearson on ranks; ties use average ranks). Other `metric` values fail closed. Threshold default `0.8`.
 - Inputs are parallel score sequences. Truth must be derived from report-role hold-out. Optional `truth_results` invoke `require_report_role` (no-op when eval-role / report-uplift enforce is off).
 - Fail closed: unequal lengths, `n < 3`, non-finite/non-numeric values, constant sequence (undefined ρ), unsupported metric. `passed = coefficient >= threshold` when defined.
-- `arm_approx_eval` sets the latch only when `outcome.passed`; otherwise disarms. `approx_eval_ready_to_prune()` is true only when enforce is on **and** armed (consulted by T8; no prune yet).
-- Pure functions + env latch only. No Oracle subclass, no uplift fields, no candidate prune.
+- `arm_approx_eval` sets the latch only when `outcome.passed`; otherwise disarms. `approx_eval_ready_to_prune()` is true only when enforce is on **and** armed (prune wiring in §7-approx-prune / ticket 08).
+- Pure functions + env latch only. No Oracle subclass, no uplift fields. Candidate prune is ticket 08.
 
 ### 4. Validation & Error Matrix
 
@@ -324,7 +324,59 @@ Good: report-role hold-out scores agree with approx ranks (ρ ≥ 0.8) → arm f
 
 ### 7. Wrong vs Correct
 
-Wrong: prune candidates because `UC_APPROX_EVAL_ENFORCE` is on without a passing agreement latch, or invent a second Oracle that feeds approx scores into uplift. Correct: require Spearman agreement on report-role truth, arm explicitly, and leave prune wiring to ticket 08.
+Wrong: prune candidates because `UC_APPROX_EVAL_ENFORCE` is on without a passing agreement latch, or invent a second Oracle that feeds approx scores into uplift. Correct: require Spearman agreement on report-role truth, arm explicitly, then use §7-approx-prune for discard/keep only.
+
+## 7-approx-prune. Approx prune-only path and auto-disable (Agent Trust P1 / T8)
+
+### 1. Scope / Trigger
+
+Prune half of D4 / Seam D: discard/keep pre-filter upstream of Oracle, uplift
+refusal of approx-sourced numbers, and fingerprint-change auto-disarm. Depends
+on §7-approx-rank-agreement (`approx_eval_ready_to_prune`).
+
+### 2. Signatures
+
+```python
+class PruneDecision:  # frozen: index, keep, approx_score, reason, item_id?
+class PruneResult:  # frozen: kept, kept_indices, decisions, armed, discarded_indices
+def prune_candidates(items, scores, *, keep_top_k=None, max_discard_fraction=0.5, higher_is_better=True) -> PruneResult
+def filter_ranked_library(library, *, score_key="exec_time_ms", higher_is_better=False, ...) -> list
+def refuse_approx_sourced_uplift(payload) -> None
+def retest_agreement_on_change(fingerprint, truth_scores, approx_scores, *, previous_fingerprint=None, **agreement_kwargs) -> RankAgreementOutcome
+# published_uplift_verdict calls refuse_approx_sourced_uplift
+```
+
+### 3. Contracts
+
+- `prune_candidates` returns keep/discard only — never an `OracleVerdict` or uplift payload. When `not approx_eval_ready_to_prune()` → keep all (`armed=False`). When armed: rank by score (`higher_is_better`; use `False` for latency such as `exec_time_ms`), keep top-k (default `max(1, ceil(n * (1 - max_discard_fraction)))` with `max_discard_fraction=0.5`), discard the rest. Survivors still take full Oracle / BenchmarkRunner.
+- MetaInfer ranked-library fan-in (`metainfer_service/execution.py` via `filter_ranked_library`) may reorder/filter before `library[0]`. Soft no-op when unarmed or scores missing. **Do not** put approx inside `Oracle.evaluate`.
+- `refuse_approx_sourced_uplift` raises on `source == "approx"` or an `approx_score` field (including nested `public_uplift` / `report_verdict`). `published_uplift_verdict` always invokes it before returning a public verdict.
+- `retest_agreement_on_change`: if `previous_fingerprint` is not `None` and equals `fingerprint`, return a synthetic passed outcome and leave the latch untouched. Otherwise (cold start or change) call `evaluate_rank_agreement`; on fail `disarm_approx_eval`, on pass `arm_approx_eval`. Callers persist the fingerprint; the helper does not store it.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|---|---|
+| Not ready to prune | Keep all; `armed=False` |
+| Ready + default fraction | Keep ≈ half (at least 1); best-first survivors |
+| Ready + `keep_top_k` | Keep exactly that many (clamped to n) |
+| `higher_is_better=False` (latency) | Lower score ranks better |
+| Uplift payload `source=approx` / `approx_score` | `ValueError` |
+| Fingerprint unchanged | Synthetic pass; latch untouched |
+| Fingerprint change + agreement fail | Disarm |
+| Fingerprint change + agreement pass | Arm |
+
+### 5. Good / Base / Bad Cases
+
+Good: enforce+armed, latency scores prune worse kernels; survivors published for Oracle. Base: flags off → `filter_ranked_library` / `prune_candidates` pass through. Bad: stuffing approx scores into `published_uplift_verdict`, or leaving the latch armed after a failed fingerprint retest.
+
+### 6. Tests Required
+
+`tests/python/test_approx_prune.py` (+ existing uplift / agreement suites): unarmed keep-all; armed prune; uplift refuses approx; fingerprint change fails → disarmed; MetaInfer soft no-op when unarmed.
+
+### 7. Wrong vs Correct
+
+Wrong: prune because enforce is on without the agreement latch, feed approx into Oracle accept, or publish approx uplift. Correct: require `approx_eval_ready_to_prune`, discard/keep only upstream of Oracle, refuse approx at the publish boundary, and disarm on failed re-agreement after fingerprint change.
 
 ## 7a. Gotcha: decoded wire payloads are not `@dataclass` types
 

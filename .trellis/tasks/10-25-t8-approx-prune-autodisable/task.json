@@ -1,0 +1,30 @@
+{
+  "id": "t8-approx-prune-autodisable",
+  "name": "t8-approx-prune-autodisable",
+  "title": "T8 approx prune and auto-disable",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P2",
+  "creator": "cloud-agent",
+  "assignee": "cloud-agent",
+  "createdAt": "2026-10-25",
+  "completedAt": null,
+  "branch": "cursor/t8-approx-prune-autodisable-7c92",
+  "base_branch": "cursor/t8-approx-prune-autodisable-7c92",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "python/ultimate_coders/inference/approx_eval.py",
+    "python/ultimate_coders/metainfer_service/execution.py",
+    "tests/python/test_approx_prune.py"
+  ],
+  "notes": "Implement complete: prune API + MetaInfer pre-filter + uplift refuse + fingerprint autodisable. Staged; parent commits.",
+  "meta": {}
+}

@@ -1,9 +1,9 @@
-"""Approx-eval rank-agreement gate and arming latch (Agent Trust P1 / T7).
+"""Approx-eval rank-agreement gate, prune-only path, and auto-disable (P1 / T7–T8).
 
-Pure agreement surface: Spearman ρ on parallel score sequences, optional arming
-latch. No Oracle subclass, no uplift fields, no candidate prune (ticket 08).
-Truth rankings must come from report-role hold-out; callers may pass accompanying
-result objects for identity checks when eval-role enforce is on.
+Agreement (T7): Spearman ρ on parallel score sequences plus an arming latch.
+Prune (T8): discard/keep decisions only when enforce AND armed; never an
+OracleVerdict or public uplift payload. Bench/harness fingerprint change
+re-runs agreement and disarms on failure.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .models import require_report_role
@@ -20,6 +20,7 @@ APPROX_EVAL_ENFORCE_ENV = "UC_APPROX_EVAL_ENFORCE"
 APPROX_EVAL_ARMED_ENV = "UC_APPROX_EVAL_ARMED"
 
 DEFAULT_SPEARMAN_THRESHOLD = 0.8
+DEFAULT_MAX_DISCARD_FRACTION = 0.5
 
 _TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 
@@ -40,7 +41,7 @@ def approx_eval_armed() -> bool:
 
 
 def approx_eval_ready_to_prune() -> bool:
-    """True only when enforce is on AND the latch is armed (for ticket 08)."""
+    """True only when enforce is on AND the latch is armed."""
     return approx_eval_enforce_enabled() and approx_eval_armed()
 
 
@@ -52,6 +53,28 @@ class RankAgreementOutcome:
     threshold: float
     n: int
     reasons: list[str]
+
+
+@dataclass(frozen=True)
+class PruneDecision:
+    """Per-candidate keep/discard from the approx pre-filter (never an Oracle verdict)."""
+
+    index: int
+    keep: bool
+    approx_score: float
+    reason: str
+    item_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PruneResult:
+    """Prune-only outcome: survivors for full Oracle / BenchmarkRunner."""
+
+    kept: list[Any]
+    kept_indices: list[int]
+    decisions: list[PruneDecision]
+    armed: bool
+    discarded_indices: list[int] = field(default_factory=list)
 
 
 def _average_ranks(values: Sequence[float]) -> list[float]:
@@ -228,3 +251,208 @@ def arm_approx_eval(outcome: RankAgreementOutcome) -> bool:
 def disarm_approx_eval() -> None:
     """Clear the approx-eval arming latch."""
     os.environ.pop(APPROX_EVAL_ARMED_ENV, None)
+
+
+def _coerce_score(value: Any, index: int) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"non-numeric approx score at index {index}") from exc
+    if isinstance(value, bool) or not math.isfinite(score):
+        raise ValueError(f"non-finite approx score at index {index}")
+    return score
+
+
+def _item_id(item: Any) -> str | None:
+    if isinstance(item, dict):
+        raw = item.get("id")
+        return raw if isinstance(raw, str) else None
+    raw = getattr(item, "id", None)
+    return raw if isinstance(raw, str) else None
+
+
+def prune_candidates(
+    items: Sequence[Any],
+    scores: Sequence[float],
+    *,
+    keep_top_k: int | None = None,
+    max_discard_fraction: float = DEFAULT_MAX_DISCARD_FRACTION,
+    higher_is_better: bool = True,
+) -> PruneResult:
+    """Rank-order prune: keep/discard only; never an OracleVerdict or uplift.
+
+    When :func:`approx_eval_ready_to_prune` is false, every candidate is kept
+    (pass-through). When armed, candidates are ordered by ``scores``
+    (``higher_is_better`` controls direction; use ``False`` for latency such as
+    ``exec_time_ms``) and only the top-k survive for full Oracle /
+    BenchmarkRunner. Default ``keep_top_k`` is
+    ``max(1, ceil(n * (1 - max_discard_fraction)))``.
+    """
+    n = len(items)
+    if len(scores) != n:
+        raise ValueError(f"items/scores length mismatch: items={n} scores={len(scores)}")
+
+    parsed: list[float] = [_coerce_score(scores[i], i) for i in range(n)]
+
+    if not approx_eval_ready_to_prune():
+        decisions = [
+            PruneDecision(
+                index=i,
+                keep=True,
+                approx_score=parsed[i],
+                reason="approx prune not ready; keep all",
+                item_id=_item_id(items[i]),
+            )
+            for i in range(n)
+        ]
+        return PruneResult(
+            kept=list(items),
+            kept_indices=list(range(n)),
+            decisions=decisions,
+            armed=False,
+            discarded_indices=[],
+        )
+
+    if not math.isfinite(max_discard_fraction) or not (0.0 <= max_discard_fraction < 1.0):
+        raise ValueError("max_discard_fraction must be in [0, 1)")
+
+    if keep_top_k is None:
+        keep_n = max(1, math.ceil(n * (1.0 - max_discard_fraction))) if n else 0
+    else:
+        if not isinstance(keep_top_k, int) or isinstance(keep_top_k, bool):
+            raise ValueError("keep_top_k must be a positive int or None")
+        if keep_top_k < 1:
+            raise ValueError("keep_top_k must be >= 1")
+        keep_n = min(keep_top_k, n) if n else 0
+
+    # Stable rank: better scores first; ties keep original index order.
+    ranked = sorted(
+        range(n),
+        key=lambda i: ((-parsed[i] if higher_is_better else parsed[i]), i),
+    )
+    keep_set = set(ranked[:keep_n])
+    decisions: list[PruneDecision] = []
+    for i in range(n):
+        keep = i in keep_set
+        decisions.append(
+            PruneDecision(
+                index=i,
+                keep=keep,
+                approx_score=parsed[i],
+                reason="approx top-k keep" if keep else "approx prune discard",
+                item_id=_item_id(items[i]),
+            )
+        )
+    kept_indices = [i for i in ranked if i in keep_set]
+    discarded_indices = [i for i in ranked if i not in keep_set]
+    return PruneResult(
+        kept=[items[i] for i in kept_indices],
+        kept_indices=kept_indices,
+        decisions=decisions,
+        armed=True,
+        discarded_indices=discarded_indices,
+    )
+
+
+def refuse_approx_sourced_uplift(payload: Any) -> None:
+    """Reject approx-sourced numbers at the public uplift boundary.
+
+    Raises ``ValueError`` when ``payload`` (or nested ``public_uplift`` /
+    ``report_verdict``) carries ``source == "approx"`` or an ``approx_score``
+    field masquerading as uplift. Always active: approx scores must never
+    populate published uplift figures.
+    """
+    if payload is None:
+        return
+    if not isinstance(payload, dict):
+        return
+    source = payload.get("source")
+    if isinstance(source, str) and source.strip().lower() == "approx":
+        raise ValueError("approx-sourced uplift refused (source=approx)")
+    if "approx_score" in payload:
+        raise ValueError("approx_score cannot populate public uplift")
+    for nested_key in ("public_uplift", "report_verdict"):
+        nested = payload.get(nested_key)
+        if isinstance(nested, dict):
+            refuse_approx_sourced_uplift(nested)
+
+
+def retest_agreement_on_change(
+    fingerprint: str,
+    truth_scores: Sequence[float],
+    approx_scores: Sequence[float],
+    *,
+    previous_fingerprint: str | None = None,
+    **agreement_kwargs: Any,
+) -> RankAgreementOutcome:
+    """Re-run rank agreement when the bench/harness fingerprint changes.
+
+    Contract:
+
+    - If ``previous_fingerprint`` is not ``None`` and equals ``fingerprint``,
+      identity is unchanged: return a synthetic passed outcome and **do not**
+      touch the arming latch.
+    - Otherwise (cold start when ``previous_fingerprint`` is ``None``, or a
+      real fingerprint change): call :func:`evaluate_rank_agreement`. On
+      failure call :func:`disarm_approx_eval`; on pass call
+      :func:`arm_approx_eval`.
+
+    Callers persist the current fingerprint for the next comparison. This
+    helper does not store fingerprints itself.
+    """
+    threshold = float(agreement_kwargs.get("threshold", DEFAULT_SPEARMAN_THRESHOLD))
+    if previous_fingerprint is not None and previous_fingerprint == fingerprint:
+        n = min(len(truth_scores), len(approx_scores))
+        return RankAgreementOutcome(
+            passed=True,
+            metric="unchanged",
+            coefficient=1.0,
+            threshold=threshold,
+            n=n,
+            reasons=["fingerprint unchanged; latch untouched"],
+        )
+
+    outcome = evaluate_rank_agreement(truth_scores, approx_scores, **agreement_kwargs)
+    if outcome.passed:
+        arm_approx_eval(outcome)
+    else:
+        disarm_approx_eval()
+    return outcome
+
+
+def filter_ranked_library(
+    library: Sequence[Any],
+    *,
+    score_key: str = "exec_time_ms",
+    higher_is_better: bool = False,
+    keep_top_k: int | None = None,
+    max_discard_fraction: float = DEFAULT_MAX_DISCARD_FRACTION,
+) -> list[Any]:
+    """Soft MetaInfer pre-filter: prune when armed; otherwise return ``library``.
+
+    Expects a list of dicts with a numeric ``score_key`` (default latency
+    ``exec_time_ms``, so ``higher_is_better=False``). Missing/invalid scores
+    yield a soft no-op (original order preserved). Survivors are best-first.
+    """
+    if not isinstance(library, Sequence) or isinstance(library, (str, bytes)):
+        return list(library) if library is not None else []
+    items = list(library)
+    if not items or not approx_eval_ready_to_prune():
+        return items
+    scores: list[float] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            return items
+        raw = item.get(score_key)
+        try:
+            scores.append(_coerce_score(raw, i))
+        except ValueError:
+            return items
+    result = prune_candidates(
+        items,
+        scores,
+        keep_top_k=keep_top_k,
+        max_discard_fraction=max_discard_fraction,
+        higher_is_better=higher_is_better,
+    )
+    return list(result.kept)

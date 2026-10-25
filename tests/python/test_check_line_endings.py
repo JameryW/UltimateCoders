@@ -244,6 +244,7 @@ def test_real_repo_is_reconciled() -> None:
         (2138, 2129),  # T6 completion adapters: test + Trellis task artifacts (5 text).
         (2145, 2136),  # P1 spec + tickets 07–12 (7 text); T6 task archived (rename).
         (2151, 2142),  # T7 approx rank-agreement: module + test + Trellis task (6 text).
+        (2156, 2147),  # T8 approx prune: test_approx_prune.py + Trellis task (5 text).
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

@@ -575,8 +575,10 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     # implement.jsonl ×4 + check.jsonl ×2.
     # T7 approx-rank-agreement task context adds 5 `.trellis` refs (903→908):
     # implement.jsonl ×3 + check.jsonl ×2.
+    # T8 approx-prune task context adds 5 `.trellis` refs (908→913):
+    # implement.jsonl ×3 + check.jsonl ×2.
     assert len(refs) in (
-        812, 814, 830, 832, 846, 853, 865, 867, 880, 883, 886, 889, 891, 893, 897, 903, 908
+        812, 814, 830, 832, 846, 853, 865, 867, 880, 883, 886, 889, 891, 893, 897, 903, 908, 913
     ), (
         f"reference count drifted: {len(refs)}"
     )

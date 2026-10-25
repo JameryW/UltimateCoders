@@ -5,7 +5,10 @@ from .agent import InferenceInfraAgent
 from .approx_eval import (
     APPROX_EVAL_ARMED_ENV,
     APPROX_EVAL_ENFORCE_ENV,
+    DEFAULT_MAX_DISCARD_FRACTION,
     DEFAULT_SPEARMAN_THRESHOLD,
+    PruneDecision,
+    PruneResult,
     RankAgreementOutcome,
     approx_eval_armed,
     approx_eval_enforce_enabled,
@@ -13,6 +16,10 @@ from .approx_eval import (
     arm_approx_eval,
     disarm_approx_eval,
     evaluate_rank_agreement,
+    filter_ranked_library,
+    prune_candidates,
+    refuse_approx_sourced_uplift,
+    retest_agreement_on_change,
 )
 from .benchmark import BenchmarkRunner, BenchmarkSpec, IndependentReevalOutcome
 from .graph import AdaptationEdge, AdaptationNode, AdaptationNodeKind, ExecutionAdaptationGraph
@@ -36,6 +43,7 @@ from .workflow import OptimizationWorkflow
 __all__ = [
     "APPROX_EVAL_ARMED_ENV",
     "APPROX_EVAL_ENFORCE_ENV",
+    "DEFAULT_MAX_DISCARD_FRACTION",
     "DEFAULT_SPEARMAN_THRESHOLD",
     "BenchmarkResult",
     "EvalRole",
@@ -45,6 +53,8 @@ __all__ = [
     "Oracle",
     "OraclePolicy",
     "OracleVerdict",
+    "PruneDecision",
+    "PruneResult",
     "RankAgreementOutcome",
     "MetaInferAdapter",
     "MetaInferError",
@@ -66,9 +76,13 @@ __all__ = [
     "disarm_approx_eval",
     "dual_gate_enforce_enabled",
     "evaluate_rank_agreement",
+    "filter_ranked_library",
     "independent_reeval_enforce_enabled",
     "mint_report_result",
+    "prune_candidates",
     "published_uplift_verdict",
+    "refuse_approx_sourced_uplift",
     "report_uplift_enforce_enabled",
     "require_report_role",
+    "retest_agreement_on_change",
 ]
