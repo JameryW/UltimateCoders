@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Python test patterns"}
+{"file": ".trellis/spec/backend/completion-conditions-spec.md", "reason": "D3 completion adapters and independent_reeval condition contracts"}
+{"file": ".trellis/spec/backend/inference-infra-spec.md", "reason": "IndependentReevalOutcome shape composed into completion condition"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Index entry for completion-conditions-spec"}
