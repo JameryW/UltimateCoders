@@ -806,7 +806,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # test_inference_oracle.py (387 -> 389), both resolved; unclassified stays 0.
     # T2 report uplift: §7-report-uplift adds three mentions including two
     # runtime report.json names (exempt) (389 -> 392); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 392
+    # T3 independent re-eval: §7-independent-reeval names
+    # test_independent_reeval.py and test_inference_reliability.py
+    # (392 -> 394), both resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 394
 
 
 def test_real_corpus_has_no_false_content_mismatch():

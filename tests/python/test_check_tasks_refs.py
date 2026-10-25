@@ -567,7 +567,10 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     # journal-fix task archive moved the corpus to 883.
     # T1 eval-role archive adds 3 `.trellis` refs (883→886).
     # T2 report-uplift task context adds 3 `.trellis` refs (886→889).
-    assert len(refs) in (812, 814, 830, 832, 846, 853, 865, 867, 880, 883, 886, 889), (
+    # T3 independent-reeval task context adds 2 `.trellis` refs (889→891).
+    assert len(refs) in (
+        812, 814, 830, 832, 846, 853, 865, 867, 880, 883, 886, 889, 891
+    ), (
         f"reference count drifted: {len(refs)}"
     )
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
