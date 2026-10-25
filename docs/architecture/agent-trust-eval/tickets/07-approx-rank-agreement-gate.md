@@ -4,11 +4,11 @@
 
 **Blocked by:** None (uses P0 report-role identity / remasure; full dataset three-way split is out of scope).
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t7-approx-rank-agreement-7c92`; flags `UC_APPROX_EVAL_ENFORCE` / `UC_APPROX_EVAL_ARMED` default off; Spearman ρ threshold 0.8)
 
-- [ ] Agreement API evaluates approx ranking vs full Oracle ranking on a report-role hold-out
-- [ ] Metric choice (Spearman and/or Kendall) and threshold are explicit in code + tests
-- [ ] Failed or missing agreement leaves approx unarmed
-- [ ] Passing agreement can set an arming latch consulted by later prune wiring
-- [ ] Tests cover the agreement seam without requiring MetaInfer GPU
-- [ ] Feature flag(s) default off (`UC_APPROX_EVAL_ENFORCE`; optional latch env)
+- [x] Agreement API evaluates approx ranking vs full Oracle ranking on a report-role hold-out
+- [x] Metric choice (Spearman) and threshold are explicit in code + tests
+- [x] Failed or missing agreement leaves approx unarmed
+- [x] Passing agreement can set an arming latch consulted by later prune wiring
+- [x] Tests cover the agreement seam without requiring MetaInfer GPU
+- [x] Feature flag(s) default off (`UC_APPROX_EVAL_ENFORCE`; optional latch env)

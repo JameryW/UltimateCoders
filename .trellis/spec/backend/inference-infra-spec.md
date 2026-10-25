@@ -270,6 +270,62 @@ Good: select oracle accepts and sealed independent re-eval passes → keep. Base
 
 Wrong: treat Agent harness self-report or select-path measure alone as sufficient under `UC_DUAL_GATE_ENFORCE`. Correct: require attestation and sealed `independent_reeval.passed`, record which gate failed, and leave fingerprint fail-closed intact when the flag is off.
 
+## 7-approx-rank-agreement. Approx rank-agreement gate (Agent Trust P1 / T7)
+
+### 1. Scope / Trigger
+
+Agreement + arming latch for approx eval (D4 / Seam D agreement half). Prune wiring
+into the workflow is ticket 08. No second Oracle; no approx scores in public uplift.
+
+### 2. Signatures
+
+```python
+APPROX_EVAL_ENFORCE_ENV = "UC_APPROX_EVAL_ENFORCE"
+APPROX_EVAL_ARMED_ENV = "UC_APPROX_EVAL_ARMED"
+DEFAULT_SPEARMAN_THRESHOLD = 0.8
+def approx_eval_enforce_enabled() -> bool  # default off
+def approx_eval_armed() -> bool  # default off
+def approx_eval_ready_to_prune() -> bool  # enforce AND armed
+class RankAgreementOutcome:  # frozen: passed, metric, coefficient, threshold, n, reasons
+def evaluate_rank_agreement(truth_scores, approx_scores, *, metric="spearman", threshold=..., truth_results=None) -> RankAgreementOutcome
+def arm_approx_eval(outcome) -> bool
+def disarm_approx_eval() -> None
+```
+
+### 3. Contracts
+
+- Env: `UC_APPROX_EVAL_ENFORCE` / `UC_APPROX_EVAL_ARMED` — same truthy/off parsing as other UC inference enforce flags (`1`/`true`/`yes`/`on`); both default **off**.
+- Metric lock: Spearman ρ only (pure Python midranks + Pearson on ranks; ties use average ranks). Other `metric` values fail closed. Threshold default `0.8`.
+- Inputs are parallel score sequences. Truth must be derived from report-role hold-out. Optional `truth_results` invoke `require_report_role` (no-op when eval-role / report-uplift enforce is off).
+- Fail closed: unequal lengths, `n < 3`, non-finite/non-numeric values, constant sequence (undefined ρ), unsupported metric. `passed = coefficient >= threshold` when defined.
+- `arm_approx_eval` sets the latch only when `outcome.passed`; otherwise disarms. `approx_eval_ready_to_prune()` is true only when enforce is on **and** armed (consulted by T8; no prune yet).
+- Pure functions + env latch only. No Oracle subclass, no uplift fields, no candidate prune.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|---|---|
+| Flags unset / falsey | Enforce off; armed off; not ready to prune |
+| Perfect / high Spearman ≥ threshold | `passed=True`; may arm |
+| Anti-correlated / ρ < threshold | `passed=False`; arm refuses / disarms |
+| Short (`n < 3`) or mismatched lengths | Fail closed; not armed |
+| Constant sequence / non-finite | Fail closed; not armed |
+| Enforce on, latch unset | `approx_eval_ready_to_prune() is False` |
+| Enforce on + armed | `approx_eval_ready_to_prune() is True` |
+| `truth_results` non-report under eval-role enforce | Fail closed |
+
+### 5. Good / Base / Bad Cases
+
+Good: report-role hold-out scores agree with approx ranks (ρ ≥ 0.8) → arm for later prune. Base: flags off; agreement API callable but prune consumers see not ready. Bad: treating enforce alone as armed, or publishing approx scores as uplift.
+
+### 6. Tests Required
+
+`tests/python/test_approx_rank_agreement.py`: flag defaults off; perfect correlation passes and arms; anti-correlated / short / mismatched fail closed; enforce alone does not imply ready_to_prune; arm then disarm; optional report-identity check.
+
+### 7. Wrong vs Correct
+
+Wrong: prune candidates because `UC_APPROX_EVAL_ENFORCE` is on without a passing agreement latch, or invent a second Oracle that feeds approx scores into uplift. Correct: require Spearman agreement on report-role truth, arm explicitly, and leave prune wiring to ticket 08.
+
 ## 7a. Gotcha: decoded wire payloads are not `@dataclass` types
 
 **Warning** The dataclass rule in `.trellis/spec/frontend/component-guidelines.md`
