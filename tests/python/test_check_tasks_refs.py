@@ -579,6 +579,8 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     # implement.jsonl ×3 + check.jsonl ×2.
     # T9 typed-reviewers task context adds 6 `.trellis` refs (913→919):
     # implement.jsonl ×4 + check.jsonl ×2.
+    # T10 reviewer-cv-thresholds task context adds 5 `.trellis` refs (919→924):
+    # implement.jsonl ×3 + check.jsonl ×2.
     assert len(refs) in (
         812,
         814,
@@ -599,6 +601,7 @@ def test_real_corpus_reproduces_the_recorded_numbers():
         908,
         913,
         919,
+        924,
     ), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"

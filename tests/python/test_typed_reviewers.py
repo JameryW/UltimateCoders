@@ -1,8 +1,8 @@
-"""Typed reviewers fail-closed (ticket 09 / D5).
+"""Typed reviewers fail-closed (ticket 09 / D5; T10 threshold enablement).
 
-Flag default off; no labels ⇒ disabled; taxonomy uses routing FailureKind;
-parse_review JSON gate unchanged; no calibrated 0.5 default; stub pass can
-set review_verified for completion evidence.
+Flag default off; no labels ⇒ disabled; labels without CV threshold ⇒ disabled;
+taxonomy uses routing FailureKind; parse_review JSON gate unchanged; no
+calibrated 0.5 default; score≥threshold path sets review_verified for completion.
 """
 
 from __future__ import annotations
@@ -19,12 +19,15 @@ from ultimate_coders.agent.review import parse_review
 from ultimate_coders.agent.routing import FailureKind
 from ultimate_coders.agent.typed_review import (
     TYPED_REVIEW_ENFORCE_ENV,
+    ThresholdArtifact,
     TypedReviewOutcome,
     apply_typed_review,
     clear_labels,
+    clear_thresholds,
     completion_evidence_from_outcome,
     labels_available,
     register_labels,
+    register_threshold,
     review_for_kind,
     typed_review_enforce_enabled,
 )
@@ -34,12 +37,58 @@ _MODULE_PATH = (
 )
 
 
+def _schema_threshold(*, threshold: float = 0.82) -> ThresholdArtifact:
+    return ThresholdArtifact(
+        kind="schema",
+        metric="f1",
+        threshold=threshold,
+        cv_folds=5,
+        n_labels=40,
+        generated_at="2026-10-25T00:00:00Z",
+    )
+
+
+def _auth_threshold(*, threshold: float = 0.75) -> ThresholdArtifact:
+    return ThresholdArtifact(
+        kind="auth",
+        metric="f1",
+        threshold=threshold,
+        cv_folds=5,
+        n_labels=20,
+        generated_at="2026-10-25T00:00:00Z",
+    )
+
+
+def _unknown_threshold(*, threshold: float = 0.7) -> ThresholdArtifact:
+    return ThresholdArtifact(
+        kind="unknown",
+        metric="f1",
+        threshold=threshold,
+        cv_folds=3,
+        n_labels=10,
+        generated_at="2026-10-25T00:00:00Z",
+    )
+
+
+def _transient_threshold(*, threshold: float = 0.7) -> ThresholdArtifact:
+    return ThresholdArtifact(
+        kind="transient",
+        metric="f1",
+        threshold=threshold,
+        cv_folds=3,
+        n_labels=10,
+        generated_at="2026-10-25T00:00:00Z",
+    )
+
+
 @pytest.fixture(autouse=True)
 def _reset_typed_review_state(monkeypatch):
     clear_labels()
+    clear_thresholds()
     monkeypatch.delenv(TYPED_REVIEW_ENFORCE_ENV, raising=False)
     yield
     clear_labels()
+    clear_thresholds()
 
 
 # ── feature flag ───────────────────────────────────────────────────
@@ -118,7 +167,8 @@ def test_clear_labels_resets_registry():
 def test_review_disabled_when_flag_off(monkeypatch):
     monkeypatch.delenv(TYPED_REVIEW_ENFORCE_ENV, raising=False)
     register_labels(FailureKind.TRANSIENT, ["t1"])
-    outcome = review_for_kind(FailureKind.TRANSIENT, {"typed_review_pass": True})
+    register_threshold(_transient_threshold())
+    outcome = review_for_kind(FailureKind.TRANSIENT, {"typed_review_score": 0.99})
     assert outcome == TypedReviewOutcome(
         kind="transient",
         enabled=False,
@@ -130,21 +180,34 @@ def test_review_disabled_when_flag_off(monkeypatch):
 
 def test_review_disabled_when_no_labels(monkeypatch):
     monkeypatch.setenv(TYPED_REVIEW_ENFORCE_ENV, "1")
-    outcome = review_for_kind("schema", {"typed_review_pass": True})
+    register_threshold(_schema_threshold())
+    outcome = review_for_kind("schema", {"typed_review_score": 0.99})
     assert outcome.enabled is False
     assert outcome.passed is False
     assert outcome.review_verified is False
     assert "no labels" in outcome.reasons[0]
 
 
-def test_review_stub_fails_without_explicit_pass(monkeypatch):
+def test_review_disabled_when_labels_but_no_threshold(monkeypatch):
     monkeypatch.setenv(TYPED_REVIEW_ENFORCE_ENV, "1")
     register_labels(FailureKind.AUTH, ["a1"])
+    outcome = review_for_kind(FailureKind.AUTH, {"typed_review_score": 0.99})
+    assert outcome.enabled is False
+    assert outcome.passed is False
+    assert outcome.review_verified is False
+    assert "threshold artifact" in outcome.reasons[0]
+
+
+def test_review_fails_without_score_meeting_threshold(monkeypatch):
+    monkeypatch.setenv(TYPED_REVIEW_ENFORCE_ENV, "1")
+    register_labels(FailureKind.AUTH, ["a1"])
+    register_threshold(_auth_threshold(threshold=0.75))
     for evidence in (
         {},
-        {"typed_review_pass": False},
-        {"typed_review_pass": 1},
-        {"typed_review_pass": "yes"},
+        {"typed_review_score": 0.74},
+        {"typed_review_score": False},
+        {"typed_review_score": "0.9"},
+        {"typed_review_pass": True},
         {"approved": True},
     ):
         outcome = review_for_kind(FailureKind.AUTH, evidence)
@@ -153,10 +216,11 @@ def test_review_stub_fails_without_explicit_pass(monkeypatch):
         assert outcome.review_verified is False
 
 
-def test_review_stub_passes_with_explicit_pass(monkeypatch):
+def test_review_passes_when_score_meets_threshold(monkeypatch):
     monkeypatch.setenv(TYPED_REVIEW_ENFORCE_ENV, "1")
     register_labels(FailureKind.SCHEMA, ["s1"])
-    outcome = review_for_kind(FailureKind.SCHEMA, {"typed_review_pass": True})
+    register_threshold(_schema_threshold(threshold=0.82))
+    outcome = review_for_kind(FailureKind.SCHEMA, {"typed_review_score": 0.82})
     assert outcome.enabled is True
     assert outcome.passed is True
     assert outcome.review_verified is True
@@ -188,7 +252,8 @@ def test_completion_evidence_only_when_verified():
 def test_apply_typed_review_sets_review_verified_for_completion(monkeypatch):
     monkeypatch.setenv(TYPED_REVIEW_ENFORCE_ENV, "1")
     register_labels(FailureKind.UNKNOWN, ["u1"])
-    evidence = apply_typed_review(FailureKind.UNKNOWN, {"typed_review_pass": True})
+    register_threshold(_unknown_threshold())
+    evidence = apply_typed_review(FailureKind.UNKNOWN, {"typed_review_score": 0.95})
     assert evidence == {"review_verified": True}
     conditions = [CompletionCondition("review_approved", {})]
     verdict = evaluate_completion_conditions(conditions, evidence)
@@ -198,6 +263,7 @@ def test_apply_typed_review_sets_review_verified_for_completion(monkeypatch):
 def test_llm_approved_alone_still_fails_completion(monkeypatch):
     monkeypatch.setenv(TYPED_REVIEW_ENFORCE_ENV, "1")
     register_labels(FailureKind.TRANSIENT, ["t1"])
+    register_threshold(_transient_threshold())
     # Typed path did not verify; LLM JSON approved must not satisfy.
     evidence = apply_typed_review(FailureKind.TRANSIENT, {"approved": True})
     assert evidence == {}
@@ -231,11 +297,17 @@ def test_parse_review_still_works_when_typed_path_off():
 def test_module_has_no_calibrated_half_threshold():
     source = _MODULE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
-    # No assignment like DEFAULT_THRESHOLD = 0.5 / calibrated score constants.
+    # No module-level DEFAULT_*THRESHOLD* = … / calibrated mid-score constants.
+    # Local names like ``threshold = artifact.threshold`` are fine (T10).
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name) and "THRESHOLD" in target.id.upper():
+                if not isinstance(target, ast.Name):
+                    continue
+                name = target.id.upper()
+                if "DEFAULT" in name and "THRESHOLD" in name:
+                    pytest.fail(f"unexpected default threshold constant: {target.id}")
+                if name.endswith("_THRESHOLD") and isinstance(node.value, ast.Constant):
                     pytest.fail(f"unexpected threshold constant: {target.id}")
         if isinstance(node, ast.Constant) and node.value == 0.5:
             pytest.fail("typed_review must not ship a calibrated 0.5 default")

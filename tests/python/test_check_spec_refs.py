@@ -825,7 +825,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # python/ultimate_coders/agent/typed_review.py, review.py,
     # tests/python/test_typed_reviewers.py, and the full module path again
     # (404 -> 408), all resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 408
+    # T10 reviewer CV thresholds: typed-review-spec regeneration + ticket 10
+    # status name typed_review_thresholds.py, the schema fixture, the new
+    # test module, and short typed_review.py (408 -> 413), all resolved;
+    # unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 413
 
 
 def test_real_corpus_has_no_false_content_mismatch():

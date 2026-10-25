@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Python test patterns"}
+{"file": ".trellis/spec/backend/typed-review-spec.md", "reason": "T9 typed review contracts to extend with CV thresholds"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index"}
