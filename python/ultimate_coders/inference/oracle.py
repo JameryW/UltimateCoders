@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
+from .benchmark import IndependentReevalOutcome
 from .models import (
     METRIC_DIRECTIONS,
     BenchmarkResult,
@@ -87,6 +88,36 @@ class OracleVerdict:
         data = asdict(self)
         data["eval_role"] = self.eval_role.value
         return data
+
+
+def apply_dual_gate(verdict: OracleVerdict, reeval: IndependentReevalOutcome) -> OracleVerdict:
+    """Combine Oracle select verdict with sealed independent re-eval (ticket 04).
+
+    Attestation failure rejects even if re-eval claims pass. Re-eval failure (or
+    non-pass) rejects even if Oracle would accept. Otherwise the Oracle verdict
+    is unchanged (it may still reject for performance / policy reasons).
+    """
+    if not reeval.attestation_ok:
+        reasons = list(verdict.reasons)
+        reasons.append("dual_gate: attestation")
+        reasons.extend(reeval.reasons)
+        return OracleVerdict(
+            False,
+            reasons,
+            verdict.improvement_pct,
+            eval_role=verdict.eval_role,
+        )
+    if not reeval.passed:
+        reasons = list(verdict.reasons)
+        reasons.append("dual_gate: independent_reeval")
+        reasons.extend(reeval.reasons)
+        return OracleVerdict(
+            False,
+            reasons,
+            verdict.improvement_pct,
+            eval_role=verdict.eval_role,
+        )
+    return verdict
 
 
 class Oracle:

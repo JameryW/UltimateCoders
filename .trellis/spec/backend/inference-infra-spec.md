@@ -220,6 +220,56 @@ Good: protected harness, sealed `eval_root` outside the agent workspace, measure
 
 Wrong: mark correctness passed from Agent harness self-report alone, or measure under an Agent-writable tree and call it sealed. Correct: attest fingerprints first, measure only under a root outside Agent-writable trees, and expose `IndependentReevalOutcome` for dual-gate accept (T4).
 
+## 7-dual-gate. Dual-gate Oracle accept (Agent Trust P0 / T4)
+
+### 1. Scope / Trigger
+
+`OptimizationWorkflow.run` accept decision after select-path `oracle.evaluate`, when both harness fingerprint attestation and independent correctness re-eval (ticket 03) must pass before `keep`.
+
+### 2. Signatures
+
+```python
+DUAL_GATE_ENFORCE_ENV = "UC_DUAL_GATE_ENFORCE"
+def dual_gate_enforce_enabled() -> bool  # default off
+def apply_dual_gate(verdict: OracleVerdict, reeval: IndependentReevalOutcome) -> OracleVerdict
+# OptimizationWorkflow.run history may include dual_gate: {attestation_ok, passed, ...}
+```
+
+### 3. Contracts
+
+- Env: `UC_DUAL_GATE_ENFORCE` — same truthy/off parsing as other UC inference enforce flags; default **off**.
+- When off: existing behaviour (verify_harness + oracle only). Fingerprint fail-closed is not weakened.
+- When on, after `oracle.evaluate(best, measured)`:
+  1. Copy candidate+harness into a temp sealed root **outside** the Agent workspace `root` (not a descendant of `root`).
+  2. Call `benchmark.independent_reeval(sealed, agent_workspace=str(root), agent_reported=measured)` on the same runner (reuse protect fingerprints on agent paths so harness drift still fail-closes).
+  3. Replace the verdict with `apply_dual_gate(verdict, reeval)`.
+  4. Persist a `dual_gate` object on the iteration history record for diagnosis.
+- `apply_dual_gate`: if `not reeval.attestation_ok` → `accepted=False` and reasons include `dual_gate: attestation` (even if re-eval would pass). Elif `not reeval.passed` → `accepted=False` and reasons include `dual_gate: independent_reeval` (even if Oracle would accept). Else keep the Oracle verdict (may still reject for policy/performance).
+- Accept (`keep`) only when the (possibly dual-gated) verdict is accepted. Agent harness self-report alone never yields accept under the flag.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|---|---|
+| Flag off | No sealed re-eval; no `dual_gate` history field; oracle-only accept |
+| Flag on + attestation ok + reeval.passed + oracle accept | Keep candidate |
+| Flag on + attestation fail | Reject; reason `dual_gate: attestation`; rollback |
+| Flag on + attestation ok + reeval not passed | Reject; reason `dual_gate: independent_reeval`; rollback |
+| Flag on + oracle reject + reeval pass | Keep oracle reject (no dual_gate override to accept) |
+| Flag on + agent_reported.correctness True + sealed fail | Reject via independent_reeval gate |
+
+### 5. Good / Base / Bad Cases
+
+Good: select oracle accepts and sealed independent re-eval passes → keep. Base: flag off preserves prior verify_harness + oracle accept. Bad: accepting on Agent-tree measure alone under enforce, or omitting which gate failed from history/verdict reasons.
+
+### 6. Tests Required
+
+`tests/python/test_dual_gate_accept.py` (+ existing workflow / independent-reeval suites): flag matrix, apply_dual_gate attestation/reeval/oracle matrix, sealed root outside agent workspace, flag-off unchanged.
+
+### 7. Wrong vs Correct
+
+Wrong: treat Agent harness self-report or select-path measure alone as sufficient under `UC_DUAL_GATE_ENFORCE`. Correct: require attestation and sealed `independent_reeval.passed`, record which gate failed, and leave fingerprint fail-closed intact when the flag is off.
+
 ## 7a. Gotcha: decoded wire payloads are not `@dataclass` types
 
 **Warning** The dataclass rule in `.trellis/spec/frontend/component-guidelines.md`

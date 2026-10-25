@@ -809,7 +809,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # T3 independent re-eval: §7-independent-reeval names
     # test_independent_reeval.py and test_inference_reliability.py
     # (392 -> 394), both resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 394
+    # T4 dual-gate: §7-dual-gate names test_dual_gate_accept.py
+    # (394 -> 395), resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 395
 
 
 def test_real_corpus_has_no_false_content_mismatch():

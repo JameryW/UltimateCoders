@@ -8,6 +8,7 @@ import os
 import shutil
 import stat
 import subprocess
+import tempfile
 from collections.abc import Awaitable
 from dataclasses import replace
 from pathlib import Path
@@ -22,10 +23,11 @@ from .models import (
     InferenceTaskType,
     MetaInferResult,
     MetaInferTask,
+    dual_gate_enforce_enabled,
     mint_report_result,
     report_uplift_enforce_enabled,
 )
-from .oracle import Oracle
+from .oracle import Oracle, apply_dual_gate
 
 Candidate = Callable[[MetaInferTask], Awaitable[MetaInferResult]]
 
@@ -258,6 +260,36 @@ class OptimizationWorkflow:
                 await phase("validation", iteration=index)
                 measured = await benchmark.measure(str(root))
                 verdict = self.oracle.evaluate(best, measured)
+                dual_gate_record = None
+                if dual_gate_enforce_enabled():
+                    sealed_parent = Path(
+                        tempfile.mkdtemp(prefix="uc-dual-gate-", dir=str(artifacts))
+                    )
+                    sealed_root = sealed_parent / "workspace"
+                    try:
+                        # Copy candidate+harness outside the Agent-writable tree.
+                        # Reuse the same runner fingerprints (absolute paths under
+                        # ``root``) so attestation still fail-closes on harness drift.
+                        shutil.copytree(
+                            root,
+                            sealed_root,
+                            ignore=shutil.ignore_patterns(".git"),
+                        )
+                        reeval = await benchmark.independent_reeval(
+                            str(sealed_root),
+                            agent_workspace=str(root),
+                            agent_reported=measured,
+                        )
+                        verdict = apply_dual_gate(verdict, reeval)
+                        dual_gate_record = {
+                            "attestation_ok": reeval.attestation_ok,
+                            "passed": reeval.passed,
+                            "correctness": reeval.correctness,
+                            "reasons": list(reeval.reasons),
+                            "eval_root": reeval.eval_root,
+                        }
+                    finally:
+                        shutil.rmtree(sealed_parent, ignore_errors=True)
                 await phase("accepted" if verdict.accepted else "rejected", iteration=index)
                 record = {
                     "index": index,
@@ -265,6 +297,8 @@ class OptimizationWorkflow:
                     "measurement": measured.to_dict(),
                     "verdict": verdict.to_dict(),
                 }
+                if dual_gate_record is not None:
+                    record["dual_gate"] = dual_gate_record
                 history.append(record)
                 graph.record_evidence(
                     index,
