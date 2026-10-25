@@ -242,6 +242,7 @@ def test_real_repo_is_reconciled() -> None:
         (2126, 2117),  # T4 dual-gate accept: test + Trellis task artifacts (5 text).
         (2133, 2124),  # T5 completion_conditions: module + test + spec + Trellis task (7 text).
         (2138, 2129),  # T6 completion adapters: test + Trellis task artifacts (5 text).
+        (2145, 2136),  # P1 spec + tickets 07–12 (7 text); T6 task archived (rename).
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
