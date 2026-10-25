@@ -568,8 +568,9 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     # T1 eval-role archive adds 3 `.trellis` refs (883→886).
     # T2 report-uplift task context adds 3 `.trellis` refs (886→889).
     # T3 independent-reeval task context adds 2 `.trellis` refs (889→891).
+    # T4 dual-gate-accept task context adds 2 `.trellis` refs (891→893).
     assert len(refs) in (
-        812, 814, 830, 832, 846, 853, 865, 867, 880, 883, 886, 889, 891
+        812, 814, 830, 832, 846, 853, 865, 867, 880, 883, 886, 889, 891, 893
     ), (
         f"reference count drifted: {len(refs)}"
     )

@@ -11,13 +11,14 @@ from .models import (
     MetaInferResult,
     MetaInferTask,
     assert_report_identity,
+    dual_gate_enforce_enabled,
     independent_reeval_enforce_enabled,
     mint_report_result,
     published_uplift_verdict,
     report_uplift_enforce_enabled,
     require_report_role,
 )
-from .oracle import Oracle, OraclePolicy, OracleVerdict
+from .oracle import Oracle, OraclePolicy, OracleVerdict, apply_dual_gate
 from .workflow import OptimizationWorkflow
 
 __all__ = [
@@ -40,7 +41,9 @@ __all__ = [
     "AdaptationNodeKind",
     "ExecutionAdaptationGraph",
     "OptimizationWorkflow",
+    "apply_dual_gate",
     "assert_report_identity",
+    "dual_gate_enforce_enabled",
     "independent_reeval_enforce_enabled",
     "mint_report_result",
     "published_uplift_verdict",

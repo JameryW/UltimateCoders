@@ -249,8 +249,9 @@ class BenchmarkRunner:
         Fingerprint attestation always runs first and fail-closes. ``agent_reported``
         never flips ``passed`` — only the sealed measure result does. When
         ``agent_workspace`` is supplied, ``eval_root`` must resolve outside that
-        tree (Agent-writable paths are not sealed). Dual-gate accept wiring is
-        ticket 04; callers may gate on ``independent_reeval_enforce_enabled``.
+        tree (Agent-writable paths are not sealed). Dual-gate accept
+        (``UC_DUAL_GATE_ENFORCE`` / ticket 04) calls this API; callers may also
+        gate on ``independent_reeval_enforce_enabled``.
         """
         resolved_root = str(Path(eval_root).resolve())
         # Intentionally unused for the pass decision (Agent self-report is not

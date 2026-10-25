@@ -4,12 +4,12 @@
 
 **Blocked by:** 03 (independent correctness re-eval).
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t4-dual-gate-accept-7c92`; flag `UC_DUAL_GATE_ENFORCE` default off)
 
-- [ ] Accept requires attestation AND independent re-eval both passing when the dual-gate flag is on
-- [ ] Attestation failure rejects even if re-eval would pass
-- [ ] Re-eval failure or skip rejects even if attestation passes
-- [ ] Agent harness self-report alone never yields accept under the flag
-- [ ] Accept / reject events expose which gate failed for diagnosis
-- [ ] Tests cover dual-gate matrix at the Oracle accept seam
-- [ ] Feature flag defaults off and does not weaken existing fingerprint fail-closed behaviour when off
+- [x] Accept requires attestation AND independent re-eval both passing when the dual-gate flag is on
+- [x] Attestation failure rejects even if re-eval would pass
+- [x] Re-eval failure or skip rejects even if attestation passes
+- [x] Agent harness self-report alone never yields accept under the flag
+- [x] Accept / reject events expose which gate failed for diagnosis
+- [x] Tests cover dual-gate matrix at the Oracle accept seam
+- [x] Feature flag defaults off and does not weaken existing fingerprint fail-closed behaviour when off

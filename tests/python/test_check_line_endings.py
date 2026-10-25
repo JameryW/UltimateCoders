@@ -239,6 +239,7 @@ def test_real_repo_is_reconciled() -> None:
         (2111, 2102),  # T1 CI-fix Trellis task artifacts (4 text).
         (2116, 2107),  # T2 report uplift: test_report_uplift.py + Trellis task (5 text).
         (2121, 2112),  # T3 independent reeval: test + Trellis task artifacts (5 text).
+        (2126, 2117),  # T4 dual-gate accept: test + Trellis task artifacts (5 text).
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
