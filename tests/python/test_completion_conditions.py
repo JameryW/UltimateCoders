@@ -93,7 +93,7 @@ def test_model_self_report_types_always_fail():
 
 def test_unknown_type_fails_closed():
     verdict = evaluate_completion_conditions(
-        [CompletionCondition(type="verify_command", params={"cmd": "pytest"})],
+        [CompletionCondition(type="not_a_real_type", params={"cmd": "pytest"})],
         {"cmd_ok": True},
     )
     assert verdict.satisfied is False

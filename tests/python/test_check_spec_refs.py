@@ -815,7 +815,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # name contract.py, completion_conditions.py, and the two seam tests
     # (395 -> 400), all resolved once the new module/test are tracked;
     # unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 400
+    # T6 completion adapters: completion-conditions-spec names
+    # test_completion_adapters.py (400 -> 401), resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 401
 
 
 def test_real_corpus_has_no_false_content_mismatch():

@@ -28,7 +28,7 @@ P0 (D1–D3) — **ready-for-agent** (docs-tree tickets; GitHub wayfinder public
 - [03 independent correctness re-eval](tickets/03-independent-correctness-reeval.md) — **implemented** (`UC_INDEPENDENT_REEVAL_ENFORCE`); was blocked by: none
 - [04 dual-gate accept](tickets/04-dual-gate-accept.md) — **implemented** (`UC_DUAL_GATE_ENFORCE`); was blocked by 03
 - [05 completion_conditions](tickets/05-completion-conditions.md) — **implemented** (`UC_COMPLETION_CONDITIONS_ENFORCE`); was blocked by: none
-- [06 adapters and re-eval condition](tickets/06-adapters-and-reeval-condition.md) — Blocked by: 05, 03
+- [06 adapters and re-eval condition](tickets/06-adapters-and-reeval-condition.md) — **implemented** (`verify_command` / `step_condition` / `independent_reeval`); was blocked by: 05, 03
 
 Frontier for implementers: 06 (unblocked by 05 + 03). P1 (D4–D6) and P2 (D7–D8) are **not ticketed yet**.
 

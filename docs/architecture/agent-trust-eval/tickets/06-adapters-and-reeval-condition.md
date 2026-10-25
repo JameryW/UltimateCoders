@@ -4,12 +4,12 @@
 
 **Blocked by:** 05 (completion_conditions), 03 (independent correctness re-eval).
 
-**Status:** ready-for-agent
+**Status:** implemented (`verify_command` / `step_condition` / `independent_reeval` / `review_approved` under `evaluate_completion_conditions`; reuse `UC_COMPLETION_CONDITIONS_ENFORCE`)
 
-- [ ] verify-command is expressible as a `completion_conditions` condition type or adapter
-- [ ] step-condition is expressible as a `completion_conditions` condition type or adapter
-- [ ] A condition type exists that passes only when independent correctness re-eval passed
-- [ ] No parallel completion registry or second “done” authority is introduced
-- [ ] Model or review self-approval alone cannot satisfy the re-eval condition
-- [ ] Tests cover adapters and the re-eval condition at the contract evaluate seam
-- [ ] Feature flag defaults off
+- [x] verify-command is expressible as a `completion_conditions` condition type or adapter
+- [x] step-condition is expressible as a `completion_conditions` condition type or adapter
+- [x] A condition type exists that passes only when independent correctness re-eval passed
+- [x] No parallel completion registry or second “done” authority is introduced
+- [x] Model or review self-approval alone cannot satisfy the re-eval condition
+- [x] Tests cover adapters and the re-eval condition at the contract evaluate seam
+- [x] Feature flag defaults off
