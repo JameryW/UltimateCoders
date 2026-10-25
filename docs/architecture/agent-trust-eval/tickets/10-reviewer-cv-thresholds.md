@@ -4,11 +4,11 @@
 
 **Blocked by:** 09 (typed reviewer interface).
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t10-reviewer-cv-thresholds-7c92`; `python/ultimate_coders/agent/typed_review_thresholds.py` + integration in `typed_review.py`; enablement requires labels **and** CV artifact; pass on `typed_review_score >= threshold`; refuse `calibrated_default`; no magic 0.5 default; `UC_TYPED_REVIEW_ENFORCE` still default off)
 
-- [ ] CV artifact schema and loader for per-kind thresholds
-- [ ] Loader refuses missing/corrupt artifacts (kind stays disabled)
-- [ ] Regeneration steps documented for future label owners
-- [ ] Typed reviewers read thresholds only from the loader (no magic defaults)
-- [ ] Tests cover load success, missing artifact, and corrupt artifact
-- [ ] Feature flag remains default off; artifacts alone do not enable without enforce
+- [x] CV artifact schema and loader for per-kind thresholds
+- [x] Loader refuses missing/corrupt artifacts (kind stays disabled)
+- [x] Regeneration steps documented for future label owners
+- [x] Typed reviewers read thresholds only from the loader (no magic defaults)
+- [x] Tests cover load success, missing artifact, and corrupt artifact
+- [x] Feature flag remains default off; artifacts alone do not enable without enforce

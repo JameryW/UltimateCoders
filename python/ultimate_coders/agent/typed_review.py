@@ -1,11 +1,10 @@
-"""Per-failure-kind typed reviewers (P1 / T9 / D5): fail-closed, labels-gated.
+"""Per-failure-kind typed reviewers (P1 / T9–T10 / D5): fail-closed.
 
 Aligns reviewer kinds to :class:`~ultimate_coders.agent.routing.FailureKind`
-(``transient`` / ``auth`` / ``schema`` / ``unknown``). Without registered
-labels for a kind, that reviewer stays disabled. Thresholds from cross-
-validation land in T10; this module ships a fail-closed stub that requires
-explicit ``evidence["typed_review_pass"] is True`` and never invents a
-calibrated mid-score default.
+(``transient`` / ``auth`` / ``schema`` / ``unknown``). A kind enables only when
+enforce is on, labels are registered, **and** a CV threshold artifact is
+registered. Pass requires ``evidence["typed_review_score"]`` to be a finite
+float ``>=`` the loaded threshold. Never invents a calibrated mid-score default.
 
 Product callers gate via ``UC_TYPED_REVIEW_ENFORCE`` (default off). Successful
 typed review may populate completion evidence ``review_verified``; LLM review
@@ -14,12 +13,22 @@ JSON ``approved`` alone still fails completion.
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from ultimate_coders.agent.routing import FailureKind
+from ultimate_coders.agent.typed_review_thresholds import (
+    ThresholdArtifact,
+    clear_thresholds,
+    get_threshold_artifact,
+    load_threshold_artifact,
+    register_threshold,
+    threshold_available,
+    threshold_for,
+)
 
 TYPED_REVIEW_ENFORCE_ENV = "UC_TYPED_REVIEW_ENFORCE"
 
@@ -79,16 +88,25 @@ def labels_available(kind: FailureKind | str) -> bool:
     return bool(_LABELS.get(key))
 
 
+def _score_meets_threshold(score: Any, threshold: float) -> bool:
+    """True when ``score`` is a finite number (not bool) ``>= threshold``."""
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        return False
+    value = float(score)
+    return math.isfinite(value) and value >= threshold
+
+
 def review_for_kind(
     kind: FailureKind | str,
     evidence: Mapping[str, Any],
 ) -> TypedReviewOutcome:
-    """Run the fail-closed stub reviewer for one :class:`FailureKind`.
+    """Run the fail-closed CV-threshold reviewer for one :class:`FailureKind`.
 
-    When enforce is off or no labels are registered for the kind, returns
-    ``enabled=False``, ``passed=False``, ``review_verified=False``. When
-    labels are present, passes only if ``evidence.get("typed_review_pass")
-    is True`` (strict identity). Never invents a calibrated score threshold.
+    Enablement requires enforce on, labels registered, **and** a threshold
+    artifact registered for the kind. When enabled, passes only if
+    ``evidence.get("typed_review_score")`` is a finite float ``>=`` the
+    artifact threshold. Missing/non-finite scores fail closed. Never invents
+    a calibrated default threshold.
     """
     key = _normalize_kind(kind)
     if not typed_review_enforce_enabled():
@@ -107,21 +125,30 @@ def review_for_kind(
             reasons=[f"no labels registered for kind={key!r}; reviewer disabled"],
             review_verified=False,
         )
-    # Labels present ⇒ kind enabled. Stub until T10 CV thresholds: require
-    # explicit boolean evidence, never a default calibrated score.
-    if evidence.get("typed_review_pass") is True:
+    artifact = get_threshold_artifact(key)
+    if artifact is None:
+        return TypedReviewOutcome(
+            kind=key,
+            enabled=False,
+            passed=False,
+            reasons=[f"no CV threshold artifact registered for kind={key!r}; reviewer disabled"],
+            review_verified=False,
+        )
+    threshold = artifact.threshold
+    score = evidence.get("typed_review_score")
+    if _score_meets_threshold(score, threshold):
         return TypedReviewOutcome(
             kind=key,
             enabled=True,
             passed=True,
-            reasons=["typed_review_pass is True"],
+            reasons=[f"typed_review_score {float(score)} >= threshold {threshold}"],
             review_verified=True,
         )
     return TypedReviewOutcome(
         kind=key,
         enabled=True,
         passed=False,
-        reasons=["typed_review_pass is not True (fail closed)"],
+        reasons=[f"typed_review_score {score!r} does not meet threshold {threshold} (fail closed)"],
         review_verified=False,
     )
 
@@ -143,3 +170,23 @@ def apply_typed_review(
 ) -> dict[str, Any]:
     """Run :func:`review_for_kind` and return completion evidence when verified."""
     return completion_evidence_from_outcome(review_for_kind(kind, evidence))
+
+
+__all__ = [
+    "TYPED_REVIEW_ENFORCE_ENV",
+    "ThresholdArtifact",
+    "TypedReviewOutcome",
+    "apply_typed_review",
+    "clear_labels",
+    "clear_thresholds",
+    "completion_evidence_from_outcome",
+    "get_threshold_artifact",
+    "labels_available",
+    "load_threshold_artifact",
+    "register_labels",
+    "register_threshold",
+    "review_for_kind",
+    "threshold_available",
+    "threshold_for",
+    "typed_review_enforce_enabled",
+]

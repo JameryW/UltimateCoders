@@ -1,0 +1,8 @@
+{
+  "kind": "schema",
+  "metric": "f1",
+  "threshold": 0.82,
+  "cv_folds": 5,
+  "n_labels": 40,
+  "generated_at": "2026-10-25T00:00:00Z"
+}

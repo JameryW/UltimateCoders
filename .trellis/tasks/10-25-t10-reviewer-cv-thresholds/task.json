@@ -1,0 +1,33 @@
+{
+  "id": "t10-reviewer-cv-thresholds",
+  "name": "t10-reviewer-cv-thresholds",
+  "title": "T10 reviewer CV thresholds",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P2",
+  "creator": "cloud-agent",
+  "assignee": "cloud-agent",
+  "createdAt": "2026-10-25",
+  "completedAt": null,
+  "branch": "cursor/t10-reviewer-cv-thresholds-7c92",
+  "base_branch": "cursor/t10-reviewer-cv-thresholds-7c92",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "python/ultimate_coders/agent/typed_review.py",
+    "python/ultimate_coders/agent/typed_review_thresholds.py",
+    "tests/python/test_reviewer_cv_thresholds.py",
+    "tests/python/test_typed_reviewers.py",
+    "tests/python/fixtures/reviewer_cv_threshold_schema.json",
+    ".trellis/spec/backend/typed-review-spec.md"
+  ],
+  "notes": "T10: CV threshold artifacts required to enable typed reviewers; score>=threshold gate.",
+  "meta": {}
+}
