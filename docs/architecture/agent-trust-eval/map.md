@@ -35,12 +35,12 @@ P1 (D4–D6) — **in progress**:
 - Spec: [spec-p1.md](spec-p1.md)
 - [07 approx rank-agreement gate](tickets/07-approx-rank-agreement-gate.md) — **implemented** (agreement + arming latch; prune = 08)
 - [08 approx prune and auto-disable](tickets/08-approx-prune-and-autodisable.md) — **implemented** (prune-only + uplift refuse + fingerprint auto-disarm); was blocked by 07
-- [09 typed reviewers fail-closed](tickets/09-typed-reviewers-fail-closed.md) — Blocked by: none
+- [09 typed reviewers fail-closed](tickets/09-typed-reviewers-fail-closed.md) — **implemented** (`UC_TYPED_REVIEW_ENFORCE`; label-gated stub); was blocked by: none
 - [10 reviewer CV thresholds](tickets/10-reviewer-cv-thresholds.md) — Blocked by: 09
 - [11 Hy-Memory supersede write](tickets/11-hy-memory-supersede-write.md) — Blocked by: none
 - [12 Hy-Memory auto context](tickets/12-hy-memory-auto-context.md) — Blocked by: none (compliance: keep flag off until egress review)
 
-Frontier for implementers: **09, 10, 11, 12**. P2 (D7–D8) is **not ticketed yet**.
+Frontier for implementers: **10, 11, 12**. P2 (D7–D8) is **not ticketed yet**.
 
 ## Decisions so far
 

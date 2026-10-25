@@ -1,0 +1,30 @@
+{
+  "id": "t9-typed-reviewers",
+  "name": "t9-typed-reviewers",
+  "title": "T9 typed reviewers fail-closed",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P2",
+  "creator": "cloud-agent",
+  "assignee": "cloud-agent",
+  "createdAt": "2026-10-25",
+  "completedAt": "2026-10-25",
+  "branch": "cursor/t9-typed-reviewers-7c92",
+  "base_branch": "cursor/t9-typed-reviewers-7c92",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "python/ultimate_coders/agent/typed_review.py",
+    "tests/python/test_typed_reviewers.py",
+    ".trellis/spec/backend/typed-review-spec.md"
+  ],
+  "notes": "T9 typed reviewers fail-closed implemented; do not commit from implement agent.",
+  "meta": {}
+}
