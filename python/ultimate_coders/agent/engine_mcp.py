@@ -189,7 +189,8 @@ def _memory_tools() -> list:
             description="Record a completed task trace (messages including "
             "tool calls) into coding memory. The backend extracts the fact "
             "of what was done plus reusable experiences, and appends real "
-            "diffs to the version-evolution chain.",
+            "diffs to the version-evolution chain. Prior facts are marked "
+            "superseded (never deleted) when supersede_fact_ids is set.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -205,6 +206,14 @@ def _memory_tools() -> list:
                     "branch": {
                         "type": "string",
                         "description": "Branch scope (defaults to UC_MEMORY_BRANCH)",
+                    },
+                    "supersede_fact_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Prior fact ids to mark superseded "
+                            "(mark_not_delete; never deleted)"
+                        ),
                     },
                 },
                 "required": ["messages"],
@@ -462,23 +471,29 @@ async def _remember_coding_memory(engine: Engine, args: dict) -> list[TextConten
         return [TextContent(type="text", text="No messages to remember.")]
     workspace_id = args.get("workspace_id") or backend.workspace_id
     branch = args.get("branch") or backend.branch
+    supersede_raw = args.get("supersede_fact_ids")
+    supersede_fact_ids = (
+        list(supersede_raw) if isinstance(supersede_raw, (list, tuple)) else None
+    )
     scoped = CodingMemory(
         user_id=backend.user_id,
         workspace_id=workspace_id,
         branch=branch,
         client=backend.client,
     )
-    result = scoped.remember(messages)
+    result = scoped.remember(messages, supersede_fact_ids=supersede_fact_ids)
     if not result.get("success"):
         return [TextContent(type="text", text=f"Coding memory write failed: {result}")]
     facts = len(result.get("fact_ids") or [])
     experiences = len(result.get("experience_ids") or [])
+    superseded = result.get("superseded_ids") or []
+    suffix = f", superseded {len(superseded)} prior fact(s)" if superseded else ""
     return [
         TextContent(
             type="text",
             text=(
                 f"Remembered (scene={result.get('scene')}): "
-                f"{facts} fact(s), {experiences} experience(s)."
+                f"{facts} fact(s), {experiences} experience(s){suffix}."
             ),
         )
     ]

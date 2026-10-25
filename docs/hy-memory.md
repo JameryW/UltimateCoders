@@ -72,6 +72,14 @@ mem = CodingMemory(
 # 任务结束后：写入一条含工具调用的轨迹
 result = mem.remember(messages)          # {"success": True, "fact_ids": [...], ...}
 
+# 纠正旧事实时：标记取代，绝不删除（D6 / T11）
+result = mem.remember(
+    messages,
+    supersede_fact_ids=["fact-old-id"],
+)
+# metadata 带 supersedes + supersede_policy="mark_not_delete"
+# 返回含 superseded_ids；只走 client.add，从不 delete/remove/drop
+
 # 新任务开始前：召回事实 / 经验 / 版本链
 hits = mem.recall("search 超时最终用的哪个实现？")
 for fact in hits["facts"]:        ...
@@ -83,6 +91,12 @@ mem.close()
 
 `recall()` 永不抛异常：端点不可用时返回 `ok=False` + 空列表，调用方记录即可。
 
+**写入硬约束（supersede-not-delete）**：`CodingMemory.remember` 与 MCP
+`remember_coding_memory` 对“更新”语义只标记旧事实为被取代
+（`supersedes` + `supersede_policy=mark_not_delete`），**从不**调用
+Hy-Memory 客户端的 delete / remove / drop。与 `UC_HY_MEMORY_AUTO_CONTEXT`
+自动注入（T12）无关——该开关默认关，本路径不引入注入。
+
 ## MCP 工具（沙箱内 Agent）
 
 `ultimate_coders.agent.engine_mcp` 在 hy-memory 可用时额外暴露两个工具
@@ -91,7 +105,7 @@ mem.close()
 | 工具 | 用途 |
 |---|---|
 | `recall_coding_memory` | 按 query 召回 facts / experiences / 版本链，支持 `workspace_id` / `branch` / `limit` 覆盖 |
-| `remember_coding_memory` | 写入一条含工具调用的消息轨迹 |
+| `remember_coding_memory` | 写入一条含工具调用的消息轨迹；可选 `supersede_fact_ids`（标记取代，不删除） |
 
 沙箱内的 MCP 子进程通过 `SHARED_ENV_ALLOWLIST` 拿到 `MEMORY_*` 变量
 （与 `UC_*` 控制面同级，见 `python/ultimate_coders/agent/sandbox.py` 的
@@ -152,6 +166,7 @@ override 只做三件事：给 `orchestrator` / `worker` / `nats-worker` 转发
 |---|---|
 | 可用性/版本底线/掩码 | `tests/python/test_hy_memory_integration.py`（`test_available_matches_version`、`test_version_floor_comparisons`、`test_mask_key_never_leaks_the_middle`） |
 | remember 传参（scene/坐标/source） | `test_remember_passes_coding_scene_and_isolation_coordinates` |
+| supersede-not-delete（metadata / 禁 delete / MCP） | `tests/python/test_hy_memory_supersede.py` |
 | recall 归一化 + 失败降级 + 空通道 | `test_recall_normalises_channels`、`test_recall_survives_client_failure`、`test_recall_tolerates_empty_channels` |
 | 惰性客户端 / 关闭语义 | `test_lazy_client_built_once_and_closed_only_when_owned`、`test_injected_client_is_never_closed_by_the_wrapper` |
 | preflight 全矩阵 | `test_preflight_*`（无包 / 低版本 / 缺端点 / 仅缺 embedder / OPENAI 兜底 / 构造失败） |
