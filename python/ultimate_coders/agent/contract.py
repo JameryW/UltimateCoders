@@ -16,6 +16,11 @@ orchestrator's job, not something a worker can improvise.
 The digest normalizes only cosmetics (CRLF, trailing whitespace, blank-line
 edges). Wording changes are *not* normalized away: "must not touch main" and
 "may touch main" differ by one word and by the entire risk posture.
+
+A second namespace — structured ``completion_conditions`` — lives beside digest
+and is re-exported here (D3 / ticket 05). Digest responsibility remains
+goal-change detection only; completion evaluation is non-LLM and does not
+mutate the registry. See :mod:`ultimate_coders.agent.completion_conditions`.
 """
 
 from __future__ import annotations
@@ -26,6 +31,30 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..runtime_state import RuntimeState
+from .completion_conditions import (
+    COMPLETION_CONDITIONS_ENFORCE_ENV,
+    CompletionCondition,
+    CompletionVerdict,
+    ConditionResult,
+    completion_conditions_enforce_enabled,
+    completion_gate,
+    evaluate_completion_conditions,
+)
+
+__all__ = [
+    "NAMESPACE",
+    "contract_digest",
+    "ContractVerdict",
+    "ContractRegistry",
+    # completion_conditions namespace (D3)
+    "COMPLETION_CONDITIONS_ENFORCE_ENV",
+    "CompletionCondition",
+    "ConditionResult",
+    "CompletionVerdict",
+    "completion_conditions_enforce_enabled",
+    "evaluate_completion_conditions",
+    "completion_gate",
+]
 
 #: Namespace holding one record per task (key = task id).
 NAMESPACE = "task_contracts"
