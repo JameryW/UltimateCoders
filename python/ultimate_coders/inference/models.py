@@ -94,9 +94,7 @@ def require_report_role(result_or_verdict: Any) -> None:
     else:
         role = getattr(result_or_verdict, "eval_role", None)
     if coerce_eval_role(role) is not EvalRole.REPORT:
-        raise ValueError(
-            f"report identity required; got eval_role={coerce_eval_role(role).value}"
-        )
+        raise ValueError(f"report identity required; got eval_role={coerce_eval_role(role).value}")
 
 
 def assert_report_identity(result_or_verdict: Any) -> None:
@@ -111,26 +109,36 @@ def published_uplift_verdict(result: dict[str, Any]) -> dict[str, Any] | None:
     public uplift; select/search iteration verdicts are never a fallback. Missing
     remasure on a successful optimization accept (iterations present) fails closed.
     Non-optimization successes (analyze/benchmark) publish no uplift verdict.
+
+    Approx-sourced numbers (``source=approx`` / ``approx_score``) are always
+    refused at this boundary (ticket 08); they must never become public uplift.
     """
+    # Lazy import: approx_eval already depends on require_report_role here.
+    from .approx_eval import refuse_approx_sourced_uplift
+
+    refuse_approx_sourced_uplift(result)
     if report_uplift_enforce_enabled():
         report = result.get("report_verdict")
         if isinstance(report, dict):
             require_report_role(report)
+            refuse_approx_sourced_uplift(report)
             return report
         # Legacy publish path used the last iteration verdict. Under enforce that
         # select/search score must never become the public uplift figure.
         iterations = result.get("iterations") or []
         if result.get("success") and iterations:
             raise ValueError(
-                "report remasure required for publication under "
-                f"{REPORT_UPLIFT_ENFORCE_ENV}"
+                f"report remasure required for publication under {REPORT_UPLIFT_ENFORCE_ENV}"
             )
         return None
     iterations = result.get("iterations") or []
     if not iterations:
         return None
     verdict = iterations[-1].get("verdict")
-    return verdict if isinstance(verdict, dict) else None
+    if isinstance(verdict, dict):
+        refuse_approx_sourced_uplift(verdict)
+        return verdict
+    return None
 
 
 def refuse_relabel_to_report(current: EvalRole, new_role: EvalRole) -> None:
@@ -138,9 +146,7 @@ def refuse_relabel_to_report(current: EvalRole, new_role: EvalRole) -> None:
     if not eval_role_enforce_enabled():
         return
     if current is not EvalRole.REPORT and new_role is EvalRole.REPORT:
-        raise ValueError(
-            f"cannot relabel {current.value} as report under {EVAL_ROLE_ENFORCE_ENV}"
-        )
+        raise ValueError(f"cannot relabel {current.value} as report under {EVAL_ROLE_ENFORCE_ENV}")
 
 
 @dataclass(frozen=True)

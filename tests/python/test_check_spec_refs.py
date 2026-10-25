@@ -819,7 +819,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # test_completion_adapters.py (400 -> 401), resolved; unclassified stays 0.
     # T7 approx rank-agreement: §7-approx-rank-agreement names
     # test_approx_rank_agreement.py (401 -> 402), resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 402
+    # T8 approx prune: §7-approx-prune names metainfer_service/execution.py and
+    # test_approx_prune.py (402 -> 404), both resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 404
 
 
 def test_real_corpus_has_no_false_content_mismatch():

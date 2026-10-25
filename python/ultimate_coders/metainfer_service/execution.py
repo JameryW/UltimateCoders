@@ -83,7 +83,15 @@ def publish_kernel(repository: Path, state: Path, generated: Path, kernel: Path)
     library = read_json(generated, "kernel_library.json", None)
     if not isinstance(library, list) or not 1 <= len(library) <= 10:
         raise ValueError("Publication requires a measured kernel library")
-    selected = library[0]  # The pinned upstream persists its ranked best first.
+    # Approx prune pre-filter (ticket 08): when enforce+armed, drop clearly-worse
+    # library entries by exec_time_ms before taking the ranked best. Soft no-op
+    # when the latch is off or scores are missing — never inside Oracle.evaluate.
+    from ultimate_coders.inference.approx_eval import filter_ranked_library
+
+    library = filter_ranked_library(library, score_key="exec_time_ms", higher_is_better=False)
+    if not library:
+        raise ValueError("Publication requires a measured kernel library")
+    selected = library[0]  # Ranked best first (upstream order, or approx survivors).
     elapsed = selected.get("exec_time_ms") if isinstance(selected, dict) else None
     if (
         isinstance(elapsed, bool)

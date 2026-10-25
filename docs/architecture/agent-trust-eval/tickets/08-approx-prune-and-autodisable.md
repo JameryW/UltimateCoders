@@ -4,11 +4,11 @@
 
 **Blocked by:** 07 (rank-agreement gate + arming latch).
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t8-approx-prune-autodisable-7c92`; prune via `approx_eval_ready_to_prune`; uplift refuses `source=approx` / `approx_score`; fingerprint retest auto-disarms)
 
-- [ ] Approx scorer returns prune decisions only (never OracleVerdict / public_uplift)
-- [ ] Wire prune-only upstream of Oracle; survivors still take full BenchmarkRunner measure
-- [ ] Uplift / report helpers reject approx-sourced numbers
-- [ ] Retest-on-change path clears arming when agreement fails
-- [ ] Tests cover armed vs unarmed prune and uplift refusal
-- [ ] Feature flag defaults off; disarm is automatic on retest fail
+- [x] Approx scorer returns prune decisions only (never OracleVerdict / public_uplift)
+- [x] Wire prune-only upstream of Oracle; survivors still take full BenchmarkRunner measure
+- [x] Uplift / report helpers reject approx-sourced numbers
+- [x] Retest-on-change path clears arming when agreement fails
+- [x] Tests cover armed vs unarmed prune and uplift refusal
+- [x] Feature flag defaults off; disarm is automatic on retest fail
