@@ -19,6 +19,15 @@ Verified contract (hy-memory==2.0.2, real roundtrip):
                   branch=...)
       -> {"facts": [...], "experiences": [...], "chain_block": ..., ...}
 
+**Supersede-not-delete (D6 / T11 hard invariant):** ``CodingMemory.remember``
+(and the MCP ``remember_coding_memory`` tool that calls it) never invokes a
+delete / remove / drop / tombstone API on the Hy-Memory client for “update”
+semantics. Optional ``supersede_fact_ids`` (or prior ids already listed under
+``metadata["supersedes"]``) are merged into outgoing metadata as
+``{"supersedes": [...], "supersede_policy": "mark_not_delete"}`` and echoed on
+the return payload as ``superseded_ids``. History stays auditable; auto-inject
+(T12) is out of scope for this module's write path.
+
 The SDK speaks the OpenAI protocol on both the LLM and embedding side, so the
 official DeepSeek example configuration works unchanged:
 
@@ -52,6 +61,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Sequence
 from typing import Any
 
 #: PyPI distribution name of the memory SDK.
@@ -97,6 +107,15 @@ HY_MEMORY_ENV_ALLOWLIST: tuple[str, ...] = (
 
 #: Coding-scene response channels normalised by :meth:`CodingMemory.recall`.
 _RECALL_CHANNELS = ("facts", "experiences")
+
+#: Metadata key listing prior fact ids that a remember write supersedes.
+SUPERSEDES_METADATA_KEY = "supersedes"
+
+#: Metadata key naming the UC supersede policy (never delete).
+SUPERSEDE_POLICY_METADATA_KEY = "supersede_policy"
+
+#: Only allowed supersede policy on UC write paths (D6 hard invariant).
+SUPERSEDE_POLICY_MARK_NOT_DELETE = "mark_not_delete"
 
 
 def _parse_version(text: str) -> tuple[int, ...]:
@@ -159,6 +178,59 @@ def _build_client(mode: str = DEFAULT_MODE) -> Any:
     return HyMemoryClient(mode=mode)
 
 
+def _normalize_fact_ids(ids: Sequence[Any] | None) -> list[str]:
+    """Coerce a sequence of fact ids to a de-duplicated list of non-empty strings.
+
+    A bare ``str`` / ``bytes`` is treated as a single id (not iterated as
+    characters) — ``str`` is a ``Sequence`` at runtime, which would otherwise
+    split ``"fact-1"`` into one-character ids.
+    """
+    if not ids:
+        return []
+    if isinstance(ids, (str, bytes)):
+        text = ids.decode() if isinstance(ids, bytes) else ids
+        text = text.strip()
+        return [text] if text else []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in ids:
+        text = str(raw).strip() if raw is not None else ""
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _merge_supersede_metadata(
+    metadata: dict[str, Any] | None,
+    supersede_fact_ids: Sequence[str] | None,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Merge supersede ids into metadata without wiping unrelated caller keys.
+
+    Returns ``(outgoing_metadata, superseded_ids)``. When there is nothing to
+    supersede, ``outgoing_metadata`` is the original ``metadata`` reference
+    (including ``None``) so callers that pass metadata through unchanged keep
+    identity. When superseding, returns a new dict with ``supersedes`` and
+    ``supersede_policy`` stamped; other keys are shallow-copied from the
+    caller.
+    """
+    from_arg = _normalize_fact_ids(supersede_fact_ids)
+    prior_raw = metadata.get(SUPERSEDES_METADATA_KEY) if metadata else None
+    from_meta = _normalize_fact_ids(
+        prior_raw if isinstance(prior_raw, (list, tuple)) else None
+    )
+    # Union: ids already in metadata plus any newly supplied via the arg.
+    merged_ids = _normalize_fact_ids([*from_meta, *from_arg])
+    if not merged_ids:
+        return metadata, []
+
+    outgoing = dict(metadata) if metadata else {}
+    outgoing[SUPERSEDES_METADATA_KEY] = merged_ids
+    outgoing[SUPERSEDE_POLICY_METADATA_KEY] = SUPERSEDE_POLICY_MARK_NOT_DELETE
+    return outgoing, merged_ids
+
+
 class CodingMemory:
     """Coding-scene memory over one HyMemoryClient.
 
@@ -206,24 +278,39 @@ class CodingMemory:
         messages: list[dict[str, Any]],
         *,
         metadata: dict[str, Any] | None = None,
+        supersede_fact_ids: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """Record one completed agent task trace (must contain tool calls).
 
         The coding scene extracts exactly one fact per session (what was
         done) plus zero or more reusable experiences, and appends the real
-        diffs to the version-evolution chain. Returns the raw SDK response;
-        ``success`` is False when the SDK rejected the write (e.g. endpoints
-        unreachable) — callers should log, not raise.
+        diffs to the version-evolution chain. Returns the SDK response
+        (always a dict copy); ``success`` is False when the SDK rejected
+        the write (e.g. endpoints unreachable) — callers should log, not
+        raise.
+
+        Supersede-not-delete: when ``supersede_fact_ids`` is provided (or
+        ``metadata`` already lists ``supersedes``), those ids are stamped
+        into outgoing metadata with ``supersede_policy="mark_not_delete"``
+        and echoed on the return payload as ``superseded_ids``. This method
+        only calls ``client.add`` — never delete / remove / drop / tombstone.
         """
-        return self.client.add(
+        outgoing_metadata, superseded_ids = _merge_supersede_metadata(
+            metadata, supersede_fact_ids
+        )
+        raw = self.client.add(
             messages,
             scene="coding",
             user_id=self.user_id,
             workspace_id=self.workspace_id,
             branch=self.branch,
             source=SOURCE_NAME,
-            metadata=metadata,
+            metadata=outgoing_metadata,
         )
+        payload = dict(raw) if isinstance(raw, dict) else {"success": False, "raw": raw}
+        if superseded_ids:
+            payload["superseded_ids"] = list(superseded_ids)
+        return payload
 
     def recall(
         self,

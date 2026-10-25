@@ -1,0 +1,31 @@
+{
+  "id": "t11-hy-memory-supersede",
+  "name": "t11-hy-memory-supersede",
+  "title": "T11 Hy-Memory supersede write",
+  "description": "Supersede-not-delete on CodingMemory.remember and MCP remember_coding_memory; no auto-inject.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P2",
+  "creator": "cloud-agent",
+  "assignee": "cloud-agent",
+  "createdAt": "2026-10-25",
+  "completedAt": null,
+  "branch": "cursor/t11-hy-memory-supersede-7c92",
+  "base_branch": "cursor/t11-hy-memory-supersede-7c92",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "python/ultimate_coders/agent/hy_memory.py",
+    "python/ultimate_coders/agent/engine_mcp.py",
+    "tests/python/test_hy_memory_supersede.py",
+    ".trellis/spec/backend/hy-memory-supersede-spec.md"
+  ],
+  "notes": "Implement complete; awaiting trellis-check / commit by main session.",
+  "meta": {}
+}

@@ -4,11 +4,11 @@
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t11-hy-memory-supersede-7c92`; `CodingMemory.remember(supersede_fact_ids=...)` stamps `supersedes` + `supersede_policy=mark_not_delete`, returns `superseded_ids`; never calls delete/remove/drop; MCP `remember_coding_memory` forwards the arg; `HY_MEMORY_MIN_VERSION` / allowlist unchanged; no auto-inject)
 
-- [ ] Remember path marks prior facts superseded instead of deleting them
-- [ ] Behaviour holds for both library wrapper and MCP remember tool
-- [ ] Layered Memory modules remain the storage authority for short/long term
-- [ ] Version pin / preflight behaviour unchanged or tightened, not loosened
-- [ ] Tests cover supersede semantics at the CodingMemory / MCP seam
-- [ ] No new auto-inject behaviour in this ticket (default remains MCP-only)
+- [x] Remember path marks prior facts superseded instead of deleting them
+- [x] Behaviour holds for both library wrapper and MCP remember tool
+- [x] Layered Memory modules remain the storage authority for short/long term
+- [x] Version pin / preflight behaviour unchanged or tightened, not loosened
+- [x] Tests cover supersede semantics at the CodingMemory / MCP seam
+- [x] No new auto-inject behaviour in this ticket (default remains MCP-only)

@@ -829,7 +829,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # status name typed_review_thresholds.py, the schema fixture, the new
     # test module, and short typed_review.py (408 -> 413), all resolved;
     # unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 413
+    # T11 hy-memory supersede: hy-memory-supersede-spec.md names hy_memory.py,
+    # engine_mcp.py, test_hy_memory_supersede.py, and
+    # test_hy_memory_integration.py; docs/hy-memory.md adds the new supersede
+    # test path (413 -> 418), all resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 418
 
 
 def test_real_corpus_has_no_false_content_mismatch():
