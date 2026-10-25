@@ -102,8 +102,49 @@ Imports may use either:
 
 ---
 
-## 4. Tests
+## 4. Validation & Error Matrix
+
+| Input | Behavior |
+|---|---|
+| `conditions=[]` | `satisfied=True`, empty `results` |
+| Unknown `type` | that result `passed=False`; aggregate unsatisfied |
+| Self-report type | `passed=False` with self-report reason |
+| `evidence_flag` missing / non-`True` name | fail closed |
+| `verify_command` without `verify_command_passed is True` | fail closed |
+| `step_condition` missing `expr` string | fail closed |
+| `step_condition` parse/eval error | fail closed (no raise to caller) |
+| `independent_reeval` without outcome/flag pass | fail closed |
+| `review_approved` without `review_verified is True` | fail closed |
+| Enforce flag off + `completion_gate` | `satisfied=True` without evaluating |
+| Enforce flag on + `completion_gate` | same as evaluate |
+
+---
+
+## 5. Good / Base / Bad Cases
+
+- **Good:** `evidence_flag` + `verify_command` + `independent_reeval` all True → satisfied.
+- **Base:** empty conditions → satisfied; flag off → gate satisfied.
+- **Bad:** `approved`/`done` alone; `independent_reeval` with only review self-approval;
+  `review_approved` with only review JSON; unknown type; step expr parse error.
+
+---
+
+## 6. Tests Required
 
 Prior art: `tests/python/test_completion_conditions.py` (seam),
 `tests/python/test_completion_adapters.py` (adapters / re-eval), and
 `tests/python/test_contract_versioning.py` (digest/registry must stay green).
+
+Assert: flag default off; evaluate always computes; adapters under one evaluate;
+self-approval cannot satisfy `independent_reeval`; digest APIs untouched.
+
+---
+
+## 7. Wrong vs Correct
+
+| Wrong | Correct |
+|---|---|
+| Shell out inside `verify_command` evaluate | Caller supplies `verify_command_passed` boolean |
+| Trust review JSON `approved` as completion | Require `review_verified is True` or fail |
+| Second “done” registry beside this module | New types only in `evaluate_completion_conditions` |
+| Gate on evaluate when flag off | Use `completion_gate` for product opt-in |

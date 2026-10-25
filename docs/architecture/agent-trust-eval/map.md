@@ -4,7 +4,7 @@ Status: active (versioned under docs/ — GitHub Issues publication pending expl
 Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24)
 Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏差) + P0–P2 priorities
 
-本图收敛「Agent 结果是否可信」路线上的决策，并挂接 P0 实现 backlog。决策票**不是**实现工作；P0 垂直切片见下方 Implementation backlog（[spec-p0.md](spec-p0.md) + tickets/01–06）。P1/P2 尚未开实现票。
+本图收敛「Agent 结果是否可信」路线上的决策，并挂接实现 backlog。决策票**不是**实现工作；P0 见 [spec-p0.md](spec-p0.md) + tickets/01–06（**implemented**）；P1 见 [spec-p1.md](spec-p1.md) + tickets/07–12。P2 尚未开实现票。
 
 ## Destination
 
@@ -16,11 +16,11 @@ Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏
 - Skills: `$grilling`, `$domain-modeling`, then `$to-spec` / `$to-tickets` only after this map clears
 - Standing preferences: feature flags off by default; approx↔full rank agreement re-tested when benches change; no CV thresholds without labeled data; Hy-Memory version-pinned + egress compliance
 - Tracker mode: versioned docs tree until user authorizes GitHub map + `wayfinder:*` labels；授权后以 GitHub 为权威，本目录降为镜像
-- P0 implementation backlog is published below; decision tickets remain authority for D1–D8
+- P0 + P1 implementation backlogs are published below; decision tickets remain authority for D1–D8
 
 ## Implementation backlog
 
-P0 (D1–D3) — **ready-for-agent** (docs-tree tickets; GitHub wayfinder publication still pending authorization):
+P0 (D1–D3) — **implemented** (docs-tree tickets; GitHub wayfinder publication still pending authorization):
 
 - Spec: [spec-p0.md](spec-p0.md)
 - [01 eval_role on results](tickets/01-eval-role-on-results.md) — **implemented** (`UC_EVAL_ROLE_ENFORCE`); was blocked by: none
@@ -30,7 +30,17 @@ P0 (D1–D3) — **ready-for-agent** (docs-tree tickets; GitHub wayfinder public
 - [05 completion_conditions](tickets/05-completion-conditions.md) — **implemented** (`UC_COMPLETION_CONDITIONS_ENFORCE`); was blocked by: none
 - [06 adapters and re-eval condition](tickets/06-adapters-and-reeval-condition.md) — **implemented** (`verify_command` / `step_condition` / `independent_reeval`); was blocked by: 05, 03
 
-Frontier for implementers: 06 (unblocked by 05 + 03). P1 (D4–D6) and P2 (D7–D8) are **not ticketed yet**.
+P1 (D4–D6) — **ready-for-agent**:
+
+- Spec: [spec-p1.md](spec-p1.md)
+- [07 approx rank-agreement gate](tickets/07-approx-rank-agreement-gate.md) — Blocked by: none
+- [08 approx prune and auto-disable](tickets/08-approx-prune-and-autodisable.md) — Blocked by: 07
+- [09 typed reviewers fail-closed](tickets/09-typed-reviewers-fail-closed.md) — Blocked by: none
+- [10 reviewer CV thresholds](tickets/10-reviewer-cv-thresholds.md) — Blocked by: 09
+- [11 Hy-Memory supersede write](tickets/11-hy-memory-supersede-write.md) — Blocked by: none
+- [12 Hy-Memory auto context](tickets/12-hy-memory-auto-context.md) — Blocked by: none (compliance: keep flag off until egress review)
+
+Frontier for implementers: **07, 09, 11, 12**. P2 (D7–D8) is **not ticketed yet**.
 
 ## Decisions so far
 
@@ -55,7 +65,7 @@ _(none)_
 
 - 项目本体（EvoOntology 风格）经 MCP 可查的最小词表与权威源
 - README / 文档中的数字由哪条脚本复算、CI 失败策略（漂移告警 vs hard fail）
-- 近似评测与 MetaInfer 内部 ranking 的边界（D4 已定 prune-only / uplift 禁引近似；实现票可再毕业细则）
+- 严格三分 search/select/report **数据集**拆分（D1 P1 follow-on；P1 approx 先用 report-role hold-out）
 - 标注数据管线（谁标、存在哪、如何防止泄漏进报告集）— D5 已定无标注则关闭；管线细节仍雾
 
 ## Out of scope
