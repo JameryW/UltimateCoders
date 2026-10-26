@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Python test patterns"}
+{"file": ".trellis/spec/backend/stall-redispatch-spec.md", "reason": "T13 stall signal + flag contracts (create if missing)"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for stall-redispatch section"}
+{"file": "docs/architecture/agent-trust-eval/tickets/13-stall-signal-surface.md", "reason": "Wayfinder acceptance criteria"}
+{"file": "docs/architecture/agent-trust-eval/spec-p2.md", "reason": "P2 Seam G observe half"}

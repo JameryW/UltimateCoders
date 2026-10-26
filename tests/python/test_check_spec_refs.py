@@ -838,7 +838,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # test_hy_memory_auto_context.py, test_hy_memory_supersede.py, and
     # test_hy_memory_integration.py; docs/hy-memory.md adds the auto-context
     # test path (418 -> 425), all resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 425
+    # T13 stall signal surface: stall-redispatch-spec.md names
+    # stall_redispatch.py, worker.py, progress.py (×5 short),
+    # test_stall_signal_surface.py, and test_progress_detector.py
+    # (425 -> 436), all resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 436
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -885,8 +889,10 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     it a fourth, 1457 -> 1465 (the writer's docstring now states the attempt
     identity it used to hardcode away), and the T12 hy-memory auto-context
     slice moved it a fifth, 1465 -> 1478 (optional coding-memory inject landed
-    above the checkpoint helpers). The spec's cited range and this pin
-    were re-measured together, not guessed.
+    above the checkpoint helpers), and the T13 stall-signal surface slice
+    moved it a sixth, 1478 -> 1489 (`build_stall_signal` attach on progress
+    stop landed above the checkpoint helpers). The spec's cited range and
+    this pin were re-measured together, not guessed.
     """
     guard = _load_guard()
     want = {
@@ -908,7 +914,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            1478,
+            1489,
         ),
     }
     rows = [

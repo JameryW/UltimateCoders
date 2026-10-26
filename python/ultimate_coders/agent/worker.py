@@ -44,6 +44,7 @@ from ultimate_coders.agent.sandbox import (
     SandboxManager,
     subtask_usage_from_token_usage,
 )
+from ultimate_coders.agent.stall_redispatch import build_stall_signal
 from ultimate_coders.agent.state_sync import (
     ContextInjector,
     FileChangeEvent,
@@ -1226,7 +1227,17 @@ class Worker:
                             "reason": verdict.reason,
                         }
                         if verdict.action == "stop":
+                            # Keep loop_detected for compat; attach structured
+                            # stall_signal so consumers need not scrape logs.
+                            # UC_STALL_REDISPATCH_ENFORCE does not swap agents
+                            # here (ticket 14); observe-only in T13.
                             failure_data["loop_detected"] = True
+                            stall = build_stall_signal(
+                                verdict,
+                                subtask_id=subtask.id,
+                            )
+                            if stall is not None:
+                                failure_data["stall_signal"] = stall.to_dict()
                         if (
                             attempt < self.MAX_RETRIES - 1
                             and result.retryable

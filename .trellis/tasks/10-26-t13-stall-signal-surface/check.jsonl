@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/stall-redispatch-spec.md", "reason": "T13 stall signal contracts"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Python test quality checklist"}
+{"file": "docs/architecture/agent-trust-eval/tickets/13-stall-signal-surface.md", "reason": "Ticket acceptance"}
