@@ -842,7 +842,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # stall_redispatch.py, worker.py, progress.py (×5 short),
     # test_stall_signal_surface.py, and test_progress_detector.py
     # (425 -> 436), all resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 436
+    # T14 same-contract redispatch: stall-redispatch-spec.md adds
+    # orchestrator.py and test_stall_agent_redispatch.py; ticket 14 status
+    # names stall_redispatch.py and progress.py (436 -> 440), all resolved;
+    # unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 440
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -891,8 +895,11 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     slice moved it a fifth, 1465 -> 1478 (optional coding-memory inject landed
     above the checkpoint helpers), and the T13 stall-signal surface slice
     moved it a sixth, 1478 -> 1489 (`build_stall_signal` attach on progress
-    stop landed above the checkpoint helpers). The spec's cited range and
-    this pin were re-measured together, not guessed.
+    stop landed above the checkpoint helpers), and the T14 same-contract
+    redispatch slice moved it a seventh, 1489 -> 1498 (`contract_digest` on
+    stall_signal + `result.stall_signal` attach landed above the checkpoint
+    helpers). The spec's cited range and this pin were re-measured together,
+    not guessed.
     """
     guard = _load_guard()
     want = {
@@ -914,7 +921,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            1489,
+            1498,
         ),
     }
     rows = [

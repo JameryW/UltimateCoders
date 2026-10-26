@@ -30,6 +30,7 @@ from ultimate_coders.agent.context_compiler import (
     from_hy_memory_block,
     from_search_block,
 )
+from ultimate_coders.agent.contract import contract_digest
 from ultimate_coders.agent.hy_memory import build_hy_memory_context_block
 from ultimate_coders.agent.llm import (
     LLMRetryExhaustedError,
@@ -1229,15 +1230,23 @@ class Worker:
                         if verdict.action == "stop":
                             # Keep loop_detected for compat; attach structured
                             # stall_signal so consumers need not scrape logs.
-                            # UC_STALL_REDISPATCH_ENFORCE does not swap agents
-                            # here (ticket 14); observe-only in T13.
+                            # Agent swap is owned by the orchestrator (T14 /
+                            # Approach A) behind UC_STALL_REDISPATCH_ENFORCE.
                             failure_data["loop_detected"] = True
+                            digest = (
+                                contract_digest(subtask.user_request)
+                                if (subtask.user_request or "").strip()
+                                else None
+                            )
                             stall = build_stall_signal(
                                 verdict,
                                 subtask_id=subtask.id,
+                                contract_digest=digest,
                             )
                             if stall is not None:
-                                failure_data["stall_signal"] = stall.to_dict()
+                                stall_payload = stall.to_dict()
+                                failure_data["stall_signal"] = stall_payload
+                                result.stall_signal = stall_payload
                         if (
                             attempt < self.MAX_RETRIES - 1
                             and result.retryable

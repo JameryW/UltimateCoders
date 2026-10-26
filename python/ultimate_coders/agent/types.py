@@ -335,6 +335,10 @@ class SubtaskResult:
     # reason D13 forbids a zeroed usage block: the UI would render a ✗ that
     # nobody issued.
     review: SubtaskReview | None = None
+    # Progress-stop stall signal (T13/T14). ``None`` means "not a stall stop".
+    # When set, orchestrator may apply same-contract one-shot agent redispatch
+    # under ``UC_STALL_REDISPATCH_ENFORCE`` (default off).
+    stall_signal: dict[str, Any] | None = None
 
 
 @dataclass
@@ -562,6 +566,7 @@ class Task:
                         # T16 #661: same hop, same reason as the block above —
                         # a checkpoint is a place a collected verdict can die.
                         "review": (st.result.review.to_dict() if st.result.review else None),
+                        "stall_signal": st.result.stall_signal,
                     }
                     if st.result
                     else None,
@@ -648,6 +653,9 @@ class Task:
                         SubtaskReview.from_dict(rd["review"])
                         if rd.get("review") is not None
                         else None
+                    ),
+                    stall_signal=(
+                        rd["stall_signal"] if isinstance(rd.get("stall_signal"), dict) else None
                     ),
                 )
                 if "modified_files" in rd:

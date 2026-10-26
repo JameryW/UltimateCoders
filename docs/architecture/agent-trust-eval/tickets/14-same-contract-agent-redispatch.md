@@ -4,11 +4,11 @@
 
 **Blocked by:** 13 (stall signal surface).
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t14-same-contract-agent-redispatch-7c92`; pure helpers in `stall_redispatch.py`; orchestrator Failed→Pending wire via `maybe_apply_stall_redispatch`; flag default off; no replan in `progress.py`)
 
-- [ ] One alternate-agent redispatch under unchanged contract digest
-- [ ] Second failure escalates (no further automatic swaps)
-- [ ] Does not bump contract version or rewrite goal text
-- [ ] Progress detector still has no replan API
-- [ ] Tests cover swap-once + escalate and flag-off no-swap
-- [ ] Feature flag defaults off
+- [x] One alternate-agent redispatch under unchanged contract digest
+- [x] Second failure escalates (no further automatic swaps)
+- [x] Does not bump contract version or rewrite goal text
+- [x] Progress detector still has no replan API
+- [x] Tests cover swap-once + escalate and flag-off no-swap
+- [x] Feature flag defaults off
