@@ -4,7 +4,7 @@ Status: active (versioned under docs/ — GitHub Issues publication pending expl
 Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24)
 Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏差) + P0–P2 priorities
 
-本图收敛「Agent 结果是否可信」路线上的决策，并挂接实现 backlog。决策票**不是**实现工作；P0 见 [spec-p0.md](spec-p0.md) + tickets/01–06（**implemented**）；P1 见 [spec-p1.md](spec-p1.md) + tickets/07–12。P2 尚未开实现票。
+本图收敛「Agent 结果是否可信」路线上的决策，并挂接实现 backlog。决策票**不是**实现工作；P0 见 [spec-p0.md](spec-p0.md) + tickets/01–06（**implemented**）；P1 见 [spec-p1.md](spec-p1.md) + tickets/07–12（**implemented**）；P2 见 [spec-p2.md](spec-p2.md) + tickets/13–18。
 
 ## Destination
 
@@ -16,7 +16,7 @@ Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏
 - Skills: `$grilling`, `$domain-modeling`, then `$to-spec` / `$to-tickets` only after this map clears
 - Standing preferences: feature flags off by default; approx↔full rank agreement re-tested when benches change; no CV thresholds without labeled data; Hy-Memory version-pinned + egress compliance
 - Tracker mode: versioned docs tree until user authorizes GitHub map + `wayfinder:*` labels；授权后以 GitHub 为权威，本目录降为镜像
-- P0 + P1 implementation backlogs are published below; decision tickets remain authority for D1–D8
+- P0–P2 implementation backlogs are published below; decision tickets remain authority for D1–D8
 
 ## Implementation backlog
 
@@ -40,7 +40,17 @@ P1 (D4–D6) — **implemented** (docs-tree tickets; GitHub wayfinder publicatio
 - [11 Hy-Memory supersede write](tickets/11-hy-memory-supersede-write.md) — **implemented** (supersede-not-delete on remember / MCP; no auto-inject); was blocked by: none
 - [12 Hy-Memory auto context](tickets/12-hy-memory-auto-context.md) — **implemented** (`UC_HY_MEMORY_AUTO_CONTEXT` opt-in inject; soft skip; compliance: keep flag off until egress review); was blocked by: none
 
-Frontier for implementers: **P2 not ticketed yet** (D7–D8).
+P2 (D7–D8) — **ready-for-agent**:
+
+- Spec: [spec-p2.md](spec-p2.md)
+- [13 stall signal surface](tickets/13-stall-signal-surface.md) — Blocked by: none
+- [14 same-contract agent redispatch](tickets/14-same-contract-agent-redispatch.md) — Blocked by: 13
+- [15 NetworkMode real enforcement](tickets/15-networkmode-real-enforcement.md) — Blocked by: none
+- [16 default-offline allowlist](tickets/16-default-offline-allowlist.md) — Blocked by: 15
+- [17 Landlock FS later](tickets/17-landlock-fs-later.md) — Blocked by: 15 (preferably after 16)
+- [18 true replan deferred](tickets/18-true-replan-deferred.md) — **deferred** (not P2 MVP)
+
+Frontier for implementers: **13, 15**. Ontology MCP / README numeric CI remain fog (not ticketed).
 
 ## Decisions so far
 
