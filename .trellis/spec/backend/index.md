@@ -39,6 +39,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs`) is the unified contract.
 | [Completion Conditions Spec](./completion-conditions-spec.md) | Structured non-LLM completion beside digest; `UC_COMPLETION_CONDITIONS_ENFORCE` | Filled |
 | [Typed Review Spec](./typed-review-spec.md) | Per-`FailureKind` typed reviewers; label- and CV-threshold-gated; `UC_TYPED_REVIEW_ENFORCE` | Filled |
 | [Hy-Memory Supersede Spec](./hy-memory-supersede-spec.md) | Supersede-not-delete on `CodingMemory.remember` / MCP remember; no auto-inject | Filled |
+| [Hy-Memory Auto-Context Spec](./hy-memory-auto-context-spec.md) | Opt-in `UC_HY_MEMORY_AUTO_CONTEXT` worker inject; default off; soft skip | Filled |
 | [Inference Infrastructure](./inference-infra-spec.md) | MetaInfer domain, immutable benchmarks, Oracle, adaptation graph and rollback | Filled |
 | [Event Pipeline Spec](./event-pipeline-spec.md) | Unified NATS event pipeline, sandbox-only Worker, dedup/idempotency, decomposition simplification | Filled |
 | [OMP Tools Spec](./omp-tools-spec.md) | LLM-callable tool schemas, GrpcBridge contracts, registration conventions | Filled |

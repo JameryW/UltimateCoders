@@ -25,8 +25,13 @@ delete / remove / drop / tombstone API on the Hy-Memory client for “update”
 semantics. Optional ``supersede_fact_ids`` (or prior ids already listed under
 ``metadata["supersedes"]``) are merged into outgoing metadata as
 ``{"supersedes": [...], "supersede_policy": "mark_not_delete"}`` and echoed on
-the return payload as ``superseded_ids``. History stays auditable; auto-inject
-(T12) is out of scope for this module's write path.
+the return payload as ``superseded_ids``. History stays auditable.
+
+**Optional auto-context (D6 / T12):** when ``UC_HY_MEMORY_AUTO_CONTEXT`` is
+truthy, :func:`build_hy_memory_context_block` may recall and format a short
+block for worker prompt assembly. Default remains off (MCP-only). Missing
+package / failed recall soft-skips (returns ``None``, never raises). Leave the
+flag off until egress / compliance review for that deployment.
 
 The SDK speaks the OpenAI protocol on both the LLM and embedding side, so the
 official DeepSeek example configuration works unchanged:
@@ -58,14 +63,25 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import logging
 import os
 import sys
 import time
 from collections.abc import Sequence
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 #: PyPI distribution name of the memory SDK.
 HY_MEMORY_PACKAGE = "hy-memory"
+
+#: Opt-in worker auto-inject of Hy-Memory recall into context assembly (T12).
+#: Default off — MCP-only until explicitly enabled; leave off until egress
+#: compliance review for that environment.
+HY_MEMORY_AUTO_CONTEXT_ENV = "UC_HY_MEMORY_AUTO_CONTEXT"
+
+#: Truthy env values shared with other UC feature flags.
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 
 #: Minimum supported SDK version. 2.0 introduced the coding scene with the
 #: version-evolution chain this integration is built on.
@@ -144,6 +160,12 @@ def hy_memory_available() -> bool:
     return True
 
 
+def hy_memory_auto_context_enabled() -> bool:
+    """Whether worker context may auto-inject Hy-Memory recall; default off."""
+    raw = os.environ.get(HY_MEMORY_AUTO_CONTEXT_ENV, "").strip().lower()
+    return raw in _TRUTHY_ENV
+
+
 def _version_at_least(version: str, floor: str) -> bool:
     return _parse_version(version) >= _parse_version(floor)
 
@@ -217,9 +239,7 @@ def _merge_supersede_metadata(
     """
     from_arg = _normalize_fact_ids(supersede_fact_ids)
     prior_raw = metadata.get(SUPERSEDES_METADATA_KEY) if metadata else None
-    from_meta = _normalize_fact_ids(
-        prior_raw if isinstance(prior_raw, (list, tuple)) else None
-    )
+    from_meta = _normalize_fact_ids(prior_raw if isinstance(prior_raw, (list, tuple)) else None)
     # Union: ids already in metadata plus any newly supplied via the arg.
     merged_ids = _normalize_fact_ids([*from_meta, *from_arg])
     if not merged_ids:
@@ -295,9 +315,7 @@ class CodingMemory:
         and echoed on the return payload as ``superseded_ids``. This method
         only calls ``client.add`` — never delete / remove / drop / tombstone.
         """
-        outgoing_metadata, superseded_ids = _merge_supersede_metadata(
-            metadata, supersede_fact_ids
-        )
+        outgoing_metadata, superseded_ids = _merge_supersede_metadata(metadata, supersede_fact_ids)
         raw = self.client.add(
             messages,
             scene="coding",
@@ -364,6 +382,108 @@ class CodingMemory:
             except Exception:  # pragma: no cover - close must not raise
                 pass
         self._client = None
+
+
+def _format_recall_lines(hits: dict[str, Any]) -> list[str]:
+    """Render recall channels as short bullet lines (MCP-compatible wording)."""
+    lines: list[str] = []
+    for fact in hits.get("facts") or []:
+        if isinstance(fact, dict):
+            statement = fact.get("statement") or fact.get("content") or str(fact)
+        else:
+            statement = str(fact)
+        text = str(statement).strip()
+        if text:
+            lines.append(f"- [fact] {text}")
+    for exp in hits.get("experiences") or []:
+        if isinstance(exp, dict):
+            task = exp.get("task") or exp.get("content") or str(exp)
+            solution = exp.get("solution", "")
+        else:
+            task, solution = str(exp), ""
+        task_text = str(task).strip()
+        if not task_text:
+            continue
+        sol = str(solution).strip() if solution else ""
+        lines.append(f"- [experience] {task_text}" + (f" -> {sol}" if sol else ""))
+    chain = hits.get("chain_block")
+    if chain:
+        if isinstance(chain, dict):
+            chain_text = chain.get("text") or chain.get("summary") or str(chain)
+        else:
+            chain_text = str(chain)
+        chain_text = str(chain_text).strip()
+        if chain_text:
+            lines.append(f"- [chain] {chain_text}")
+    return lines
+
+
+def _default_coding_memory() -> CodingMemory | None:
+    """Build a CodingMemory from isolation env vars, or None if unavailable."""
+    if not hy_memory_available():
+        return None
+    try:
+        return CodingMemory(
+            user_id=os.environ.get("UC_MEMORY_USER_ID", "default"),
+            workspace_id=os.environ.get("UC_MEMORY_WORKSPACE") or None,
+            branch=os.environ.get("UC_MEMORY_BRANCH") or None,
+        )
+    except Exception as exc:  # pragma: no cover - construct must soft-skip
+        logger.debug("hy-memory auto-context: client construct skipped: %s", exc)
+        return None
+
+
+def build_hy_memory_context_block(
+    query: str,
+    *,
+    memory: CodingMemory | None = None,
+    limit: int = 5,
+) -> str | None:
+    """Recall Hy-Memory and format a short context block when auto-inject is on.
+
+    Soft-skip contract (T12):
+    - Flag off / empty query / package missing / recall failure / empty hits
+      → ``None`` (never raises for a missing package).
+    - Does not claim inject succeeded; callers treat ``None`` as no-op.
+    - Does not touch remember / supersede write paths.
+    """
+    if not hy_memory_auto_context_enabled():
+        return None
+    text = (query or "").strip()
+    if not text:
+        return None
+
+    owned = False
+    mem = memory
+    if mem is None:
+        mem = _default_coding_memory()
+        if mem is None:
+            logger.debug(
+                "hy-memory auto-context: soft skip (package unavailable or construct failed)"
+            )
+            return None
+        owned = True
+
+    try:
+        try:
+            hits = mem.recall(text, limit=limit)
+        except Exception as exc:  # defensive: recall already soft-fails
+            logger.debug("hy-memory auto-context: recall raised: %s", exc)
+            return None
+        if not hits.get("ok"):
+            logger.debug(
+                "hy-memory auto-context: soft skip (recall failed: %s)",
+                hits.get("error") or "unknown",
+            )
+            return None
+        lines = _format_recall_lines(hits)
+        if not lines:
+            logger.debug("hy-memory auto-context: soft skip (empty recall)")
+            return None
+        return "## Coding memory\n" + "\n".join(lines)
+    finally:
+        if owned:
+            mem.close()
 
 
 def preflight_check(timeout_secs: int = 20) -> tuple[bool, str]:

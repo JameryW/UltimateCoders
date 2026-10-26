@@ -94,8 +94,22 @@ mem.close()
 **写入硬约束（supersede-not-delete）**：`CodingMemory.remember` 与 MCP
 `remember_coding_memory` 对“更新”语义只标记旧事实为被取代
 （`supersedes` + `supersede_policy=mark_not_delete`），**从不**调用
-Hy-Memory 客户端的 delete / remove / drop。与 `UC_HY_MEMORY_AUTO_CONTEXT`
-自动注入（T12）无关——该开关默认关，本路径不引入注入。
+Hy-Memory 客户端的 delete / remove / drop。
+
+## 可选自动注入（Worker，默认关）
+
+```bash
+export UC_HY_MEMORY_AUTO_CONTEXT=1   # 仅在合规 egress 审查通过后开启
+```
+
+当开关为真且 `hy-memory` 可用时，Worker 在组装上下文（search 之后）会用
+子任务描述做一次小 limit 的 `recall`，把短块并入 gateway `context_block`
+或本地 `compile_context`（`Tier.MEMORY` / P4）。包缺失、recall 失败或无命中
+时**软跳过**（返回 `None`，不崩溃，不宣称注入成功）。
+
+**合规**：在该环境完成 egress 审查之前保持关闭（默认即关）。开启后 Worker
+进程可能经 Hy-Memory SDK 发起 LLM / Embedding 出站调用。密钥仍只走
+`MEMORY_*` allowlist，绝不进 argv。写入路径仍遵守 supersede-not-delete。
 
 ## MCP 工具（沙箱内 Agent）
 
@@ -167,6 +181,7 @@ override 只做三件事：给 `orchestrator` / `worker` / `nats-worker` 转发
 | 可用性/版本底线/掩码 | `tests/python/test_hy_memory_integration.py`（`test_available_matches_version`、`test_version_floor_comparisons`、`test_mask_key_never_leaks_the_middle`） |
 | remember 传参（scene/坐标/source） | `test_remember_passes_coding_scene_and_isolation_coordinates` |
 | supersede-not-delete（metadata / 禁 delete / MCP） | `tests/python/test_hy_memory_supersede.py` |
+| 可选 auto-context（flag / soft skip / P4） | `tests/python/test_hy_memory_auto_context.py` |
 | recall 归一化 + 失败降级 + 空通道 | `test_recall_normalises_channels`、`test_recall_survives_client_failure`、`test_recall_tolerates_empty_channels` |
 | 惰性客户端 / 关闭语义 | `test_lazy_client_built_once_and_closed_only_when_owned`、`test_injected_client_is_never_closed_by_the_wrapper` |
 | preflight 全矩阵 | `test_preflight_*`（无包 / 低版本 / 缺端点 / 仅缺 embedder / OPENAI 兜底 / 构造失败） |

@@ -30,7 +30,7 @@ P0 (D1–D3) — **implemented** (docs-tree tickets; GitHub wayfinder publicatio
 - [05 completion_conditions](tickets/05-completion-conditions.md) — **implemented** (`UC_COMPLETION_CONDITIONS_ENFORCE`); was blocked by: none
 - [06 adapters and re-eval condition](tickets/06-adapters-and-reeval-condition.md) — **implemented** (`verify_command` / `step_condition` / `independent_reeval`); was blocked by: 05, 03
 
-P1 (D4–D6) — **in progress**:
+P1 (D4–D6) — **implemented** (docs-tree tickets; GitHub wayfinder publication still pending authorization):
 
 - Spec: [spec-p1.md](spec-p1.md)
 - [07 approx rank-agreement gate](tickets/07-approx-rank-agreement-gate.md) — **implemented** (agreement + arming latch; prune = 08)
@@ -38,9 +38,9 @@ P1 (D4–D6) — **in progress**:
 - [09 typed reviewers fail-closed](tickets/09-typed-reviewers-fail-closed.md) — **implemented** (`UC_TYPED_REVIEW_ENFORCE`; label-gated stub); was blocked by: none
 - [10 reviewer CV thresholds](tickets/10-reviewer-cv-thresholds.md) — **implemented** (CV artifact loader; labels+threshold enablement; `typed_review_score`); was blocked by: 09
 - [11 Hy-Memory supersede write](tickets/11-hy-memory-supersede-write.md) — **implemented** (supersede-not-delete on remember / MCP; no auto-inject); was blocked by: none
-- [12 Hy-Memory auto context](tickets/12-hy-memory-auto-context.md) — Blocked by: none (compliance: keep flag off until egress review)
+- [12 Hy-Memory auto context](tickets/12-hy-memory-auto-context.md) — **implemented** (`UC_HY_MEMORY_AUTO_CONTEXT` opt-in inject; soft skip; compliance: keep flag off until egress review); was blocked by: none
 
-Frontier for implementers: **12**. P2 (D7–D8) is **not ticketed yet**.
+Frontier for implementers: **P2 not ticketed yet** (D7–D8).
 
 ## Decisions so far
 

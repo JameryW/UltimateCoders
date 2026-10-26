@@ -833,7 +833,12 @@ def test_real_corpus_unanchored_census_is_reported():
     # engine_mcp.py, test_hy_memory_supersede.py, and
     # test_hy_memory_integration.py; docs/hy-memory.md adds the new supersede
     # test path (413 -> 418), all resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 418
+    # T12 hy-memory auto-context: hy-memory-auto-context-spec.md names
+    # hy_memory.py, context_compiler.py, worker.py,
+    # test_hy_memory_auto_context.py, test_hy_memory_supersede.py, and
+    # test_hy_memory_integration.py; docs/hy-memory.md adds the auto-context
+    # test path (418 -> 425), all resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 425
 
 
 def test_real_corpus_has_no_false_content_mismatch():

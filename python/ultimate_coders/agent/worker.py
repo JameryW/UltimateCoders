@@ -25,7 +25,12 @@ from ultimate_coders.agent.conflict import (
     EditType,
     LineRange,
 )
-from ultimate_coders.agent.context_compiler import compile_context, from_search_block
+from ultimate_coders.agent.context_compiler import (
+    compile_context,
+    from_hy_memory_block,
+    from_search_block,
+)
+from ultimate_coders.agent.hy_memory import build_hy_memory_context_block
 from ultimate_coders.agent.llm import (
     LLMRetryExhaustedError,
     _classify_llm_error,
@@ -937,16 +942,24 @@ class Worker:
                     context_block = (
                         f"{context_block}\n\n{search_block}" if context_block else search_block
                     )
+                # Opt-in Hy-Memory auto-context (T12 / UC_HY_MEMORY_AUTO_CONTEXT).
+                # Soft-skip when flag off, package missing, or recall empty.
+                hy_block = build_hy_memory_context_block(subtask.description or "")
+                if hy_block:
+                    context_block = f"{context_block}\n\n{hy_block}" if context_block else hy_block
             else:
                 # One budget across every local source: dependency results
-                # (P3) and search hits (P2) compete for the same tokens
-                # instead of truncating independently. The rendered text
-                # matches the legacy injector wording. The routed risk
-                # decides how that budget is allocated between tiers.
+                # (P3), search hits (P2), and optional Hy-Memory (P4) compete
+                # for the same tokens instead of truncating independently.
+                # The rendered text matches the legacy injector wording. The
+                # routed risk decides how that budget is allocated between
+                # tiers.
                 search_block = await self._build_search_context(subtask)
+                hy_block = build_hy_memory_context_block(subtask.description or "")
                 manifest = compile_context(
                     self._context_injector.dependency_items(subtask.depends_on)
-                    + from_search_block(search_block),
+                    + from_search_block(search_block)
+                    + from_hy_memory_block(hy_block),
                     budget_tokens=self._context_budget_tokens(),
                     risk=self._last_route.risk,
                 )

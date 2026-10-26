@@ -248,6 +248,7 @@ def test_real_repo_is_reconciled() -> None:
         (2163, 2154),  # T9 typed reviewers: module + test + spec + Trellis task (7 text).
         (2170, 2161),  # T10 CV thresholds: module + test + fixture + Trellis task (7 text).
         (2176, 2167),  # T11 hy-memory supersede: spec + test + Trellis task (6 text).
+        (2182, 2173),  # T12 hy-memory auto-context: spec + test + Trellis task (6 text).
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
