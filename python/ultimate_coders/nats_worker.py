@@ -3269,6 +3269,11 @@ class NatsWorker:
                     for fc in result.modified_files
                 ],
             }
+            # T14: carry structured stall_signal so orchestrator can apply
+            # same-contract one-shot agent redispatch without log scraping.
+            if result.stall_signal:
+                data["stall_signal"] = result.stall_signal
+                data["loop_detected"] = True
             event = _make_task_event_payload(event_type, task_id, subtask_id, data)
             task = self._make_subtask_result_task(
                 task_id,
@@ -3705,6 +3710,7 @@ class NatsWorker:
             await self._orchestrator.handle_subtask_result(result)
         elif event_type == "subtask_failed" and self._orchestrator:
             inner = data.get("data", {}) or {}
+            stall_raw = inner.get("stall_signal")
             result = SubtaskResult(
                 subtask_id=subtask_id,
                 worker_id="remote",
@@ -3712,6 +3718,7 @@ class NatsWorker:
                 success=False,
                 retryable=inner.get("retryable", True),
                 cleanup_pending=inner.get("cleanup_pending", False),
+                stall_signal=stall_raw if isinstance(stall_raw, dict) else None,
             )
             await self._orchestrator.handle_subtask_result(result)
 

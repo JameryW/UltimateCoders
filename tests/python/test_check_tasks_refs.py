@@ -616,6 +616,7 @@ def test_real_corpus_reproduces_the_recorded_numbers():
         927,
         934,
         939,
+        946,  # T14 same-contract redispatch task context refs.
     ), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"

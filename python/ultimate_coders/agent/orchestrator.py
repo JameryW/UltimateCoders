@@ -31,6 +31,12 @@ from ultimate_coders.agent.aggregator import ResultAggregator
 from ultimate_coders.agent.conflict import ConflictDetector
 from ultimate_coders.agent.event_emitter import TaskEventEmitter
 from ultimate_coders.agent.routing import ModelRouter, Stage, derive_risk
+from ultimate_coders.agent.stall_redispatch import (
+    STALL_EPISODE_KEY,
+    load_stall_episode,
+    maybe_apply_stall_redispatch,
+    stall_signal_from_mapping,
+)
 from ultimate_coders.agent.types import (
     Subtask,
     SubtaskResult,
@@ -608,7 +614,12 @@ class Orchestrator:
         return worker_id
 
     async def handle_subtask_result(self, result: SubtaskResult) -> None:
-        """Process a subtask result — update task state."""
+        """Process a subtask result — update task state.
+
+        On progress-stop ``stall_signal`` with ``UC_STALL_REDISPATCH_ENFORCE``
+        on, may reopen Failed→Pending once with an alternate agent under the
+        same contract digest (T14 / D7). Flag off keeps today's terminal stop.
+        """
         for task in self.tasks.values():
             for st in task.subtasks:
                 if st.id == result.subtask_id:
@@ -632,6 +643,35 @@ class Orchestrator:
                             st.status.value,
                         )
                         return
+                    # Duplicate of a stall that already triggered swap_once:
+                    # status left terminal → PENDING; ignore the replay.
+                    if (
+                        st.status == SubtaskStatus.PENDING
+                        and load_stall_episode(st.agent_config).swaps_used >= 1
+                        and (result.stall_signal or not result.success)
+                    ):
+                        logger.debug(
+                            "Subtask %s stall redispatch already applied; ignoring duplicate",
+                            st.id[:8],
+                        )
+                        return
+
+                    redispatched = False
+                    if not result.success:
+                        redispatched = self._maybe_stall_agent_redispatch(st, result)
+
+                    if redispatched:
+                        # Worker binding is done; free capacity for the reopen.
+                        wid = result.worker_id
+                        entry = self.workers.get(wid)
+                        if entry and entry.current_load > 0:
+                            entry.current_load -= 1
+                        self._update_task_status(task)
+                        task.update_timestamp()
+                        await self._publish_task_update(task)
+                        self.evict_terminal_tasks()
+                        return
+
                     st.status = SubtaskStatus.COMPLETED if result.success else SubtaskStatus.FAILED
                     st.result = result
                     # Update worker load
@@ -653,6 +693,48 @@ class Orchestrator:
                     # Evict terminal tasks to bound memory on long-running workers.
                     self.evict_terminal_tasks()
                     return
+
+    def _maybe_stall_agent_redispatch(self, subtask: Subtask, result: SubtaskResult) -> bool:
+        """Apply same-contract one-shot agent swap when policy says swap_once.
+
+        Returns True when the subtask was reopened to Pending (caller must not
+        mark Failed). Escalate / noop leave the subtask for the Failed path.
+        """
+        stall = stall_signal_from_mapping(result.stall_signal)
+        if stall is None:
+            return False
+        try:
+            from ultimate_coders.agent.registry import available_agents
+        except Exception:  # pragma: no cover - registry import is hard dependency
+            logger.warning(
+                "Stall redispatch: agent registry unavailable for subtask %s",
+                subtask.id[:8],
+                exc_info=True,
+            )
+            return False
+
+        decision = maybe_apply_stall_redispatch(
+            subtask,
+            stall=stall,
+            available=available_agents(),
+        )
+        if decision.action == "swap_once":
+            logger.info(
+                "Stall redispatch: subtask %s → Pending with agent %s (episode key %s)",
+                subtask.id[:8],
+                decision.alternate_agent,
+                STALL_EPISODE_KEY,
+            )
+            return True
+        if decision.action == "escalate":
+            logger.info(
+                "Stall redispatch escalate for subtask %s: %s",
+                subtask.id[:8],
+                decision.reason,
+            )
+            # Ensure escalate stays non-retryable for outer dispatch.
+            result.retryable = False
+        return False
 
     def _update_task_status(self, task: Task) -> None:
         """Update task status based on subtask states."""
