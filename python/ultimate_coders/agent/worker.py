@@ -358,7 +358,13 @@ class Worker:
     ):
         self.worker_id = worker_id or os.environ.get("UC_WORKER_ID") or str(uuid.uuid4())
         self.engine = engine
-        self._sandbox_config = sandbox_config or SandboxConfig()
+        if sandbox_config is None:
+            from ultimate_coders.agent.network_mode import resolve_network_default
+
+            # T16 — opt-in default Restricted; explicit SandboxConfig wins.
+            self._sandbox_config = SandboxConfig(network=resolve_network_default())
+        else:
+            self._sandbox_config = sandbox_config
         # Auto-register in-process MCP servers for sandbox agent tools.
         # uc-engine: search + memory (needs engine). uc-fs: file edit (workspace-scoped).
         # Guarded on engine != None so test stubs (SandboxConfig() + no engine) stay

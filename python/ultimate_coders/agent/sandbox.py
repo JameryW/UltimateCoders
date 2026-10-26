@@ -29,6 +29,8 @@ from ultimate_coders.agent.network_mode import (
     apply_network_argv,
     network_mode_enforce_enabled,
     plan_network_mode,
+    plan_restricted_allowlist,
+    set_restricted_applicator,
 )
 from ultimate_coders.agent.types import ChangeType, FileChange, StepUsage, SubtaskUsage
 
@@ -517,6 +519,11 @@ class SandboxManager:
         """
         self.config = config
         self.engine = engine
+        # T16 — register Restricted allowlist-preflight applicator (used only
+        # when UC_NETWORK_MODE_ENFORCE is on and network=restricted). Empty
+        # allowlist / missing intended hosts still fail closed. NATS/Gateway
+        # are not on the child allowlist requirement.
+        set_restricted_applicator(plan_restricted_allowlist)
         # T11 #653 — surface the env allowlist escape hatch at startup: an
         # operator widening the list should see it in the logs every run
         # (the widening is otherwise invisible and permanent).
@@ -891,6 +898,15 @@ class SandboxManager:
                 net_plan.mode,
                 net_plan.backend,
                 " ".join(net_plan.argv_prefix),
+            )
+        elif net_plan.backend not in ("noop",):
+            # T16 allowlist_preflight: honest log that policy passed with no
+            # kernel selective-egress wrap.
+            logger.info(
+                "NetworkMode enforce: mode=%s backend=%s "
+                "(no argv wrap; policy preflight only)",
+                net_plan.mode,
+                net_plan.backend,
             )
         command, args = apply_network_argv(command, list(args), net_plan)
 

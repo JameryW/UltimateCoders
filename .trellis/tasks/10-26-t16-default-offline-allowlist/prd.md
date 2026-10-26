@@ -45,14 +45,14 @@ With T15 NetworkMode enforcement present, add **opt-in** product policy that def
 
 ## Acceptance Criteria (evolving)
 
-* [ ] `UC_NETWORK_DEFAULT_RESTRICTED` defaults off; Full defaults unchanged
-* [ ] Flag on → resolved sandbox/dsec/worker default network is `restricted` (explicit overrides still win)
-* [ ] Enforce on + Restricted + empty allowlist → fail closed (no silent Full)
-* [ ] Enforce on + Restricted + allowlisted intended host → plan succeeds (`allowlist_preflight`)
-* [ ] Enforce on + Restricted + non-allowlisted intended host → fail closed
-* [ ] NATS/Gateway hosts are not required on the child allowlist for spawn success
-* [ ] `set_restricted_applicator` registered at sandbox init; tests cover allow/deny
-* [ ] Feature flags default off; no Landlock / no kernel fake-Restricted-as-empty-netns marketed as allowlist
+* [x] `UC_NETWORK_DEFAULT_RESTRICTED` defaults off; Full defaults unchanged
+* [x] Flag on → resolved sandbox/dsec/worker default network is `restricted` (explicit overrides still win)
+* [x] Enforce on + Restricted + empty allowlist → fail closed (no silent Full)
+* [x] Enforce on + Restricted + allowlisted intended host → plan succeeds (`allowlist_preflight`)
+* [x] Enforce on + Restricted + non-allowlisted intended host → fail closed
+* [x] NATS/Gateway hosts are not required on the child allowlist for spawn success
+* [x] `set_restricted_applicator` registered at sandbox init; tests cover allow/deny
+* [x] Feature flags default off; no Landlock / no kernel fake-Restricted-as-empty-netns marketed as allowlist
 
 ## Definition of Done (team quality bar)
 
@@ -113,9 +113,9 @@ With T15 NetworkMode enforcement present, add **opt-in** product policy that def
 4. Tests: new `tests/python/test_network_allowlist.py` (or extend enforce tests) — flag/default matrix + allow/deny preflight; reset applicator state in fixtures.
 5. Spec: extend `network-mode-spec.md` with T16 flags, applicator contract, honesty note.
 
-## Open Questions
+## Decisions locked (cont.)
 
-* Prefer documenting OS-deny deferral in the backend spec only, or also a one-line note on ticket 16 status? (non-blocking — recommend spec + ticket status note at finish)
+* Document OS selective-egress deferral in `network-mode-spec.md` and a one-line note on ticket 16 when marking implemented.
 
 ## Technical Notes
 

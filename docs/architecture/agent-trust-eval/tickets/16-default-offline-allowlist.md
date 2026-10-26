@@ -4,11 +4,13 @@
 
 **Blocked by:** 15 (real NetworkMode enforcement).
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t16-default-offline-allowlist-7c92`; `UC_NETWORK_DEFAULT_RESTRICTED` + `UC_NETWORK_ALLOWLIST` + optional `UC_NETWORK_DEFAULT_MODE`; Restricted applicator `plan_restricted_allowlist` with `backend=allowlist_preflight` registered at `SandboxManager.__init__`; construction sites use `resolve_network_default()`; OS selective egress deferred/honest; flags default off; tests in `tests/python/test_network_allowlist.py`)
 
-- [ ] Opt-in default Restricted/None policy behind a flag (default off)
-- [ ] Restricted mode consults an explicit host allowlist for LLM/API
-- [ ] Worker NATS/Gateway path not placed on the child allowlist requirement
-- [ ] Flag off preserves prior defaults
-- [ ] Tests cover allowlist allow/deny for Restricted
-- [ ] Feature flag(s) default off
+- [x] Opt-in default Restricted/None policy behind a flag (default off)
+- [x] Restricted mode consults an explicit host allowlist for LLM/API
+- [x] Worker NATS/Gateway path not placed on the child allowlist requirement
+- [x] Flag off preserves prior defaults
+- [x] Tests cover allowlist allow/deny for Restricted
+- [x] Feature flag(s) default off
+
+**Honesty note:** Restricted MVP is policy fail-closed (`allowlist_preflight`, noop argv). Kernel selective egress (nft/proxy) is a follow-up — not claimed as shipped.
