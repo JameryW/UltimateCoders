@@ -1,0 +1,5 @@
+{"file": "docs/architecture/agent-trust-eval/tickets/15-networkmode-real-enforcement.md", "reason": "Verify ticket AC: enforce modes, fail closed, worker untouched, flag off"}
+{"file": "docs/architecture/agent-trust-eval/spec-p2.md", "reason": "Seam H: flag off compatible; None probe; Restricted allow/deny boundary vs T16"}
+{"file": "docs/architecture/agent-trust-eval/issues/D8-sandbox-isolation-target.md", "reason": "Confirm Landlock not in scope; child-only cut"}
+{"file": ".trellis/tasks/10-26-t15-networkmode-real-enforcement/prd.md", "reason": "Acceptance criteria and explicit out-of-scope for check"}
+{"file": ".trellis/tasks/10-26-t15-networkmode-real-enforcement/research/grounding.md", "reason": "Guard against inventing Landlock, DockerSandbox revival, silent Full"}

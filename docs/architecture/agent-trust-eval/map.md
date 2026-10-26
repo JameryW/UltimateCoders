@@ -40,17 +40,17 @@ P1 (D4–D6) — **implemented** (docs-tree tickets; GitHub wayfinder publicatio
 - [11 Hy-Memory supersede write](tickets/11-hy-memory-supersede-write.md) — **implemented** (supersede-not-delete on remember / MCP; no auto-inject); was blocked by: none
 - [12 Hy-Memory auto context](tickets/12-hy-memory-auto-context.md) — **implemented** (`UC_HY_MEMORY_AUTO_CONTEXT` opt-in inject; soft skip; compliance: keep flag off until egress review); was blocked by: none
 
-P2 (D7–D8) — **in progress** (13–14 implemented; 15 still ready-for-agent):
+P2 (D7–D8) — **in progress** (13–15 implemented; 16 still ready-for-agent after 15):
 
 - Spec: [spec-p2.md](spec-p2.md)
 - [13 stall signal surface](tickets/13-stall-signal-surface.md) — **implemented** (`UC_STALL_REDISPATCH_ENFORCE` observe surface; swap is 14); was blocked by: none
 - [14 same-contract agent redispatch](tickets/14-same-contract-agent-redispatch.md) — **implemented** (one-shot same-digest alternate agent; escalate on second stall; flag default off); was blocked by: 13
-- [15 NetworkMode real enforcement](tickets/15-networkmode-real-enforcement.md) — Blocked by: none
+- [15 NetworkMode real enforcement](tickets/15-networkmode-real-enforcement.md) — **implemented** (`UC_NETWORK_MODE_ENFORCE`; child-only unshare none; Restricted fail-closed until T16; flag default off); was blocked by: none
 - [16 default-offline allowlist](tickets/16-default-offline-allowlist.md) — Blocked by: 15
 - [17 Landlock FS later](tickets/17-landlock-fs-later.md) — Blocked by: 15 (preferably after 16)
 - [18 true replan deferred](tickets/18-true-replan-deferred.md) — **deferred** (not P2 MVP)
 
-Frontier for implementers: **15**. Ontology MCP / README numeric CI remain fog (not ticketed).
+Frontier for implementers: **16** (after 15). Ontology MCP / README numeric CI remain fog (not ticketed).
 
 ## Decisions so far
 
