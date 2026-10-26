@@ -1,0 +1,8 @@
+{"file": "docs/architecture/agent-trust-eval/tickets/15-networkmode-real-enforcement.md", "reason": "Ticket AC: child-only None/Restricted/Full, fail closed, flag default off"}
+{"file": "docs/architecture/agent-trust-eval/spec-p2.md", "reason": "Seam H NetworkMode testing decisions and child-only cut"}
+{"file": "docs/architecture/agent-trust-eval/issues/D8-sandbox-isolation-target.md", "reason": "Decided: NetworkMode first; Landlock later; worker control-plane separate"}
+{"file": "docs/architecture/agent-trust-eval/tickets/16-default-offline-allowlist.md", "reason": "Boundary: T15 must not invent allowlist/default-offline product policy"}
+{"file": "docs/architecture/agent-trust-eval/tickets/17-landlock-fs-later.md", "reason": "Boundary: do not invent Landlock in T15"}
+{"file": ".trellis/tasks/10-26-t15-networkmode-real-enforcement/research/grounding.md", "reason": "Codebase grounding: spawn paths, isolation today, unshare probe, API shape"}
+{"file": ".trellis/tasks/10-26-t15-networkmode-real-enforcement/prd.md", "reason": "Evolving PRD + recommended Approach A"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Where a future network-mode backend spec would be indexed"}
