@@ -4,11 +4,11 @@
 
 **Blocked by:** None (supersede write is ticket 11 and should already hold whenever writes occur; not a hard code blocker for inject).
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t12-hy-memory-auto-context-7c92`; `HY_MEMORY_AUTO_CONTEXT_ENV` / `hy_memory_auto_context_enabled` default off; `build_hy_memory_context_block` soft-skips; `from_hy_memory_block` → `Tier.MEMORY`; worker gateway + local seams append/compile; compliance: leave flag off until egress review)
 
-- [ ] Flag default off; MCP-only path unchanged when flag unset
-- [ ] Flag on + package available ⇒ recall appears in worker context assembly
-- [ ] Flag on + package missing ⇒ soft skip (no crash, no silent “success” claim that inject happened)
-- [ ] Does not delete or bypass supersede write rules from ticket 11
-- [ ] Tests cover flag off / on / missing-package at the worker context seam
-- [ ] Compliance note: leave flag off until egress review for that environment
+- [x] Flag default off; MCP-only path unchanged when flag unset
+- [x] Flag on + package available ⇒ recall appears in worker context assembly
+- [x] Flag on + package missing ⇒ soft skip (no crash, no silent “success” claim that inject happened)
+- [x] Does not delete or bypass supersede write rules from ticket 11
+- [x] Tests cover flag off / on / missing-package at the worker context seam
+- [x] Compliance note: leave flag off until egress review for that environment

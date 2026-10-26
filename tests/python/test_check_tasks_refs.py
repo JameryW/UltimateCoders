@@ -584,6 +584,10 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     # T11 hy-memory-supersede task context adds 3 `.trellis` refs (924→927):
     # implement.jsonl ×2 (quality-guidelines + index) + check.jsonl ×1
     # (quality-guidelines); docs/hy-memory.md cites are outside this corpus.
+    # T12 hy-memory-auto-context task context adds 7 `.trellis` refs (927→934):
+    # implement.jsonl ×4 (quality-guidelines + supersede-spec + auto-context-spec
+    # + index) + check.jsonl ×3 (auto-context-spec + supersede-spec +
+    # quality-guidelines); docs/hy-memory.md cites are outside this corpus.
     assert len(refs) in (
         812,
         814,
@@ -606,6 +610,7 @@ def test_real_corpus_reproduces_the_recorded_numbers():
         919,
         924,
         927,
+        934,
     ), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"

@@ -3,7 +3,7 @@
   "name": "t11-hy-memory-supersede",
   "title": "T11 Hy-Memory supersede write",
   "description": "Supersede-not-delete on CodingMemory.remember and MCP remember_coding_memory; no auto-inject.",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": "backend",
   "package": null,
@@ -11,12 +11,12 @@
   "creator": "cloud-agent",
   "assignee": "cloud-agent",
   "createdAt": "2026-10-25",
-  "completedAt": null,
+  "completedAt": "2026-10-26",
   "branch": "cursor/t11-hy-memory-supersede-7c92",
   "base_branch": "cursor/t11-hy-memory-supersede-7c92",
   "worktree_path": null,
-  "commit": null,
-  "pr_url": null,
+  "commit": "9fa7fc4f",
+  "pr_url": "https://github.com/JameryW/UltimateCoders/pull/789",
   "subtasks": [],
   "children": [],
   "parent": null,
@@ -26,6 +26,6 @@
     "tests/python/test_hy_memory_supersede.py",
     ".trellis/spec/backend/hy-memory-supersede-spec.md"
   ],
-  "notes": "Implement complete; awaiting trellis-check / commit by main session.",
+  "notes": "Merged as #789; P1 T11 complete.",
   "meta": {}
 }

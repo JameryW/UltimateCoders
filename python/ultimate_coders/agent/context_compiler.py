@@ -226,12 +226,14 @@ class ContextManifest:
         Dependency results keep the injector's wording, order and blank-line
         rhythm (each line is its own block, exactly as
         ``ContextInjector.build_context`` emits them); the search block
-        follows after a blank line, as before. A truncation marker appears
+        follows after a blank line, as before. Optional Hy-Memory auto-context
+        (P4) appends the same way after evidence. A truncation marker appears
         only when the budget dropped something -- under a generous budget the
         output matches the old path line for line.
         """
         deps = [i for i in self.items if i.tier == Tier.TRACE]
         evidence = [i for i in self.items if i.tier == Tier.EVIDENCE]
+        memory = [i for i in self.items if i.tier == Tier.MEMORY]
         parts: list[str] = []
         if deps:
             parts.append("## Context from completed subtasks\n")
@@ -248,6 +250,9 @@ class ContextManifest:
         else:
             block = ""
         for item in evidence:
+            body = item.content.rstrip("\n")
+            block = f"{block}\n\n{body}" if block else body
+        for item in memory:
             body = item.content.rstrip("\n")
             block = f"{block}\n\n{body}" if block else body
         if any(d.reason == "budget" for d in self.dropped):
@@ -300,10 +305,7 @@ def compile_context(
     # stays volatile, so callers that never heard of ``stable`` compile
     # exactly as before (the policy tier already sorts first, so the
     # packing order is unchanged too).
-    items = [
-        replace(item, stable=True) if item.tier == Tier.POLICY else item
-        for item in items
-    ]
+    items = [replace(item, stable=True) if item.tier == Tier.POLICY else item for item in items]
 
     deduped: dict[str, ContextItem] = {}
     for item in items:
@@ -390,6 +392,27 @@ def from_search_block(text: str | None, *, source: str = "repo-search") -> list[
             trust_class="repository_search",
             verified=False,
             relevance=0.8,
+        )
+    ]
+
+
+def from_hy_memory_block(text: str | None, *, source: str = "hy-memory") -> list[ContextItem]:
+    """Wrap an optional Hy-Memory auto-context block as a single P4 memory item.
+
+    Soft-skip: ``None`` / empty text yields no items so the worker can treat a
+    missing package or failed recall as a no-op without claiming inject succeeded.
+    """
+    if not text:
+        return []
+    return [
+        ContextItem(
+            item_id="hy-memory-block",
+            tier=Tier.MEMORY,
+            content=text,
+            source=source,
+            trust_class="hy_memory_recall",
+            verified=False,
+            relevance=0.6,
         )
     ]
 

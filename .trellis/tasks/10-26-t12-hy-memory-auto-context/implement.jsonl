@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Python test patterns"}
+{"file": ".trellis/spec/backend/hy-memory-supersede-spec.md", "reason": "T11 write invariant must remain intact"}
+{"file": ".trellis/spec/backend/hy-memory-auto-context-spec.md", "reason": "T12 auto-context contracts"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for auto-context section"}
+{"file": "docs/hy-memory.md", "reason": "Hy-Memory product docs and compliance notes"}
