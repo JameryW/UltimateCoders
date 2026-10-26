@@ -1,5 +1,5 @@
 {"file": ".trellis/spec/backend/stall-redispatch-spec.md", "reason": "Verify enforce/swap contracts and flag-default-off against implemented helpers"}
 {"file": "docs/architecture/agent-trust-eval/tickets/14-same-contract-agent-redispatch.md", "reason": "Ticket AC: swap-once, escalate, same digest, no progress replan"}
 {"file": "docs/architecture/agent-trust-eval/spec-p2.md", "reason": "Seam G testing decisions for flag off/on and escalate"}
-{"file": ".trellis/tasks/10-26-t14-same-contract-agent-redispatch/prd.md", "reason": "Acceptance criteria and out-of-scope for check"}
-{"file": ".trellis/tasks/10-26-t14-same-contract-agent-redispatch/research/grounding.md", "reason": "Guard against inventing replan/flag/registry/digest conflation"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t14-same-contract-agent-redispatch/prd.md", "reason": "Acceptance criteria and out-of-scope for check"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t14-same-contract-agent-redispatch/research/grounding.md", "reason": "Guard against inventing replan/flag/registry/digest conflation"}

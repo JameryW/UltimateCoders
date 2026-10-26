@@ -3,5 +3,5 @@
 {"file": "docs/architecture/agent-trust-eval/tickets/14-same-contract-agent-redispatch.md", "reason": "Ticket acceptance checklist and scope"}
 {"file": "docs/architecture/agent-trust-eval/spec-p2.md", "reason": "Seam G enforce decisions: orchestrator owns, one swap, same digest"}
 {"file": "docs/architecture/agent-trust-eval/issues/D7-stall-replan-ownership.md", "reason": "MVP same-contract one-shot; true replan deferred"}
-{"file": ".trellis/tasks/10-26-t14-same-contract-agent-redispatch/research/grounding.md", "reason": "Codebase grounding: paths, API shape, wire points, do-not-invent"}
-{"file": ".trellis/tasks/10-26-t14-same-contract-agent-redispatch/prd.md", "reason": "Evolving PRD + recommended Approach A"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t14-same-contract-agent-redispatch/research/grounding.md", "reason": "Codebase grounding: paths, API shape, wire points, do-not-invent"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t14-same-contract-agent-redispatch/prd.md", "reason": "Evolving PRD + recommended Approach A"}
