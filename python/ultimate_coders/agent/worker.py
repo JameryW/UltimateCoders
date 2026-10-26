@@ -38,13 +38,13 @@ from ultimate_coders.agent.llm import (
 from ultimate_coders.agent.progress import AttemptEvidence, ProgressTracker
 from ultimate_coders.agent.review import REVIEW_INSTRUCTIONS, parse_review
 from ultimate_coders.agent.routing import ModelRouter, classify_failure
-from ultimate_coders.agent.stall_redispatch import build_stall_signal
 from ultimate_coders.agent.sandbox import (
     AgentOutput,
     SandboxConfig,
     SandboxManager,
     subtask_usage_from_token_usage,
 )
+from ultimate_coders.agent.stall_redispatch import build_stall_signal
 from ultimate_coders.agent.state_sync import (
     ContextInjector,
     FileChangeEvent,
