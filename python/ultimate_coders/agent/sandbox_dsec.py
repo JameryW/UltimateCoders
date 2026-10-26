@@ -42,6 +42,7 @@ import sys
 from typing import Any
 
 from ultimate_coders.agent import harness_deepseek
+from ultimate_coders.agent.network_mode import resolve_network_default
 from ultimate_coders.agent.sandbox import NetworkMode, SandboxConfig
 
 logger = logging.getLogger(__name__)
@@ -127,6 +128,11 @@ def dsec_sandbox_config(
     }
     if api_key is not None:
         kwargs["api_key"] = api_key
+    # T16 — opt-in default Restricted via resolve_network_default(); static
+    # DSEC_DEFAULTS stays Full so importing the dict alone does not mutate
+    # semantics. Explicit network= in overrides always wins.
+    if "network" not in overrides:
+        kwargs["network"] = resolve_network_default()
     kwargs.update(overrides)
     return SandboxConfig(**kwargs)
 

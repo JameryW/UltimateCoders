@@ -3,6 +3,6 @@
 {"file": "docs/architecture/agent-trust-eval/issues/D8-sandbox-isolation-target.md", "reason": "Decided: NetworkMode first; Landlock later; worker control-plane separate"}
 {"file": "docs/architecture/agent-trust-eval/tickets/16-default-offline-allowlist.md", "reason": "Boundary: T15 must not invent allowlist/default-offline product policy"}
 {"file": "docs/architecture/agent-trust-eval/tickets/17-landlock-fs-later.md", "reason": "Boundary: do not invent Landlock in T15"}
-{"file": ".trellis/tasks/10-26-t15-networkmode-real-enforcement/research/grounding.md", "reason": "Codebase grounding: spawn paths, isolation today, unshare probe, API shape"}
-{"file": ".trellis/tasks/10-26-t15-networkmode-real-enforcement/prd.md", "reason": "Evolving PRD + recommended Approach A"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t15-networkmode-real-enforcement/research/grounding.md", "reason": "Codebase grounding: spawn paths, isolation today, unshare probe, API shape"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t15-networkmode-real-enforcement/prd.md", "reason": "Evolving PRD + recommended Approach A"}
 {"file": ".trellis/spec/backend/index.md", "reason": "Where a future network-mode backend spec would be indexed"}

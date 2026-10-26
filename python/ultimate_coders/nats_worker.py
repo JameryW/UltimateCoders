@@ -1558,6 +1558,7 @@ class NatsWorker:
         )
 
         # Worker — sandbox-only, always
+        from ultimate_coders.agent.network_mode import resolve_network_default
         from ultimate_coders.agent.sandbox import DEFAULT_CODING_AGENT, SandboxConfig
 
         sandbox_config = SandboxConfig(
@@ -1567,6 +1568,9 @@ class NatsWorker:
             # UC_AGENT_PLUGINS / the ultimate_coders.agent_adapters entry point).
             agent=os.environ.get("UC_CODING_AGENT", DEFAULT_CODING_AGENT),
             project_path=self._project_path or os.getcwd(),
+            # T16 — opt-in default Restricted when UC_NETWORK_DEFAULT_RESTRICTED
+            # (or UC_NETWORK_DEFAULT_MODE) is set; flag off → Full.
+            network=resolve_network_default(),
         )
         logger.info("Worker coding agent: %s", sandbox_config.agent)
 

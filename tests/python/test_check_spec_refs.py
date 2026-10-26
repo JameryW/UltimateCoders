@@ -850,7 +850,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # network_mode.py, sandbox.py, test_network_mode_enforce.py (×2),
     # ticket 15, spec-p2.md, and D8; ticket 15 status names the module,
     # sandbox.py, and the test (440 -> 450), all resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 450
+    # T16 default-offline allowlist: network-mode-spec.md adds
+    # sandbox_dsec.py, nats_worker.py, worker.py, test_network_allowlist.py
+    # (×2), and ticket 16; ticket 16 status names test_network_allowlist.py
+    # (450 -> 457), all resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 457
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -902,8 +906,10 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     stop landed above the checkpoint helpers), and the T14 same-contract
     redispatch slice moved it a seventh, 1489 -> 1498 (`contract_digest` on
     stall_signal + `result.stall_signal` attach landed above the checkpoint
-    helpers). The spec's cited range and this pin were re-measured together,
-    not guessed.
+    helpers), and the T16 allowlist default slice moved it an eighth,
+    1498 -> 1504 (`resolve_network_default` on Worker SandboxConfig landed
+    above the checkpoint helpers). The spec's cited range and this pin were
+    re-measured together, not guessed.
     """
     guard = _load_guard()
     want = {
@@ -925,7 +931,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            1498,
+            1504,
         ),
     }
     rows = [

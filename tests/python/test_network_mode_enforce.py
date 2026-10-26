@@ -239,12 +239,21 @@ async def test_subprocess_full_noop_when_enforce_on(
 async def test_subprocess_restricted_fail_closed_no_spawn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """T16 registers the Restricted applicator at SandboxManager init.
+
+    Empty ``UC_NETWORK_ALLOWLIST`` must still fail closed (no silent Full).
+    """
     monkeypatch.setenv(NETWORK_MODE_ENFORCE_ENV, "1")
+    monkeypatch.delenv("UC_NETWORK_ALLOWLIST", raising=False)
     manager = _manager(NetworkMode.RESTRICTED)
     result = await manager._execute_subprocess(_probe_request())
     assert result.exit_code == -1
-    assert "Restricted" in result.stderr or "restricted" in result.stderr.lower()
-    assert "Refusing" in result.stderr or "applicator" in result.stderr
+    assert "restricted" in result.stderr.lower() or "allowlist" in result.stderr.lower()
+    assert (
+        "Refusing" in result.stderr
+        or "empty" in result.stderr.lower()
+        or "allowlist" in result.stderr.lower()
+    )
 
 
 @pytest.mark.asyncio
