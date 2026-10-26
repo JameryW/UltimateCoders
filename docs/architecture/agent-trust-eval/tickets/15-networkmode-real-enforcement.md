@@ -4,11 +4,11 @@
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** implemented (branch `cursor/t15-networkmode-real-enforcement-7c92`; planner in `python/ultimate_coders/agent/network_mode.py`; wire in `python/ultimate_coders/agent/sandbox.py` `_execute_subprocess`; Restricted fail-closed until T16 applicator; engine `execute_in_sandbox` bypass closed when enforce on; flag default off; tests in `tests/python/test_network_mode_enforce.py`)
 
-- [ ] Agent child respects None / Restricted / Full when enforce is on
-- [ ] Worker control-plane connectivity remains available
-- [ ] Unsupported platform + enforce on → fail closed (no silent Full)
-- [ ] Flag off leaves today’s spawn behaviour compatible
-- [ ] Tests cover at least None vs Full with a child egress probe (or documented CI skip matrix)
-- [ ] Feature flag defaults off (`UC_NETWORK_MODE_ENFORCE`)
+- [x] Agent child respects None / Restricted / Full when enforce is on
+- [x] Worker control-plane connectivity remains available
+- [x] Unsupported platform + enforce on → fail closed (no silent Full)
+- [x] Flag off leaves today’s spawn behaviour compatible
+- [x] Tests cover at least None vs Full with a child egress probe (or documented CI skip matrix)
+- [x] Feature flag defaults off (`UC_NETWORK_MODE_ENFORCE`)

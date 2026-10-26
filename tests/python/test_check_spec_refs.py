@@ -846,7 +846,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # orchestrator.py and test_stall_agent_redispatch.py; ticket 14 status
     # names stall_redispatch.py and progress.py (436 -> 440), all resolved;
     # unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 440
+    # T15 NetworkMode real enforcement: network-mode-spec.md names
+    # network_mode.py, sandbox.py, test_network_mode_enforce.py (×2),
+    # ticket 15, spec-p2.md, and D8; ticket 15 status names the module,
+    # sandbox.py, and the test (440 -> 450), all resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 450
 
 
 def test_real_corpus_has_no_false_content_mismatch():

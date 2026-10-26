@@ -24,6 +24,12 @@ from ultimate_coders.agent.deepseek_web import (
     DEEPSEEK_WEB_ENV_ALLOWLIST as _DEEPSEEK_WEB_ENV_ALLOWLIST,
 )
 from ultimate_coders.agent.hy_memory import HY_MEMORY_ENV_ALLOWLIST as _HY_MEMORY_ENV_ALLOWLIST
+from ultimate_coders.agent.network_mode import (
+    NetworkModeError,
+    apply_network_argv,
+    network_mode_enforce_enabled,
+    plan_network_mode,
+)
 from ultimate_coders.agent.types import ChangeType, FileChange, StepUsage, SubtaskUsage
 
 logger = logging.getLogger(__name__)
@@ -676,11 +682,16 @@ class SandboxManager:
             temp_files = exec_request.pop("_temp_files", [])
             cancel_file = exec_request.pop("_cancel_file", None)
 
-            if (
+            # T15 / D8 — when UC_NETWORK_MODE_ENFORCE is on, never bypass
+            # Python spawn via engine.execute_in_sandbox: Rust SubprocessSandbox
+            # does not apply NetworkMode, which would silently run Full.
+            use_engine_sandbox = (
                 not cancel_file
                 and self.engine is not None
                 and hasattr(self.engine, "execute_in_sandbox")
-            ):
+                and not network_mode_enforce_enabled()
+            )
+            if use_engine_sandbox:
                 result_dict = await self.engine.execute_in_sandbox(
                     handle_id=handle.id,
                     **exec_request,
@@ -850,6 +861,38 @@ class SandboxManager:
         # enough: the adapter's env_vars overlay still adds/overrides child
         # values, but the host environment outside the allowlist stays out.
         env = self.config.build_child_env(os.environ, env_vars, agent=agent_name)
+
+        # T15 / D8 — NetworkMode at agent-child spawn only. Flag off → noop
+        # (compatible Full). Flag on → argv wrap or fail closed; never
+        # silent Full. Worker NATS/Gateway sockets are not touched.
+        try:
+            net_plan = plan_network_mode(self.config.network)
+        except NetworkModeError as exc:
+            logger.error("NetworkMode enforce refused spawn: %s", exc)
+            return ExecResult(
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                duration_ms=0,
+                timed_out=False,
+            )
+        except ValueError as exc:
+            logger.error("Invalid SandboxConfig.network: %s", exc)
+            return ExecResult(
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                duration_ms=0,
+                timed_out=False,
+            )
+        if net_plan.argv_prefix:
+            logger.info(
+                "NetworkMode enforce: mode=%s backend=%s prefix=%s",
+                net_plan.mode,
+                net_plan.backend,
+                " ".join(net_plan.argv_prefix),
+            )
+        command, args = apply_network_argv(command, list(args), net_plan)
 
         proc = None
         tree = None

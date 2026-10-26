@@ -26,9 +26,10 @@ Make `NetworkMode` (`none` / `restricted` / `full`) real at **agent-subprocess**
 * Restricted host allowlist **content** is T16; T15 only needs Restricted to be enforceable or fail closed (no silent Full).
 * Live egress probes skip when userns/unshare unavailable; unit tests use an injectable applicator.
 
-## Open Questions
+## Decisions locked
 
-* Restricted under enforce in T15: fail closed until an applicator is registered (T16), vs treat empty allowlist as total cut (None-equivalent)? → **ask user**
+* **Restricted under enforce (T15):** fail closed until an allowlist applicator is registered (T16). Never silent Full; never pretend Restricted works with empty allowlist.
+* **Approach A:** mockable planner + `unshare -Urn` argv wrap for `none`; `full` noop; wire at `_execute_subprocess`.
 
 ## Requirements (evolving)
 
@@ -41,14 +42,14 @@ Make `NetworkMode` (`none` / `restricted` / `full`) real at **agent-subprocess**
 
 ## Acceptance Criteria (evolving)
 
-* [ ] Flag defaults off; spawn behaviour compatible with today
-* [ ] Flag on + `none` → child cannot reach external hosts (live probe or documented skip)
-* [ ] Flag on + `full` → child networking unchanged (noop plan)
-* [ ] Flag on + `restricted` → enforceable path or fail closed (per decision); never silent Full
-* [ ] Unsupported platform + enforce on → refuse start
-* [ ] Worker NATS/Gateway path unaffected by child wrap
-* [ ] Unit tests cover flag matrix + injectable applicator without root
-* [ ] No Landlock / no T16 default-offline policy in this change
+* [x] Flag defaults off; spawn behaviour compatible with today
+* [x] Flag on + `none` → child cannot reach external hosts (live probe or documented skip)
+* [x] Flag on + `full` → child networking unchanged (noop plan)
+* [x] Flag on + `restricted` → enforceable path or fail closed (per decision); never silent Full
+* [x] Unsupported platform + enforce on → refuse start
+* [x] Worker NATS/Gateway path unaffected by child wrap
+* [x] Unit tests cover flag matrix + injectable applicator without root
+* [x] No Landlock / no T16 default-offline policy in this change
 
 ## Definition of Done (team quality bar)
 

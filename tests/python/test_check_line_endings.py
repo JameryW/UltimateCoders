@@ -252,6 +252,7 @@ def test_real_repo_is_reconciled() -> None:
         (2189, 2180),  # P2 spec + tickets 13–18 (7 text); T12 task archived (rename).
         (2196, 2187),  # T13 stall signal: module + test + spec + Trellis task (7 text).
         (2202, 2193),  # T14 agent redispatch: test + Trellis task (6 text); T13 archived.
+        (2210, 2201),  # T15 NetworkMode: module + test + spec + Trellis task; T14 archived.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
