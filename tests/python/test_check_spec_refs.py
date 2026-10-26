@@ -874,16 +874,18 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     `orchestrator.py:149-161, refresh_heartbeat` for a `write_memory`
     best-effort pattern that no longer exists in that file at all -- the row had
     drifted from "slightly late" to "citing code that is not there". It now
-    names the site that actually does it, `worker.py:1465-1519, _save_checkpoint`,
+    names the site that actually does it, `worker.py:1478-1532, _save_checkpoint`,
     and the range covers the definition so the anchor holds. The model-routing
     slice moved the definition from 1369 to 1427 (per-attempt routing and the
     failure-action gates landed above it); the context-compiler risk slice
     moved it again, 1427 -> 1433 (the attempt-0 route now runs before context
     compilation so its risk sizes the budget allocation); the manifest-outbox
     slice moved it a third time, 1433 -> 1457 (`_record_context_manifest`
-    landed just above `_is_inference`), and the manifest-attempt slice moved
+    landed just above `_is_inference`), the manifest-attempt slice moved
     it a fourth, 1457 -> 1465 (the writer's docstring now states the attempt
-    identity it used to hardcode away). The spec's cited range and this pin
+    identity it used to hardcode away), and the T12 hy-memory auto-context
+    slice moved it a fifth, 1465 -> 1478 (optional coding-memory inject landed
+    above the checkpoint helpers). The spec's cited range and this pin
     were re-measured together, not guessed.
     """
     guard = _load_guard()
@@ -906,7 +908,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            1465,
+            1478,
         ),
     }
     rows = [
