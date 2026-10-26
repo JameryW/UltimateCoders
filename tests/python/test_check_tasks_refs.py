@@ -588,6 +588,10 @@ def test_real_corpus_reproduces_the_recorded_numbers():
     # implement.jsonl ×4 (quality-guidelines + supersede-spec + auto-context-spec
     # + index) + check.jsonl ×3 (auto-context-spec + supersede-spec +
     # quality-guidelines); docs/hy-memory.md cites are outside this corpus.
+    # T13 stall-signal-surface task context adds 5 `.trellis` refs (934→939):
+    # implement.jsonl ×3 (quality-guidelines + stall-redispatch-spec + index)
+    # + check.jsonl ×2 (stall-redispatch-spec + quality-guidelines); ticket /
+    # spec-p2.md cites are outside this corpus.
     assert len(refs) in (
         812,
         814,
@@ -611,6 +615,7 @@ def test_real_corpus_reproduces_the_recorded_numbers():
         924,
         927,
         934,
+        939,
     ), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
