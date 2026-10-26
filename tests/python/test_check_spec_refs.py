@@ -854,7 +854,12 @@ def test_real_corpus_unanchored_census_is_reported():
     # sandbox_dsec.py, nats_worker.py, worker.py, test_network_allowlist.py
     # (×2), and ticket 16; ticket 16 status names test_network_allowlist.py
     # (450 -> 457), all resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 457
+    # T17 Landlock FS: landlock-fs-spec.md names landlock.py, sandbox.py,
+    # test_landlock_fs.py (×2), network-mode-spec.md, ticket 17, spec-p2,
+    # D8; ticket 17 status names landlock.py, sandbox.py, test_landlock_fs.py;
+    # network-mode-spec cross-link; dsec-sandbox posture note
+    # (457 -> 470), all resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 470
 
 
 def test_real_corpus_has_no_false_content_mismatch():
