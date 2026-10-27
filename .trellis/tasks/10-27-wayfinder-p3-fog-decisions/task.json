@@ -16,11 +16,11 @@
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
-  "pr_url": null,
+  "pr_url": "https://github.com/JameryW/UltimateCoders/pull/798",
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "D9/D10 decided via \u7ee7\u7eed adopting Proposed. Next: spec-p3 + tickets.",
   "meta": {}
 }
