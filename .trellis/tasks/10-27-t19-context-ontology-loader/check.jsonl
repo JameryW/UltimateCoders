@@ -1,0 +1,8 @@
+{"file": "docs/architecture/agent-trust-eval/tickets/19-context-ontology-loader.md", "reason": "Verify shipped behavior matches T19 checklist"}
+{"file": "docs/architecture/agent-trust-eval/tickets/20-ontology-mcp-readonly.md", "reason": "Ensure T19 did not steal T20 MCP registration scope"}
+{"file": "docs/architecture/agent-trust-eval/issues/D9-project-ontology-mcp.md", "reason": "Confirm human authority + no write-back invariants"}
+{"file": "docs/architecture/agent-trust-eval/spec-p3.md", "reason": "Seam I soft-empty / flag-off matrix"}
+{"file": ".agents/skills/domain-modeling/CONTEXT-FORMAT.md", "reason": "Seed CONTEXT.md stays Matt-format compliant"}
+{"file": ".trellis/tasks/10-27-t19-context-ontology-loader/prd.md", "reason": "Acceptance criteria and out-of-scope for check pass"}
+{"file": ".trellis/tasks/10-27-t19-context-ontology-loader/research/grounding.md", "reason": "API surface and non-authority boundaries for review"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Tests/lint expectations for ontology module"}

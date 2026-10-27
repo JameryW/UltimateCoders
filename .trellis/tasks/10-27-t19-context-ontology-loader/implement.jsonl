@@ -1,0 +1,9 @@
+{"file": "docs/architecture/agent-trust-eval/tickets/19-context-ontology-loader.md", "reason": "T19 acceptance criteria and explicit non-goals (no MCP registration, no write APIs)"}
+{"file": "docs/architecture/agent-trust-eval/issues/D9-project-ontology-mcp.md", "reason": "Authority decision: human CONTEXT.md + read-only MCP deferred; flag default off"}
+{"file": "docs/architecture/agent-trust-eval/spec-p3.md", "reason": "P3 Seam I ontology contracts and testing matrix"}
+{"file": "docs/agents/domain.md", "reason": "Single-context repo; lazy root CONTEXT.md as canonical vocabulary"}
+{"file": ".agents/skills/domain-modeling/CONTEXT-FORMAT.md", "reason": "Matt Language term/definition/_Avoid_ parse shape for CONTEXT.md"}
+{"file": ".trellis/tasks/10-27-t19-context-ontology-loader/research/grounding.md", "reason": "Grounded API, seed terms, and Approach A recommendation"}
+{"file": ".trellis/tasks/10-27-t19-context-ontology-loader/prd.md", "reason": "Task PRD with Approach A and acceptance criteria"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Python test and quality bar for new module"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Where agent modules belong under python/ultimate_coders"}
