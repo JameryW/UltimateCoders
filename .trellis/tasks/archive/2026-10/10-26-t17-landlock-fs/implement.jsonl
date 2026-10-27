@@ -5,5 +5,5 @@
 {"file": "docs/architecture/agent-trust-eval/tickets/16-default-offline-allowlist.md", "reason": "Prior T16 landed; Landlock must not change allowlist / NetworkMode semantics"}
 {"file": ".trellis/spec/backend/network-mode-spec.md", "reason": "Existing spawn/enforce contracts; cross-link and do not regress"}
 {"file": "docs/dsec-sandbox.md", "reason": "Sandbox security posture context; same child choke point as env allowlist"}
-{"file": ".trellis/tasks/10-26-t17-landlock-fs/research/grounding.md", "reason": "Wire order, FS policy, ctypes probe evidence, Approach A, regression guards"}
-{"file": ".trellis/tasks/10-26-t17-landlock-fs/prd.md", "reason": "Evolving PRD + recommended Approach A"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t17-landlock-fs/research/grounding.md", "reason": "Wire order, FS policy, ctypes probe evidence, Approach A, regression guards"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t17-landlock-fs/prd.md", "reason": "Evolving PRD + recommended Approach A"}

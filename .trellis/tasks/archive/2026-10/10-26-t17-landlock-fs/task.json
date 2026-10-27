@@ -3,7 +3,7 @@
   "name": "t17-landlock-fs",
   "title": "T17 Landlock FS enforcement (agent child)",
   "description": "Optional Landlock FS restriction for agent child behind UC_LANDLOCK_ENFORCE (default off); Approach A: landlock.py + argv helper.",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": "feature",
   "scope": "sandbox",
   "package": "python",
@@ -11,11 +11,11 @@
   "creator": "cloud-agent",
   "assignee": "cloud-agent",
   "createdAt": "2026-10-26",
-  "completedAt": null,
+  "completedAt": "2026-10-27",
   "branch": "cursor/t17-landlock-fs-7c92",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "ecbde386",
   "pr_url": "https://github.com/JameryW/UltimateCoders/pull/796",
   "subtasks": [],
   "children": [],
@@ -25,6 +25,6 @@
     "python/ultimate_coders/agent/sandbox.py",
     "docs/architecture/agent-trust-eval/tickets/17-landlock-fs-later.md"
   ],
-  "notes": "Brainstorm seeded with Approach A after T15/T16. Research in research/grounding.md.",
+  "notes": "Merged as #796; P2 MVP (T13–T17) complete. T18 remains deferred.",
   "meta": {}
 }

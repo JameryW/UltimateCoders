@@ -1,10 +1,10 @@
 # Wayfinder Map: Agent Trust / Eval
 
-Status: active (versioned under docs/ — GitHub Issues publication pending explicit authorization)
-Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24)
+Status: active — **P0–P2 MVP shipped** (tickets 01–17 implemented; 18 deferred; GitHub Issues publication still pending explicit authorization)
+Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24; P2 MVP closed 2026-10-27)
 Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏差) + P0–P2 priorities
 
-本图收敛「Agent 结果是否可信」路线上的决策，并挂接实现 backlog。决策票**不是**实现工作；P0 见 [spec-p0.md](spec-p0.md) + tickets/01–06（**implemented**）；P1 见 [spec-p1.md](spec-p1.md) + tickets/07–12（**implemented**）；P2 见 [spec-p2.md](spec-p2.md) + tickets/13–18。
+本图收敛「Agent 结果是否可信」路线上的决策，并挂接实现 backlog。决策票**不是**实现工作；P0 见 [spec-p0.md](spec-p0.md) + tickets/01–06（**implemented**）；P1 见 [spec-p1.md](spec-p1.md) + tickets/07–12（**implemented**）；P2 见 [spec-p2.md](spec-p2.md) + tickets/13–17（**implemented**）/ [18 deferred](tickets/18-true-replan-deferred.md)。
 
 ## Destination
 
