@@ -1,0 +1,9 @@
+{"file": "docs/architecture/agent-trust-eval/map.md", "reason": "wayfinder index: fog rows, Decisions so far, Destination P3 wording"}
+{"file": "docs/architecture/agent-trust-eval-assessment.md", "reason": "assessment fog rows §五/§六 to update when D9/D10 decide"}
+{"file": "docs/architecture/agent-trust-eval/issues/D7-stall-replan-ownership.md", "reason": "decision ticket style template (MVP + defer)"}
+{"file": "docs/architecture/agent-trust-eval/issues/D8-sandbox-isolation-target.md", "reason": "decision ticket style template (MVP + defer)"}
+{"file": "docs/agents/domain.md", "reason": "names CONTEXT.md as glossary authority for D9"}
+{"file": "docs/architecture/agent-trust-eval/spec-p2.md", "reason": "explicitly left ontology MCP + README numeric CI as fog"}
+{"file": ".trellis/tasks/10-27-wayfinder-p3-fog-decisions/research/grounding.md", "reason": "grounded Proposed resolutions for D9/D10"}
+{"file": ".trellis/spec/backend/codegraph-integration.md", "reason": "codegraph is code graph not project ontology — negative boundary for D9"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "backend quality bar if follow-on MCP/CI tickets land"}
