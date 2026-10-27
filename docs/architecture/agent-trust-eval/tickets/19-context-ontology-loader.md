@@ -4,12 +4,20 @@
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** **implemented** (`UC_ONTOLOGY_MCP` + `python/ultimate_coders/agent/ontology.py` + root `CONTEXT.md`; soft-empty; no MCP registration)
 
-- [ ] `UC_ONTOLOGY_MCP` exists and defaults off
-- [ ] Loader returns empty / soft-skip when flag off or CONTEXT absent
-- [ ] Loader returns parsed terms when CONTEXT is present
-- [ ] Codegraph / Hy-Memory are not used as glossary sources
-- [ ] No ontology write / delete APIs
-- [ ] Tests cover flag-off, missing file, and seeded parse without a live MCP server
-- [ ] Feature flag defaults off
+- [x] `UC_ONTOLOGY_MCP` exists and defaults off
+- [x] Loader returns empty / soft-skip when flag off or CONTEXT absent
+- [x] Loader returns parsed terms when CONTEXT is present
+- [x] Codegraph / Hy-Memory are not used as glossary sources
+- [x] No ontology write / delete APIs
+- [x] Tests cover flag-off, missing file, and seeded parse without a live MCP server
+- [x] Feature flag defaults off
+
+## Implementation notes
+
+- Module: `python/ultimate_coders/agent/ontology.py`
+- Spec: `.trellis/spec/backend/ontology-loader-spec.md`
+- Tests: `tests/python/test_ontology_loader.py`
+- Seed glossary: root `CONTEXT.md` (Gateway, Worker, Task, Subtask, Attempt, ExecutionEnvelope, CONTRACT_VERSION)
+- T20 wraps `list_terms` / `lookup_term` for MCP advertising; leave `engine_mcp.py` unchanged here

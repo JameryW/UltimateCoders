@@ -446,8 +446,8 @@ def test_a_docs_rule_is_corpus_checked_like_any_other(guard):
 def test_real_corpus_docs_root_is_live():
     """The second root is not decorative in the real repo.
 
-    `docs/` contributes specs to the corpus, its one dangling name has a REASONED
-    exemption (0 unclassified), and the exemption tables are still in sync.
+    `docs/` contributes specs to the corpus, CONTEXT.md mentions resolve to the
+    T19-seeded root authority (0 dangling), and the exemption tables stay in sync.
     """
     guard = _load_guard()
     rows = guard.collect()
@@ -455,10 +455,15 @@ def test_real_corpus_docs_root_is_live():
     assert len(docs_specs) >= 6, docs_specs
     assert guard.exemption_self_check(rows) == []
 
-    context = [r for r in rows if r["ref"] == "CONTEXT.md" and r["verdict"] == guard.DANGLING]
-    # domain.md ×2 (T41) + D9 ×3 + map.md ×1 (P3 D9 decision).
-    assert len(context) == 6, context
-    assert all(guard._mention_exemption(r["spec"], r["ref"]) for r in context), context
+    context_dangling = [
+        r for r in rows if r["ref"] == "CONTEXT.md" and r["verdict"] == guard.DANGLING
+    ]
+    context_resolved = [
+        r for r in rows if r["ref"] == "CONTEXT.md" and r["verdict"] == guard.MENTION_OK
+    ]
+    # T19 seeded root CONTEXT.md: prior domain.md / D9 / map dangling mentions resolve.
+    assert context_dangling == []
+    assert len(context_resolved) >= 6, context_resolved
 
 
 # --------------------------------------------------------------------------
@@ -863,7 +868,12 @@ def test_real_corpus_unanchored_census_is_reported():
     # P3 D9/D10 decisions: D9 cites docs/agents/domain.md + CONTEXT.md×3;
     # map cites CONTEXT.md; D10 cites check-readme-ci-table.py +
     # verify-sse-latency.py (470 -> 477); CONTEXT.md dangling exempt; unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 477
+    # T19 CONTEXT ontology loader: seed CONTEXT.md resolves prior dangling
+    # CONTEXT mentions; ontology-loader-spec + ticket 19 status name
+    # ontology.py, CONTEXT.md, test_ontology_loader.py; backend index + map
+    # cite CONTEXT.md / ontology surfaces (477 -> 492), all resolved or still
+    # triaged; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 492
 
 
 def test_real_corpus_has_no_false_content_mismatch():

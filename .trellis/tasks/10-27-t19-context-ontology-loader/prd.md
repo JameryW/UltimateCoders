@@ -62,7 +62,7 @@ Seed a minimal human-owned root `CONTEXT.md` and an in-process loader (`ontology
 ## Decision (ADR-lite)
 
 **Context**: T19 needs a loader authority and API shape before T20 registers MCP tools.  
-**Decision**: **Approach A** (recommended) — pending confirmation.  
+**Decision**: **Approach A** — locked via「继续」.  
 **Consequences**: Humans own `CONTEXT.md`; loader is read-only and flag-gated; T20 wraps the same structures; write-back / Evo remain deferred.
 
 ## Requirements (evolving)
@@ -76,14 +76,14 @@ Seed a minimal human-owned root `CONTEXT.md` and an in-process loader (`ontology
 
 ## Acceptance Criteria (evolving)
 
-* [ ] `UC_ONTOLOGY_MCP` exists and defaults off
-* [ ] Loader returns empty / soft-skip when flag off or CONTEXT absent
-* [ ] Loader returns parsed terms when CONTEXT is present (fixture and/or seeded file)
-* [ ] `list_terms` / `lookup_term` behave consistently with `load_ontology`
-* [ ] Codegraph / Hy-Memory are not used as glossary sources
-* [ ] No ontology write / delete APIs
-* [ ] Tests cover flag-off, missing file, and seeded parse without a live MCP server
-* [ ] Feature flag defaults off
+* [x] `UC_ONTOLOGY_MCP` exists and defaults off
+* [x] Loader returns empty / soft-skip when flag off or CONTEXT absent
+* [x] Loader returns parsed terms when CONTEXT is present (fixture and/or seeded file)
+* [x] `list_terms` / `lookup_term` behave consistently with `load_ontology`
+* [x] Codegraph / Hy-Memory are not used as glossary sources
+* [x] No ontology write / delete APIs
+* [x] Tests cover flag-off, missing file, and seeded parse without a live MCP server
+* [x] Feature flag defaults off
 
 ## Definition of Done (team quality bar)
 
@@ -105,12 +105,12 @@ Seed a minimal human-owned root `CONTEXT.md` and an in-process loader (`ontology
 
 1. Seed root `CONTEXT.md` with ~7 Matt-format Language terms (Gateway, Worker, Task, Subtask, Attempt, ExecutionEnvelope, CONTRACT_VERSION).
 2. Add `ontology.py`: truthy flag helper, dataclass, Markdown parse → terms, list/lookup wrappers, soft empty.
-3. Unit tests under `tests/python/test_ontology.py` (tmp_path fixtures; env matrix).
+3. Unit tests under `tests/python/test_ontology_loader.py` (tmp_path fixtures; env matrix).
 4. Leave `engine_mcp.py` unchanged for T19.
 
-## Open Questions
+## Decisions locked
 
-* Confirm Approach A (vs B/C) and the ~7-term seed list — or trim/expand before implement.
+* Approach A + ~7-term seed (Gateway, Worker, Task, Subtask, Attempt, ExecutionEnvelope, CONTRACT_VERSION).
 
 ## Technical Notes
 
