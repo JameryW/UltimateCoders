@@ -1,10 +1,10 @@
 # Wayfinder Map: Agent Trust / Eval
 
-Status: active — **P0–P2 MVP shipped**; D9–D10 decided (P3 not yet ticketed; GitHub Issues publication still pending explicit authorization)
-Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24; P2 MVP closed 2026-10-27; D9–D10 decided 2026-10-27)
+Status: active — **P0–P2 MVP shipped**; P3 ready-for-agent (D9–D10; GitHub Issues publication still pending explicit authorization)
+Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24; P2 MVP closed 2026-10-27; D9–D10 decided 2026-10-27; P3 ticketed 2026-10-27)
 Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏差) + P0–P2 priorities + P3 fog graduation
 
-本图收敛「Agent 结果是否可信」路线上的决策，并挂接实现 backlog。决策票**不是**实现工作；P0 见 [spec-p0.md](spec-p0.md) + tickets/01–06（**implemented**）；P1 见 [spec-p1.md](spec-p1.md) + tickets/07–12（**implemented**）；P2 见 [spec-p2.md](spec-p2.md) + tickets/13–17（**implemented**）/ [18 deferred](tickets/18-true-replan-deferred.md)；P3 待 [D9](issues/D9-project-ontology-mcp.md)/[D10](issues/D10-readme-numeric-ci.md) 落地后 `$to-spec` / `$to-tickets`。
+本图收敛「Agent 结果是否可信」路线上的决策，并挂接实现 backlog。决策票**不是**实现工作；P0 见 [spec-p0.md](spec-p0.md) + tickets/01–06（**implemented**）；P1 见 [spec-p1.md](spec-p1.md) + tickets/07–12（**implemented**）；P2 见 [spec-p2.md](spec-p2.md) + tickets/13–17（**implemented**）/ [18 deferred](tickets/18-true-replan-deferred.md)；P3 见 [spec-p3.md](spec-p3.md) + tickets/19–22。
 
 ## Destination
 
@@ -16,7 +16,7 @@ Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏
 - Skills: `$grilling`, `$domain-modeling`, then `$to-spec` / `$to-tickets` only after this map clears
 - Standing preferences: feature flags off by default; approx↔full rank agreement re-tested when benches change; no CV thresholds without labeled data; Hy-Memory version-pinned + egress compliance
 - Tracker mode: versioned docs tree until user authorizes GitHub map + `wayfinder:*` labels；授权后以 GitHub 为权威，本目录降为镜像
-- P0–P2 implementation backlogs are published below; decision tickets remain authority for D1–D10
+- P0–P3 implementation backlogs are published below; decision tickets remain authority for D1–D10
 
 ## Implementation backlog
 
@@ -50,7 +50,15 @@ P2 (D7–D8) — **MVP complete except deferred** (13–17 implemented; 18 defer
 - [17 Landlock FS later](tickets/17-landlock-fs-later.md) — **implemented** (`UC_LANDLOCK_ENFORCE`; child-only ctypes Landlock after NetworkMode wrap; fail closed; flag default off); was blocked by: 15 (preferably after 16)
 - [18 true replan deferred](tickets/18-true-replan-deferred.md) — **deferred** (not P2 MVP)
 
-Frontier for implementers: **P3 not ticketed yet** (D9–D10 decided — next `$to-spec` / tickets). Ticket **18** remains deferred. Remaining fog below is not decision-ready.
+P3 (D9–D10) — **ready-for-agent**:
+
+- Spec: [spec-p3.md](spec-p3.md)
+- [19 CONTEXT ontology loader](tickets/19-context-ontology-loader.md) — Blocked by: none
+- [20 ontology MCP read-only](tickets/20-ontology-mcp-readonly.md) — Blocked by: 19
+- [21 docs numeric pin CI](tickets/21-docs-numeric-pin-ci.md) — Blocked by: none
+- [22 live numeric remeasure deferred](tickets/22-live-numeric-remeasure-deferred.md) — **deferred** (not P3 MVP)
+
+Frontier for implementers: **19, 21**. Ticket **18** remains deferred. Remaining fog below is not decision-ready.
 
 ## Decisions so far
 
@@ -77,7 +85,6 @@ _(none)_
 
 - 严格三分 search/select/report **数据集**拆分（D1 P1 follow-on；P1 approx 先用 report-role hold-out）
 - 标注数据管线（谁标、存在哪、如何防止泄漏进报告集）— D5 已定无标注则关闭；管线细节仍雾
-- P3 实现票（ontology MCP / README pin CI）— D9/D10 已决，待 `spec-p3` + tickets
 
 ## Out of scope
 
