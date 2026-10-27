@@ -4,7 +4,7 @@
 > Enforce flag `UC_NETWORK_MODE_ENFORCE` defaults off. T16 adds opt-in
 > default-toward-Restricted (`UC_NETWORK_DEFAULT_RESTRICTED`) and an explicit
 > LLM/API host allowlist (`UC_NETWORK_ALLOWLIST`) with policy preflight
-> Restricted applicator. Landlock FS is T17.
+> Restricted applicator. Landlock FS is T17 — see [landlock-fs-spec.md](./landlock-fs-spec.md).
 
 ---
 
@@ -161,7 +161,8 @@ Documented in `tests/python/test_network_mode_enforce.py` and
 
 - Kernel nft/iptables/bwrap/slirp / forced allowlist proxy selective egress
   (follow-up; not claimed by `allowlist_preflight`).
-- Landlock FS / `UC_LANDLOCK_ENFORCE` (T17).
+- Landlock FS / `UC_LANDLOCK_ENFORCE` (T17 — implemented separately; see
+  [landlock-fs-spec.md](./landlock-fs-spec.md)).
 - Cutting network on the entire worker container.
 - Changing `SandboxConfig.network` / `DSEC_DEFAULTS` Full literals when flags
   are off.

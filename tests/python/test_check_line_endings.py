@@ -254,6 +254,8 @@ def test_real_repo_is_reconciled() -> None:
         (2202, 2193),  # T14 agent redispatch: test + Trellis task (6 text); T13 archived.
         (2210, 2201),  # T15 NetworkMode: module + test + spec + Trellis task; T14 archived.
         (2216, 2207),  # T16 allowlist: test + Trellis task; T15 archived.
+        (2221, 2212),  # T17 pre-stage working tree (docs/map edits already tracked).
+        (2224, 2215),  # T17 Landlock FS: landlock.py + test + landlock-fs-spec.md.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

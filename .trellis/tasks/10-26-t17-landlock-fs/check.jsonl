@@ -1,0 +1,6 @@
+{"file": "docs/architecture/agent-trust-eval/tickets/17-landlock-fs-later.md", "reason": "Verify ticket AC: restrict when enforce on, fail closed, flag off, NetworkMode intact, skip matrix"}
+{"file": "docs/architecture/agent-trust-eval/issues/D8-sandbox-isolation-target.md", "reason": "Confirm child-only cut; Landlock does not touch worker NATS/Gateway"}
+{"file": "docs/architecture/agent-trust-eval/spec-p2.md", "reason": "Confirm Landlock remains separate from Seam H network AC; no NetworkMode regression"}
+{"file": ".trellis/spec/backend/network-mode-spec.md", "reason": "Guard NetworkMode contracts still hold after Landlock wire"}
+{"file": ".trellis/tasks/10-26-t17-landlock-fs/prd.md", "reason": "Acceptance criteria and explicit out-of-scope for check"}
+{"file": ".trellis/tasks/10-26-t17-landlock-fs/research/grounding.md", "reason": "Guard against parent restrict_self, landlockctl dependency, SandboxConfig schema creep, NetworkMode bypass"}

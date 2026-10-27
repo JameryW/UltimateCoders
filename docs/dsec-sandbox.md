@@ -119,6 +119,12 @@ variables are inherited from the host. For dsec those are
 `DEEPSEEK_API_KEY` and `DEEPSEEK_BASE_URL`. An unrelated host secret
 (e.g. `AWS_SECRET_ACCESS_KEY`) never reaches `dsh`.
 
+Optional child-only isolation (both **default off**): `UC_NETWORK_MODE_ENFORCE`
+applies `SandboxConfig.network` at spawn; `UC_LANDLOCK_ENFORCE` applies
+Landlock FS (RO `/`, RW worktree + `/tmp`) via the same choke point. Neither
+restricts the worker parent (NATS / Gateway stay up). See the NetworkMode and
+Landlock FS backend specs under `.trellis/spec/backend/`.
+
 Notes:
 
 - `DEEPSEEK_BASE_URL` is forwarded only when explicitly set; otherwise `dsh`

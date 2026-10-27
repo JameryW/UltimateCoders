@@ -4,6 +4,6 @@
 {"file": "docs/architecture/agent-trust-eval/tickets/15-networkmode-real-enforcement.md", "reason": "T15 seam: Restricted applicator hook and enforce flag already shipped"}
 {"file": "docs/architecture/agent-trust-eval/tickets/17-landlock-fs-later.md", "reason": "Boundary: do not invent Landlock in T16"}
 {"file": ".trellis/spec/backend/network-mode-spec.md", "reason": "Extend with T16 default/allowlist contracts; keep T15 enforce contracts"}
-{"file": ".trellis/tasks/10-26-t16-default-offline-allowlist/research/grounding.md", "reason": "Flag names, applicator MVP honesty, wire map, test matrix"}
-{"file": ".trellis/tasks/10-26-t16-default-offline-allowlist/prd.md", "reason": "Evolving PRD + recommended Approach A"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t16-default-offline-allowlist/research/grounding.md", "reason": "Flag names, applicator MVP honesty, wire map, test matrix"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t16-default-offline-allowlist/prd.md", "reason": "Evolving PRD + recommended Approach A"}
 {"file": ".trellis/tasks/archive/2026-10/10-26-t15-networkmode-real-enforcement/research/grounding.md", "reason": "T15 Restricted seam + runner constraints continuity"}

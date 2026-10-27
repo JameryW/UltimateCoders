@@ -24,6 +24,12 @@ from ultimate_coders.agent.deepseek_web import (
     DEEPSEEK_WEB_ENV_ALLOWLIST as _DEEPSEEK_WEB_ENV_ALLOWLIST,
 )
 from ultimate_coders.agent.hy_memory import HY_MEMORY_ENV_ALLOWLIST as _HY_MEMORY_ENV_ALLOWLIST
+from ultimate_coders.agent.landlock import (
+    LandlockError,
+    apply_landlock_argv,
+    landlock_enforce_enabled,
+    plan_landlock,
+)
 from ultimate_coders.agent.network_mode import (
     NetworkModeError,
     apply_network_argv,
@@ -689,14 +695,16 @@ class SandboxManager:
             temp_files = exec_request.pop("_temp_files", [])
             cancel_file = exec_request.pop("_cancel_file", None)
 
-            # T15 / D8 — when UC_NETWORK_MODE_ENFORCE is on, never bypass
-            # Python spawn via engine.execute_in_sandbox: Rust SubprocessSandbox
-            # does not apply NetworkMode, which would silently run Full.
+            # T15 / T17 / D8 — when NetworkMode or Landlock enforce is on,
+            # never bypass Python spawn via engine.execute_in_sandbox: Rust
+            # SubprocessSandbox does not apply those isolations (would
+            # silently run Full / unrestricted FS).
             use_engine_sandbox = (
                 not cancel_file
                 and self.engine is not None
                 and hasattr(self.engine, "execute_in_sandbox")
                 and not network_mode_enforce_enabled()
+                and not landlock_enforce_enabled()
             )
             if use_engine_sandbox:
                 result_dict = await self.engine.execute_in_sandbox(
@@ -869,9 +877,13 @@ class SandboxManager:
         # values, but the host environment outside the allowlist stays out.
         env = self.config.build_child_env(os.environ, env_vars, agent=agent_name)
 
-        # T15 / D8 — NetworkMode at agent-child spawn only. Flag off → noop
-        # (compatible Full). Flag on → argv wrap or fail closed; never
-        # silent Full. Worker NATS/Gateway sockets are not touched.
+        # T15 + T17 / D8 — child-only isolation at spawn. Plan both first
+        # (fail closed before any wrap). Apply Landlock **inner**, then
+        # NetworkMode **outer**: Landlock sets PR_SET_NO_NEW_PRIVS, which
+        # breaks a subsequent ``unshare --map-root-user`` uid_map write.
+        # Final shape when both active:
+        #   unshare … -- python landlock.py … -- <agent>
+        # Worker NATS/Gateway sockets are never wrapped.
         try:
             net_plan = plan_network_mode(self.config.network)
         except NetworkModeError as exc:
@@ -885,6 +897,17 @@ class SandboxManager:
             )
         except ValueError as exc:
             logger.error("Invalid SandboxConfig.network: %s", exc)
+            return ExecResult(
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                duration_ms=0,
+                timed_out=False,
+            )
+        try:
+            ll_plan = plan_landlock(working_dir, environ=env)
+        except LandlockError as exc:
+            logger.error("Landlock enforce refused spawn: %s", exc)
             return ExecResult(
                 exit_code=-1,
                 stdout="",
@@ -908,6 +931,15 @@ class SandboxManager:
                 net_plan.mode,
                 net_plan.backend,
             )
+        if ll_plan.argv_prefix:
+            logger.info(
+                "Landlock enforce: backend=%s prefix=%s",
+                ll_plan.backend,
+                " ".join(ll_plan.argv_prefix[:6])
+                + (" …" if len(ll_plan.argv_prefix) > 6 else ""),
+            )
+        # Inner Landlock, then outer NetworkMode (unshare before NNP).
+        command, args = apply_landlock_argv(command, list(args), ll_plan)
         command, args = apply_network_argv(command, list(args), net_plan)
 
         proc = None

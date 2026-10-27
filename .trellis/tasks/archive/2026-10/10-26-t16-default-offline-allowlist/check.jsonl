@@ -2,5 +2,5 @@
 {"file": "docs/architecture/agent-trust-eval/spec-p2.md", "reason": "Seam H: Restricted allowlist semantics vs documented OS deferral"}
 {"file": "docs/architecture/agent-trust-eval/issues/D8-sandbox-isolation-target.md", "reason": "Confirm child-only cut; Landlock still out of scope"}
 {"file": ".trellis/spec/backend/network-mode-spec.md", "reason": "Check T16 contracts and honesty note match implementation"}
-{"file": ".trellis/tasks/10-26-t16-default-offline-allowlist/prd.md", "reason": "Acceptance criteria and explicit out-of-scope for check"}
-{"file": ".trellis/tasks/10-26-t16-default-offline-allowlist/research/grounding.md", "reason": "Guard against silent Full default change, fake kernel Restricted, NATS on allowlist"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t16-default-offline-allowlist/prd.md", "reason": "Acceptance criteria and explicit out-of-scope for check"}
+{"file": ".trellis/tasks/archive/2026-10/10-26-t16-default-offline-allowlist/research/grounding.md", "reason": "Guard against silent Full default change, fake kernel Restricted, NATS on allowlist"}
