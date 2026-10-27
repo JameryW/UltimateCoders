@@ -1,5 +1,3 @@
-{"file": "docs/architecture/agent-trust-eval/map.md", "reason": "verify fog cleared and D9/D10 listed under Decisions so far"}
-{"file": "docs/architecture/agent-trust-eval-assessment.md", "reason": "verify assessment fog rows match decided status"}
-{"file": ".trellis/tasks/10-27-wayfinder-p3-fog-decisions/research/grounding.md", "reason": "Proposed must match recorded Resolutions"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "docs/decision consistency checks"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "cross-layer consistency when map + assessment + issues update together"}
+{"file": "docs/architecture/agent-trust-eval/issues/D9-project-ontology-mcp.md", "reason": "Verify D9 resolution matches Proposed"}
+{"file": "docs/architecture/agent-trust-eval/issues/D10-readme-numeric-ci.md", "reason": "Verify D10 resolution matches Proposed"}
+{"file": "docs/architecture/agent-trust-eval/map.md", "reason": "Map lists D9–D10 and P3 frontier"}

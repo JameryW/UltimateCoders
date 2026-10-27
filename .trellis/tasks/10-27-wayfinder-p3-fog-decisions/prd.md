@@ -1,73 +1,27 @@
-# wayfinder-p3-fog-decisions
+# Wayfinder P3 fog → D9/D10 decisions
 
 ## Goal
 
-Graduate the two remaining Agent Trust wayfinder fog items into decision tickets **D9** (project ontology via MCP) and **D10** (README/docs numeric recomputation CI), with Proposed resolutions matching D7/D8 style: MVP small, flags/guards conservative, hard parts deferred.
+Graduate the two P2-destination fog items (project ontology MCP; README numeric CI) into decided grilling tickets D9/D10 so the next turn can `$to-spec` / `$to-tickets` for P3.
 
-## What I already know
+## Source
 
-* P0–P2 MVP shipped (tickets 01–17); T18 true replan deferred; ontology MCP + README numeric CI remain fog (`map.md`).
-* D7/D8 pattern: MVP slice + defer hard half + clear ownership; product flags default off.
-* No `CONTEXT.md` / `docs/adr/` yet; `docs/agents/domain.md` already names CONTEXT as glossary authority.
-* MCP exists (engine search/memory/Hy-Memory; codegraph symbols) but no domain-term tools.
-* README has no uplift `%`; primary measured perf claims are SSE localhost maxima 6.394ms / 55.712ms (EN+ZH + verification doc).
-* `check-readme-ci-table.py` is the structural docs↔YAML hard-fail pattern; `verify-sse-latency.py` can remeasure SSE.
+- Map fog (pre-decision): ontology MCP + README numeric CI
+- Research: `research/grounding.md`
+- User「继续」adopts Proposed for both (same pattern as D7/D8)
 
-## Research References
+## Decisions locked
 
-* [`research/grounding.md`](research/grounding.md) — full grounding + Proposed D9/D10
+* **D9:** human-owned `CONTEXT.md` + read-only MCP; flag default off; no write-back / Evo in MVP
+* **D10:** numeric manifest + pin checker hard fail (SSE family first); live remeasure deferred; align D1/T2 on uplift %
 
-## Proposed decisions (pending adopt)
+## Out of scope
 
-### D9 — Project ontology via MCP (Recommended Approach A)
+Implementing MCP tools or CI scripts in this change; T18 true replan; dataset-split / label-pipeline fog.
 
-**MVP = read-only glossary MCP over `CONTEXT.md`; evolution deferred.**
+## Acceptance Criteria
 
-1. Minimal human-owned `CONTEXT.md` vocab (runtime entities + trust/eval nouns).
-2. Read-only MCP list/lookup behind default-off flag; fail soft when off/missing.
-3. Not codegraph / Hy-Memory / layered memory as authority.
-4. Defer write-back, auto-evolution, multi-context maps.
-
-### D10 — README / docs numeric CI (Recommended Approach A)
-
-**MVP = pin known measured claims to evidence (hard fail); live remeasure deferred.**
-
-1. Seed with SSE latency claim family; manifest + checker like `check-readme-ci-table`.
-2. Uplift `%` banned unless report-role + manifest (align D1/T2); no GPU recompute here.
-3. Hard fail pin drift; no required live SSE on every PR.
-4. Defer auto-README rewrite, production SLAs, BenchmarkRunner CI recompute.
-
-## Requirements (evolving)
-
-* Record D9/D10 issue files with Status + Resolution once Proposed is adopted (same as D4–D8).
-* Update map «Not yet specified» / Decisions so far + assessment fog rows.
-* Keep implementation of MCP tools / CI scripts as **follow-on tickets** after decide (this task may stop at decision docs if grilling adopts Proposed).
-
-## Acceptance Criteria (evolving)
-
-* [ ] `research/grounding.md` captures evidence + Proposed D9/D10
-* [ ] User/grilling adopts or amends Proposed
-* [ ] `issues/D9-*.md` + `issues/D10-*.md` show decided Resolution
-* [ ] `map.md` + assessment reflect D9/D10; fog rows cleared or narrowed
-* [ ] Local path-mention / line-ending pins updated if guards fail
-
-## Definition of Done
-
-* Decision docs + map/assessment consistent
-* Lint/CI hygiene for touched docs
-* Docs-only commit on the P3 decisions branch; no product code required in the decide slice
-
-## Out of Scope
-
-* Implementing ontology MCP server or numeric CI script (post-decision tickets)
-* T18 true replan; D5 labeling pipeline fog; GitHub wayfinder publication
-* Production GPU uplift claims
-
-## Open Questions
-
-* Prefer adopt Proposed D9/D10 as written, or amend authority path (CONTEXT.md vs docs/agents/glossary.md) / CI slice?
-
-## Technical Notes
-
-* Style refs: `docs/architecture/agent-trust-eval/issues/D7-*.md`, `D8-*.md`
-* Grounding file is the detailed evidence log; keep PRD thin
+* [x] `issues/D9-project-ontology-mcp.md` decided
+* [x] `issues/D10-readme-numeric-ci.md` decided
+* [x] `map.md` updated (D9–D10; fog list trimmed; frontier = P3 not ticketed)
+* [ ] Docs PR opened
