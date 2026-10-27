@@ -256,6 +256,7 @@ def test_real_repo_is_reconciled() -> None:
         (2216, 2207),  # T16 allowlist: test + Trellis task; T15 archived.
         (2221, 2212),  # T17 pre-stage working tree (docs/map edits already tracked).
         (2224, 2215),  # T17 Landlock FS: landlock.py + test + landlock-fs-spec.md.
+        (2231, 2222),  # P3 D9/D10 decisions + Trellis grounding task.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

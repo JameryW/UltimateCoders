@@ -354,6 +354,13 @@ MENTION_EXEMPT: tuple[tuple[str, str, int, str], ...] = (
      "`docs/adr/` are created lazily by `/domain-modeling`' -- absence is the documented "
      "default, not a broken pointer.  Reached this table only when T41 (#691) widened the "
      "scan to `docs/**`; before that it was outside every guard"),
+    ("architecture/agent-trust-eval/issues/D9-project-ontology-mcp.md", "CONTEXT.md", 3,
+     "same lazy CONTEXT.md authority as agents/domain.md: D9 decides the MVP authority is a "
+     "human-owned root CONTEXT.md that does not exist until a P3 ticket creates it; these "
+     "mentions name the planned authority, not a broken pointer"),
+    ("architecture/agent-trust-eval/map.md", "CONTEXT.md", 1,
+     "wayfinder map summary of D9: names the planned root CONTEXT.md authority; file is "
+     "intentionally absent until P3 ontology MCP implementation creates it"),
     ("backend/taskservice-grpc-spec.md", "tui/src/**", 2,
      "deliberately historical section: the Ink/React TUI client was deleted in d7f4631 "
      "(2026-06-25, #157).  This spec's live subject is the TaskService gRPC surface, so the "

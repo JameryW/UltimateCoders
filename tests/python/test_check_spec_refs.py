@@ -456,7 +456,8 @@ def test_real_corpus_docs_root_is_live():
     assert guard.exemption_self_check(rows) == []
 
     context = [r for r in rows if r["ref"] == "CONTEXT.md" and r["verdict"] == guard.DANGLING]
-    assert len(context) == 2, context
+    # domain.md ×2 (T41) + D9 ×3 + map.md ×1 (P3 D9 decision).
+    assert len(context) == 6, context
     assert all(guard._mention_exemption(r["spec"], r["ref"]) for r in context), context
 
 
@@ -859,7 +860,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # D8; ticket 17 status names landlock.py, sandbox.py, test_landlock_fs.py;
     # network-mode-spec cross-link; dsec-sandbox posture note
     # (457 -> 470), all resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 470
+    # P3 D9/D10 decisions: D9 cites docs/agents/domain.md + CONTEXT.md×3;
+    # map cites CONTEXT.md; D10 cites check-readme-ci-table.py +
+    # verify-sse-latency.py (470 -> 477); CONTEXT.md dangling exempt; unclassified 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 477
 
 
 def test_real_corpus_has_no_false_content_mismatch():
