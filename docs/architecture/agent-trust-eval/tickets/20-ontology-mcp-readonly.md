@@ -2,7 +2,7 @@
 
 **What to build:** When `UC_ONTOLOGY_MCP` is on, register read-only MCP tools (e.g. list / lookup) that expose the loader from ticket 19. When the flag is off, do not register tools (or soft-fail). Never provide write/remember/delete ontology tools. Fail soft on missing CONTEXT (empty list / not-found), not crash.
 
-**Blocked by:** 19 (CONTEXT ontology loader + flag).
+**Blocked by:** none (was 19 — CONTEXT ontology loader + flag, now implemented).
 
 **Status:** ready-for-agent
 
