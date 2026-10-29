@@ -1,0 +1,64 @@
+name: Docs Numeric Pins CI
+
+# WHAT THIS GUARDS
+# ----------------
+# `scripts/check-docs-numeric-pins.py` reconciles docs-facing measured numbers
+# against `docs/numeric-pins.yaml` (D10 / T21). SSE latency family first.
+# Undocumented uplift "%" on README surfaces fails closed unless allowlisted
+# with eval_role=report. Live stack remeasure is ticket 22 and is NOT invoked
+# here.
+#
+# WHY A `paths` FILTER (same mechanical test as ci-readme-ci-table.yml)
+# ---------------------------------------------------------------------
+# The guard reads a CLOSED input set: the manifest, the listed surfaces, the
+# script, and these tests. A blindfold filter would miss drift; an unfiltered
+# workflow would waste runners. Own file because Actions `paths` is
+# workflow-level.
+#
+# WHY PyYAML
+# ----------
+# Manifest semantics matter; a hand-rolled subset parser that quietly returns
+# nothing would stay green forever. PyYAML is already a runtime dependency.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "README.zh-CN.md"
+      - "docs/numeric-pins.yaml"
+      - "docs/live-feedback-and-metainfer-verification.md"
+      - "scripts/check-docs-numeric-pins.py"
+      - "tests/python/test_check_docs_numeric_pins.py"
+      - ".github/workflows/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "README.zh-CN.md"
+      - "docs/numeric-pins.yaml"
+      - "docs/live-feedback-and-metainfer-verification.md"
+      - "scripts/check-docs-numeric-pins.py"
+      - "tests/python/test_check_docs_numeric_pins.py"
+      - ".github/workflows/**"
+
+jobs:
+  docs-numeric-pins:
+    name: Docs numeric pins (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - name: Install PyYAML + pytest
+        run: pip install pyyaml pytest
+      - name: Run the numeric pin guard
+        run: python scripts/check-docs-numeric-pins.py
+      - name: Run the guard's own tests
+        run: pytest tests/python/test_check_docs_numeric_pins.py -v -o addopts=""

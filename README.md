@@ -554,7 +554,7 @@ troubleshooting table and the test map.
 
 ## CI
 
-Eleven independent workflows are defined. Ten run on pushes and pull requests targeting `main`; `metainfer-release-gate.yml` is manual-only. All but `ci-scripts.yml` and the manual gate are path-filtered, so they only run when one of the listed paths changes; the workflow files themselves are the source of truth:
+Twelve independent workflows are defined. Eleven run on pushes and pull requests targeting `main`; `metainfer-release-gate.yml` is manual-only. All but `ci-scripts.yml` and the manual gate are path-filtered, so they only run when one of the listed paths changes; the workflow files themselves are the source of truth:
 
 | Workflow | Trigger paths | Checks |
 |----------|--------------|--------|
@@ -568,6 +568,7 @@ Eleven independent workflows are defined. Ten run on pushes and pull requests ta
 | **Codex Issue-Flow CI** (`ci-codex-flow.yml`) | `.agents/skills/**`, `AGENTS.md`, `docs/agents/domain.md`, `docs/agents/issue-tracker.md`, `docs/agents/mattpocock-skills.md`, `docs/agents/triage-labels.md`, `docs/workflows/codex-issue-flow.md`, `scripts/check-codex-issue-flow.py` | issue-workflow wiring validation |
 | **README CI Table CI** (`ci-readme-ci-table.yml`) | `README.md`, `README.zh-CN.md`, `.github/workflows/**`, `scripts/check-readme-ci-table.py`, `tests/python/test_check_readme_ci_table.py` | reconciles this table against the workflow YAML |
 | **Workflow Inputs CI** (`ci-workflow-inputs.yml`) | `.github/workflows/**`, `scripts/check-workflow-inputs.py`, `tests/python/test_check_workflow_inputs.py` | checks that every file a workflow's `run:` steps name is covered by its `paths` |
+| **Docs Numeric Pins CI** (`ci-docs-numeric-pins.yml`) | `README.md`, `README.zh-CN.md`, `docs/numeric-pins.yaml`, `docs/live-feedback-and-metainfer-verification.md`, `scripts/check-docs-numeric-pins.py`, `tests/python/test_check_docs_numeric_pins.py`, `.github/workflows/**` | hard-fails docs↔numeric-pin drift and undocumented README uplift `%` |
 | **MetaInfer Release Gate** (`metainfer-release-gate.yml`) | *(no paths filter; manual dispatch only)* | pinned MetaInfer service contract, shared-workspace preflight and GPU identity evidence gate |
 
 Every path-filtered workflow's own YAML file also matches its `paths` (named directly, or through `.github/workflows/**`), so editing a workflow re-runs it, and every workflow supports manual dispatch. The PostgreSQL-backed suite runs on every PR; storage integration tests only run on `main` pushes or manual dispatch (requires Docker Compose infra).

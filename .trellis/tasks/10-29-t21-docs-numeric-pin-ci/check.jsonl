@@ -1,0 +1,6 @@
+{"file": "docs/architecture/agent-trust-eval/tickets/21-docs-numeric-pin-ci.md", "reason": "Acceptance checklist for T21"}
+{"file": "docs/architecture/agent-trust-eval/issues/D10-readme-numeric-ci.md", "reason": "Decision authority for hard-fail / SSE-first / no live"}
+{"file": "docs/architecture/agent-trust-eval/spec-p3.md", "reason": "Seam J testing: mismatch fail; uplift ban; no live"}
+{"file": ".trellis/tasks/10-29-t21-docs-numeric-pin-ci/prd.md", "reason": "Locked Approach A requirements"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Test quality expectations"}
+{"file": "scripts/check-readme-ci-table.py", "reason": "Peer behavior for exit-code-as-verdict guards"}

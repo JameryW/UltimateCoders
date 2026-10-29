@@ -4,11 +4,19 @@
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** **implemented** (`docs/numeric-pins.yaml` + `scripts/check-docs-numeric-pins.py` + `ci-docs-numeric-pins.yml`; SSE family first; uplift ban fail-closed; no live stack)
 
-- [ ] Manifest lists at least the SSE latency family pins used in README / verification docs
-- [ ] CI checker hard-fails on doc↔pin drift
-- [ ] Undocumented uplift `%` on README-facing surfaces fails closed
-- [ ] No live stack required for the pin checker to pass
-- [ ] Tests cover match, drift, and uplift-ban cases
-- [ ] Checker wired into CI (or documented equivalent gate)
+- [x] Manifest lists at least the SSE latency family pins used in README / verification docs
+- [x] CI checker hard-fails on doc↔pin drift
+- [x] Undocumented uplift `%` on README-facing surfaces fails closed
+- [x] No live stack required for the pin checker to pass
+- [x] Tests cover match, drift, and uplift-ban cases
+- [x] Checker wired into CI (or documented equivalent gate)
+
+## Landing notes
+
+- Manifest: `docs/numeric-pins.yaml` (SSE max / p99 / 200ms ceiling)
+- Checker: `scripts/check-docs-numeric-pins.py` (exit code = verdict)
+- Tests: `tests/python/test_check_docs_numeric_pins.py`
+- CI: `.github/workflows/ci-docs-numeric-pins.yml`
+- Live remeasure remains ticket 22
