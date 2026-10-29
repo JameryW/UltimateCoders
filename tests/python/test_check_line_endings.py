@@ -259,7 +259,9 @@ def test_real_repo_is_reconciled() -> None:
         (2231, 2222),  # P3 D9/D10 decisions + Trellis grounding task.
         (2236, 2227),  # P3 spec + tickets 19–22 (5 text); fog-decisions task archived.
         (2245, 2236),  # T19 ontology loader: CONTEXT.md + module + test + spec + task.
+        (2251, 2242),  # T20 ontology MCP: test + Trellis task; T19 archived.
         (2254, 2245),  # T21 docs numeric pins: manifest + checker + test + workflow + task.
+        (2260, 2251),  # T20∪T21 merge: both ticket file sets on main.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

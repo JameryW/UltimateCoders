@@ -873,10 +873,13 @@ def test_real_corpus_unanchored_census_is_reported():
     # ontology.py, CONTEXT.md, test_ontology_loader.py; backend index + map
     # cite CONTEXT.md / ontology surfaces (477 -> 492), all resolved or still
     # triaged; unclassified stays 0.
-    # T21 docs numeric pin CI: map status names docs/numeric-pins.yaml +
-    # ci-docs-numeric-pins.yml; ticket 21 status/landing names the manifest,
-    # checker, test, and workflow (492 -> 500), all resolved; unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 500
+    # T20 ontology MCP read-only: ontology-loader-spec MCP splice + ticket 20
+    # landing notes name engine_mcp.py, ontology.py, test_ontology_mcp.py
+    # (and related CONTEXT / ontology surfaces) (492 -> 500 on T20 alone).
+    # T21 docs numeric pin CI: map + ticket 21 landing names the manifest,
+    # checker, test, and workflow (492 -> 500 on T21 alone). Merged:
+    # 492 + 8 + 8 = 508, all resolved; unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 508
 
 
 def test_real_corpus_has_no_false_content_mismatch():

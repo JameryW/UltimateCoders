@@ -3,7 +3,8 @@
 ``UC_ONTOLOGY_MCP`` defaults **off**. When off, or when CONTEXT is missing /
 unreadable, loaders soft-return an empty glossary (never raise for those
 cases). Codegraph and Hy-Memory are **not** glossary authorities. No write /
-delete / remember APIs live here — MCP tool registration is ticket 20.
+delete / remember APIs live here — MCP ``list`` / ``lookup`` advertising is
+``engine_mcp._ontology_tools`` (ticket 20).
 """
 
 from __future__ import annotations
