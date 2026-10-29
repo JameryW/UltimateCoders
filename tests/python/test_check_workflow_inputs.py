@@ -174,9 +174,9 @@ def test_real_repo_is_reconciled() -> None:
     n = len(list((REPO / WORKFLOWS).glob("*.yml")))
     assert f"{n} workflow(s), " in out, f"the guard must report how much it looked at; got:\n{out}"
     expected = (
-        "workflows: 11 workflow(s), 9 path-filtered, 21 run-step reference(s), "
-        "13 subject to coverage"
-    )
+            "workflows: 12 workflow(s), 10 path-filtered, 23 run-step reference(s), "
+            "15 subject to coverage"
+        )
     assert expected in out, f"the reported summary has moved; got:\n{out}"
 
 

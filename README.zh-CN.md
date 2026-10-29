@@ -442,7 +442,7 @@ SDK 安装后，沙箱 MCP server 还会暴露 `recall_coding_memory` / `remembe
 
 ## CI
 
-共有十一套独立工作流，其中十套面向 `main` 的推送与 PR 运行，`metainfer-release-gate.yml` 仅手动触发。除 `ci-scripts.yml` 与手动门禁外都是路径过滤的 —— 只有列出的路径发生变化才会运行；工作流文件本身是权威来源：
+共有十二套独立工作流，其中十一套面向 `main` 的推送与 PR 运行，`metainfer-release-gate.yml` 仅手动触发。除 `ci-scripts.yml` 与手动门禁外都是路径过滤的 —— 只有列出的路径发生变化才会运行；工作流文件本身是权威来源：
 
 | 工作流 | 触发路径 | 检查内容 |
 | --- | --- | --- |
@@ -456,6 +456,7 @@ SDK 安装后，沙箱 MCP server 还会暴露 `recall_coding_memory` / `remembe
 | **Codex Issue-Flow CI**（`ci-codex-flow.yml`） | `.agents/skills/**`、`AGENTS.md`、`docs/agents/domain.md`、`docs/agents/issue-tracker.md`、`docs/agents/mattpocock-skills.md`、`docs/agents/triage-labels.md`、`docs/workflows/codex-issue-flow.md`、`scripts/check-codex-issue-flow.py` | issue 工作流接线校验 |
 | **README CI Table CI**（`ci-readme-ci-table.yml`） | `README.md`、`README.zh-CN.md`、`.github/workflows/**`、`scripts/check-readme-ci-table.py`、`tests/python/test_check_readme_ci_table.py` | 把本表与 workflow YAML 对账 |
 | **Workflow Inputs CI**（`ci-workflow-inputs.yml`） | `.github/workflows/**`、`scripts/check-workflow-inputs.py`、`tests/python/test_check_workflow_inputs.py` | 校验 workflow 的 `run:` 步点名的每个文件都被它的 `paths` 覆盖 |
+| **Docs Numeric Pins CI**（`ci-docs-numeric-pins.yml`） | `README.md`、`README.zh-CN.md`、`docs/numeric-pins.yaml`、`docs/live-feedback-and-metainfer-verification.md`、`scripts/check-docs-numeric-pins.py`、`tests/python/test_check_docs_numeric_pins.py`、`.github/workflows/**` | 文档数字 pin 漂移与未登记 README uplift `%` 硬失败 |
 | **MetaInfer Release Gate**（`metainfer-release-gate.yml`） | *（无 paths 过滤；仅手动触发）* | 固定版本 MetaInfer 合约、共享工作区预检与 GPU 身份证据门禁 |
 
 上述带路径过滤的工作流都会让自己的 YAML 文件命中 `paths`（直接列出，或经 `.github/workflows/**`），因此改动工作流本身会重新触发它；所有工作流都支持手动触发。PostgreSQL 集成测试在每个 PR 上运行；存储集成测试只在推送到 `main` 或手动触发时运行，并需要 Docker Compose 基础设施。
