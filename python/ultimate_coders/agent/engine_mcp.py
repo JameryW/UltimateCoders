@@ -51,7 +51,18 @@ from ultimate_coders.agent.deepseek_web import (
     is_configured as deepseek_web_configured,
 )
 from ultimate_coders.agent.hy_memory import CodingMemory, hy_memory_available
+from ultimate_coders.agent.ontology import (
+    list_terms as ontology_list_terms,
+)
+from ultimate_coders.agent.ontology import (
+    lookup_term as ontology_lookup_term,
+)
+from ultimate_coders.agent.ontology import ontology_mcp_enabled
 from ultimate_coders.engine import Engine
+
+#: Read-only ontology MCP tool names (T20 / D9). Never advertise write tools.
+TOOL_LIST_ONTOLOGY = "list_ontology_terms"
+TOOL_LOOKUP_ONTOLOGY = "lookup_ontology_term"
 
 #: Lazily-built coding-memory backend for the hy-memory MCP tools. None
 #: until the first tool call; stays None (tools hidden) when the optional
@@ -222,6 +233,50 @@ def _memory_tools() -> list:
     ]
 
 
+def _ontology_tools() -> list:
+    """Read-only CONTEXT glossary tools (empty when flag off or mcp missing).
+
+    Gated by ``UC_ONTOLOGY_MCP`` (default off) and the optional ``mcp``
+    package. Never advertises write / remember / delete ontology tools —
+    wrappers only over :mod:`ultimate_coders.agent.ontology`.
+    """
+    if not ontology_mcp_enabled() or Server is None:
+        return []
+    return [
+        Tool(
+            name=TOOL_LIST_ONTOLOGY,
+            description=(
+                "List project ontology terms from the human-owned CONTEXT.md "
+                "glossary. Read-only; soft-empty when CONTEXT is missing. "
+                "Requires UC_ONTOLOGY_MCP."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+        Tool(
+            name=TOOL_LOOKUP_ONTOLOGY,
+            description=(
+                "Look up one project ontology term by name (case-insensitive) "
+                "from human-owned CONTEXT.md. Returns canonical casing, "
+                "definition, and authority_path. Soft not-found when absent. "
+                "Requires UC_ONTOLOGY_MCP."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Term name to look up (case-insensitive)",
+                    },
+                },
+                "required": ["name"],
+            },
+        ),
+    ]
+
+
 def _create_server(engine: Engine) -> object:
     """Create MCP server with search and memory tools."""
     if Server is None:
@@ -321,6 +376,7 @@ def _create_server(engine: Engine) -> object:
             ),
             *_memory_tools(),
             *_deepseek_web_tools(),
+            *_ontology_tools(),
         ]
 
     @server.call_tool()
@@ -339,9 +395,58 @@ def _create_server(engine: Engine) -> object:
             return await _deepseek_web_search(arguments)
         if name == TOOL_FETCH:
             return await _deepseek_web_fetch(arguments)
+        if name == TOOL_LIST_ONTOLOGY:
+            return await _list_ontology_terms(arguments)
+        if name == TOOL_LOOKUP_ONTOLOGY:
+            return await _lookup_ontology_term(arguments)
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
     return server
+
+
+def _format_ontology_term(term: object) -> str:
+    """Render one OntologyTerm as plain text (authority_path included)."""
+    name = getattr(term, "name", "?")
+    definition = getattr(term, "definition", "")
+    authority = getattr(term, "authority_path", "CONTEXT.md")
+    avoid = getattr(term, "avoid", ()) or ()
+    lines = [
+        f"**{name}**: {definition}",
+        f"authority_path: {authority}",
+    ]
+    if avoid:
+        lines.append(f"_Avoid_: {', '.join(avoid)}")
+    return "\n".join(lines)
+
+
+async def _list_ontology_terms(args: dict) -> list[TextContent]:
+    """Thin wrapper over ontology.list_terms — soft empty, never raises soft."""
+    # Optional path override for tests / non-default CONTEXT; not advertised.
+    path = args.get("path") if isinstance(args, dict) else None
+    terms = ontology_list_terms(path=path)
+    if not terms:
+        return [TextContent(type="text", text="No ontology terms found.")]
+    blocks = [_format_ontology_term(term) for term in terms]
+    return [TextContent(type="text", text="\n\n".join(blocks))]
+
+
+async def _lookup_ontology_term(args: dict) -> list[TextContent]:
+    """Thin wrapper over ontology.lookup_term — soft not-found text."""
+    name = ""
+    path = None
+    if isinstance(args, dict):
+        name = str(args.get("name") or "")
+        path = args.get("path")
+    term = ontology_lookup_term(name, path=path)
+    if term is None:
+        label = name.strip() or "(empty)"
+        return [
+            TextContent(
+                type="text",
+                text=f"Ontology term '{label}' not found.",
+            )
+        ]
+    return [TextContent(type="text", text=_format_ontology_term(term))]
 
 
 async def _deepseek_web_search(args: dict) -> list[TextContent]:

@@ -873,7 +873,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # ontology.py, CONTEXT.md, test_ontology_loader.py; backend index + map
     # cite CONTEXT.md / ontology surfaces (477 -> 492), all resolved or still
     # triaged; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 492
+    # T20 ontology MCP read-only: ontology-loader-spec MCP splice + ticket 20
+    # landing notes name engine_mcp.py, ontology.py, test_ontology_mcp.py
+    # (and related CONTEXT / ontology surfaces) (492 -> 500), all resolved;
+    # unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 500
 
 
 def test_real_corpus_has_no_false_content_mismatch():

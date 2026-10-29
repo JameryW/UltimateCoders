@@ -4,11 +4,18 @@
 
 **Blocked by:** none (was 19 — CONTEXT ontology loader + flag, now implemented).
 
-**Status:** ready-for-agent
+**Status:** **implemented** (`UC_ONTOLOGY_MCP` + `engine_mcp._ontology_tools` → `list_ontology_terms` / `lookup_ontology_term`; hide when off; soft empty; no write tools)
 
-- [ ] Flag on → list / lookup tools available and return loader data
-- [ ] Flag off → tools absent or soft-fail; no hard dependency for workers
-- [ ] No write-back / Evo / mutate APIs
-- [ ] Missing CONTEXT → empty / not-found, not process crash
-- [ ] Tests cover flag matrix without requiring a full coding agent
-- [ ] Feature flag defaults off
+- [x] Flag on → list / lookup tools available and return loader data
+- [x] Flag off → tools absent or soft-fail; no hard dependency for workers
+- [x] No write-back / Evo / mutate APIs
+- [x] Missing CONTEXT → empty / not-found, not process crash
+- [x] Tests cover flag matrix without requiring a full coding agent
+- [x] Feature flag defaults off
+
+## Landing notes
+
+- Module splice: `python/ultimate_coders/agent/engine_mcp.py` (`_ontology_tools`, handlers)
+- Authority API unchanged: `python/ultimate_coders/agent/ontology.py` (`list_terms` / `lookup_term`)
+- Tests: `tests/python/test_ontology_mcp.py` (helper-based; no stdio MCP server)
+- Spec: `.trellis/spec/backend/ontology-loader-spec.md` §6 MCP advertising note

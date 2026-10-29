@@ -64,7 +64,7 @@ When `UC_ONTOLOGY_MCP` is on, advertise read-only MCP `list` / `lookup` tools on
 ## Decision (ADR-lite)
 
 **Context**: T20 must expose T19’s glossary over MCP without a second authority or write path.  
-**Decision**: **Approach A** (recommended; caller-aligned) — pending explicit lock.  
+**Decision**: **Approach A** — locked via「继续」.  
 **Consequences**: One splice into `engine_mcp`; hide when `UC_ONTOLOGY_MCP` off; soft empty via existing loader; write/Evo remain out of scope.
 
 ## Requirements (evolving)
@@ -112,9 +112,9 @@ When `UC_ONTOLOGY_MCP` is on, advertise read-only MCP `list` / `lookup` tools on
 3. Add `tests/python/test_engine_mcp_ontology.py` mirroring DeepSeek/Hy-Memory helper tests.
 4. Leave `ontology.py` contracts intact unless a tiny export is required.
 
-## Open Questions
+## Decisions locked
 
-* Prefer Approach A as locked for implementation? (Recommended: yes — already caller-aligned.)
+* Approach A: `_ontology_tools()` in `engine_mcp.py`; hide when flag off; soft empty; no write tools.
 
 ## Technical Notes
 
