@@ -236,11 +236,11 @@ def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
             "prose-count",
             README,
             # NOTE: these anchors quote the README's real wording, so adding
-            # a workflow (which moves Ten -> Eleven) breaks them. The anchor
+            # a workflow (which moves Eleven -> Twelve) breaks them. The anchor
             # count assertion is what makes that a loud failure at the anchor
             # rather than a mutation that quietly replaces nothing.
+            "Twelve independent workflows",
             "Eleven independent workflows",
-            "Ten independent workflows",
             1,
             "first",
         ),
@@ -248,8 +248,8 @@ def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
             "J the ZH prose count drifts off the real number",
             "prose-count",
             README_ZH,
+            "\u5341\u4e8c\u5957\u72ec\u7acb\u5de5\u4f5c\u6d41",
             "\u5341\u4e00\u5957\u72ec\u7acb\u5de5\u4f5c\u6d41",
-            "\u5341\u5957\u72ec\u7acb\u5de5\u4f5c\u6d41",
             1,
             "first",
         ),
@@ -257,7 +257,7 @@ def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
             "M the prose count is reworded past the parser",
             "prose-count-missing",
             README,
-            "Eleven independent workflows",
+            "Twelve independent workflows",
             "Several independent workflows",
             1,
             "first",

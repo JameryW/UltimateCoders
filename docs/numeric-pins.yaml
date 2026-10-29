@@ -1,0 +1,71 @@
+# Docs-facing measured-number pins (D10 / T21).
+#
+# The checker scripts/check-docs-numeric-pins.py hard-fails when a listed
+# surface no longer contains must_contain, or when an uplift "%" appears on a
+# ban surface without an uplift_allowed entry that carries eval_role=report.
+# Live remeasure (verify-sse-latency.py against a stack) is ticket 22 — not
+# required for this file to stay green.
+
+version: 1
+
+pins:
+  - id: sse-steady-max-ms
+    family: sse-latency
+    value: "6.394"
+    unit: ms
+    source: fixed-pin
+    surfaces:
+      - path: README.md
+        must_contain: "6.394ms"
+      - path: README.zh-CN.md
+        must_contain: "6.394ms"
+      - path: docs/live-feedback-and-metainfer-verification.md
+        must_contain: "6.394ms"
+
+  - id: sse-burst-max-ms
+    family: sse-latency
+    value: "55.712"
+    unit: ms
+    source: fixed-pin
+    surfaces:
+      - path: README.md
+        must_contain: "55.712ms"
+      - path: README.zh-CN.md
+        must_contain: "55.712ms"
+      - path: docs/live-feedback-and-metainfer-verification.md
+        must_contain: "55.712ms"
+
+  - id: sse-steady-p99-ms
+    family: sse-latency
+    value: "2.260"
+    unit: ms
+    source: fixed-pin
+    surfaces:
+      - path: docs/live-feedback-and-metainfer-verification.md
+        must_contain: "2.260ms"
+
+  - id: sse-burst-p99-ms
+    family: sse-latency
+    value: "55.270"
+    unit: ms
+    source: fixed-pin
+    surfaces:
+      - path: docs/live-feedback-and-metainfer-verification.md
+        must_contain: "55.270ms"
+
+  - id: sse-sample-ceiling-ms
+    family: sse-latency
+    value: "200"
+    unit: ms
+    source: fixed-pin
+    surfaces:
+      - path: docs/live-feedback-and-metainfer-verification.md
+        must_contain: "200ms"
+
+# README-facing surfaces scanned for undocumented uplift percentages.
+uplift_ban_surfaces:
+  - README.md
+  - README.zh-CN.md
+
+# Empty = fail closed. Any entry must set eval_role: report (D1 / T2).
+uplift_allowed: []

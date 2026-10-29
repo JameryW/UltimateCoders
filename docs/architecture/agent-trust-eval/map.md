@@ -50,15 +50,15 @@ P2 (D7–D8) — **MVP complete except deferred** (13–17 implemented; 18 defer
 - [17 Landlock FS later](tickets/17-landlock-fs-later.md) — **implemented** (`UC_LANDLOCK_ENFORCE`; child-only ctypes Landlock after NetworkMode wrap; fail closed; flag default off); was blocked by: 15 (preferably after 16)
 - [18 true replan deferred](tickets/18-true-replan-deferred.md) — **deferred** (not P2 MVP)
 
-P3 (D9–D10) — **in progress** (19–20 implemented; 21 ready-for-agent; 22 deferred):
+P3 (D9–D10) — **MVP complete except deferred** (19–21 implemented; 22 deferred):
 
 - Spec: [spec-p3.md](spec-p3.md)
 - [19 CONTEXT ontology loader](tickets/19-context-ontology-loader.md) — **implemented** (`UC_ONTOLOGY_MCP` loader + seed `CONTEXT.md`; soft-empty; no MCP tools); was blocked by: none
 - [20 ontology MCP read-only](tickets/20-ontology-mcp-readonly.md) — **implemented** (`engine_mcp._ontology_tools` list/lookup; hide when off; soft empty; no write tools); was blocked by: 19
-- [21 docs numeric pin CI](tickets/21-docs-numeric-pin-ci.md) — Blocked by: none
+- [21 docs numeric pin CI](tickets/21-docs-numeric-pin-ci.md) — **implemented** (`docs/numeric-pins.yaml` + hard-fail checker + `ci-docs-numeric-pins.yml`; SSE first; uplift ban); was blocked by: none
 - [22 live numeric remeasure deferred](tickets/22-live-numeric-remeasure-deferred.md) — **deferred** (not P3 MVP)
 
-Frontier for implementers: **21**. Ticket **18** remains deferred. Ticket **22** remains deferred. Remaining fog below is not decision-ready.
+Frontier for implementers: _(none on P3 MVP)_. Ticket **18** remains deferred. Ticket **22** remains deferred. Remaining fog below is not decision-ready.
 
 ## Decisions so far
 

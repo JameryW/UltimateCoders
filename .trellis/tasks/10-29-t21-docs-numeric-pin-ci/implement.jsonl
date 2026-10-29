@@ -1,0 +1,10 @@
+{"file": "docs/architecture/agent-trust-eval/tickets/21-docs-numeric-pin-ci.md", "reason": "T21 acceptance criteria"}
+{"file": "docs/architecture/agent-trust-eval/issues/D10-readme-numeric-ci.md", "reason": "D10 resolution: manifest + hard fail; SSE first; live deferred"}
+{"file": "docs/architecture/agent-trust-eval/spec-p3.md", "reason": "P3 Seam J numeric pin contracts"}
+{"file": ".trellis/tasks/10-29-t21-docs-numeric-pin-ci/research/grounding.md", "reason": "SSE pin inventory, Approach A, test plan"}
+{"file": ".trellis/tasks/10-29-t21-docs-numeric-pin-ci/prd.md", "reason": "Task PRD with Approach A locked"}
+{"file": "scripts/check-readme-ci-table.py", "reason": "Peer hard-fail docs↔machine guard pattern"}
+{"file": ".github/workflows/ci-readme-ci-table.yml", "reason": "Peer path-filtered workflow shape"}
+{"file": "tests/python/test_check_readme_ci_table.py", "reason": "Sandbox mutation test pattern"}
+{"file": "docs/live-feedback-and-metainfer-verification.md", "reason": "Authoritative SSE table numbers to pin"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Python test quality bar"}
