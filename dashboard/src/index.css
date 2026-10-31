@@ -1583,7 +1583,7 @@ body:has(.terminal-app) {
 .cc-card.dispatch { border-color: color-mix(in srgb, var(--cc-dispatch) 70%, transparent); }
 .cc-card.swarm { border-color: color-mix(in srgb, var(--cc-swarm) 65%, transparent); min-width: 0; }
 .cc-card.swarm.cc-swarm-enter {
-  animation: cc-swarm-enter 320ms ease-out both;
+  animation: cc-swarm-enter 320ms ease-out backwards;
 }
 .cc-idle-tip {
   margin-top: 2px;
@@ -3377,6 +3377,154 @@ body:has(.terminal-app) {
   .terminal-swarm-row,
   .terminal-command-bar button,
   .cc-stage-chip {
+    transition: none !important;
+  }
+}
+
+/* Task orchestration motion ------------------------------------------------ */
+/* Motion for the orchestration surfaces: task-list rows, the live strip, the
+   selected-task swarm list and the command-center flow connectors. Entrance
+   animations use `backwards` fill so hover transforms keep working. */
+@keyframes uc-task-row-enter {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes uc-swarm-row-enter {
+  from { opacity: 0; transform: translateY(7px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes uc-phase-enter {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes uc-rail-pulse {
+  0%, 100% { opacity: .35; }
+  50% { opacity: 1; }
+}
+@keyframes uc-running-ring {
+  0%, 100% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--cc-swarm) 38%, transparent),
+                0 0 12px color-mix(in srgb, var(--cc-swarm) 16%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--cc-swarm) 78%, transparent),
+                0 0 24px color-mix(in srgb, var(--cc-swarm) 40%, transparent);
+  }
+}
+@keyframes uc-check-pop {
+  0% { transform: scale(.45); opacity: 0; }
+  55% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes uc-live-glow {
+  0%, 100% { text-shadow: 0 0 0 transparent; }
+  50% { text-shadow: 0 0 10px color-mix(in srgb, var(--cc-swarm) 62%, transparent); }
+}
+@keyframes uc-node-pulse {
+  0%, 100% {
+    box-shadow: 0 0 10px color-mix(in srgb, var(--cc-lead) 65%, transparent),
+                0 0 0 0 color-mix(in srgb, var(--cc-lead) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 10px color-mix(in srgb, var(--cc-lead) 65%, transparent),
+                0 0 0 7px transparent;
+  }
+}
+
+/* Task list rows: staggered entrance, hover slide, pulsing rail for running work. */
+.terminal-task-layout ul[aria-label="Task list"] > li {
+  animation: uc-task-row-enter 300ms cubic-bezier(.2, .75, .3, 1) backwards;
+}
+.terminal-task-layout ul[aria-label="Task list"] > li:nth-child(2) { animation-delay: 25ms; }
+.terminal-task-layout ul[aria-label="Task list"] > li:nth-child(3) { animation-delay: 50ms; }
+.terminal-task-layout ul[aria-label="Task list"] > li:nth-child(4) { animation-delay: 75ms; }
+.terminal-task-layout ul[aria-label="Task list"] > li:nth-child(5) { animation-delay: 100ms; }
+.terminal-task-layout ul[aria-label="Task list"] > li:nth-child(6) { animation-delay: 125ms; }
+.terminal-task-layout ul[aria-label="Task list"] > li:nth-child(7) { animation-delay: 150ms; }
+.terminal-task-layout ul[aria-label="Task list"] > li:nth-child(8) { animation-delay: 175ms; }
+.terminal-task-layout ul[aria-label="Task list"] > li:nth-child(9) { animation-delay: 200ms; }
+.terminal-task-layout ul[aria-label="Task list"] > li:nth-child(10) { animation-delay: 225ms; }
+.terminal-task-row {
+  position: relative;
+  transition: transform .18s ease, box-shadow .18s ease, border-left-color .2s ease, background .2s ease;
+}
+.terminal-task-row:hover { transform: translateX(2px); }
+.terminal-task-row.terminal-task-status-in_progress::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -2px;
+  width: 2px;
+  background: linear-gradient(180deg, transparent, var(--cc-swarm), transparent);
+  animation: uc-rail-pulse 2.2s ease-in-out infinite;
+  pointer-events: none;
+}
+.terminal-task-progress-chip { position: relative; }
+.terminal-task-progress-chip::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .3), transparent);
+  transform: translateX(-130%);
+  animation: uc-bar-sheen 2.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Live strip: sheen on the progress bar, breathing percent, phase entrance. */
+.terminal-task-live-strip .terminal-mini-bar i { position: relative; overflow: hidden; }
+.terminal-task-live-strip .terminal-mini-bar i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .34), transparent);
+  transform: translateX(-130%);
+  animation: uc-bar-sheen 2.6s ease-in-out infinite;
+}
+.terminal-task-live-pct { animation: uc-live-glow 2.4s ease-in-out infinite; }
+.terminal-task-live-phase { animation: uc-phase-enter 420ms ease-out backwards; }
+
+/* Selected-task swarm list: staggered rows, breathing ring for running subtasks. */
+.terminal-swarm-list > .terminal-swarm-row {
+  animation: uc-swarm-row-enter 320ms cubic-bezier(.2, .75, .3, 1) backwards;
+}
+.terminal-swarm-row.is-running {
+  animation: uc-swarm-row-enter 320ms cubic-bezier(.2, .75, .3, 1) backwards,
+             uc-running-ring 2.4s ease-in-out 360ms infinite;
+}
+.terminal-swarm-list > .terminal-swarm-row:nth-child(2) { animation-delay: 30ms, 360ms; }
+.terminal-swarm-list > .terminal-swarm-row:nth-child(3) { animation-delay: 60ms, 360ms; }
+.terminal-swarm-list > .terminal-swarm-row:nth-child(4) { animation-delay: 90ms, 360ms; }
+.terminal-swarm-list > .terminal-swarm-row:nth-child(5) { animation-delay: 120ms, 360ms; }
+.terminal-swarm-list > .terminal-swarm-row:nth-child(6) { animation-delay: 150ms, 360ms; }
+.terminal-swarm-list > .terminal-swarm-row:nth-child(7) { animation-delay: 180ms, 360ms; }
+.terminal-swarm-list > .terminal-swarm-row:nth-child(8) { animation-delay: 210ms, 360ms; }
+.terminal-swarm-list > .terminal-swarm-row:nth-child(9) { animation-delay: 240ms, 360ms; }
+.terminal-swarm-list > .terminal-swarm-row:nth-child(10) { animation-delay: 270ms, 360ms; }
+.terminal-swarm-marker.done { animation: uc-check-pop 380ms cubic-bezier(.2, .9, .3, 1.2) backwards; }
+
+/* History header status and command-center flow node pulses. */
+.terminal-task-history-head .status-in_progress,
+.terminal-task-row.is-selected .status-in_progress { animation: uc-live-glow 2.4s ease-in-out infinite; }
+.cc-flow-connector.cc-flow-active i { animation: uc-node-pulse 1.9s ease-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-task-layout ul[aria-label="Task list"] > li,
+  .terminal-task-row.terminal-task-status-in_progress::after,
+  .terminal-task-progress-chip::after,
+  .terminal-task-live-strip .terminal-mini-bar i::after,
+  .terminal-task-live-pct,
+  .terminal-task-live-phase,
+  .terminal-swarm-list > .terminal-swarm-row,
+  .terminal-swarm-row.is-running,
+  .terminal-swarm-marker.done,
+  .terminal-task-history-head .status-in_progress,
+  .terminal-task-row.is-selected .status-in_progress,
+  .cc-flow-connector.cc-flow-active i {
+    animation: none !important;
+  }
+  .terminal-task-row,
+  .terminal-task-progress-chip {
     transition: none !important;
   }
 }
