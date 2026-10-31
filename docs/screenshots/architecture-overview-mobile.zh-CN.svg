@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="620" height="1436" viewBox="0 0 620 1436" preserveAspectRatio="xMidYMid meet" xml:lang="zh-CN" role="img" aria-labelledby="title desc">
   <title id="title">UltimateCoders · 系统架构</title>
-  <desc id="desc">UltimateCoders 概览：Dashboard 和可选 OMP 提交任务；Python 规划 DAG，Rust 管理任务状态与调度。NATS 连接控制层和隔离 worktree 中的可扩展 Worker。共享服务提供检索、记忆和模型；可选 MetaInfer 提供 GPU 工具，UC 负责验收。</desc>
+  <desc id="desc">UltimateCoders 概览：Dashboard 和可选 OMP 提交任务；Python 规划 DAG，Rust 管理任务状态与调度。NATS 连接控制层和隔离 worktree 中的可扩展 Worker。Worker 还向编程 Agent 暴露 MCP 工具服务（engine/fs/lsp）。共享服务提供检索、记忆和模型；可选 MetaInfer 提供 GPU 工具，UC 负责验收。</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
       <path d="M1 1 L9 5 L1 9 Z" fill="#60758c"/>
@@ -38,7 +38,7 @@
   <text x="56" y="828" font-size="24" class="heading" text-anchor="start">Python Worker</text>
   <text x="56" y="860" font-size="21" class="muted" text-anchor="start">从 1 个扩展到 N 个 Worker</text>
   <text x="56" y="912" font-size="21" class="" text-anchor="start">Sandbox + Git worktree</text>
-  <text x="56" y="944" font-size="21" class="" text-anchor="start">编程 / 推理适配器</text>
+  <text x="56" y="944" font-size="21" class="" text-anchor="start">编程 / 推理适配器 · MCP 工具</text>
   <rect x="32" y="978" width="556" height="52" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
   <text x="310" y="1011" font-size="23" class="heading" text-anchor="middle">NATS · Core 消息 / JetStream 投递</text>
   <text x="32" y="1068" font-size="16" class="section muted" text-anchor="start">共享服务</text>
