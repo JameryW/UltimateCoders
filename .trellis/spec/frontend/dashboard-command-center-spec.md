@@ -502,3 +502,129 @@ className={cn("terminal-worker-row", `is-${workerRowNeon(w)}`, expanded && "is-e
 ```tsx
 <span className={`terminal-mini-bar ${workerLoadTone(pct)}`}><i style={{ width: `${pct}%` }} /></span>
 ```
+
+---
+
+## Scenario: Logs view command-center polish
+
+### 1. Scope / Trigger
+
+- Trigger: User opens the **logs** tab in `TerminalDashboard` (`EventLogPanel`).
+- Pure frontend; reuses overview CC tokens + `sessionRoleForEventType`; no new Gateway RPCs.
+- Out of scope: Search/Inference redesign; Opus/Sonnet/Haiku/JEV branding.
+
+### 2. Signatures
+
+```typescript
+// dashboard/src/components/panels/EventLogPanel.tsx
+EventLogPanel({
+  events, stale?, onSelectTask?,
+  variant?: "default" | "terminal",
+})
+
+// TerminalDashboard logs shell
+<div className="terminal-data-view terminal-logs-layout">
+  <EventLogPanel variant="terminal" onSelectTask={…} … />
+</div>
+```
+
+### 3. Contracts
+
+#### Shell
+
+- Logs view wraps the panel in `.terminal-data-view.terminal-logs-layout`.
+- Terminal path drops Card chrome; renders `.terminal-logs-panel` with `.cc-session-log-head` / `.terminal-logs-head`.
+- `onSelectTask(taskId)` still navigates to the tasks view.
+
+#### Rows
+
+Under `variant="terminal"`:
+
+| Element | Class / token |
+|---------|----------------|
+| Row | `.cc-session-row` + `.cc-session-role-{lead\|swarm\|dispatch\|advisor}` |
+| Role map | `sessionRoleForEventType` — `task_*`→lead, `subtask_*`→swarm, `tool_*`→dispatch, `llm_*`→advisor |
+| Line | `.cc-session-line` with `<time>` + role + msg |
+| Task jump | `.terminal-logs-task-jump` (monospace id prefix) |
+
+- Terminal path must **not** use Tailwind `border-l-green-500` / `border-l-blue-500` rails or dead `evt-*` background classes.
+- Default variant may keep legacy Card + Tailwind type colors.
+
+#### Toolbar
+
+- Filters / type chips / Errors / Export / time-range use `.terminal-log-chip` (role-tinted; Errors → `.is-active.error`).
+- Search uses `.terminal-logs-search` (not `focus:border-blue-500`).
+- No blue/red Tailwind pills on the terminal path.
+
+#### Stream / Latest
+
+- Virtualized stream uses `.terminal-logs-stream` filling available height under `terminal-view-body` (not fixed `max-h-64` only).
+- SSR / zero-metric scroll parents fall back to a capped static row list so role classes still appear in markup.
+- “↓ Latest” uses `.terminal-logs-latest` CC control (not `bg-blue-500`).
+
+#### Empty / stale
+
+- Empty → `.terminal-empty-line` vocabulary (`waiting for live events…` / filter miss).
+- Stale → `.terminal-logs-stale` banner + `.is-stale` panel border (lead-toned).
+
+#### Reduced motion
+
+- `.terminal-logs-latest` transition disabled under `prefers-reduced-motion: reduce`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|-----------|----------|
+| Terminal + events | `cc-session-row` + role class per event type |
+| Terminal + empty | `terminal-empty-line`; no Card empty-state chrome |
+| Terminal + stale | stale banner visible |
+| Filter Errors on | only failed task/subtask rows |
+| Default variant | Card + legacy Tailwind type colors allowed |
+| Task id click | `onSelectTask` → tasks view |
+
+### 5. Good / Base / Bad Cases
+
+**Good**: Mixed `task_submitted` / `subtask_progress` / `tool_call` / `llm_request` stream → lead/swarm/dispatch/advisor row colors, type chips, export chip, virtualized stream.
+
+**Base**: Empty event log → waiting line; no Tailwind blue Latest control.
+
+**Bad**: Card chrome in terminal mode; `evt-*` / `border-l-green-500` on terminal path; inventing model personas.
+
+### 6. Tests Required
+
+| Test | Assertion |
+|------|-----------|
+| Terminal SSR rows | `cc-session-row` + `cc-session-role-*`; `data-session-role` |
+| Chips | `terminal-log-chip` for Errors / types / ranges / Export |
+| Shell | `terminal-logs-layout` + `variant="terminal"` from TerminalDashboard |
+| No Tailwind rails | no `border-l-green-500` / `border-l-blue-500` / `bg-blue-500` Latest on terminal path |
+| CSS | `.terminal-logs-layout`, `.terminal-log-chip.is-active.error`, reduced-motion for latest |
+| Default variant | Card + legacy type colors still render |
+
+### 7. Wrong vs Correct
+
+#### Wrong: Card + Tailwind blue pills in terminal mode
+
+```tsx
+<Card><button className="bg-blue-600 text-white">All</button></Card>
+```
+
+#### Correct: terminal shell + chips
+
+```tsx
+<section className="terminal-logs-panel">
+  <button className={cn("terminal-log-chip", active && "is-active swarm")}>All</button>
+</section>
+```
+
+#### Wrong: Dead evt-* + green rail on terminal rows
+
+```tsx
+<div className={cn("evt-completed", "border-l-green-500")}>{evt.type}</div>
+```
+
+#### Correct: session role row
+
+```tsx
+<div className={cn("cc-session-row", `cc-session-role-${sessionRoleForEventType(evt.type)}`)} />
+```

@@ -453,6 +453,154 @@ test("workers command-center: neon rows, mini-bar load, assignment swarm strip",
   }
 });
 
+test("logs command-center: session rows, terminal chips, shell layout", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const { EventLogPanel } = await vite.ssrLoadModule("/src/components/panels/EventLogPanel.tsx");
+    const { TerminalDashboard } = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+    const { sessionRoleForEventType } = await vite.ssrLoadModule("/src/lib/taskProgress.ts");
+
+    assert.equal(sessionRoleForEventType("task_submitted"), "lead");
+    assert.equal(sessionRoleForEventType("subtask_progress"), "swarm");
+    assert.equal(sessionRoleForEventType("tool_call"), "dispatch");
+    assert.equal(sessionRoleForEventType("llm_request"), "advisor");
+
+    const events = [
+      {
+        timestamp: "2026-10-31T12:04:18Z",
+        type: "task_submitted",
+        details: { task_id: "task-alpha", description: "Ship logs CC polish" },
+      },
+      {
+        timestamp: "2026-10-31T12:04:20Z",
+        type: "subtask_progress",
+        details: { task_id: "task-alpha", subtask_id: "sub-1", percent: 42, phase: "executing", step_agent: "codex" },
+      },
+      {
+        timestamp: "2026-10-31T12:04:22Z",
+        type: "tool_call",
+        details: { task_id: "task-alpha", tool: "read_file" },
+      },
+      {
+        timestamp: "2026-10-31T12:04:24Z",
+        type: "llm_request",
+        details: { task_id: "task-alpha", model: "local" },
+      },
+      {
+        timestamp: "2026-10-31T12:04:26Z",
+        type: "subtask_failed",
+        details: { task_id: "task-alpha", error: "boom" },
+      },
+    ];
+
+    const html = renderToStaticMarkup(React.createElement(EventLogPanel, {
+      events,
+      variant: "terminal",
+      onSelectTask: () => {},
+    }));
+    assert.match(html, /data-testid="terminal-logs-panel"/);
+    assert.match(html, /cc-session-log-head|terminal-logs-head/);
+    assert.match(html, /cc-session-row cc-session-role-lead|cc-session-role-lead/);
+    assert.match(html, /cc-session-role-swarm/);
+    assert.match(html, /cc-session-role-dispatch/);
+    assert.match(html, /cc-session-role-advisor/);
+    assert.match(html, /data-session-role="lead"/);
+    assert.match(html, /data-session-role="swarm"/);
+    assert.match(html, /data-testid="terminal-log-row"/);
+    assert.match(html, /terminal-log-chip/);
+    assert.match(html, /data-testid="terminal-log-chip-errors"/);
+    assert.match(html, /data-testid="terminal-log-chip-type"/);
+    assert.match(html, /data-testid="terminal-log-chip-range"/);
+    assert.match(html, /data-testid="terminal-log-chip-export"/);
+    assert.match(html, /data-testid="terminal-logs-search"/);
+    assert.match(html, /data-testid="terminal-logs-stream"/);
+    assert.match(html, /terminal-logs-task-jump/);
+    assert.doesNotMatch(html, /border-l-green-500/);
+    assert.doesNotMatch(html, /border-l-blue-500/);
+    assert.doesNotMatch(html, /bg-blue-500|bg-blue-600/);
+    assert.doesNotMatch(html, /evt-submitted|evt-completed|evt-failed/);
+    assert.doesNotMatch(html, /Opus|Sonnet|Haiku|JEV/);
+
+    const emptyHtml = renderToStaticMarkup(React.createElement(EventLogPanel, {
+      events: [],
+      variant: "terminal",
+      stale: true,
+    }));
+    assert.match(emptyHtml, /data-testid="terminal-logs-empty"/);
+    assert.match(emptyHtml, /waiting for live events/);
+    assert.match(emptyHtml, /data-testid="terminal-logs-stale"/);
+    assert.match(emptyHtml, /is-stale|data-stale="true"/);
+
+    const legacyHtml = renderToStaticMarkup(React.createElement(EventLogPanel, {
+      events,
+      variant: "default",
+    }));
+    assert.match(legacyHtml, /Event Log/);
+    assert.doesNotMatch(legacyHtml, /data-testid="terminal-logs-panel"/);
+    assert.match(legacyHtml, /evt-submitted|text-blue-500/);
+
+    const workers = { available: true, available_count: 0, total: 0, workers: [] };
+    const tasks = {
+      available: true,
+      total: 0,
+      status_counts: {},
+      pending_task_count: 0,
+      tasks: [],
+    };
+    const dashHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", version: "0.2.1", components: [] },
+      workers,
+      tasks,
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: events,
+      metrics: null,
+      interactionLog: {},
+      selectedTask: null,
+      selectedTaskId: null,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+      initialView: "logs",
+    }));
+    assert.match(dashHtml, /terminal-logs-layout/);
+    assert.match(dashHtml, /data-testid="terminal-logs-panel"/);
+    assert.match(dashHtml, /cc-session-role-lead|data-session-role="lead"/);
+    assert.match(dashHtml, /terminal-log-chip/);
+    assert.doesNotMatch(dashHtml, /border-l-green-500/);
+    assert.doesNotMatch(dashHtml, /bg-blue-500|bg-blue-600/);
+    assert.doesNotMatch(dashHtml, /Opus|Sonnet|Haiku|Claude Code|JEV/);
+
+    const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
+    assert.match(css, /\.terminal-logs-layout/);
+    assert.match(css, /\.terminal-log-chip/);
+    assert.match(css, /\.terminal-log-chip\.is-active\.error[\s\S]*?--terminal-red/);
+    assert.match(css, /\.terminal-logs-stream/);
+    assert.match(css, /\.terminal-logs-latest/);
+    assert.match(css, /\.terminal-logs-panel \.cc-session-role-lead[\s\S]*?--cc-lead/);
+    assert.match(css, /\.terminal-logs-panel \.cc-session-role-swarm[\s\S]*?--cc-swarm/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.terminal-logs-latest[\s\S]*?transition:\s*none/);
+  } finally {
+    await vite.close();
+  }
+});
+
 test("the operations dashboard opens on the live command-center overview", async () => {
   const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
   try {

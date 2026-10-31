@@ -2283,15 +2283,233 @@ body:has(.terminal-app) {
   .terminal-worker-row { transition: none; }
 }
 
+/* Logs view — command-center polish --------------------------------------- */
+.terminal-logs-layout {
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.terminal-logs-layout > .terminal-logs-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 12px 14px 10px;
+  border: 1px solid color-mix(in srgb, var(--cc-swarm) 35%, var(--terminal-border));
+  border-radius: 2px;
+  background: rgba(10, 14, 20, .88) !important;
+  box-shadow: none;
+}
+.terminal-logs-panel.is-stale {
+  border-color: color-mix(in srgb, var(--cc-lead) 45%, var(--terminal-border));
+}
+.terminal-logs-head {
+  margin-bottom: 10px;
+}
+.terminal-logs-head b {
+  color: var(--cc-swarm);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .04em;
+}
+.terminal-logs-stale {
+  margin-bottom: 8px;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--cc-lead) 45%, transparent);
+  border-left: 3px solid var(--cc-lead);
+  background: color-mix(in srgb, var(--cc-lead) 8%, transparent);
+  color: var(--cc-lead);
+  font-size: 9px;
+  letter-spacing: .04em;
+}
+.terminal-logs-filters {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.terminal-logs-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.terminal-logs-type-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.terminal-log-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--terminal-border);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--terminal-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: .02em;
+}
+.terminal-log-chip:hover {
+  color: var(--terminal-text);
+  border-color: color-mix(in srgb, var(--cc-swarm) 40%, transparent);
+}
+.terminal-log-chip.role-lead { color: var(--cc-lead); border-color: color-mix(in srgb, var(--cc-lead) 35%, transparent); }
+.terminal-log-chip.role-swarm { color: var(--cc-swarm); border-color: color-mix(in srgb, var(--cc-swarm) 35%, transparent); }
+.terminal-log-chip.role-dispatch { color: var(--cc-dispatch); border-color: color-mix(in srgb, var(--cc-dispatch) 35%, transparent); }
+.terminal-log-chip.role-advisor { color: var(--cc-advisor); border-color: color-mix(in srgb, var(--cc-advisor) 35%, transparent); }
+.terminal-log-chip.is-active {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 22%, transparent);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.terminal-log-chip.is-active.swarm {
+  color: var(--cc-swarm);
+  border-color: color-mix(in srgb, var(--cc-swarm) 55%, transparent);
+}
+.terminal-log-chip.is-active.error {
+  color: var(--terminal-red);
+  border-color: color-mix(in srgb, var(--terminal-red) 50%, transparent);
+  background: color-mix(in srgb, var(--terminal-red) 10%, transparent);
+}
+.terminal-logs-search {
+  width: 100%;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--terminal-border);
+  border-radius: 2px;
+  background: rgba(6, 12, 16, .72);
+  color: var(--terminal-text);
+  outline: 0;
+}
+.terminal-logs-search::placeholder { color: var(--terminal-dim); }
+.terminal-logs-search:focus {
+  border-color: color-mix(in srgb, var(--cc-swarm) 55%, transparent);
+}
+.terminal-logs-range {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.terminal-logs-stream-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.terminal-logs-stream {
+  min-height: 180px;
+  max-height: none;
+  height: min(62vh, calc(100dvh - 280px));
+  overflow-y: auto;
+  border-top: 1px solid color-mix(in srgb, var(--terminal-border) 80%, transparent);
+  padding-top: 6px;
+}
+.terminal-logs-panel .cc-session-row {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: default;
+  font-family: "IBM Plex Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  text-align: left;
+}
+.terminal-logs-panel .cc-session-row.cc-session-expandable { cursor: pointer; }
+.terminal-logs-panel .cc-session-row:hover { color: var(--terminal-text); }
+.terminal-logs-panel .cc-session-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.terminal-logs-panel .cc-session-row time {
+  color: var(--terminal-dim);
+  font-variant-numeric: tabular-nums;
+}
+.terminal-logs-panel .cc-session-role {
+  letter-spacing: .04em;
+  text-transform: lowercase;
+}
+.terminal-logs-panel .cc-session-role-lead .cc-session-role,
+.terminal-logs-panel .cc-session-role-lead .cc-session-msg { color: var(--cc-lead); }
+.terminal-logs-panel .cc-session-role-swarm .cc-session-role,
+.terminal-logs-panel .cc-session-role-swarm .cc-session-msg { color: var(--cc-swarm); }
+.terminal-logs-panel .cc-session-role-dispatch .cc-session-role,
+.terminal-logs-panel .cc-session-role-dispatch .cc-session-msg { color: var(--cc-dispatch); }
+.terminal-logs-panel .cc-session-role-advisor .cc-session-role,
+.terminal-logs-panel .cc-session-role-advisor .cc-session-msg { color: var(--cc-advisor); }
+.terminal-logs-panel .cc-session-expand { margin-left: 4px; color: var(--terminal-dim); }
+.terminal-logs-task-jump {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cc-swarm);
+  cursor: pointer;
+  font: inherit;
+  font-size: 8px;
+  letter-spacing: .02em;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.terminal-logs-task-jump:hover { color: var(--terminal-text); }
+.terminal-logs-expand {
+  margin: 4px 0 2px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--terminal-border) 80%, transparent);
+  background: rgba(6, 12, 16, .72);
+  color: var(--terminal-dim);
+  cursor: pointer;
+  font-size: 9px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 140px;
+  overflow: auto;
+}
+.terminal-logs-latest {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--cc-swarm) 55%, transparent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--cc-swarm) 14%, rgba(8, 12, 16, .92));
+  color: var(--cc-swarm);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: .04em;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--cc-swarm) 18%, transparent);
+  transition: filter 160ms ease, border-color 160ms ease;
+}
+.terminal-logs-latest:hover {
+  filter: brightness(1.12);
+  border-color: color-mix(in srgb, var(--cc-swarm) 80%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-logs-latest { transition: none; }
+}
+
 @media (max-width: 1300px) {
   .terminal-task-layout { grid-template-columns: minmax(0, 1fr); }
   .terminal-task-layout ul[aria-label="Task list"] { max-height: min(34vh, 280px); }
   .terminal-task-history { max-height: none; }
   .terminal-task-live-strip { grid-template-columns: auto minmax(0, 1fr) auto; }
   .terminal-task-live-phase { grid-column: 1 / -1; }
+  .terminal-logs-stream { height: min(48vh, calc(100dvh - 300px)); }
 }
 
 @media (max-width: 620px) {
   .terminal-worker-load-row { grid-template-columns: minmax(0, 1fr); }
   .terminal-worker-row-topline { flex-wrap: wrap; }
+  .terminal-logs-stream { height: min(42vh, calc(100dvh - 320px)); }
+  .terminal-logs-layout > .terminal-logs-panel { padding: 10px; }
 }
