@@ -343,19 +343,28 @@ impl MemoryStore {
 
     /// Health check for memory components.
     pub fn health(&self) -> Vec<uc_types::engine::ComponentHealth> {
+        // An explicitly configured in-memory backend is not a degraded state:
+        // the operator opted in (e.g. `UC_SHORT_TERM_BACKEND=memory` on a
+        // platform without TiKV). Only an unexpected fallback is reported as
+        // `fallback` (mapped to "degraded" by LocalEngine::health).
+        let short_term_status =
+            if self.short_term.is_connected() || self.short_term.is_intentional_memory() {
+                "ok"
+            } else {
+                "fallback"
+            };
+        let short_term_details = if self.short_term.is_connected() {
+            Some("TiKV connected".into())
+        } else if self.short_term.is_intentional_memory() {
+            Some("In-memory (explicitly configured via UC_SHORT_TERM_BACKEND=memory)".into())
+        } else {
+            Some("Using in-memory fallback".into())
+        };
         vec![
             uc_types::engine::ComponentHealth {
                 name: "short_term_memory".into(),
-                status: if self.short_term.is_connected() {
-                    "ok".into()
-                } else {
-                    "fallback".into()
-                },
-                details: if self.short_term.is_connected() {
-                    Some("TiKV connected".into())
-                } else {
-                    Some("Using in-memory fallback".into())
-                },
+                status: short_term_status.into(),
+                details: short_term_details,
             },
             uc_types::engine::ComponentHealth {
                 name: "long_term_memory".into(),
@@ -613,6 +622,31 @@ mod tests {
         // Both should be in fallback mode
         assert_eq!(health[0].status, "fallback");
         assert_eq!(health[1].status, "fallback");
+    }
+
+    /// An explicitly configured in-memory short-term backend is healthy, not a
+    /// degraded fallback (`UC_SHORT_TERM_BACKEND=memory`).
+    #[tokio::test]
+    async fn test_health_explicit_in_memory_is_healthy() {
+        let short_term = Arc::new(ShortTermMemory::new_in_memory(3600));
+        let long_term = Arc::new(LongTermMemory::new_fallback());
+        let embedding_service = Arc::new(EmbeddingService::new_fallback());
+        let store = MemoryStore::new_with_default_config(short_term, long_term, embedding_service);
+        let health = store.health();
+        let short = health
+            .iter()
+            .find(|c| c.name == "short_term_memory")
+            .expect("short_term_memory component");
+        assert_eq!(short.status, "ok");
+        assert!(
+            short
+                .details
+                .as_deref()
+                .unwrap_or_default()
+                .contains("explicitly configured"),
+            "details should name the explicit configuration: {:?}",
+            short.details
+        );
     }
 
     #[tokio::test]
