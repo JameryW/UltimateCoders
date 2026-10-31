@@ -176,17 +176,23 @@ UC 和 MetaInfer 必须以相同绝对路径访问已分配的真实、独占 Gi
 
 本地预览：`http://127.0.0.1:4176/`；运营 Dashboard：`http://127.0.0.1:4176/#/dashboard`。
 
+### 运营 Dashboard
+
+![UltimateCoders 运营 Dashboard：command center 概览](docs/screenshots/dashboard-overview.png)
+
+Command center 展示实时 Gateway 健康状态、调度/队列状态、Worker 集群、会话日志，以及可深度链接的视图 —— `#/dashboard/tasks`、`#/dashboard/workers`、`#/dashboard/search`、`#/dashboard/logs`、`#/dashboard/inference` —— 任意界面都可收藏或刷新恢复。
+
 ### 产品能力总览
 
 ![UltimateCoders 产品能力总览](docs/screenshots/product-capabilities.png)
 
-总览图展示 DAG 编排、能力感知 Worker、Hybrid Search + Memory、事件驱动恢复，以及从本机工作流到集群的部署路径。
+总览图展示 DAG 编排、能力感知 Worker、Hybrid Search + Memory、MCP 工具服务、事件驱动恢复，以及从本机工作流到集群的部署路径。
 
 ### 产品场景
 
 ![UltimateCoders 产品场景](docs/screenshots/product-scenarios.png)
 
-UltimateCoders 面向大型仓库改造、并行交付、线上问题诊断和从本机扩展到集群四类场景，核心收益是上下文可复用、执行可观测、容量可扩展。
+UltimateCoders 面向大型仓库改造、并行交付、线上问题诊断和从本机扩展到集群四类场景，并支持可深度链接的运营视图与跨主机 ScaleWorkers dry-run。核心收益是上下文可复用、执行可观测、容量可扩展。
 
 ## 运行时与架构细节
 

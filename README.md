@@ -194,17 +194,23 @@ The product home is the navigation layer between product understanding and real 
 
 Local Vite preview: `http://127.0.0.1:4176/`; operations dashboard: `http://127.0.0.1:4176/#/dashboard`.
 
+### Operations dashboard
+
+![UltimateCoders operations dashboard: command-center overview](docs/screenshots/dashboard-overview.png)
+
+The command center shows live Gateway health, dispatch/queue state, the worker swarm, the session log, and deep-linkable views — `#/dashboard/tasks`, `#/dashboard/workers`, `#/dashboard/search`, `#/dashboard/logs`, `#/dashboard/inference` — so any surface can be bookmarked or restored on reload.
+
 ### Product capabilities
 
 ![UltimateCoders product capabilities](docs/screenshots/product-capabilities.png)
 
-This overview covers DAG orchestration, capability-aware workers, Hybrid Search + Memory, event-driven recovery, and the path from a local workflow to a cluster.
+This overview covers DAG orchestration, capability-aware workers, Hybrid Search + Memory, MCP tool servers, event-driven recovery, and the path from a local workflow to a cluster.
 
 ### Product use cases
 
 ![UltimateCoders product use cases](docs/screenshots/product-scenarios.png)
 
-UltimateCoders targets large-repository changes, parallel delivery, incident diagnosis, and local-to-cluster expansion. The recurring benefits are reusable context, observable execution, and scalable capacity.
+UltimateCoders targets large-repository changes, parallel delivery, incident diagnosis, and local-to-cluster expansion — including deep-linkable operations views and cross-host ScaleWorkers dry-run. The recurring benefits are reusable context, observable execution, and scalable capacity.
 
 ## Runtime and architecture
 

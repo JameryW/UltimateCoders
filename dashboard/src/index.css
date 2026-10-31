@@ -3198,3 +3198,185 @@ body:has(.terminal-app) {
   .terminal-inference-layout > .terminal-inference-panel { padding: 10px; }
   .terminal-search-row-meta { justify-content: flex-start; }
 }
+
+/* Motion polish ---------------------------------------------------------- */
+/* Transform/opacity-only motion: view entrances, a live tab indicator, a
+   breathing stage chip, a pulsing online dot, card hover lift, a sheen on the
+   dispatch bars and a slow scan line across the command-center board. All of
+   it is disabled for reduced-motion users. */
+@keyframes uc-view-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes uc-tab-underline {
+  from { transform: scaleX(0); opacity: 0; }
+  to { transform: scaleX(1); opacity: 1; }
+}
+@keyframes uc-brand-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+@keyframes uc-online-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(131, 233, 141, .5); }
+  70% { box-shadow: 0 0 0 5px rgba(131, 233, 141, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(131, 233, 141, 0); }
+}
+@keyframes uc-scan-sweep {
+  0% { top: -4%; opacity: 0; }
+  10% { opacity: .5; }
+  88% { opacity: .28; }
+  100% { top: 104%; opacity: 0; }
+}
+@keyframes uc-bar-sheen {
+  0% { transform: translateX(-130%); }
+  60%, 100% { transform: translateX(230%); }
+}
+@keyframes uc-stage-breathe {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); }
+  50% { filter: drop-shadow(0 0 7px currentColor); }
+}
+@keyframes uc-home-rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* View transitions: each dashboard view mounts with a short rise. */
+.terminal-view-body > * {
+  animation: uc-view-enter 260ms cubic-bezier(.2, .75, .3, 1) both;
+}
+
+/* Tabs: hover lift, glow and an animated active underline. */
+.terminal-tabs button {
+  position: relative;
+  transition: color .18s ease, background .18s ease, border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+}
+.terminal-tabs button:hover { transform: translateY(-1px); }
+.terminal-tabs button.active {
+  box-shadow: 0 0 14px color-mix(in srgb, var(--terminal-green) 16%, transparent);
+}
+.terminal-tabs button.active::after {
+  content: "";
+  position: absolute;
+  right: 7px;
+  bottom: -1px;
+  left: 7px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--terminal-green), transparent);
+  box-shadow: 0 0 8px var(--terminal-green);
+  animation: uc-tab-underline 240ms ease-out both;
+}
+
+/* Brand wordmark shimmer. */
+.terminal-brand strong {
+  background: linear-gradient(100deg, var(--terminal-green) 0%, #eafff1 38%, var(--terminal-green) 72%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: uc-brand-shimmer 7s linear infinite;
+}
+.terminal-brand.offline strong {
+  background: none;
+  -webkit-text-fill-color: var(--terminal-amber);
+  animation: none;
+}
+
+/* Live status dot ring. */
+.terminal-topbar-status i.online,
+.terminal-live-dot.online {
+  animation: uc-online-pulse 2.4s ease-out infinite;
+}
+
+/* Command-center cards: hover lift + brightness. */
+.cc-card {
+  transition: transform .2s ease, filter .2s ease, border-color .2s ease;
+}
+.cc-card:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.08);
+}
+.cc-stage-chip {
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.cc-stage-chip:not(:disabled) { animation: uc-stage-breathe 2.8s ease-in-out infinite; }
+.cc-stage-chip:hover:not(:disabled) { transform: translateY(-1px); }
+
+/* Progress-bar sheen on the dispatch bars (a handful of elements only). */
+.cc-dispatch-bars .terminal-mini-bar i { position: relative; overflow: hidden; }
+.cc-dispatch-bars .terminal-mini-bar i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .35), transparent);
+  transform: translateX(-130%);
+  animation: uc-bar-sheen 2.8s ease-in-out infinite;
+}
+
+/* Slow scan line across the command-center board. */
+.terminal-overview.cc-board { position: relative; overflow: hidden; }
+.terminal-overview.cc-board::after {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--cc-swarm, #83e98d) 55%, transparent), transparent);
+  filter: blur(.4px);
+  animation: uc-scan-sweep 9s linear infinite;
+  pointer-events: none;
+}
+
+/* Rows: hover slide + accent rail. */
+.terminal-worker-row,
+.terminal-swarm-row {
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.terminal-worker-row:hover,
+.terminal-swarm-row:hover {
+  transform: translateX(2px);
+  box-shadow: -2px 0 0 color-mix(in srgb, var(--terminal-blue) 45%, transparent);
+}
+
+/* Command bar: focus glow and a lifted run button. */
+.terminal-command-bar input:focus { box-shadow: 0 10px 22px -18px var(--terminal-green); }
+.terminal-command-bar button:not(:disabled) {
+  transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.terminal-command-bar button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--terminal-green) 35%, transparent);
+}
+
+/* Home hero entrance. */
+.home-hero-copy > * { animation: uc-home-rise 520ms cubic-bezier(.2, .75, .3, 1) both; }
+.home-hero-copy > *:nth-child(2) { animation-delay: 60ms; }
+.home-hero-copy > *:nth-child(3) { animation-delay: 120ms; }
+.home-hero-copy > *:nth-child(4) { animation-delay: 180ms; }
+.home-hero-copy > *:nth-child(5) { animation-delay: 240ms; }
+.home-runtime-card { animation: uc-home-rise 620ms cubic-bezier(.2, .75, .3, 1) 140ms both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-view-body > *,
+  .terminal-tabs button.active::after,
+  .terminal-brand strong,
+  .terminal-topbar-status i.online,
+  .terminal-live-dot.online,
+  .cc-stage-chip,
+  .cc-dispatch-bars .terminal-mini-bar i::after,
+  .terminal-overview.cc-board::after,
+  .home-hero-copy > *,
+  .home-runtime-card {
+    animation: none !important;
+  }
+  .cc-card,
+  .terminal-tabs button,
+  .terminal-worker-row,
+  .terminal-swarm-row,
+  .terminal-command-bar button,
+  .cc-stage-chip {
+    transition: none !important;
+  }
+}

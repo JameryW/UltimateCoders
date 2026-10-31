@@ -109,10 +109,12 @@ LABELS = {
     "overview_description": (
         "Overview of UltimateCoders: Dashboard and optional OMP submit tasks; "
         "Python plans DAGs and Rust owns task state and dispatch. NATS connects the control "
-        "plane to scalable Workers in isolated Git worktrees. Shared services supply search, "
+        "plane to scalable Workers in isolated Git worktrees. Workers also expose MCP tool "
+        "servers (engine/fs/lsp) to their coding agents. Shared services supply search, "
         "memory and models. Optional MetaInfer supplies specialized GPU tools, with UC acceptance.",
         "UltimateCoders 概览：Dashboard 和可选 OMP 提交任务；Python 规划 DAG，"
         "Rust 管理任务状态与调度。NATS 连接控制层和隔离 worktree 中的可扩展 Worker。"
+        "Worker 还向编程 Agent 暴露 MCP 工具服务（engine/fs/lsp）。"
         "共享服务提供检索、记忆和模型；可选 MetaInfer 提供 GPU 工具，UC 负责验收。",
     ),
     "overview_entry": ("Entry points", "交互入口"),
@@ -121,7 +123,10 @@ LABELS = {
     "overview_gateway": ("State · dispatch · recovery", "状态 · 调度 · 恢复"),
     "overview_planner": ("DAG · domain routing", "DAG · 领域路由"),
     "overview_isolation": ("Sandbox + Git worktrees", "Sandbox + Git worktree"),
-    "overview_adapters": ("Coding / inference adapters", "编程 / 推理适配器"),
+    "overview_adapters": (
+        "Coding / inference adapters · MCP tools",
+        "编程 / 推理适配器 · MCP 工具",
+    ),
     "overview_scale": ("Scale from 1 to N workers", "从 1 个扩展到 N 个 Worker"),
     "overview_omp": ("OMP terminal · optional", "OMP 终端 · 可选"),
     "overview_transport": (
