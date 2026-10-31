@@ -492,14 +492,12 @@ function OverviewView({
   onSelectTask: (taskId: string | null) => void;
 }) {
   const previewMode = shouldUseCommandCenterPreview({ connected, tasks, workers });
+  // Tick only advances while previewMode is on; leaving preview stops the timer
+  // without a sync setState reset (react-hooks/set-state-in-effect).
   const [previewTick, setPreviewTick] = useState(0);
 
   useEffect(() => {
-    if (!previewMode) {
-      setPreviewTick(0);
-      return;
-    }
-    if (typeof window === "undefined") return;
+    if (!previewMode || typeof window === "undefined") return;
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     if (reduced) return;
     const timer = window.setInterval(() => setPreviewTick((tick) => tick + 1), 3200);
@@ -578,7 +576,8 @@ function OverviewView({
     <div className={`terminal-overview cc-board${previewMode ? " cc-preview" : ""}`} data-cc-preview={previewMode ? "sample" : "live"}>
       {previewMode && (
         <div className="cc-preview-banner" role="status" data-testid="cc-preview-banner">
-          preview · sample — waiting for gateway
+          <strong>SAMPLE</strong>
+          <span>preview · not live data — waiting for gateway</span>
         </div>
       )}
       <RoleLegend />

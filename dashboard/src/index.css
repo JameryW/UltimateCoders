@@ -1303,15 +1303,37 @@ body:has(.terminal-app) {
 .cc-preview-banner {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 12px;
-  padding: 8px 12px;
-  border: 1px dashed color-mix(in srgb, var(--cc-advisor) 55%, transparent);
-  border-left: 3px solid var(--cc-advisor);
-  background: linear-gradient(90deg, color-mix(in srgb, var(--cc-advisor) 14%, transparent), rgba(10, 12, 18, .7));
-  color: var(--cc-advisor);
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--cc-advisor) 65%, transparent);
+  border-left: 4px solid var(--cc-advisor);
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      color-mix(in srgb, var(--cc-advisor) 16%, transparent),
+      color-mix(in srgb, var(--cc-advisor) 16%, transparent) 6px,
+      color-mix(in srgb, var(--cc-advisor) 8%, transparent) 6px,
+      color-mix(in srgb, var(--cc-advisor) 8%, transparent) 12px
+    ),
+    rgba(10, 12, 18, .88);
+  color: var(--terminal-text);
   font-size: 10px;
-  letter-spacing: .08em;
+  letter-spacing: .04em;
+}
+.cc-preview-banner strong {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--cc-advisor) 70%, transparent);
+  background: color-mix(in srgb, var(--cc-advisor) 22%, transparent);
+  color: var(--cc-advisor);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .16em;
+}
+.cc-preview-banner span {
+  color: var(--terminal-muted);
+  letter-spacing: .06em;
   text-transform: lowercase;
 }
 
