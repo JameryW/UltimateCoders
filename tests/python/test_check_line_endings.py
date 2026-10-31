@@ -265,6 +265,7 @@ def test_real_repo_is_reconciled() -> None:
         (2265, 2256),  # Dashboard command-center Trellis task artifacts.
         (2266, 2257),  # Command-center executable frontend spec added.
         (2267, 2258),  # taskProgress.ts (+1 text) moved the census.
+        (2268, 2259),  # MCP stdio helper (mcp_stdio.py) adds one text file.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
