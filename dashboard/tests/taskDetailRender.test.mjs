@@ -127,7 +127,8 @@ test("the operations dashboard opens on the live command-center overview", async
     assert.match(html, /gateway · lead/);
     assert.match(html, /Ship command-center overview/);
     assert.match(html, /HEALTH advisor/);
-    assert.match(html, /◇ engine/);
+    assert.match(html, /◆ engine/);
+    assert.match(html, /◇ nats/);
     assert.match(html, /session log/);
     assert.match(html, /workers \[1\/1\]/);
     assert.match(html, /tasks \[1 running\]/);
@@ -138,6 +139,11 @@ test("the operations dashboard opens on the live command-center overview", async
     assert.match(html, />42%</);
     assert.match(html, /review · in flight/);
     assert.doesNotMatch(html, /Opus|Sonnet|Haiku|Claude Code|JEV/);
+    assert.doesNotMatch(html, /preview · not live data/);
+    assert.doesNotMatch(html, /data-cc-preview="sample"/);
+    assert.doesNotMatch(html, />SAMPLE</);
+    // Overview hero: left command rail collapsed (mobile quick actions may still exist).
+    assert.doesNotMatch(html, /terminal-command-rail/);
     // Completed subtasks must not steal the swarm row when nothing else is running.
     assert.doesNotMatch(html, /swarm-b/);
     // Running subtasks drive the swarm stage + flow particles above it.
@@ -358,6 +364,119 @@ test("command-center active stage marches: dispatch queue and review terminal", 
     const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
     assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-card\.cc-stage-active[\s\S]*?animation:\s*none/);
     assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-flow-connector\.cc-flow-active em[\s\S]*?animation:\s*none/);
+  } finally {
+    await vite.close();
+  }
+});
+
+function emptyClusterProps(overrides = {}) {
+  return {
+    connected: false,
+    grpcState: "disconnected",
+    grpcExhausted: false,
+    dashGrpcState: "disconnected",
+    theme: "dark",
+    onToggleTheme: () => {},
+    onLogout: () => {},
+    onReconnectGrpc: () => {},
+    onReconnectDashGrpc: () => {},
+    fetchErrors: {},
+    grpcStale: false,
+    health: { available: false, status: "unavailable", components: [] },
+    workers: { available: false, workers: [], total: 0, available_count: 0 },
+    tasks: { available: false, tasks: [], total: 0, status_counts: {}, pending_task_count: 0 },
+    scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+    eventLog: [],
+    metrics: null,
+    interactionLog: {},
+    selectedTask: null,
+    selectedTaskId: null,
+    taskHistoryLoading: false,
+    onSelectTask: () => {},
+    onPauseTask: async () => ({ success: true }),
+    onResumeTask: async () => ({ success: true }),
+    onCancelTask: async () => ({ success: true }),
+    onRefresh: async () => {},
+    onFlush: () => {},
+    onTaskCreated: () => {},
+    onOptimisticAdd: () => {},
+    ...overrides,
+  };
+}
+
+test("command-center preview activates offline with empty cluster and drops when live data arrives", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const mod = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+    const { TerminalDashboard, shouldUseCommandCenterPreview } = mod;
+
+    assert.equal(shouldUseCommandCenterPreview({
+      connected: false,
+      tasks: { tasks: [], total: 0 },
+      workers: { workers: [], total: 0 },
+    }), true);
+    assert.equal(shouldUseCommandCenterPreview({
+      connected: true,
+      tasks: { tasks: [], total: 0 },
+      workers: { workers: [], total: 0 },
+    }), false);
+    assert.equal(shouldUseCommandCenterPreview({
+      connected: false,
+      tasks: { tasks: [{ id: "t1" }], total: 1 },
+      workers: { workers: [], total: 0 },
+    }), false);
+    assert.equal(shouldUseCommandCenterPreview({
+      connected: false,
+      tasks: { tasks: [], total: 0 },
+      workers: { workers: [{ id: "w1" }], total: 1 },
+    }), false);
+
+    const previewHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, emptyClusterProps()));
+    assert.match(previewHtml, /data-cc-preview="sample"/);
+    assert.match(previewHtml, /data-testid="cc-preview-banner"/);
+    assert.match(previewHtml, />SAMPLE</);
+    assert.match(previewHtml, /preview · not live data — waiting for gateway/);
+    assert.match(previewHtml, /Ship command-center live board/);
+    assert.match(previewHtml, /preview-a|preview-b|preview-c/);
+    assert.match(previewHtml, /◐ running/);
+    assert.match(previewHtml, /✓ done/);
+    assert.match(previewHtml, /cc-flow-connector cc-flow-active/);
+    assert.match(previewHtml, /data-active-stage="swarm"/);
+    assert.doesNotMatch(previewHtml, /terminal-command-rail/);
+    assert.doesNotMatch(previewHtml, /Opus|Sonnet|Haiku|Claude Code|JEV/);
+
+    // Offline + residual totals must not fake a sample board.
+    assert.equal(shouldUseCommandCenterPreview({
+      connected: false,
+      tasks: { tasks: [], total: 2 },
+      workers: { workers: [], total: 0 },
+    }), false);
+
+    const liveHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, emptyClusterProps({
+      connected: true,
+      grpcState: "connected",
+      dashGrpcState: "connected",
+      health: { available: true, status: "healthy", components: [{ name: "engine", status: "ok" }] },
+      workers: {
+        available: true,
+        workers: [{
+          id: "worker-live",
+          capabilities: ["code"],
+          current_load: 0,
+          max_capacity: 2,
+          load_percent: 0,
+          is_available: true,
+          last_heartbeat: "2026-10-31T12:00:00Z",
+        }],
+        total: 1,
+        available_count: 1,
+      },
+    })));
+    assert.doesNotMatch(liveHtml, /preview · not live data/);
+    assert.doesNotMatch(liveHtml, />SAMPLE</);
+    assert.doesNotMatch(liveHtml, /data-cc-preview="sample"/);
+    assert.doesNotMatch(liveHtml, /Ship command-center live board/);
+    assert.match(liveHtml, /data-cc-preview="live"/);
   } finally {
     await vite.close();
   }
