@@ -761,6 +761,189 @@ test("search command-center: terminal chips, neon rows, shell layout", async () 
   }
 });
 
+test("inference command-center: terminal layout, rows, chips, recovery", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const {
+      InferenceBoard,
+      InferencePanel,
+      inferenceStateTone,
+    } = await vite.ssrLoadModule("/src/components/panels/InferencePanel.tsx");
+    const { TerminalDashboard } = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+
+    assert.equal(inferenceStateTone("accepted"), "healthy");
+    assert.equal(inferenceStateTone("completed"), "healthy");
+    assert.equal(inferenceStateTone("rejected"), "fail");
+    assert.equal(inferenceStateTone("failed"), "fail");
+    assert.equal(inferenceStateTone("pending"), "pending");
+    assert.equal(inferenceStateTone("submission_unknown"), "pending");
+    assert.equal(inferenceStateTone(""), "pending");
+
+    const fixtureOps = {
+      jobs: [
+        { key: "job-recover", state: "cleanup_pending", version: 3, remote_id: "remote-9" },
+        { key: "job-ok", state: "completed", version: 1 },
+      ],
+      resources: [
+        { key: "gpu-0", capacity: 2, holders: { a: {} }, queue: [{ operation_id: "op-1" }] },
+        { key: "gpu-1", capacity: 1, holders: {}, queue: [] },
+      ],
+      outbox: { pending: { count: 2, oldest_age_seconds: 41 } },
+      leases: { cleanup_pending: { count: 1 } },
+    };
+    const fixtureExperiments = [
+      {
+        key: "exp-accepted-01",
+        state: "completed",
+        identity: { graph_id: "g-1" },
+        remote_id: "r-1",
+        artifact_state: "ready",
+        verdict: { accepted: true, reasons: ["pass"] },
+        delivery: { status: "delivered" },
+        artifacts: {
+          "report.json": { sha256: "abc", size: 12 },
+          "graph.json": { sha256: "def", size: 8 },
+        },
+      },
+      {
+        key: "exp-rejected-02",
+        state: "failed",
+        verdict: { accepted: false, reasons: ["oracle miss"] },
+        delivery: { status: "rejected" },
+        artifacts: {},
+      },
+      {
+        key: "exp-pending-03",
+        state: "running",
+        delivery: { status: "pending" },
+      },
+    ];
+
+    const html = renderToStaticMarkup(React.createElement(InferenceBoard, {
+      terminal: true,
+      stale: true,
+      experiments: fixtureExperiments,
+      operations: fixtureOps,
+      onDownload: () => {},
+      onRecoveryChange: () => {},
+    }));
+    assert.match(html, /data-testid="terminal-inference-panel"/);
+    assert.match(html, /data-testid="terminal-inference-head"/);
+    assert.match(html, /terminal-inference-head|cc-session-log-head/);
+    assert.match(html, /experiments 3 · recovery 1/);
+    assert.match(html, /data-testid="terminal-inference-stale"/);
+    assert.match(html, /data-testid="terminal-inference-ops"/);
+    assert.match(html, /data-testid="terminal-inference-stat"/);
+    assert.match(html, /outbox \[2\]/);
+    assert.match(html, /data-testid="terminal-inference-row"/);
+    assert.match(html, /data-tone="healthy"/);
+    assert.match(html, /data-tone="fail"/);
+    assert.match(html, /data-tone="pending"/);
+    assert.match(html, /data-testid="terminal-inference-chip-artifact"/);
+    assert.match(html, /data-testid="terminal-inference-recovery"/);
+    assert.match(html, /data-testid="terminal-inference-chip-reconcile"/);
+    assert.match(html, /terminal-inference-chip/);
+    assert.doesNotMatch(html, /推理实验与资源/);
+    assert.doesNotMatch(html, /bg-blue-|border-blue|text-blue-/);
+    assert.doesNotMatch(html, /text-red-400|bg-red-500|border-l-blue-500/);
+    assert.doesNotMatch(html, /border rounded p-3/);
+    assert.doesNotMatch(html, /Opus|Sonnet|Haiku|JEV/);
+
+    const emptyHtml = renderToStaticMarkup(React.createElement(InferenceBoard, {
+      terminal: true,
+      experiments: [],
+      operations: { jobs: [], resources: [], outbox: {}, leases: {} },
+      onDownload: () => {},
+    }));
+    assert.match(emptyHtml, /data-testid="terminal-inference-empty"/);
+    assert.match(emptyHtml, /terminal-empty-line/);
+
+    const errorHtml = renderToStaticMarkup(React.createElement(InferenceBoard, {
+      terminal: true,
+      experiments: [],
+      operations: null,
+      error: "推理状态暂不可用：boom",
+      onDownload: () => {},
+    }));
+    assert.match(errorHtml, /data-testid="terminal-inference-error"/);
+    assert.match(errorHtml, /role="alert"/);
+
+    const legacyHtml = renderToStaticMarkup(React.createElement(InferenceBoard, {
+      terminal: false,
+      experiments: fixtureExperiments,
+      operations: fixtureOps,
+      onDownload: () => {},
+    }));
+    assert.match(legacyHtml, /推理实验与资源/);
+    assert.doesNotMatch(legacyHtml, /data-testid="terminal-inference-panel"/);
+    assert.match(legacyHtml, /border rounded p-3/);
+
+    // Live panel still mounts terminal shell (poll may error offline; markup shell locked).
+    const panelHtml = renderToStaticMarkup(React.createElement(InferencePanel, { variant: "terminal" }));
+    assert.match(panelHtml, /data-testid="terminal-inference-panel"/);
+    assert.match(panelHtml, /data-testid="terminal-inference-head"/);
+    assert.doesNotMatch(panelHtml, /推理实验与资源/);
+
+    const workers = { available: true, available_count: 0, total: 0, workers: [] };
+    const tasks = {
+      available: true,
+      total: 0,
+      status_counts: {},
+      pending_task_count: 0,
+      tasks: [],
+    };
+    const dashHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", version: "0.2.1", components: [] },
+      workers,
+      tasks,
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [],
+      metrics: null,
+      interactionLog: {},
+      selectedTask: null,
+      selectedTaskId: null,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+      initialView: "inference",
+    }));
+    assert.match(dashHtml, /terminal-inference-layout/);
+    assert.match(dashHtml, /data-testid="terminal-inference-panel"/);
+    assert.match(dashHtml, /terminal-inference-head|cc-session-log-head/);
+    assert.doesNotMatch(dashHtml, /bg-blue-|text-red-400|border-l-blue-500/);
+    assert.doesNotMatch(dashHtml, /Opus|Sonnet|Haiku|Claude Code|JEV/);
+
+    const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
+    assert.match(css, /\.terminal-inference-layout/);
+    assert.match(css, /\.terminal-view-body:has\(\.terminal-inference-layout\)/);
+    assert.match(css, /\.terminal-inference-stat\.tone-healthy[\s\S]*?--cc-dispatch/);
+    assert.match(css, /\.terminal-inference-row\.tone-fail[\s\S]*?--terminal-red/);
+    assert.match(css, /\.terminal-inference-row\.tone-pending[\s\S]*?--cc-lead/);
+    assert.match(css, /\.terminal-inference-chip/);
+    assert.match(css, /\.terminal-inference-recovery/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.terminal-inference-chip[\s\S]*?transition:\s*none/);
+  } finally {
+    await vite.close();
+  }
+});
+
 test("the operations dashboard opens on the live command-center overview", async () => {
   const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
   try {

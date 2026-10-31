@@ -97,7 +97,7 @@ Extend the same visual language onto the **logs** (`EventLogPanel`) view — fro
 
 ### Out of scope
 
-Search/Inference redesign, backend APIs.
+Search/Inference redesign (each has its own follow-up), backend APIs.
 
 ## Follow-up: Search page Command-Center polish
 
@@ -113,4 +113,20 @@ Extend the same visual language onto the **search** (`SearchPanel`) view — fro
 
 ### Out of scope
 
-Inference redesign, backend/RPC changes.
+Inference redesign (see follow-up below), backend/RPC changes.
+
+## Follow-up: Inference page Command-Center polish
+
+Extend the same visual language onto the **inference** (`InferencePanel`) view — frontend-only (keep REST poll).
+
+### Requirements (inference view)
+
+1. `variant="terminal"` + shell `.terminal-inference-layout`; terminal head with counts.
+2. Ops strip as `.terminal-inference-stat` / chips with `--cc-*` / `--terminal-*` only.
+3. Resources + experiments as neon-toned `.terminal-inference-row`; artifact chips; no Tailwind recovery cards.
+4. Empty / error / recovery / optional poll-stale in CC vocabulary.
+5. SSR tests locking layout + terminal testids; default path preserved.
+
+### Out of scope
+
+New gRPC/Memory RPC, artifact topology changes.
