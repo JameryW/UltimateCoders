@@ -716,7 +716,8 @@ test("command-center autofocus helper, stage chip, and first-visit dark preferen
     assert.match(html, /stage · swarm/);
     assert.match(html, /cc-stage-chip swarm/);
     assert.match(html, /<button[^>]*data-testid="cc-stage-chip"/);
-    assert.match(html, /data-testid="cc-lead-elapsed"/);
+    // Lead present → elapsed renders HH:MM:SS (wall clock vs updated_at/created_at).
+    assert.match(html, /data-testid="cc-lead-elapsed"[^>]*>elapsed \d{2,}:\d{2}:\d{2}</);
     assert.match(html, /elapsed \d+:\d{2}:\d{2}/);
     // SSR does not run effects — autofocus is covered by the pure helper above.
     assert.equal(selected, null);
@@ -818,6 +819,8 @@ test("command-center stage nav, elapsed helper, and live handoff", async () => {
     assert.match(source, /COMMAND_CENTER_LIVE_HANDOFF/);
     assert.match(source, /cc-live-banner/);
     assert.match(source, /showLiveHandoff/);
+    // Handoff edge must survive Strict Mode cleanup (clear ref only after window).
+    assert.match(source, /wasPreviewRef\.current = false/);
 
     const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
     assert.match(css, /\.cc-live-banner/);

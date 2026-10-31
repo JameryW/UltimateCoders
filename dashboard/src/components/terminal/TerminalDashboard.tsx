@@ -673,12 +673,20 @@ function OverviewView({
   }, []);
 
   // Preview → live handoff: brief notice when SAMPLE flips off (gateway/data arrived).
+  // Keep wasPreviewRef true until the handoff window finishes so React Strict Mode
+  // effect cleanup+rerun cannot swallow the true→false edge.
   useEffect(() => {
-    const wasPreview = wasPreviewRef.current;
-    wasPreviewRef.current = previewMode;
-    if (!wasPreview || previewMode) return;
+    if (previewMode) {
+      wasPreviewRef.current = true;
+      const hideTimer = window.setTimeout(() => setShowLiveHandoff(false), 0);
+      return () => window.clearTimeout(hideTimer);
+    }
+    if (!wasPreviewRef.current) return;
     const startTimer = window.setTimeout(() => setShowLiveHandoff(true), 0);
-    const clearTimer = window.setTimeout(() => setShowLiveHandoff(false), 2000);
+    const clearTimer = window.setTimeout(() => {
+      setShowLiveHandoff(false);
+      wasPreviewRef.current = false;
+    }, 2000);
     return () => {
       window.clearTimeout(startTimer);
       window.clearTimeout(clearTimer);
