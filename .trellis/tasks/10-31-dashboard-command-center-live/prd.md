@@ -98,3 +98,19 @@ Extend the same visual language onto the **logs** (`EventLogPanel`) view — fro
 ### Out of scope
 
 Search/Inference redesign, backend APIs.
+
+## Follow-up: Search page Command-Center polish
+
+Extend the same visual language onto the **search** (`SearchPanel`) view — frontend-only.
+
+### Requirements (search view)
+
+1. `variant="terminal"` + shell `.terminal-search-layout`; no Card in terminal mode.
+2. Query / modes / lang / limit as `.terminal-search-chip` controls.
+3. Result rows `.terminal-search-row` with match-type neon via `--cc-*` (no Tailwind blue/purple/cyan rails).
+4. Surface `score` / `symbolKind` when present; keep `onNavigateFile` jump (`terminal-search-jump`).
+5. SSR tests locking CC classes + default Card path unchanged.
+
+### Out of scope
+
+Inference redesign, backend/RPC changes.

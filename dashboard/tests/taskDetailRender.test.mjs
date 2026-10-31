@@ -603,6 +603,164 @@ test("logs command-center: session rows, terminal chips, shell layout", async ()
   }
 });
 
+test("search command-center: terminal chips, neon rows, shell layout", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const {
+      SearchPanel,
+      SearchResultList,
+      matchTypeTone,
+    } = await vite.ssrLoadModule("/src/components/panels/SearchPanel.tsx");
+    const { TerminalDashboard } = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+
+    assert.equal(matchTypeTone("text"), "text");
+    assert.equal(matchTypeTone("semantic"), "semantic");
+    assert.equal(matchTypeTone("ast"), "ast");
+    assert.equal(matchTypeTone("other"), "default");
+
+    const html = renderToStaticMarkup(React.createElement(SearchPanel, {
+      grpcState: "connected",
+      variant: "terminal",
+      stale: true,
+      onNavigateFile: () => {},
+    }));
+    assert.match(html, /data-testid="terminal-search-panel"/);
+    assert.match(html, /terminal-search-head|cc-session-log-head/);
+    assert.match(html, /data-testid="terminal-search-stale"/);
+    assert.match(html, /data-testid="terminal-search-query"/);
+    assert.match(html, /data-testid="terminal-search-chip-run"/);
+    assert.match(html, /data-testid="terminal-search-chip-mode"/);
+    assert.match(html, /data-testid="terminal-search-chip-limit"/);
+    assert.match(html, /data-testid="terminal-search-lang"/);
+    assert.match(html, /terminal-search-chip/);
+    assert.match(html, /data-testid="terminal-search-hint"/);
+    assert.doesNotMatch(html, /Code Search/);
+    assert.doesNotMatch(html, /border-l-blue-500/);
+    assert.doesNotMatch(html, /bg-purple-500|bg-cyan-500/);
+    assert.doesNotMatch(html, /text-blue-400|focus:border-blue-500/);
+    assert.doesNotMatch(html, /Opus|Sonnet|Haiku|JEV/);
+
+    const rowsHtml = renderToStaticMarkup(React.createElement(SearchResultList, {
+      terminal: true,
+      onNavigateFile: () => {},
+      results: [
+        {
+          repoId: "uc",
+          filePath: "crates/uc-engine/src/search.rs",
+          startLine: 12,
+          endLine: 40,
+          contentSnippet: "fn hybrid_search",
+          matchType: "ast",
+          score: 0.91,
+          symbolName: "hybrid_search",
+          symbolKind: "function",
+          parentSymbol: "SearchEngine",
+        },
+        {
+          repoId: "uc",
+          filePath: "docs/search.md",
+          startLine: 3,
+          endLine: 3,
+          contentSnippet: "semantic retrieval",
+          matchType: "semantic",
+          score: 0.77,
+        },
+        {
+          repoId: "uc",
+          filePath: "README.md",
+          startLine: 1,
+          endLine: 1,
+          contentSnippet: "text hit",
+          matchType: "text",
+          score: 1,
+        },
+      ],
+    }));
+    assert.match(rowsHtml, /data-testid="terminal-search-row"/);
+    assert.match(rowsHtml, /data-match-type="ast"/);
+    assert.match(rowsHtml, /data-match-type="semantic"/);
+    assert.match(rowsHtml, /data-match-type="text"/);
+    assert.match(rowsHtml, /terminal-search-row match-ast|match-ast/);
+    assert.match(rowsHtml, /terminal-search-row match-semantic|match-semantic/);
+    assert.match(rowsHtml, /data-testid="terminal-search-jump"/);
+    assert.match(rowsHtml, /data-testid="terminal-search-score"/);
+    assert.match(rowsHtml, /data-testid="terminal-search-kind"/);
+    assert.match(rowsHtml, /data-testid="terminal-search-parent"/);
+    assert.match(rowsHtml, /hybrid_search/);
+    assert.match(rowsHtml, /function/);
+    assert.match(rowsHtml, /SearchEngine/);
+    assert.doesNotMatch(rowsHtml, /border-l-blue-500/);
+    assert.doesNotMatch(rowsHtml, /bg-purple-500|bg-cyan-500|text-blue-400/);
+
+    const legacyHtml = renderToStaticMarkup(React.createElement(SearchPanel, {
+      grpcState: "connected",
+      variant: "default",
+    }));
+    assert.match(legacyHtml, /Code Search/);
+    assert.doesNotMatch(legacyHtml, /data-testid="terminal-search-panel"/);
+    assert.match(legacyHtml, /border-l-blue-500|btn-action-info|focus:border-blue-500/);
+
+    const workers = { available: true, available_count: 0, total: 0, workers: [] };
+    const tasks = {
+      available: true,
+      total: 0,
+      status_counts: {},
+      pending_task_count: 0,
+      tasks: [],
+    };
+    const dashHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", version: "0.2.1", components: [] },
+      workers,
+      tasks,
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [],
+      metrics: null,
+      interactionLog: {},
+      selectedTask: null,
+      selectedTaskId: null,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+      initialView: "search",
+    }));
+    assert.match(dashHtml, /terminal-search-layout/);
+    assert.match(dashHtml, /data-testid="terminal-search-panel"/);
+    assert.match(dashHtml, /terminal-search-chip/);
+    assert.doesNotMatch(dashHtml, /border-l-blue-500/);
+    assert.doesNotMatch(dashHtml, /bg-purple-500|bg-cyan-500/);
+    assert.doesNotMatch(dashHtml, /Opus|Sonnet|Haiku|Claude Code|JEV/);
+
+    const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
+    assert.match(css, /\.terminal-search-layout/);
+    assert.match(css, /\.terminal-view-body:has\(\.terminal-search-layout\)/);
+    assert.match(css, /\.terminal-search-chip/);
+    assert.match(css, /\.terminal-search-row\.match-ast[\s\S]*?--cc-swarm/);
+    assert.match(css, /\.terminal-search-row\.match-semantic[\s\S]*?--cc-advisor/);
+    assert.match(css, /\.terminal-search-row\.match-text[\s\S]*?--cc-dispatch/);
+    assert.match(css, /\.terminal-search-jump/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.terminal-search-chip[\s\S]*?transition:\s*none/);
+  } finally {
+    await vite.close();
+  }
+});
+
 test("the operations dashboard opens on the live command-center overview", async () => {
   const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
   try {

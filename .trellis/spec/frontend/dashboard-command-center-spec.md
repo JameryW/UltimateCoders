@@ -511,7 +511,7 @@ className={cn("terminal-worker-row", `is-${workerRowNeon(w)}`, expanded && "is-e
 
 - Trigger: User opens the **logs** tab in `TerminalDashboard` (`EventLogPanel`).
 - Pure frontend; reuses overview CC tokens + `sessionRoleForEventType`; no new Gateway RPCs.
-- Out of scope: Search/Inference redesign; Opus/Sonnet/Haiku/JEV branding.
+- Out of scope: Search/Inference redesign (Search has its own scenario below); Opus/Sonnet/Haiku/JEV branding.
 
 ### 2. Signatures
 
@@ -627,4 +627,108 @@ Under `variant="terminal"`:
 
 ```tsx
 <div className={cn("cc-session-row", `cc-session-role-${sessionRoleForEventType(evt.type)}`)} />
+```
+
+---
+
+## Scenario: Search view command-center polish
+
+### 1. Scope / Trigger
+
+- Trigger: User opens the **search** tab in `TerminalDashboard` (`SearchPanel`).
+- Pure frontend; reuses overview CC tokens (`--cc-*`); no new Gateway RPCs.
+- Out of scope: Inference redesign; Opus/Sonnet/Haiku/JEV branding.
+
+### 2. Signatures
+
+```typescript
+// dashboard/src/components/panels/SearchPanel.tsx
+SearchPanel({
+  grpcState?, onNavigateFile?, stale?,
+  variant?: "default" | "terminal",
+})
+
+// TerminalDashboard search shell
+<div className="terminal-data-view terminal-search-layout">
+  <SearchPanel variant="terminal" onNavigateFile={…} … />
+</div>
+```
+
+### 3. Contracts
+
+#### Shell
+
+- Search view wraps the panel in `.terminal-data-view.terminal-search-layout`.
+- Terminal path drops Card chrome; renders `.terminal-search-panel` with `.terminal-search-head` / `.cc-session-log-head`.
+- Stale → `.terminal-search-stale` + `.is-stale` panel border (lead-toned).
+- `onNavigateFile({ repoId, path, line })` still opens FileBrowser.
+
+#### Controls
+
+- Query / run / mode / lang / limit use `.terminal-search-chip` (and `.terminal-search-query` / `.terminal-search-lang`).
+- Mode chips tint by match type: text→dispatch/dim, semantic→advisor, ast→swarm.
+- Terminal path must **not** use Tailwind `focus:border-blue-500`, `border-blue-500`, `text-blue-400`, `bg-purple-500`, or `bg-cyan-500`.
+
+#### Rows
+
+Under `variant="terminal"`:
+
+| Element | Class / token |
+|---------|----------------|
+| Row | `.terminal-search-row` + `.match-{text\|semantic\|ast\|default}` |
+| Neon rail | text→`--cc-dispatch` / dim, semantic→`--cc-advisor`, ast→`--cc-swarm` |
+| Path jump | `.terminal-search-jump` (`data-testid="terminal-search-jump"`) |
+| Score / kind | `.terminal-search-score` / `.terminal-search-kind` when present |
+| Parent | `.terminal-search-parent` when `parentSymbol` is present on the mapped result |
+
+- Surface `score` and optional `symbolKind` from existing `SearchResultItem` fields; wire `parentSymbol` through `mapResult` when the proto carries it — do not invent RPC fields.
+- Default variant may keep Card + Tailwind blue/purple/cyan match rails.
+
+#### Reduced motion
+
+- `.terminal-search-chip` / `.terminal-search-row` transitions disabled under `prefers-reduced-motion: reduce`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|-----------|----------|
+| Terminal + idle | hint line; chips visible; no Card title |
+| Terminal + stale | stale banner visible |
+| Terminal + results | neon row rails + score/kind when set |
+| Jump click | `onNavigateFile` with repo/path/line |
+| Default variant | Card “Code Search” + legacy Tailwind colors allowed |
+
+### 5. Good / Base / Bad Cases
+
+**Good**: Mixed text / semantic / ast hits → dispatch / advisor / swarm neon rails, score + symbolKind chips, path jump.
+
+**Base**: Empty/idle search → ready head + mode/limit chips; no Tailwind blue Search button.
+
+**Bad**: Card chrome in terminal mode; `border-l-blue-500` / `bg-purple-500` / `bg-cyan-500` on terminal path; inventing model personas.
+
+### 6. Tests Required
+
+| Test | Assertion |
+|------|-----------|
+| Terminal SSR shell | `terminal-search-panel`; chips; query/lang testids |
+| Rows | `terminal-search-row` + `data-match-type`; score/kind; jump |
+| Shell | `terminal-search-layout` + `variant="terminal"` from TerminalDashboard |
+| No Tailwind rails | no `border-l-blue-500` / `bg-purple-500` / `bg-cyan-500` / `text-blue-400` on terminal path |
+| CSS | `.terminal-search-layout`, `.terminal-search-row.match-ast`, reduced-motion |
+| Default variant | Card “Code Search” still renders; no terminal testids |
+
+### 7. Wrong vs Correct
+
+#### Wrong: Card + Tailwind blue/purple rails in terminal mode
+
+```tsx
+<Card><li className="border-l-blue-500"><span className="bg-purple-500/20">semantic</span></li></Card>
+```
+
+#### Correct: terminal shell + match-tone neon
+
+```tsx
+<section className="terminal-search-panel">
+  <li className="terminal-search-row match-semantic" data-match-type="semantic" />
+</section>
 ```
