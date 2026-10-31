@@ -262,6 +262,7 @@ def test_real_repo_is_reconciled() -> None:
         (2251, 2242),  # T20 ontology MCP: test + Trellis task; T19 archived.
         (2254, 2245),  # T21 docs numeric pins: manifest + checker + test + workflow + task.
         (2260, 2251),  # T20∪T21 merge: both ticket file sets on main.
+        (2265, 2256),  # Dashboard command-center Trellis task artifacts.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

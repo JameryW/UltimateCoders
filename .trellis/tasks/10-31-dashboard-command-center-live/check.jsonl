@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/10-31-dashboard-command-center-live/prd.md", "reason": "Acceptance: live command-center overview"}
+{"file": ".trellis/tasks/10-31-dashboard-command-center-live/research/grounding.md", "reason": "Data mapping must hold"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend quality bar"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Do not invent APIs outside contracts"}

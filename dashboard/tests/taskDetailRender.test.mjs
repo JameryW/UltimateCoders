@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
+
+const dashboardRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 test("selecting a historical task renders persisted subtask state and result", async () => {
   const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
@@ -38,19 +43,36 @@ test("selecting a historical task renders persisted subtask state and result", a
   }
 });
 
-test("the operations dashboard opens with visible task history and selected logs", async () => {
+test("the operations dashboard opens on the live command-center overview", async () => {
   const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
   try {
     const { TerminalDashboard } = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
-    const task = {
-      id: "historical-task",
-      description: "Read README heading",
-      status: "completed",
+    const running = {
+      id: "live-task",
+      description: "Ship command-center overview",
+      status: "in_progress",
       project_id: "repo",
-      subtask_count: 1,
+      subtask_count: 2,
       created_at: "2026-09-24T01:00:00Z",
       updated_at: "2026-09-24T02:00:00Z",
-      subtasks: [{ id: "historical-subtask", description: "Read the file", status: "completed", depends_on: [], result: "# UltimateCoders" }],
+      subtasks: [
+        {
+          id: "swarm-a",
+          description: "Wire advisor rail",
+          status: "in_progress",
+          depends_on: [],
+          phase: "executing",
+          percent: 42,
+          step_status: "started",
+        },
+        {
+          id: "swarm-b",
+          description: "Done earlier",
+          status: "completed",
+          depends_on: [],
+          percent: 100,
+        },
+      ],
     };
     const html = renderToStaticMarkup(React.createElement(TerminalDashboard, {
       connected: true,
@@ -64,15 +86,35 @@ test("the operations dashboard opens with visible task history and selected logs
       onReconnectDashGrpc: () => {},
       fetchErrors: {},
       grpcStale: false,
-      health: { available: true, status: "healthy" },
-      workers: { available: true, workers: [], total: 0 },
-      tasks: { available: true, tasks: [task], total: 1, status_counts: { completed: 1 }, pending_task_count: 0 },
-      scheduler: { available: false, jobs: [] },
-      eventLog: [],
+      health: {
+        available: true,
+        status: "healthy",
+        version: "0.2.1",
+        uptime_seconds: 90,
+        components: [{ name: "engine", status: "ok" }, { name: "nats", status: "ok" }],
+      },
+      workers: {
+        available: true,
+        workers: [{
+          id: "worker-1",
+          capabilities: ["code"],
+          current_load: 1,
+          max_capacity: 4,
+          load_percent: 25,
+          is_available: true,
+          last_heartbeat: "2026-09-24T02:00:00Z",
+        }],
+        total: 1,
+        available_count: 1,
+      },
+      tasks: { available: true, tasks: [running], total: 1, status_counts: { in_progress: 1 }, pending_task_count: 2 },
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [{ timestamp: "2026-09-24T02:00:00Z", type: "subtask_started", details: { task_id: running.id, worker_id: "worker-1" } }],
       metrics: null,
-      interactionLog: { "historical-task": [{ timestamp: "2026-09-24T02:00:00Z", type: "subtask_completed", task_id: task.id, subtask_id: "historical-subtask", data: { summary: "# UltimateCoders" } }] },
-      selectedTask: task,
-      selectedTaskId: task.id,
+      interactionLog: {},
+      selectedTask: running,
+      selectedTaskId: running.id,
+      taskHistoryLoading: false,
       onSelectTask: () => {},
       onPauseTask: async () => ({ success: true }),
       onResumeTask: async () => ({ success: true }),
@@ -82,9 +124,240 @@ test("the operations dashboard opens with visible task history and selected logs
       onTaskCreated: () => {},
       onOptimisticAdd: () => {},
     }));
-    assert.match(html, /Read README heading/);
-    assert.match(html, /Task detail: Read README heading/);
-    assert.match(html, /Interaction Log/);
+    assert.match(html, /gateway · lead/);
+    assert.match(html, /Ship command-center overview/);
+    assert.match(html, /HEALTH advisor/);
+    assert.match(html, /◇ engine/);
+    assert.match(html, /session log/);
+    assert.match(html, /workers \[1\/1\]/);
+    assert.match(html, /tasks \[1 running\]/);
+    assert.match(html, /grpc \[connected\]/);
+    assert.match(html, /dispatch · fork layer/);
+    assert.match(html, /delegate to workers · swarm/);
+    assert.match(html, /◐ running/);
+    assert.match(html, />42%</);
+    assert.match(html, /review · in flight/);
+    assert.doesNotMatch(html, /Opus|Sonnet|Haiku|Claude Code|JEV/);
+    // Completed subtasks must not steal the swarm row when nothing else is running.
+    assert.doesNotMatch(html, /swarm-b/);
+    // Running subtasks drive the swarm stage + flow particles above it.
+    assert.match(html, /data-active-stage="swarm"/);
+    assert.match(html, /cc-card swarm cc-stage-active/);
+    assert.match(html, /cc-flow-connector cc-flow-active[^>]*data-flow-from="lead"/);
+    assert.match(html, /cc-flow-connector cc-flow-active[^>]*data-flow-from="dispatch"/);
+    assert.doesNotMatch(html, /data-flow-from="swarm"[^>]*cc-flow-active|cc-flow-active[^>]*data-flow-from="swarm"/);
+  } finally {
+    await vite.close();
+  }
+});
+
+test("command-center swarm falls back to workers when no running subtasks", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const { TerminalDashboard } = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+    const idle = {
+      id: "idle-task",
+      description: "Queued only",
+      status: "planning",
+      project_id: "repo",
+      subtask_count: 1,
+      created_at: "2026-09-24T01:00:00Z",
+      updated_at: "2026-09-24T02:00:00Z",
+      subtasks: [{ id: "done-only", description: "Finished", status: "completed", depends_on: [], percent: 100 }],
+    };
+    const html = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", components: [{ name: "engine", status: "ok" }] },
+      workers: {
+        available: true,
+        workers: [{
+          id: "worker-alpha",
+          capabilities: ["code"],
+          current_load: 0,
+          max_capacity: 2,
+          load_percent: 0,
+          is_available: true,
+          last_heartbeat: "2026-09-24T02:00:00Z",
+        }],
+        total: 1,
+        available_count: 1,
+      },
+      tasks: { available: true, tasks: [idle], total: 1, status_counts: { planning: 1 }, pending_task_count: 0 },
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [],
+      metrics: null,
+      interactionLog: {},
+      selectedTask: idle,
+      selectedTaskId: idle.id,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+    }));
+    assert.match(html, /worker-alpha/);
+    assert.doesNotMatch(html, /done-only/);
+    assert.match(html, /✓ done|◇ idle/);
+    // Planning with no running swarm → lead stage (no connector particles yet).
+    assert.match(html, /data-active-stage="lead"/);
+    assert.match(html, /cc-card lead cc-stage-active/);
+    assert.doesNotMatch(html, /cc-flow-active/);
+  } finally {
+    await vite.close();
+  }
+});
+
+test("command-center active stage marches: dispatch queue and review terminal", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const mod = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+    const { TerminalDashboard, deriveActiveStage } = mod;
+
+    assert.equal(deriveActiveStage({
+      connected: true,
+      lead: { id: "t1", description: "x", status: "planning", project_id: "", subtask_count: 0, created_at: "", updated_at: "", subtasks: [] },
+      selectedTask: null,
+      pending: 0,
+      swarm: [{ running: false }],
+    }), "lead");
+    assert.equal(deriveActiveStage({
+      connected: true,
+      lead: { id: "t1", description: "x", status: "in_progress", project_id: "", subtask_count: 1, created_at: "", updated_at: "", subtasks: [] },
+      selectedTask: null,
+      pending: 3,
+      swarm: [{ running: false }],
+    }), "dispatch");
+    assert.equal(deriveActiveStage({
+      connected: true,
+      lead: { id: "t1", description: "x", status: "in_progress", project_id: "", subtask_count: 1, created_at: "", updated_at: "" },
+      selectedTask: null,
+      pending: 3,
+      swarm: [{ running: true }],
+    }), "swarm");
+    assert.equal(deriveActiveStage({
+      connected: true,
+      lead: { id: "t1", description: "x", status: "completed", project_id: "", subtask_count: 1, created_at: "", updated_at: "" },
+      selectedTask: { id: "t1", description: "x", status: "completed", project_id: "", subtask_count: 1, created_at: "", updated_at: "" },
+      pending: 0,
+      swarm: [],
+    }), "review");
+    assert.equal(deriveActiveStage({
+      connected: false,
+      lead: null,
+      selectedTask: null,
+      pending: 0,
+      swarm: [],
+    }), "idle");
+
+    const queued = {
+      id: "queued-task",
+      description: "Waiting on workers",
+      status: "in_progress",
+      project_id: "repo",
+      subtask_count: 1,
+      created_at: "2026-09-24T01:00:00Z",
+      updated_at: "2026-09-24T02:00:00Z",
+      subtasks: [{ id: "pending-sub", description: "Not started", status: "pending", depends_on: [] }],
+    };
+    const dispatchHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", components: [] },
+      workers: { available: true, workers: [], total: 0, available_count: 0 },
+      tasks: { available: true, tasks: [queued], total: 1, status_counts: { in_progress: 1 }, pending_task_count: 4 },
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [],
+      metrics: null,
+      interactionLog: {},
+      selectedTask: queued,
+      selectedTaskId: queued.id,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+    }));
+    assert.match(dispatchHtml, /data-active-stage="dispatch"/);
+    assert.match(dispatchHtml, /cc-card dispatch cc-stage-active/);
+    assert.match(dispatchHtml, /cc-flow-connector cc-flow-active[^>]*data-flow-from="lead"/);
+    assert.doesNotMatch(dispatchHtml, /data-flow-from="dispatch"[^>]*cc-flow-active|cc-flow-active[^>]*data-flow-from="dispatch"/);
+
+    const done = {
+      id: "done-task",
+      description: "Ready for verify",
+      status: "completed",
+      project_id: "repo",
+      subtask_count: 1,
+      created_at: "2026-09-24T01:00:00Z",
+      updated_at: "2026-09-24T02:00:00Z",
+      subtasks: [{ id: "done-sub", description: "Finished", status: "completed", depends_on: [], percent: 100 }],
+    };
+    const reviewHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", components: [] },
+      workers: { available: true, workers: [], total: 0, available_count: 0 },
+      tasks: { available: true, tasks: [done], total: 1, status_counts: { completed: 1 }, pending_task_count: 0 },
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [],
+      metrics: null,
+      interactionLog: {},
+      selectedTask: done,
+      selectedTaskId: done.id,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+    }));
+    assert.match(reviewHtml, /data-active-stage="review"/);
+    assert.match(reviewHtml, /cc-card review cc-stage-active/);
+    assert.match(reviewHtml, /cc-flow-active[^>]*data-flow-from="swarm"|data-flow-from="swarm"[^>]*cc-flow-active/);
+
+    // prefers-reduced-motion must kill stage glow + connector particle motion.
+    const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-card\.cc-stage-active[\s\S]*?animation:\s*none/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-flow-connector\.cc-flow-active em[\s\S]*?animation:\s*none/);
   } finally {
     await vite.close();
   }

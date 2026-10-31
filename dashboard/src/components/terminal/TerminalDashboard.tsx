@@ -90,10 +90,28 @@ function formatClock(date: Date): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
-function MiniBar({ value, tone = "green" }: { value: number; tone?: "green" | "blue" | "amber" }) {
+type BarTone = "green" | "blue" | "amber" | "orange" | "purple";
+
+const ACTIVE_TASK_STATUSES = new Set(["in_progress", "running", "planning", "assigned"]);
+const RUNNING_SUBTASK_STATUSES = new Set(["in_progress", "running", "assigned", "started", "executing"]);
+const DONE_SUBTASK_STATUSES = new Set(["completed", "done", "success", "succeeded"]);
+const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "cancelled", "canceled", "done"]);
+
+function MiniBar({ value, tone = "green" }: { value: number; tone?: BarTone }) {
   return (
     <span className={`terminal-mini-bar ${tone}`}>
       <i style={{ width: `${percent(value)}%` }} />
+    </span>
+  );
+}
+
+function EffortMeter({ value }: { value: number }) {
+  const filled = Math.max(0, Math.min(4, Math.ceil(percent(value) / 25)));
+  return (
+    <span className="cc-effort" aria-label={`effort ${percent(value)}%`}>
+      {Array.from({ length: 4 }, (_, index) => (
+        <i key={index} className={index < filled ? "on" : ""} />
+      ))}
     </span>
   );
 }
@@ -108,91 +126,394 @@ function ConnectionPill({ label, state }: { label: string; state: string }) {
   );
 }
 
+function RoleLegend() {
+  return (
+    <div className="cc-legend" aria-label="Role legend">
+      <span className="cc-legend-item lead"><i /> gateway · lead</span>
+      <span className="cc-legend-item swarm"><i /> workers · swarm</span>
+      <span className="cc-legend-item dispatch"><i /> dispatch · queue</span>
+      <span className="cc-legend-item advisor"><i /> health · advisor</span>
+    </div>
+  );
+}
+
+function eventAdviceLine(event: DashboardEvent): string {
+  const detailKeys = Object.keys(event.details ?? {});
+  if (detailKeys.length === 0) return event.type.replace(/_/g, " ");
+  const preview = detailKeys.slice(0, 2).map((key) => {
+    const value = event.details[key];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return `${key}=${String(value).slice(0, 28)}`;
+    }
+    return key;
+  }).join(" · ");
+  return `${event.type.replace(/_/g, " ")} · ${preview}`;
+}
+
+function pickLeadTask(tasks: TasksData, selectedTask: TaskSummary | null): TaskSummary | null {
+  const list = tasks.tasks ?? [];
+  if (selectedTask && ACTIVE_TASK_STATUSES.has(selectedTask.status)) return selectedTask;
+  const active = list.find((task) => ACTIVE_TASK_STATUSES.has(task.status));
+  if (active) return active;
+  if (selectedTask) return selectedTask;
+  return list[0] ?? null;
+}
+
+function isSubtaskDone(subtask: NonNullable<TaskSummary["subtasks"]>[number]): boolean {
+  return DONE_SUBTASK_STATUSES.has(subtask.status)
+    || subtask.step_status === "completed"
+    || percent(subtask.percent ?? 0) >= 100;
+}
+
+function isSubtaskRunning(subtask: NonNullable<TaskSummary["subtasks"]>[number]): boolean {
+  if (isSubtaskDone(subtask)) return false;
+  return RUNNING_SUBTASK_STATUSES.has(subtask.status)
+    || subtask.step_status === "started"
+    || (typeof subtask.percent === "number" && percent(subtask.percent) > 0 && percent(subtask.percent) < 100);
+}
+
+function collectSwarmCards(lead: TaskSummary | null, workers: WorkersData) {
+  // Prefer live running subtasks; otherwise fall back to workers (not completed %).
+  const runningSubtasks = (lead?.subtasks ?? [])
+    .filter(isSubtaskRunning)
+    .slice(0, 3)
+    .map((subtask) => ({
+      id: subtask.id,
+      title: shortId(subtask.id, 12),
+      detail: subtask.phase || subtask.step_summary || subtask.description || "subtask",
+      value: percent(subtask.percent ?? 35),
+      done: false,
+      running: true,
+    }));
+
+  if (runningSubtasks.length > 0) return runningSubtasks;
+
+  return (workers.workers ?? []).slice(0, 3).map((worker) => {
+    const load = percent(worker.load_percent);
+    return {
+      id: worker.id,
+      title: shortId(worker.id, 12),
+      detail: worker.is_available ? "available" : "offline",
+      value: load,
+      done: load <= 0 && worker.is_available,
+      running: worker.is_available && load > 0,
+    };
+  });
+}
+
+function reviewCue(lead: TaskSummary | null, selectedTask: TaskSummary | null): { title: string; detail: string } {
+  const focus = selectedTask ?? lead;
+  if (!focus) return { title: "review · idle", detail: "awaiting task selection" };
+  if (TERMINAL_TASK_STATUSES.has(focus.status)) {
+    return { title: `review · ${focus.status}`, detail: "verify outputs · inspect history" };
+  }
+  if (ACTIVE_TASK_STATUSES.has(focus.status)) {
+    return { title: "review · in flight", detail: "awaiting verify after swarm completes" };
+  }
+  return { title: `review · ${focus.status}`, detail: shortId(focus.id, 16) };
+}
+
+/** Live command-center stage driven by UC runtime state (not a fake idle loop). */
+export type CommandCenterStage = "idle" | "lead" | "dispatch" | "swarm" | "review";
+
+const STAGE_ORDER: CommandCenterStage[] = ["idle", "lead", "dispatch", "swarm", "review"];
+
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested stage helper shared with OverviewView
+export function deriveActiveStage(input: {
+  connected: boolean;
+  lead: TaskSummary | null;
+  selectedTask: TaskSummary | null;
+  pending: number;
+  swarm: Array<{ running: boolean }>;
+}): CommandCenterStage {
+  const { connected, lead, selectedTask, pending, swarm } = input;
+  const focus = selectedTask ?? lead;
+  const hasActiveTask = Boolean(lead && ACTIVE_TASK_STATUSES.has(lead.status));
+  const hasRunningSwarm = swarm.some((card) => card.running)
+    || (lead?.subtasks ?? []).some(isSubtaskRunning);
+
+  // Furthest-advanced hot stage wins when multiple conditions apply.
+  if (focus && TERMINAL_TASK_STATUSES.has(focus.status)) return "review";
+  if (hasRunningSwarm) return "swarm";
+  if (pending > 0 || (hasActiveTask && lead && (lead.status === "in_progress" || lead.status === "running") && !hasRunningSwarm)) {
+    return "dispatch";
+  }
+  if (hasActiveTask) return "lead";
+  if (!connected) return "idle";
+  return "idle";
+}
+
+function connectorFlowsFor(stage: CommandCenterStage): { afterLead: boolean; afterDispatch: boolean; afterSwarm: boolean } {
+  const index = STAGE_ORDER.indexOf(stage);
+  // Connectors above the active stage carry traveling light.
+  return {
+    afterLead: index >= STAGE_ORDER.indexOf("dispatch"),
+    afterDispatch: index >= STAGE_ORDER.indexOf("swarm"),
+    afterSwarm: index >= STAGE_ORDER.indexOf("review"),
+  };
+}
+
+function AdvisorPanel({
+  connected,
+  workers,
+  tasks,
+  eventLog,
+  health,
+  metrics,
+  onView,
+  compact = false,
+}: Pick<TerminalDashboardProps, "connected" | "workers" | "tasks" | "eventLog" | "health" | "metrics"> & {
+  onView: (view: TerminalView) => void;
+  compact?: boolean;
+}) {
+  const workerList = workers.workers ?? [];
+  const onlineWorkers = workerList.filter((worker) => worker.is_available).length;
+  const advice = latestDashboardEvents(eventLog ?? [], 4);
+  const components = (health.components ?? []).slice(0, 4);
+  const phase = !connected
+    ? "waiting for gateway"
+    : health.status === "ok" || health.status === "healthy"
+      ? "cluster healthy"
+      : health.status || "checking health";
+
+  return (
+    <aside className={`cc-advisor ${compact ? "compact" : ""}`} aria-label="Health advisor">
+      <div className="cc-advisor-head">
+        <span>HEALTH advisor · on call</span>
+        <b className={connected ? "online" : "offline"}>{connected ? "live" : "offline"}</b>
+      </div>
+      <div className="cc-advisor-phase"><span className="cc-diamond">◆</span> {phase}</div>
+      <div className="cc-advisor-section">
+        <div className="cc-advisor-label">components</div>
+        {components.length === 0 ? (
+          <div className="cc-advisor-empty">no health components yet</div>
+        ) : components.map((component) => (
+          <div key={component.name} className="cc-advisor-line">
+            <span>◇ {component.name}</span>
+            <b>{component.status}</b>
+          </div>
+        ))}
+      </div>
+      <div className="cc-advisor-section">
+        <div className="cc-advisor-label">last advice</div>
+        {advice.length === 0 ? (
+          <div className="cc-advisor-empty">» waiting for events</div>
+        ) : advice.map((event, index) => (
+          <button key={`${event.timestamp}-${event.type}-${index}`} className="cc-advisor-advice" onClick={() => onView("logs")}>
+            » {eventAdviceLine(event)}
+          </button>
+        ))}
+      </div>
+      <div className="cc-advisor-metrics">
+        <div><span>uptime</span><b>{formatUptime(health.uptime_seconds ?? metrics?.system.uptime_seconds)}</b></div>
+        <div><span>events</span><b>{eventLog.length}</b></div>
+        <div><span>workers</span><b>{onlineWorkers}/{workers.total}</b></div>
+        <div><span>tasks</span><b>{tasks.total}</b></div>
+        <div><span>util</span><b>{(metrics?.system.cluster_utilization_pct ?? 0).toFixed(0)}%</b></div>
+        <div><span>engine</span><b>{health.version ?? "—"}</b></div>
+      </div>
+      <div className="cc-advisor-foot">
+        <span>◇ {health.status || "unknown"}</span>
+        <button onClick={() => onView("logs")}>session log</button>
+      </div>
+    </aside>
+  );
+}
+
 function OverviewView({
   health,
   workers,
   tasks,
   eventLog,
+  metrics,
   connected,
+  selectedTask,
   onView,
-}: Pick<TerminalDashboardProps, "health" | "workers" | "tasks" | "eventLog" | "connected"> & { onView: (view: TerminalView) => void }) {
-  const onlineWorkers = workers.workers.filter((worker) => worker.is_available).length;
-  const averageLoad = workers.workers.length
-    ? workers.workers.reduce((sum, worker) => sum + percent(worker.load_percent), 0) / workers.workers.length
+  onSelectTask,
+}: Pick<TerminalDashboardProps, "health" | "workers" | "tasks" | "eventLog" | "metrics" | "connected" | "selectedTask"> & {
+  onView: (view: TerminalView) => void;
+  onSelectTask: (taskId: string | null) => void;
+}) {
+  const workerList = workers.workers ?? [];
+  const onlineWorkers = workerList.filter((worker) => worker.is_available).length;
+  const averageLoad = workerList.length
+    ? workerList.reduce((sum, worker) => sum + percent(worker.load_percent), 0) / workerList.length
     : 0;
-  const runningTasks = tasks.tasks.filter((task) => ["in_progress", "running", "planning", "assigned"].includes(task.status)).length;
-  const eventTotal = eventLog.length;
-  const pending = tasks.pending_task_count;
-  const queuePercent = tasks.total ? (pending / tasks.total) * 100 : 0;
+  const runningTasks = (tasks.tasks ?? []).filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
+  const pending = tasks.pending_task_count ?? 0;
+  const onlineRatio = workers.total ? (onlineWorkers / workers.total) * 100 : 0;
+  const queuePercent = tasks.total ? Math.min(100, (pending / Math.max(tasks.total, 1)) * 100) : pending > 0 ? 100 : 0;
+  const lead = pickLeadTask(tasks, selectedTask);
+  const swarm = collectSwarmCards(lead, workers);
+  const review = reviewCue(lead, selectedTask);
+  const sessionEvents = latestDashboardEvents(eventLog ?? [], 8);
+  const activeStage = deriveActiveStage({
+    connected,
+    lead,
+    selectedTask,
+    pending,
+    swarm,
+  });
+  const flow = connectorFlowsFor(activeStage);
 
   return (
-    <div className="terminal-overview">
-      <div className="terminal-runtime-banner">
-        <span>UC / RUNTIME</span>
-        <strong>{connected ? "Docker backend connected" : "Waiting for Docker backend"}</strong>
-        <small>Health · TaskService · DashboardService · live events</small>
+    <div className="terminal-overview cc-board">
+      <RoleLegend />
+      <div className="cc-layout">
+        <AdvisorPanel
+          connected={connected}
+          workers={workers}
+          tasks={tasks}
+          eventLog={eventLog}
+          health={health}
+          metrics={metrics}
+          onView={onView}
+        />
+
+        <section
+          className={`cc-flow stage-${activeStage}`}
+          data-active-stage={activeStage}
+          aria-label="Live execution flow"
+        >
+          <button
+            className={`cc-card lead${activeStage === "lead" ? " cc-stage-active" : ""}`}
+            data-stage="lead"
+            onClick={() => {
+              if (lead) {
+                onSelectTask(lead.id);
+                onView("tasks");
+              } else {
+                onView("tasks");
+              }
+            }}
+          >
+            <div className="cc-card-topline">
+              <strong>gateway · lead</strong>
+              <EffortMeter value={averageLoad || (ACTIVE_TASK_STATUSES.has(lead?.status ?? "") ? 50 : 0)} />
+            </div>
+            <div className="cc-card-title">{lead ? shortId(lead.description || lead.id, 48) : "no active task"}</div>
+            <div className="cc-card-meta">
+              <span>{lead ? lead.status : connected ? "idle" : "offline"}</span>
+              <span>{runningTasks} running · engine {health.version ?? "—"}</span>
+            </div>
+          </button>
+
+          <div
+            className={`cc-flow-connector${flow.afterLead ? " cc-flow-active" : activeStage === "idle" ? " cc-flow-idle" : ""}`}
+            data-flow-from="lead"
+            aria-hidden="true"
+          >
+            <i /><span /><em /><b>▼</b>
+          </div>
+
+          <button
+            className={`cc-card dispatch${activeStage === "dispatch" ? " cc-stage-active" : ""}`}
+            data-stage="dispatch"
+            onClick={() => onView("workers")}
+          >
+            <div className="cc-card-topline">
+              <strong>dispatch · fork layer</strong>
+              <span className="cc-card-count">queue {pending}</span>
+            </div>
+            <div className="cc-dispatch-bars">
+              <div className="cc-dispatch-row"><span>worker load</span><MiniBar value={averageLoad} tone="orange" /><b>{percent(averageLoad)}%</b></div>
+              <div className="cc-dispatch-row"><span>pending queue</span><MiniBar value={queuePercent} tone="green" /><b>{pending}</b></div>
+              <div className="cc-dispatch-row"><span>online ratio</span><MiniBar value={onlineRatio} tone="blue" /><b>{onlineWorkers}/{workers.total}</b></div>
+            </div>
+          </button>
+
+          <div
+            className={`cc-flow-connector${flow.afterDispatch ? " cc-flow-active" : activeStage === "idle" ? " cc-flow-idle" : ""}`}
+            data-flow-from="dispatch"
+            aria-hidden="true"
+          >
+            <i /><span /><em /><b>▼</b>
+          </div>
+
+          <div className="cc-swarm-head">delegate to workers · swarm</div>
+          <div className={`cc-swarm-row${activeStage === "swarm" ? " cc-stage-active" : ""}`} data-stage="swarm">
+            {swarm.length === 0 ? (
+              <div className="cc-swarm-empty">no running subtasks or workers</div>
+            ) : swarm.map((card) => (
+              <button
+                key={card.id}
+                className={`cc-card swarm${activeStage === "swarm" && card.running ? " cc-stage-active" : ""}`}
+                onClick={() => onView(lead?.subtasks?.length ? "tasks" : "workers")}
+                title={card.id}
+              >
+                <strong>{card.title}</strong>
+                <MiniBar value={card.value} tone="blue" />
+                <div className="cc-swarm-status">
+                  <span className={card.done ? "done" : card.running ? "running" : "idle"}>
+                    {card.done ? "✓ done" : card.running ? "◐ running" : "◇ idle"}
+                  </span>
+                  <b>{card.value}%</b>
+                </div>
+                <small>{card.detail}</small>
+              </button>
+            ))}
+          </div>
+
+          <div
+            className={`cc-flow-connector${flow.afterSwarm ? " cc-flow-active" : activeStage === "idle" ? " cc-flow-idle" : ""}`}
+            data-flow-from="swarm"
+            aria-hidden="true"
+          >
+            <i /><span /><em /><b>▼</b>
+          </div>
+
+          <button
+            className={`cc-card review${activeStage === "review" ? " cc-stage-active" : ""}`}
+            data-stage="review"
+            onClick={() => {
+              if (selectedTask ?? lead) {
+                onSelectTask((selectedTask ?? lead)!.id);
+                onView("tasks");
+              } else {
+                onView("tasks");
+              }
+            }}
+          >
+            <div className="cc-card-topline"><strong>{review.title}</strong></div>
+            <div className="cc-card-meta"><span>{review.detail}</span></div>
+          </button>
+        </section>
       </div>
 
-      <section className="terminal-topology" aria-label="Cluster topology">
-        <div className="terminal-section-head">
-          <span>集群拓扑 / CLUSTER TOPOLOGY</span>
-          <b><i className={onlineWorkers > 0 ? "terminal-live-dot online" : "terminal-live-dot"} /> {onlineWorkers}/{workers.total} 在线</b>
+      <section className="cc-session-log" aria-label="Session log">
+        <div className="cc-session-log-head">
+          <span>session log</span>
+          <button onClick={() => onView("logs")}>all events</button>
         </div>
-        <button className="terminal-topology-node operator" onClick={() => onView("tasks")}>
-          <small>第 0 层 · 操作者</small>
-          <strong>UC OPERATOR <em>submit / inspect / control</em></strong>
-          <span>真实任务入口 · gRPC-Web</span>
-        </button>
-        <div className="terminal-topology-arrow">▼</div>
-        <button className="terminal-topology-node engine" onClick={() => onView("overview")}>
-          <small>第 1 层 · 控制平面</small>
-          <strong>UC-ENGINE <em>{health.version ?? "—"}</em> <i className={connected ? "terminal-live-dot online" : "terminal-live-dot"} /> {connected ? "online" : "waiting"}</strong>
-          <span>DAG scheduler · DashboardService · live events</span>
-        </button>
-        <div className="terminal-topology-arrow">▼</div>
-        <div className="terminal-worker-lane">
-          {workers.workers.length > 0 ? workers.workers.slice(0, 3).map((worker) => (
-            <button key={worker.id} className="terminal-worker-node" onClick={() => onView("workers")} title={worker.id}>
-              <strong>{shortId(worker.id)}</strong>
-              <MiniBar value={worker.load_percent} tone="blue" />
-              <b>{percent(worker.load_percent)}%</b>
-            </button>
-          )) : <div className="terminal-empty-line">后端当前没有注册 worker</div>}
-        </div>
-        <div className="terminal-topology-arrow">▼</div>
-        <div className="terminal-service-lane">
-          <div><small>消息总线</small><strong><i className={connected ? "terminal-live-dot online" : "terminal-live-dot"} /> NATS</strong><span>{workers.total} workers</span></div>
-          <div><small>检索 / 观测</small><strong>Dashboard</strong><span>{eventTotal} events</span></div>
-        </div>
+        {sessionEvents.length === 0 ? (
+          <div className="terminal-empty-line">waiting for live events…</div>
+        ) : sessionEvents.map((event, index) => (
+          <button
+            key={`${event.timestamp}-${event.type}-${index}`}
+            className="cc-session-row"
+            onClick={() => {
+              const taskId = typeof event.details.task_id === "string" ? event.details.task_id : null;
+              if (taskId) {
+                onSelectTask(taskId);
+                onView("tasks");
+              } else {
+                onView("logs");
+              }
+            }}
+          >
+            <time>{new Date(event.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</time>
+            <span className="cc-session-role">{event.type.split("_")[0] || "uc"}</span>
+            <span className="cc-session-msg">{eventAdviceLine(event)}</span>
+          </button>
+        ))}
       </section>
 
-      <div className="terminal-runtime-checks">
-        <div><b>» engine · {connected ? "● connected" : "○ disconnected"}</b><span>{health.status || "waiting"}</span></div>
-        <div><b>» workers · {workers.total} registered</b><span>{onlineWorkers} available</span></div>
-        <div><b>» DAG · {tasks.total} tasks</b><span>{runningTasks} running</span></div>
-        <div><b>» events · {eventTotal} buffered</b><span>real backend events</span></div>
-      </div>
-
-      <div className="terminal-stat-grid">
-        <div><b>{formatUptime(health.uptime_seconds)}</b><span>运行时长 · hh:mm:ss</span></div>
-        <div><b>{tasks.total}</b><span>DAG 任务</span></div>
-        <div><b>{runningTasks}</b><span>运行中</span></div>
-        <div><b>{eventTotal}</b><span>事件缓冲</span></div>
-      </div>
-
-      <section className="terminal-vitals">
-        <div className="terminal-vitals-head">运行体征 · REALTIME <i className={connected ? "terminal-live-dot online" : "terminal-live-dot"} /></div>
-        <div className="terminal-vital-row"><span>workers · load</span><MiniBar value={averageLoad} /><strong>{percent(averageLoad)}%</strong></div>
-        <div className="terminal-vital-row"><span>engine · queue</span><MiniBar value={queuePercent} tone="amber" /><strong>{pending}</strong></div>
-        <div className="terminal-vital-row"><span>events · buffer</span><MiniBar value={Math.min(100, eventTotal)} tone="blue" /><strong>{eventTotal}</strong></div>
-      </section>
-
-      <p className="terminal-help-line">提示：顶栏 <kbd>1</kbd>–<kbd>6</kbd> 切视图 · 左栏主操作 · <kbd>Ctrl</kbd><kbd>K</kbd> 聚焦命令 · <kbd>/</kbd> 命令行</p>
+      <p className="terminal-help-line">提示：顶栏 <kbd>1</kbd>–<kbd>7</kbd> 切视图 · 左栏主操作 · <kbd>Ctrl</kbd><kbd>K</kbd> 聚焦命令 · <kbd>/</kbd> 命令行</p>
     </div>
   );
 }
 
-function ClusterRail({
+function AdvisorRail({
   connected,
   workers,
   tasks,
@@ -201,44 +522,42 @@ function ClusterRail({
   metrics,
   onView,
 }: Pick<TerminalDashboardProps, "connected" | "workers" | "tasks" | "eventLog" | "health" | "metrics"> & { onView: (view: TerminalView) => void }) {
-  const onlineWorkers = workers.workers.filter((worker) => worker.is_available).length;
-  const load = workers.workers.length ? workers.workers.reduce((sum, worker) => sum + worker.load_percent, 0) / workers.workers.length : 0;
-  const latestEvents = latestDashboardEvents(eventLog);
   return (
-    <aside className="terminal-cluster-rail">
-      <div className="terminal-rail-head"><span>集群 / CLUSTER</span><b className={connected ? "online" : "offline"}><i /> {connected ? "ONLINE" : "OFFLINE"}</b></div>
-      <div className="terminal-cluster-summary">
-        <div><b>{onlineWorkers}<small>/{workers.total}</small></b><span>workers online</span></div>
-        <div><b>{tasks.total}</b><span>dag tasks</span></div>
-        <div><b>{eventLog.length}</b><span>events</span></div>
-      </div>
-      <section className="terminal-rail-section">
-        <div className="terminal-rail-section-head"><span>运行负载</span><button onClick={() => onView("workers")}>VIEW</button></div>
-        <div className="terminal-rail-metric"><span>cluster load</span><b>{percent(load)}%</b></div>
-        <MiniBar value={load} tone="blue" />
-        <div className="terminal-rail-metric"><span>queue</span><b>{tasks.pending_task_count}</b></div>
-        <MiniBar value={tasks.total ? (tasks.pending_task_count / tasks.total) * 100 : 0} tone="amber" />
-      </section>
-      <section className="terminal-rail-section">
-        <div className="terminal-rail-section-head"><span>后端组件</span><button onClick={() => onView("overview")}>HEALTH</button></div>
-        <ConnectionPill label="engine" state={connected ? "connected" : "disconnected"} />
-        <ConnectionPill label="workers" state={workers.available ? "connected" : "disconnected"} />
-        <ConnectionPill label="health" state={health.available ? "connected" : "disconnected"} />
-      </section>
-      <section className="terminal-rail-section terminal-event-feed">
-        <div className="terminal-rail-section-head"><span>事件流</span><button onClick={() => onView("logs")}>ALL</button></div>
-        {latestEvents.length === 0 ? <div className="terminal-empty-line">等待真实事件…</div> : latestEvents.map((event, index) => (
-          <button key={`${event.timestamp}-${event.type}-${index}`} className="terminal-event-row" onClick={() => onView("logs")}>
-            <i /> <span>{event.type}</span><time>{new Date(event.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
-          </button>
-        ))}
-      </section>
-      <section className="terminal-rail-section terminal-health-meter">
-        <div className="terminal-rail-section-head"><span>系统体征</span><span className="terminal-accent-text">{(metrics?.system.cluster_utilization_pct ?? 0).toFixed(0)}%</span></div>
-        <MiniBar value={metrics?.system.cluster_utilization_pct ?? 0} />
-        <small>{health.version ? `engine ${health.version}` : "engine version unavailable"}</small>
-      </section>
-    </aside>
+    <div className="terminal-cluster-rail cc-rail-shell">
+      <AdvisorPanel
+        connected={connected}
+        workers={workers}
+        tasks={tasks}
+        eventLog={eventLog}
+        health={health}
+        metrics={metrics}
+        onView={onView}
+        compact
+      />
+    </div>
+  );
+}
+
+function StatusPillBar({
+  connected,
+  grpcState,
+  dashGrpcState,
+  workers,
+  tasks,
+  eventLog,
+}: Pick<TerminalDashboardProps, "connected" | "grpcState" | "dashGrpcState" | "workers" | "tasks" | "eventLog">) {
+  const onlineWorkers = (workers.workers ?? []).filter((worker) => worker.is_available).length;
+  const runningTasks = (tasks.tasks ?? []).filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
+  return (
+    <div className="cc-status-pills" aria-label="Live status">
+      <span className={`cc-pill swarm ${onlineWorkers > 0 ? "hot" : ""}`}>workers [{onlineWorkers}/{workers.total}]</span>
+      <span className={`cc-pill lead ${runningTasks > 0 ? "hot" : ""}`}>tasks [{runningTasks} running]</span>
+      <span className={`cc-pill dispatch ${(tasks.pending_task_count ?? 0) > 0 ? "hot" : ""}`}>queue [{tasks.pending_task_count ?? 0}]</span>
+      <span className={`cc-pill ${grpcState === "connected" ? "hot lead" : ""}`}>grpc [{grpcState}]</span>
+      <span className={`cc-pill ${dashGrpcState === "connected" ? "hot advisor" : "advisor"}`}>dash [{dashGrpcState}]</span>
+      <span className="cc-pill advisor">events [{eventLog.length}]</span>
+      <span className={`cc-pill ${connected ? "hot dispatch" : ""}`}>{connected ? "backend [online]" : "backend [offline]"}</span>
+    </div>
   );
 }
 
@@ -275,7 +594,7 @@ export function TerminalDashboard({
   onTaskCreated,
   onOptimisticAdd,
 }: TerminalDashboardProps) {
-  const [view, setView] = useState<TerminalView>("tasks");
+  const [view, setView] = useState<TerminalView>("overview");
   const [command, setCommand] = useState("");
   const [lastCommand, setLastCommand] = useState("—");
   const [notice, setNotice] = useState({ text: "Dashboard 就绪 — 正在读取真实 Docker Gateway", tone: "info" });
@@ -361,11 +680,11 @@ export function TerminalDashboard({
   const runQuickCommand = (value: string) => { void runCommand(value); };
 
   return (
-    <div className="terminal-app" data-theme={theme}>
+    <div className={`terminal-app ${view === "overview" ? "cc-mode" : ""}`} data-theme={theme}>
       <header className="terminal-topbar">
         <div className="terminal-window-dots" aria-hidden="true"><i className="red" /><i className="yellow" /><i className="green" /></div>
         <div className={`terminal-brand ${connected ? "online" : "offline"}`}><span>ULTIMATE</span><strong>CODERS</strong></div>
-        <div className="terminal-brand-tag">distributed ai coding system · dashboard</div>
+        <div className="terminal-brand-tag">command center · live status</div>
         <nav className="terminal-tabs" aria-label="视图切换">
           <span className="terminal-tabs-label">视图</span>
           {VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><b>{item.key}</b>{item.label}<small>{item.meta}</small></button>)}
@@ -407,7 +726,7 @@ export function TerminalDashboard({
         <section className="terminal-main-panel">
           <div className="terminal-panel-head"><div><h1>{currentView.label}</h1><span>uc / {currentView.meta.toLowerCase()}</span></div><div className={`terminal-panel-meta ${connected ? "online" : "offline"}`}><i />{health.version ?? "engine"} · {connected ? "connected" : "waiting"}</div></div>
           <div className="terminal-view-body">
-            {view === "overview" && <OverviewView health={health} workers={workers} tasks={tasks} eventLog={eventLog} connected={connected} onView={setView} />}
+            {view === "overview" && <OverviewView health={health} workers={workers} tasks={tasks} eventLog={eventLog} metrics={metrics} connected={connected} selectedTask={selectedTask} onView={setView} onSelectTask={onSelectTask} />}
             {view === "tasks" && <div className="terminal-data-view terminal-task-layout">
               <TasksPanel data={tasks} interactionLog={interactionLog} onFlush={onFlush} onPauseTask={onPauseTask} onResumeTask={onResumeTask} onCancelTask={onCancelTask} stale={grpcStale} grpcSubmitTask={grpcSubmitTask} onTaskCreated={onTaskCreated} onOptimisticAdd={onOptimisticAdd} onSelectTask={onSelectTask} selectedTaskId={selectedTaskId} showInlineDetail={false} onNavigateFile={setFileBrowserNav} />
               <section className="terminal-task-history" ref={historyRef} aria-label="Selected task history">
@@ -431,11 +750,12 @@ export function TerminalDashboard({
           <div className={`terminal-notice ${notice.tone}`}><span>❯</span>{notice.text}</div>
         </section>
 
-        <ClusterRail connected={connected} workers={workers} tasks={tasks} eventLog={eventLog} health={health} metrics={metrics} onView={setView} />
+        {view !== "overview" && <AdvisorRail connected={connected} workers={workers} tasks={tasks} eventLog={eventLog} health={health} metrics={metrics} onView={setView} />}
       </div>
 
+      <StatusPillBar connected={connected} grpcState={grpcState} dashGrpcState={dashGrpcState} workers={workers} tasks={tasks} eventLog={eventLog} />
       <footer className="terminal-command-bar"><span>uc ❯</span><input ref={commandRef} value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runCommand(); } }} placeholder='submit "fix flaky heartbeat test"' aria-label="uc 命令行" /><button onClick={() => void runCommand()} disabled={!command.trim() || busy}>运行</button><kbd>↵</kbd><small>运行 · / 聚焦</small><span className="terminal-footer-status">{connected ? "后端在线" : "后端离线"} · engine {health.version ?? "—"} · {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : "waiting"}</span></footer>
-      <div className="terminal-keybar"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>6</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
+      <div className="terminal-keybar"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>7</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
       <nav className="terminal-mobile-nav" aria-label="移动端视图导航">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav>
       {fileBrowserNav && <div className="terminal-file-browser-fallback"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} /></div>}
       <div className="terminal-connection-diagnostics" aria-label="Connection diagnostics"><ConnectionPill label="Task" state={grpcState} /><ConnectionPill label="Dashboard" state={dashGrpcState} />{grpcExhausted && <button onClick={onReconnectGrpc}>↻ retry gRPC</button>}<button onClick={onReconnectDashGrpc}>↻ retry dashboard</button></div>
