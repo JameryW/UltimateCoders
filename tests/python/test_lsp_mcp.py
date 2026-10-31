@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from ultimate_coders.agent.lsp_mcp import (
@@ -70,20 +70,30 @@ def _clear_ls_cache() -> None:
 
 @pytest.fixture
 def mock_ls() -> MagicMock:
-    """A mocked LanguageServer that returns canned LSP responses."""
+    """A mocked LanguageServer that returns canned LSP responses.
+
+    multilspy 0.0.15's ``request_*`` methods are coroutines, so the mocked
+    methods are ``AsyncMock`` to match the real (awaited) contract.
+    """
     ls = MagicMock()
     ls.repository_root_path = "/workspace"
-    ls.request_definition.return_value = [_make_location("file:///workspace/other.py", 10, 4)]
-    ls.request_references.return_value = [
-        _make_location("file:///workspace/a.py", 5, 0),
-        _make_location("file:///workspace/b.py", 20, 8),
-    ]
-    ls.request_hover.return_value = _make_hover("def foo(x: int) -> str: ...")
-    ls.request_document_symbols.return_value = (
-        [_make_symbol("foo", "Function"), _make_symbol("Bar", "Class")],
-        "Module\n├─foo (Function)\n└─Bar (Class)",
+    ls.request_definition = AsyncMock(
+        return_value=[_make_location("file:///workspace/other.py", 10, 4)]
     )
-    ls.request_workspace_symbol.return_value = [_make_symbol("foo", "Function")]
+    ls.request_references = AsyncMock(
+        return_value=[
+            _make_location("file:///workspace/a.py", 5, 0),
+            _make_location("file:///workspace/b.py", 20, 8),
+        ]
+    )
+    ls.request_hover = AsyncMock(return_value=_make_hover("def foo(x: int) -> str: ..."))
+    ls.request_document_symbols = AsyncMock(
+        return_value=(
+            [_make_symbol("foo", "Function"), _make_symbol("Bar", "Class")],
+            "Module\n├─foo (Function)\n└─Bar (Class)",
+        )
+    )
+    ls.request_workspace_symbol = AsyncMock(return_value=[_make_symbol("foo", "Function")])
     return ls
 
 

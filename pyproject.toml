@@ -41,6 +41,11 @@ test = [
 lsp = [
     "multilspy==0.0.15",
 ]
+mcp = [
+    # The three stdio MCP servers (engine/fs/lsp) target the 1.x Server API:
+    # Server.run + Server.create_initialization_options over stdio_server().
+    "mcp>=1,<2",
+]
 
 [tool.maturin]
 manifest-path = "crates/uc-python/Cargo.toml"

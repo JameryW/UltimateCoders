@@ -36,11 +36,13 @@ COPY pyproject.toml ./
 # deployment does not fall back to newline splitting with ModuleNotFoundError.
 # prometheus-client powers the dashboard /metrics exporter (the dashboard
 # degrades to a stub text response without it).
+# mcp: the sandbox MCP servers (engine/fs/lsp) speak the 1.x stdio API —
+# pinned below 2.x, whose Server decorators/stdio contract are incompatible.
 RUN pip install --no-cache-dir \
     "fastapi>=0.100.0" "uvicorn>=0.20.0" "jinja2>=3.1.0" \
     "sse-starlette>=1.6.0" "nats-py>=2.7.0" \
     "anthropic>=0.30.0" "litellm>=1.0.0" \
-    "prometheus-client>=0.20.0"
+    "prometheus-client>=0.20.0" "mcp>=1,<2"
 
 # ponytail: multilspy (optional LSP dep) — install jedi-language-server (pure
 # Python, no binary download needed). Verify the import works at build time so
@@ -183,6 +185,10 @@ RUN grok --version
 # builder stage. The Python runtime and analyzer are copied only after them.
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin/rust-analyzer /usr/local/bin/rust-analyzer
+# multilspy spawns the `jedi-language-server` console script; it is generated in
+# the builder's /usr/local/bin, so copy it alongside the site-packages (without
+# it every LSP tool degrades to "Connection lost").
+COPY --from=builder /usr/local/bin/jedi-language-server /usr/local/bin/jedi-language-server
 
 # Claude Code refuses --dangerously-skip-permissions under root. Keep the
 # container entrypoint root-owned so it can initialize an existing named
