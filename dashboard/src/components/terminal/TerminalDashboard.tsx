@@ -1344,7 +1344,11 @@ export function TerminalDashboard({
                 />
               </div>
             )}
-            {view === "inference" && <div className="terminal-data-view"><InferencePanel /></div>}
+            {view === "inference" && (
+              <div className="terminal-data-view terminal-inference-layout">
+                <InferencePanel variant="terminal" />
+              </div>
+            )}
             {view === "logs" && (
               <div className="terminal-data-view terminal-logs-layout">
                 <EventLogPanel

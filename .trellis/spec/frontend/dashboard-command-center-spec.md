@@ -511,7 +511,7 @@ className={cn("terminal-worker-row", `is-${workerRowNeon(w)}`, expanded && "is-e
 
 - Trigger: User opens the **logs** tab in `TerminalDashboard` (`EventLogPanel`).
 - Pure frontend; reuses overview CC tokens + `sessionRoleForEventType`; no new Gateway RPCs.
-- Out of scope: Search/Inference redesign (Search has its own scenario below); Opus/Sonnet/Haiku/JEV branding.
+- Out of scope: Search/Inference redesign (each has its own scenario below); Opus/Sonnet/Haiku/JEV branding.
 
 ### 2. Signatures
 
@@ -637,7 +637,7 @@ Under `variant="terminal"`:
 
 - Trigger: User opens the **search** tab in `TerminalDashboard` (`SearchPanel`).
 - Pure frontend; reuses overview CC tokens (`--cc-*`); no new Gateway RPCs.
-- Out of scope: Inference redesign; Opus/Sonnet/Haiku/JEV branding.
+- Out of scope: Inference redesign (see Inference scenario below); Opus/Sonnet/Haiku/JEV branding.
 
 ### 2. Signatures
 
@@ -730,5 +730,118 @@ Under `variant="terminal"`:
 ```tsx
 <section className="terminal-search-panel">
   <li className="terminal-search-row match-semantic" data-match-type="semantic" />
+</section>
+```
+
+---
+
+## Scenario: Inference view command-center polish
+
+### 1. Scope / Trigger
+
+- Trigger: User opens the **inference** tab in `TerminalDashboard` (`InferencePanel`).
+- Pure frontend; keeps existing REST poll (`/dashboard/api/experiments`, `/dashboard/api/inference/operations`); no new gRPC / Memory RPCs.
+- Out of scope: backend reconcile/artifact topology changes; Opus/Sonnet/Haiku/JEV branding.
+
+### 2. Signatures
+
+```typescript
+// dashboard/src/components/panels/InferencePanel.tsx
+export type InferenceStateTone = "healthy" | "fail" | "pending";
+export function inferenceStateTone(state: string | null | undefined): InferenceStateTone;
+
+InferencePanel({ variant?: "default" | "terminal" })
+InferenceBoard({ experiments, operations, error?, stale?, terminal, … })
+InferenceOpsStrip / InferenceResourceRows / InferenceExperimentRows / InferenceRecoveryList
+
+// TerminalDashboard inference shell
+<div className="terminal-data-view terminal-inference-layout">
+  <InferencePanel variant="terminal" />
+</div>
+```
+
+### 3. Contracts
+
+#### Shell
+
+- Inference view wraps the panel in `.terminal-data-view.terminal-inference-layout`.
+- Terminal path drops bare unstyled `<h2>` chrome; renders `.terminal-inference-panel` with `.terminal-inference-head` / `.cc-session-log-head` showing `experiments N · recovery M`.
+- Optional frontend-only stale: when last successful poll age exceeds ~2 poll intervals (~10s), show `.terminal-inference-stale` + `.is-stale` panel border (lead-toned).
+
+#### Ops strip
+
+- Pending outbox / oldest wait / cleanup leases use `.terminal-inference-stat` with `--cc-*` / `--terminal-*` tones only.
+- Terminal path must **not** use Tailwind blue/red pills (`bg-blue-*`, `text-red-400` status chips, etc.).
+
+#### Rows
+
+Under `variant="terminal"`:
+
+| Element | Class / token |
+|---------|----------------|
+| Row | `.terminal-inference-row` + `.tone-{healthy\|fail\|pending}` |
+| healthy / accepted | `--cc-dispatch` |
+| fail / rejected | `--terminal-red` |
+| pending / unknown / running | `--cc-lead` / amber |
+| Artifact download | `.terminal-inference-chip` (`data-testid="terminal-inference-chip-artifact"`) |
+| Recovery | `.terminal-inference-recovery` + chip buttons (not `border rounded` Card) |
+
+- Keep reconcile POST + artifact download behavior identical to the default path.
+- Default variant may keep legacy `<h2>` + plain table markup.
+
+#### Empty / error
+
+- Empty → `.terminal-empty-line` (`waiting for inference experiments…`).
+- Error → `.terminal-inference-error` (`role="alert"`).
+
+#### Reduced motion
+
+- `.terminal-inference-chip` / `.terminal-inference-row` transitions disabled under `prefers-reduced-motion: reduce`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|-----------|----------|
+| Terminal + experiments | neon rows + artifact chips; head counts |
+| Terminal + empty | empty line; ops strip still visible |
+| Terminal + error | error alert; no bare h2 |
+| Terminal + recovery job | recovery strip + reconcile chip |
+| Poll age > 2 intervals | stale banner (terminal only) |
+| Default variant | `<h2>推理实验与资源</h2>` + plain tables |
+
+### 5. Good / Base / Bad Cases
+
+**Good**: Mixed accepted / rejected / pending experiments with artifact chips and a `cleanup_pending` recovery job → dispatch/red/lead tones, recovery chip, head `experiments N · recovery M`.
+
+**Base**: Empty ops + empty experiments → waiting line; ops stats at zero.
+
+**Bad**: Tailwind blue/red pills on terminal path; inventing model personas; new Gateway RPCs.
+
+### 6. Tests Required
+
+| Test | Assertion |
+|------|-----------|
+| `inferenceStateTone` | accepted→healthy; rejected→fail; pending/unknown→pending |
+| Terminal SSR board | panel/head/ops/row/chip/empty/error/recovery testids |
+| Shell | `terminal-inference-layout` + `variant="terminal"` from TerminalDashboard |
+| No Tailwind pills | no `bg-blue-` / `text-red-400` / `border-blue` on terminal path |
+| CSS | `.terminal-inference-layout`, `.tone-healthy`→`--cc-dispatch`, reduced-motion |
+| Default variant | `<h2>推理实验与资源</h2>`; no terminal panel testid |
+
+### 7. Wrong vs Correct
+
+#### Wrong: bare h2 + Tailwind recovery card in terminal mode
+
+```tsx
+<section><h2>推理实验与资源</h2><div className="border rounded p-3 bg-blue-500/20">…</div></section>
+```
+
+#### Correct: terminal shell + recovery strip
+
+```tsx
+<section className="terminal-inference-panel">
+  <div className="terminal-inference-recovery tone-pending">
+    <button className="terminal-inference-chip is-active lead">验证退出证据</button>
+  </div>
 </section>
 ```
