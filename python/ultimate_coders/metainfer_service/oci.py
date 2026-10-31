@@ -82,8 +82,6 @@ class LocalOCI:
             "ALL",
             "--security-opt",
             "no-new-privileges",
-            "--pid",
-            "private",
             "--cgroupns",
             "private",
             "--restart",
@@ -98,6 +96,12 @@ class LocalOCI:
             command[0],
             *self._gpu_arguments(),
         ]
+        if self.executable == "podman":
+            # Podman needs an explicit private PID namespace. Docker's default
+            # already IS a private PID namespace and rejects the literal
+            # "private" for --pid ("invalid PID mode"), so only pass it for
+            # Podman.
+            arguments += ["--pid", "private"]
         if self.rootless:
             arguments += ["--userns", "keep-id"]
         for key, value in labels.items():
