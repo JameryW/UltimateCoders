@@ -139,8 +139,9 @@ test("the operations dashboard opens on the live command-center overview", async
     assert.match(html, />42%</);
     assert.match(html, /review · in flight/);
     assert.doesNotMatch(html, /Opus|Sonnet|Haiku|Claude Code|JEV/);
-    assert.doesNotMatch(html, /preview · sample/);
+    assert.doesNotMatch(html, /preview · not live data/);
     assert.doesNotMatch(html, /data-cc-preview="sample"/);
+    assert.doesNotMatch(html, />SAMPLE</);
     // Overview hero: left command rail collapsed (mobile quick actions may still exist).
     assert.doesNotMatch(html, /terminal-command-rail/);
     // Completed subtasks must not steal the swarm row when nothing else is running.
@@ -433,7 +434,8 @@ test("command-center preview activates offline with empty cluster and drops when
     const previewHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, emptyClusterProps()));
     assert.match(previewHtml, /data-cc-preview="sample"/);
     assert.match(previewHtml, /data-testid="cc-preview-banner"/);
-    assert.match(previewHtml, /preview · sample — waiting for gateway/);
+    assert.match(previewHtml, />SAMPLE</);
+    assert.match(previewHtml, /preview · not live data — waiting for gateway/);
     assert.match(previewHtml, /Ship command-center live board/);
     assert.match(previewHtml, /preview-a|preview-b|preview-c/);
     assert.match(previewHtml, /◐ running/);
@@ -442,6 +444,13 @@ test("command-center preview activates offline with empty cluster and drops when
     assert.match(previewHtml, /data-active-stage="swarm"/);
     assert.doesNotMatch(previewHtml, /terminal-command-rail/);
     assert.doesNotMatch(previewHtml, /Opus|Sonnet|Haiku|Claude Code|JEV/);
+
+    // Offline + residual totals must not fake a sample board.
+    assert.equal(shouldUseCommandCenterPreview({
+      connected: false,
+      tasks: { tasks: [], total: 2 },
+      workers: { workers: [], total: 0 },
+    }), false);
 
     const liveHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, emptyClusterProps({
       connected: true,
@@ -463,7 +472,8 @@ test("command-center preview activates offline with empty cluster and drops when
         available_count: 1,
       },
     })));
-    assert.doesNotMatch(liveHtml, /preview · sample/);
+    assert.doesNotMatch(liveHtml, /preview · not live data/);
+    assert.doesNotMatch(liveHtml, />SAMPLE</);
     assert.doesNotMatch(liveHtml, /data-cc-preview="sample"/);
     assert.doesNotMatch(liveHtml, /Ship command-center live board/);
     assert.match(liveHtml, /data-cc-preview="live"/);
