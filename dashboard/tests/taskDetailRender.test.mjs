@@ -38,6 +38,230 @@ test("selecting a historical task renders persisted subtask state and result", a
     }));
     assert.match(html, /Task detail: Read README heading/);
     assert.match(html, /# UltimateCoders/);
+    assert.match(html, /terminal-task-row[^"]*is-selected|is-selected[^"]*terminal-task-row/);
+  } finally {
+    await vite.close();
+  }
+});
+
+test("tasks command-center: list chip, live strip, swarm rows, session log roles", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const progress = await vite.ssrLoadModule("/src/lib/taskProgress.ts");
+    const {
+      aggregateSubtaskProgress,
+      taskListProgressChip,
+      sessionRoleForEventType,
+    } = progress;
+
+    assert.equal(sessionRoleForEventType("task_submitted"), "lead");
+    assert.equal(sessionRoleForEventType("subtask_started"), "swarm");
+    assert.equal(sessionRoleForEventType("tool_call"), "dispatch");
+    assert.equal(sessionRoleForEventType("llm_request"), "advisor");
+
+    const subtasks = [
+      {
+        id: "swarm-done",
+        description: "Done piece",
+        status: "completed",
+        depends_on: [],
+        percent: 100,
+        step_status: "completed",
+      },
+      {
+        id: "swarm-run",
+        description: "Wire session log",
+        status: "in_progress",
+        depends_on: [],
+        percent: 42,
+        phase: "executing",
+        step_agent: "codex",
+        step_status: "started",
+        assigned_worker: "worker-alpha",
+      },
+      {
+        id: "swarm-idle",
+        description: "Pending piece",
+        status: "pending",
+        depends_on: [],
+      },
+    ];
+    const agg = aggregateSubtaskProgress(subtasks);
+    assert.equal(agg.completed, 1);
+    assert.equal(agg.total, 3);
+    assert.equal(agg.percent, 71); // mean of 100 + 42
+    assert.equal(agg.phase, "executing");
+    assert.equal(agg.stepAgent, "codex");
+    assert.equal(agg.hasRunning, true);
+
+    const chip = taskListProgressChip({ status: "in_progress", subtasks });
+    assert.deepEqual(chip, { percent: 71, phase: "executing" });
+    assert.equal(taskListProgressChip({ status: "completed", subtasks }), null);
+
+    const { TasksPanel } = await vite.ssrLoadModule("/src/components/panels/TasksPanel.tsx");
+    const { TaskDetail } = await vite.ssrLoadModule("/src/components/panels/TaskDetail.tsx");
+    const { InteractionLog } = await vite.ssrLoadModule("/src/components/panels/InteractionLog.tsx");
+    const { TerminalDashboard } = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+
+    const running = {
+      id: "cc-task",
+      description: "Polish tasks command center",
+      status: "in_progress",
+      project_id: "repo",
+      subtask_count: 3,
+      created_at: "2026-09-24T01:00:00Z",
+      updated_at: "2026-09-24T02:00:00Z",
+      subtasks,
+    };
+
+    const listHtml = renderToStaticMarkup(React.createElement(TasksPanel, {
+      data: { available: true, tasks: [running], total: 1, status_counts: { in_progress: 1 }, pending_task_count: 0 },
+      interactionLog: {},
+      onSelectTask: () => {},
+      selectedTaskId: running.id,
+      showInlineDetail: false,
+      onPauseTask: () => {},
+      onCancelTask: () => {},
+    }));
+    assert.match(listHtml, /data-testid="terminal-task-row"/);
+    assert.match(listHtml, /terminal-task-row[^"]*\bis-selected\b|\bis-selected\b[^"]*terminal-task-row/);
+    assert.match(listHtml, /data-testid="terminal-task-progress-chip"/);
+    assert.match(listHtml, /71% · executing/);
+    assert.doesNotMatch(listHtml, /border-l-blue-500/);
+
+    const events = [
+      {
+        timestamp: "2026-10-31T12:00:10Z",
+        type: "task_submitted",
+        task_id: running.id,
+        data: { description: running.description },
+      },
+      {
+        timestamp: "2026-10-31T12:00:20Z",
+        type: "subtask_started",
+        task_id: running.id,
+        subtask_id: "swarm-run",
+        data: { description: "Wire session log", worker_id: "worker-alpha" },
+      },
+      {
+        timestamp: "2026-10-31T12:00:30Z",
+        type: "tool_call",
+        task_id: running.id,
+        subtask_id: "swarm-run",
+        data: { tool: "read", input_summary: "README.md" },
+      },
+      {
+        timestamp: "2026-10-31T12:00:40Z",
+        type: "llm_request",
+        task_id: running.id,
+        subtask_id: "swarm-run",
+        data: { model: "gateway-llm" },
+      },
+    ];
+
+    const detailHtml = renderToStaticMarkup(React.createElement(TaskDetail, {
+      task: running,
+      interactionLog: events,
+      variant: "terminal",
+    }));
+    assert.match(detailHtml, /data-testid="terminal-swarm-list"/);
+    assert.match(detailHtml, /data-testid="terminal-swarm-row"/);
+    assert.match(detailHtml, /◐ running/);
+    assert.match(detailHtml, /✓ done/);
+    assert.match(detailHtml, />42%</);
+    assert.match(detailHtml, /executing/);
+    assert.match(detailHtml, /codex/);
+    assert.match(detailHtml, /worker-a/);
+    assert.match(detailHtml, /swarm · subtasks/);
+    assert.doesNotMatch(detailHtml, /Timeline:/);
+    assert.doesNotMatch(detailHtml, /🔧|▶️|📤|✅|❌/);
+    assert.doesNotMatch(detailHtml, /Opus|Sonnet|Haiku|JEV/);
+    assert.match(detailHtml, /cc-session-row cc-session-role-lead/);
+    assert.match(detailHtml, /cc-session-row cc-session-role-swarm/);
+    assert.match(detailHtml, /cc-session-row cc-session-role-dispatch/);
+    assert.match(detailHtml, /cc-session-row cc-session-role-advisor/);
+    assert.match(detailHtml, /data-session-role="lead"/);
+    assert.match(detailHtml, /data-session-role="swarm"/);
+    assert.match(detailHtml, /data-session-role="dispatch"/);
+    assert.match(detailHtml, /data-session-role="advisor"/);
+
+    // Default variant still keeps the emoji timeline for non-terminal surfaces.
+    const legacyHtml = renderToStaticMarkup(React.createElement(TaskDetail, {
+      task: running,
+      interactionLog: events,
+      variant: "default",
+    }));
+    assert.match(legacyHtml, /Timeline:/);
+    assert.doesNotMatch(legacyHtml, /data-testid="terminal-swarm-list"/);
+
+    const logHtml = renderToStaticMarkup(React.createElement(InteractionLog, { events, variant: "terminal" }));
+    assert.match(logHtml, /cc-session-role-lead/);
+    assert.match(logHtml, /cc-session-role-swarm/);
+    assert.match(logHtml, /cc-session-role-dispatch/);
+    assert.match(logHtml, /cc-session-role-advisor/);
+    assert.doesNotMatch(logHtml, /🔧|▶️|●/);
+    // Identity-stable keys (timestamp|type|task|subtask) — no trailing index suffix.
+    const logSource = readFileSync(join(dashboardRoot, "src/components/panels/InteractionLog.tsx"), "utf8");
+    assert.match(logSource, /interactionEventKey/);
+    assert.doesNotMatch(logSource, /key=\{`\$\{ev\.timestamp\}-\$\{ev\.type\}-\$\{rowIndex\}`\}/);
+
+    const dashHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", version: "0.2.1", components: [] },
+      workers: { available: true, workers: [], total: 0, available_count: 0 },
+      tasks: { available: true, tasks: [running], total: 1, status_counts: { in_progress: 1 }, pending_task_count: 0 },
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [],
+      metrics: null,
+      interactionLog: { [running.id]: events },
+      selectedTask: running,
+      selectedTaskId: running.id,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+      initialView: "tasks",
+    }));
+    assert.match(dashHtml, /data-testid="terminal-task-live-strip"/);
+    assert.match(dashHtml, /terminal-mini-bar blue/);
+    assert.match(dashHtml, /1\/3/);
+    assert.match(dashHtml, /data-testid="terminal-task-live-phase"/);
+    assert.match(dashHtml, /executing · codex/);
+    assert.match(dashHtml, /data-testid="terminal-swarm-list"/);
+    assert.match(dashHtml, /◐ running/);
+    assert.match(dashHtml, /terminal-task-row/);
+    assert.match(dashHtml, /data-testid="terminal-task-progress-chip"/);
+    assert.doesNotMatch(dashHtml, /Timeline:/);
+    assert.doesNotMatch(dashHtml, /border-l-blue-500/);
+    assert.doesNotMatch(dashHtml, /Opus|Sonnet|Haiku|Claude Code|JEV/);
+
+    const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
+    assert.match(css, /\.terminal-task-layout \.status-in_progress[\s\S]*?--cc-swarm/);
+    assert.match(css, /\.terminal-task-layout \.status-completed[\s\S]*?--cc-dispatch/);
+    assert.match(css, /\.terminal-task-layout \.status-failed[\s\S]*?--terminal-red/);
+    assert.match(css, /\.terminal-task-layout \.status-paused[\s\S]*?--cc-lead/);
+    assert.match(css, /\.btn-action-warn[\s\S]*?--cc-lead/);
+    assert.match(css, /\.terminal-task-row\.is-selected/);
+    assert.match(css, /\.terminal-task-live-strip/);
+    assert.match(css, /\.terminal-swarm-marker\.running/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.terminal-swarm-marker\.running[\s\S]*?animation:\s*none/);
+    assert.match(css, /\.cc-session-role-lead[\s\S]*?--cc-lead/);
+    assert.match(css, /\.cc-session-role-swarm[\s\S]*?--cc-swarm/);
   } finally {
     await vite.close();
   }

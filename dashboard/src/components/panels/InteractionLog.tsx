@@ -1,11 +1,19 @@
 import { useRef, useCallback, useMemo, memo, useState, useEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { TaskEvent } from "@/types/dashboard";
+import { sessionRoleForEventType } from "@/lib/taskProgress";
 import { cn } from "@/lib/utils";
 
 interface InteractionLogProps {
   events: TaskEvent[];
   filterSubtaskId?: string;
+  /** Command-center monospaced session rows (role colors, no emoji dots). */
+  variant?: "default" | "terminal";
+}
+
+/** Identity-stable list key — no row index (prepends must not remount siblings). */
+function interactionEventKey(ev: TaskEvent): string {
+  return `${ev.timestamp}|${ev.type}|${ev.task_id ?? ""}|${ev.subtask_id ?? ""}`;
 }
 
 function eventTypeStyle(type: string): { border: string; dot: string } {
@@ -73,7 +81,8 @@ const EVENT_TYPE_FILTERS = [
   { key: "subtask", label: "Subtasks", match: (t: string) => t.startsWith("subtask_") },
 ] as const;
 
-export const InteractionLog = memo(function InteractionLog({ events, filterSubtaskId }: InteractionLogProps) {
+export const InteractionLog = memo(function InteractionLog({ events, filterSubtaskId, variant = "default" }: InteractionLogProps) {
+  const terminal = variant === "terminal";
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -159,28 +168,68 @@ export const InteractionLog = memo(function InteractionLog({ events, filterSubta
         >
           {filtered.length === 0 ? (
             <p className="text-xs text-[var(--text-muted)] py-2">No matching events</p>
-          ) : (
-            <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-              {virtualizer.getVirtualItems().map((virtualRow) => {
-                const ev = filtered[virtualRow.index]!;
+          ) : (() => {
+            const virtualItems = virtualizer.getVirtualItems();
+            // SSR / zero-metric scroll parents yield no virtual rows — fall back to a
+            // capped static list so terminal session roles still render in markup.
+            const rowIndexes = virtualItems.length > 0
+              ? virtualItems.map((item) => item.index)
+              : filtered.slice(0, 40).map((_, index) => index);
+            const useVirtualLayout = virtualItems.length > 0;
+            return (
+            <div style={useVirtualLayout ? { height: virtualizer.getTotalSize(), position: "relative" } : undefined}>
+              {rowIndexes.map((rowIndex) => {
+                const ev = filtered[rowIndex]!;
                 const style = eventTypeStyle(ev.type);
+                const role = sessionRoleForEventType(ev.type);
+                const virtualRow = virtualItems.find((item) => item.index === rowIndex);
                 const time = ev.timestamp
-                  ? new Date(ev.timestamp).toLocaleTimeString()
-                  : "--";
-                const isExpanded = expandedIdx === virtualRow.index;
+                  ? new Date(ev.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+                  : "--:--:--";
+                const isExpanded = expandedIdx === rowIndex;
                 const canExpand = hasDetailData(ev);
-                return (
-                  <div
-                    key={`${ev.timestamp}-${ev.type}-${virtualRow.index}`}
-                    className={`border-l-2 ${style.border} pl-2 py-0.5 text-xs ${canExpand ? "cursor-pointer hover:bg-[var(--bg-surface-alt)]/30" : ""}`}
-                    style={{
-                      position: "absolute",
+                const layoutStyle = useVirtualLayout && virtualRow
+                  ? {
+                      position: "absolute" as const,
                       top: virtualRow.start,
                       left: 0,
                       width: "100%",
                       height: virtualRow.size,
-                    }}
-                    onClick={() => canExpand && setExpandedIdx(isExpanded ? null : virtualRow.index)}
+                    }
+                  : undefined;
+                const rowKey = interactionEventKey(ev);
+                if (terminal) {
+                  return (
+                    <div
+                      key={rowKey}
+                      className={cn(
+                        "cc-session-row",
+                        `cc-session-role-${role}`,
+                        canExpand && "cc-session-expandable",
+                      )}
+                      data-session-role={role}
+                      data-event-type={ev.type}
+                      style={layoutStyle}
+                      onClick={() => canExpand && setExpandedIdx(isExpanded ? null : rowIndex)}
+                    >
+                      <span className="cc-session-line">
+                        <time>{time}</time>
+                        {" "}
+                        <span className="cc-session-role">{role}</span>
+                        {" "}
+                        <span className="cc-session-msg">{eventContent(ev)}</span>
+                        {canExpand && <span className="cc-session-expand">{isExpanded ? "[-]" : "[+]"}</span>}
+                      </span>
+                      {isExpanded && renderDetail(ev)}
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    key={rowKey}
+                    className={`border-l-2 ${style.border} pl-2 py-0.5 text-xs ${canExpand ? "cursor-pointer hover:bg-[var(--bg-surface-alt)]/30" : ""}`}
+                    style={layoutStyle}
+                    onClick={() => canExpand && setExpandedIdx(isExpanded ? null : rowIndex)}
                   >
                     <span className="text-[var(--text-muted)] mr-1">{time}</span>
                     <span className={style.dot}>●</span>{" "}
@@ -191,7 +240,8 @@ export const InteractionLog = memo(function InteractionLog({ events, filterSubta
                 );
               })}
             </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* "Return to latest" button */}
