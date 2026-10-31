@@ -220,6 +220,8 @@ const STAGE_ORDER: CommandCenterStage[] = ["idle", "lead", "dispatch", "swarm", 
 /** Start on swarm so connector particles + stage glow are visible in the offline sample. */
 const PREVIEW_STAGE_CYCLE: CommandCenterStage[] = ["swarm", "dispatch", "swarm", "review", "lead"];
 
+export const COMMAND_CENTER_IDLE_TIP = "» submit a task to see live flow";
+
 type SwarmCard = {
   id: string;
   title: string;
@@ -228,6 +230,81 @@ type SwarmCard = {
   done: boolean;
   running: boolean;
 };
+
+export type StatusPillValues = {
+  workers: string;
+  tasks: string;
+  queue: string;
+  grpc: string;
+  dash: string;
+  events: string;
+  backend: string;
+};
+
+/** Diff pill snapshots so StatusPillBar can flash only changed keys. */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested helper
+export function changedPillKeys(prev: StatusPillValues | null, next: StatusPillValues): Array<keyof StatusPillValues> {
+  if (!prev) return [];
+  return (Object.keys(next) as Array<keyof StatusPillValues>).filter((key) => prev[key] !== next[key]);
+}
+
+function taskEventToDashboardEvent(event: TaskEvent): DashboardEvent {
+  return {
+    timestamp: event.timestamp,
+    type: event.type,
+    details: {
+      task_id: event.task_id,
+      ...(event.subtask_id ? { subtask_id: event.subtask_id } : {}),
+      ...(event.data ?? {}),
+    },
+  };
+}
+
+/** Stable identity for session rows — no list index (indexes shift when newer events prepend). */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested helper
+export function sessionLogEventKey(event: DashboardEvent): string {
+  const taskId = typeof event.details?.task_id === "string" ? event.details.task_id : "";
+  const subtaskId = typeof event.details?.subtask_id === "string" ? event.details.subtask_id : "";
+  return `${event.timestamp}|${event.type}|${taskId}|${subtaskId}`;
+}
+
+/** Merge dashboard eventLog with selected/lead interaction events (newest first, capped). */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested helper
+export function mergeSessionLogEvents(
+  eventLog: DashboardEvent[],
+  interactionEvents: TaskEvent[],
+  limit = 8,
+): DashboardEvent[] {
+  const merged = [
+    ...(eventLog ?? []),
+    ...(interactionEvents ?? []).map(taskEventToDashboardEvent),
+  ];
+  merged.sort((a, b) => {
+    const ta = Date.parse(a.timestamp) || 0;
+    const tb = Date.parse(b.timestamp) || 0;
+    return tb - ta;
+  });
+  const seen = new Set<string>();
+  const unique: DashboardEvent[] = [];
+  for (const event of merged) {
+    const key = sessionLogEventKey(event);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(event);
+    if (unique.length >= limit) break;
+  }
+  return unique;
+}
+
+/** Connected + empty/idle board (not SAMPLE preview) — show quiet submit tip. */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested helper
+export function isCommandCenterConnectedIdle(input: {
+  connected: boolean;
+  previewMode: boolean;
+  stage: CommandCenterStage;
+}): boolean {
+  return input.connected && !input.previewMode && input.stage === "idle";
+}
 
 /** Offline + empty cluster → show unmistakably-labeled sample board (not production data). */
 // eslint-disable-next-line react-refresh/only-export-components -- unit-tested preview gate
@@ -461,13 +538,21 @@ function formatSessionStamp(timestamp: string): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
+const SESSION_DETAIL_SKIP = new Set(["task_id", "subtask_id"]);
+
 function sessionLogLine(event: DashboardEvent): string {
   const type = event.type.replace(/_/g, " ");
-  const detailKeys = Object.keys(event.details ?? {});
+  const details = event.details ?? {};
+  const detailKeys = Object.keys(details);
+  // Prefer payload keys (tool/worker/percent) over id fields for the two-slot preview.
+  const preferred = [
+    ...detailKeys.filter((key) => !SESSION_DETAIL_SKIP.has(key)),
+    ...detailKeys.filter((key) => SESSION_DETAIL_SKIP.has(key)),
+  ].slice(0, 2);
   let detail = "";
-  if (detailKeys.length > 0) {
-    detail = detailKeys.slice(0, 2).map((key) => {
-      const value = event.details[key];
+  if (preferred.length > 0) {
+    detail = preferred.map((key) => {
+      const value = details[key];
       if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
         return `${key}=${String(value).slice(0, 28)}`;
       }
@@ -485,9 +570,10 @@ function OverviewView({
   metrics,
   connected,
   selectedTask,
+  interactionLog,
   onView,
   onSelectTask,
-}: Pick<TerminalDashboardProps, "health" | "workers" | "tasks" | "eventLog" | "metrics" | "connected" | "selectedTask"> & {
+}: Pick<TerminalDashboardProps, "health" | "workers" | "tasks" | "eventLog" | "metrics" | "connected" | "selectedTask" | "interactionLog"> & {
   onView: (view: TerminalView) => void;
   onSelectTask: (taskId: string | null) => void;
 }) {
@@ -495,6 +581,8 @@ function OverviewView({
   // Tick only advances while previewMode is on; leaving preview stops the timer
   // without a sync setState reset (react-hooks/set-state-in-effect).
   const [previewTick, setPreviewTick] = useState(0);
+  const knownSessionKeysRef = useRef<Set<string> | null>(null);
+  const [enteringSessionKeys, setEnteringSessionKeys] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     if (!previewMode || typeof window === "undefined") return;
@@ -520,7 +608,9 @@ function OverviewView({
   const liveLead = pickLeadTask(tasks, selectedTask);
   const liveSwarm = collectSwarmCards(liveLead, workers);
   const liveReview = reviewCue(liveLead, selectedTask);
-  const liveSessionEvents = latestDashboardEvents(eventLog ?? [], 8);
+  const focusTaskId = selectedTask?.id ?? liveLead?.id;
+  const interactionEvents = focusTaskId ? (interactionLog?.[focusTaskId] ?? []) : [];
+  const liveSessionEvents = mergeSessionLogEvents(eventLog ?? [], interactionEvents, 8);
   const liveStage = deriveActiveStage({
     connected,
     lead: liveLead,
@@ -541,6 +631,11 @@ function OverviewView({
   const queuePercent = preview?.queuePercent ?? liveQueuePercent;
   const runningTasks = preview?.runningTasks ?? liveRunningTasks;
   const activeStage = preview?.stage ?? liveStage;
+  const showIdleTip = isCommandCenterConnectedIdle({
+    connected,
+    previewMode,
+    stage: activeStage,
+  });
   const flow = connectorFlowsFor(activeStage);
   const boardHealth = preview?.health ?? health;
   const boardEvents = preview?.advice ?? eventLog;
@@ -571,6 +666,37 @@ function OverviewView({
         pending_task_count: preview.pending,
       }
     : tasks;
+
+  const sessionKeys = sessionEvents.map((event) => sessionLogEventKey(event));
+  const sessionKeySignature = sessionKeys.join("|");
+
+  useEffect(() => {
+    // Defer setState into timers so we never sync-setState in the effect body
+    // (react-hooks/set-state-in-effect). Keys are identity-stable — no index.
+    if (previewMode) {
+      knownSessionKeysRef.current = new Set(sessionKeys);
+      const clearTimer = window.setTimeout(() => {
+        setEnteringSessionKeys((prev) => (prev.size === 0 ? prev : new Set()));
+      }, 0);
+      return () => window.clearTimeout(clearTimer);
+    }
+    const known = knownSessionKeysRef.current;
+    if (!known) {
+      knownSessionKeysRef.current = new Set(sessionKeys);
+      return;
+    }
+    const fresh = sessionKeys.filter((key) => !known.has(key));
+    knownSessionKeysRef.current = new Set(sessionKeys);
+    if (fresh.length === 0) return;
+    const startTimer = window.setTimeout(() => setEnteringSessionKeys(new Set(fresh)), 0);
+    const clearTimer = window.setTimeout(() => setEnteringSessionKeys(new Set()), 520);
+    return () => {
+      window.clearTimeout(startTimer);
+      window.clearTimeout(clearTimer);
+    };
+    // sessionKeys is mirrored by sessionKeySignature for eslint-static deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- signature tracks key identity joins
+  }, [previewMode, sessionKeySignature]);
 
   return (
     <div className={`terminal-overview cc-board${previewMode ? " cc-preview" : ""}`} data-cc-preview={previewMode ? "sample" : "live"}>
@@ -623,6 +749,9 @@ function OverviewView({
               <span>{lead ? lead.status : connected ? "idle" : "offline"}</span>
               <span>{runningTasks} running · engine {boardHealth.version ?? "—"}</span>
             </div>
+            {showIdleTip && (
+              <div className="cc-idle-tip" data-testid="cc-idle-tip">{COMMAND_CENTER_IDLE_TIP}</div>
+            )}
           </button>
 
           <div
@@ -661,10 +790,11 @@ function OverviewView({
           <div className={`cc-swarm-row${activeStage === "swarm" ? " cc-stage-active" : ""}`} data-stage="swarm">
             {swarm.length === 0 ? (
               <div className="cc-swarm-empty">no running subtasks or workers</div>
-            ) : swarm.map((card) => (
+            ) : swarm.map((card, index) => (
               <button
                 key={card.id}
-                className={`cc-card swarm${activeStage === "swarm" && card.running ? " cc-stage-active" : ""}`}
+                className={`cc-card swarm cc-swarm-enter${activeStage === "swarm" && card.running ? " cc-stage-active" : ""}`}
+                style={{ animationDelay: `${index * 45}ms` }}
                 onClick={() => onView(previewMode || lead?.subtasks?.length ? "tasks" : "workers")}
                 title={card.id}
               >
@@ -717,32 +847,37 @@ function OverviewView({
           <button onClick={() => onView("logs")}>all events</button>
         </div>
         {sessionEvents.length === 0 ? (
-          <div className="terminal-empty-line">waiting for live events…</div>
-        ) : sessionEvents.map((event, index) => (
-          <button
-            key={`${event.timestamp}-${event.type}-${index}`}
-            className="cc-session-row"
-            onClick={() => {
-              if (previewMode) {
-                onView("logs");
-                return;
-              }
-              const taskId = typeof event.details.task_id === "string" ? event.details.task_id : null;
-              if (taskId) {
-                onSelectTask(taskId);
-                onView("tasks");
-              } else {
-                onView("logs");
-              }
-            }}
-          >
-            <span className="cc-session-line">
-              <time>{formatSessionStamp(event.timestamp)}</time>
-              {" "}
-              <span className="cc-session-msg">{sessionLogLine(event)}</span>
-            </span>
-          </button>
-        ))}
+          <div className="terminal-empty-line" data-testid={showIdleTip ? "cc-idle-tip-log" : undefined}>
+            {showIdleTip ? COMMAND_CENTER_IDLE_TIP : "waiting for live events…"}
+          </div>
+        ) : sessionEvents.map((event, index) => {
+          const rowKey = sessionKeys[index] ?? sessionLogEventKey(event);
+          return (
+            <button
+              key={rowKey}
+              className={`cc-session-row${enteringSessionKeys.has(rowKey) ? " cc-session-row-enter" : ""}`}
+              onClick={() => {
+                if (previewMode) {
+                  onView("logs");
+                  return;
+                }
+                const taskId = typeof event.details?.task_id === "string" ? event.details.task_id : null;
+                if (taskId) {
+                  onSelectTask(taskId);
+                  onView("tasks");
+                } else {
+                  onView("logs");
+                }
+              }}
+            >
+              <span className="cc-session-line">
+                <time>{formatSessionStamp(event.timestamp)}</time>
+                {" "}
+                <span className="cc-session-msg">{sessionLogLine(event)}</span>
+              </span>
+            </button>
+          );
+        })}
       </section>
 
       <p className="terminal-help-line">提示：顶栏 <kbd>1</kbd>–<kbd>7</kbd> 切视图 · <kbd>Ctrl</kbd><kbd>K</kbd> 聚焦命令 · <kbd>/</kbd> 命令行</p>
@@ -785,15 +920,58 @@ function StatusPillBar({
 }: Pick<TerminalDashboardProps, "connected" | "grpcState" | "dashGrpcState" | "workers" | "tasks" | "eventLog">) {
   const onlineWorkers = (workers.workers ?? []).filter((worker) => worker.is_available).length;
   const runningTasks = (tasks.tasks ?? []).filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
+  const pillValues: StatusPillValues = {
+    workers: `${onlineWorkers}/${workers.total}`,
+    tasks: String(runningTasks),
+    queue: String(tasks.pending_task_count ?? 0),
+    grpc: grpcState,
+    dash: dashGrpcState,
+    events: String(eventLog.length),
+    backend: connected ? "online" : "offline",
+  };
+  const prevPillRef = useRef<StatusPillValues | null>(null);
+  const [flashing, setFlashing] = useState<Set<keyof StatusPillValues>>(() => new Set());
+  const pillWorkers = pillValues.workers;
+  const pillTasks = pillValues.tasks;
+  const pillQueue = pillValues.queue;
+  const pillGrpc = pillValues.grpc;
+  const pillDash = pillValues.dash;
+  const pillEvents = pillValues.events;
+  const pillBackend = pillValues.backend;
+
+  useEffect(() => {
+    const next: StatusPillValues = {
+      workers: pillWorkers,
+      tasks: pillTasks,
+      queue: pillQueue,
+      grpc: pillGrpc,
+      dash: pillDash,
+      events: pillEvents,
+      backend: pillBackend,
+    };
+    const changed = changedPillKeys(prevPillRef.current, next);
+    prevPillRef.current = next;
+    if (changed.length === 0) return;
+    // Timer-deferred setState avoids react-hooks/set-state-in-effect.
+    const startTimer = window.setTimeout(() => setFlashing(new Set(changed)), 0);
+    const clearTimer = window.setTimeout(() => setFlashing(new Set()), 600);
+    return () => {
+      window.clearTimeout(startTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [pillWorkers, pillTasks, pillQueue, pillGrpc, pillDash, pillEvents, pillBackend]);
+
+  const flashClass = (key: keyof StatusPillValues) => (flashing.has(key) ? " cc-pill-flash" : "");
+
   return (
     <div className="cc-status-pills" aria-label="Live status">
-      <span className={`cc-pill swarm ${onlineWorkers > 0 ? "hot" : ""}`}>workers [{onlineWorkers}/{workers.total}]</span>
-      <span className={`cc-pill lead ${runningTasks > 0 ? "hot" : ""}`}>tasks [{runningTasks} running]</span>
-      <span className={`cc-pill dispatch ${(tasks.pending_task_count ?? 0) > 0 ? "hot" : ""}`}>queue [{tasks.pending_task_count ?? 0}]</span>
-      <span className={`cc-pill ${grpcState === "connected" ? "hot lead" : ""}`}>grpc [{grpcState}]</span>
-      <span className={`cc-pill ${dashGrpcState === "connected" ? "hot advisor" : "advisor"}`}>dash [{dashGrpcState}]</span>
-      <span className="cc-pill advisor">events [{eventLog.length}]</span>
-      <span className={`cc-pill ${connected ? "hot dispatch" : ""}`}>{connected ? "backend [online]" : "backend [offline]"}</span>
+      <span className={`cc-pill swarm ${onlineWorkers > 0 ? "hot" : ""}${flashClass("workers")}`}>workers [{pillValues.workers}]</span>
+      <span className={`cc-pill lead ${runningTasks > 0 ? "hot" : ""}${flashClass("tasks")}`}>tasks [{pillValues.tasks} running]</span>
+      <span className={`cc-pill dispatch ${(tasks.pending_task_count ?? 0) > 0 ? "hot" : ""}${flashClass("queue")}`}>queue [{pillValues.queue}]</span>
+      <span className={`cc-pill ${grpcState === "connected" ? "hot lead" : ""}${flashClass("grpc")}`}>grpc [{pillValues.grpc}]</span>
+      <span className={`cc-pill ${dashGrpcState === "connected" ? "hot advisor" : "advisor"}${flashClass("dash")}`}>dash [{pillValues.dash}]</span>
+      <span className={`cc-pill advisor${flashClass("events")}`}>events [{pillValues.events}]</span>
+      <span className={`cc-pill ${connected ? "hot dispatch" : ""}${flashClass("backend")}`}>{connected ? "backend [online]" : "backend [offline]"}</span>
     </div>
   );
 }
@@ -965,7 +1143,7 @@ export function TerminalDashboard({
         <section className="terminal-main-panel">
           <div className="terminal-panel-head"><div><h1>{currentView.label}</h1><span>uc / {currentView.meta.toLowerCase()}</span></div><div className={`terminal-panel-meta ${connected ? "online" : "offline"}`}><i />{health.version ?? "engine"} · {connected ? "connected" : "waiting"}</div></div>
           <div className="terminal-view-body">
-            {view === "overview" && <OverviewView health={health} workers={workers} tasks={tasks} eventLog={eventLog} metrics={metrics} connected={connected} selectedTask={selectedTask} onView={setView} onSelectTask={onSelectTask} />}
+            {view === "overview" && <OverviewView health={health} workers={workers} tasks={tasks} eventLog={eventLog} metrics={metrics} connected={connected} selectedTask={selectedTask} interactionLog={interactionLog} onView={setView} onSelectTask={onSelectTask} />}
             {view === "tasks" && <div className="terminal-data-view terminal-task-layout">
               <TasksPanel data={tasks} interactionLog={interactionLog} onFlush={onFlush} onPauseTask={onPauseTask} onResumeTask={onResumeTask} onCancelTask={onCancelTask} stale={grpcStale} grpcSubmitTask={grpcSubmitTask} onTaskCreated={onTaskCreated} onOptimisticAdd={onOptimisticAdd} onSelectTask={onSelectTask} selectedTaskId={selectedTaskId} showInlineDetail={false} onNavigateFile={setFileBrowserNav} />
               <section className="terminal-task-history" ref={historyRef} aria-label="Selected task history">

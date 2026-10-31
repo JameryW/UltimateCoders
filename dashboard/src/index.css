@@ -1275,6 +1275,18 @@ body:has(.terminal-app) {
   0% { background-position: 0 0; }
   100% { background-position: 0 18px; }
 }
+@keyframes cc-swarm-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes cc-session-row-enter {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes cc-pill-flash {
+  0% { background: color-mix(in srgb, currentColor 22%, transparent); }
+  100% { background: transparent; }
+}
 
 /* Command-center live board ------------------------------------------------ */
 .cc-legend {
@@ -1437,6 +1449,15 @@ body:has(.terminal-app) {
 .cc-card.lead, .cc-card.review { border-color: color-mix(in srgb, var(--cc-lead) 70%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--cc-lead) 10%, transparent); }
 .cc-card.dispatch { border-color: color-mix(in srgb, var(--cc-dispatch) 70%, transparent); }
 .cc-card.swarm { border-color: color-mix(in srgb, var(--cc-swarm) 65%, transparent); min-width: 0; }
+.cc-card.swarm.cc-swarm-enter {
+  animation: cc-swarm-enter 320ms ease-out both;
+}
+.cc-idle-tip {
+  margin-top: 2px;
+  color: var(--terminal-dim);
+  font-size: 9px;
+  letter-spacing: .02em;
+}
 .cc-card-topline { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .cc-card.lead .cc-card-topline strong,
 .cc-card.review .cc-card-topline strong { color: var(--cc-lead); font-size: 11px; font-weight: 500; letter-spacing: .04em; }
@@ -1644,6 +1665,9 @@ body:has(.terminal-app) {
   font-size: 9px;
   text-align: left;
 }
+.cc-session-row.cc-session-row-enter {
+  animation: cc-session-row-enter 420ms ease-out both;
+}
 .cc-session-row:hover { color: var(--terminal-text); }
 .cc-session-line {
   display: block;
@@ -1685,14 +1709,21 @@ body:has(.terminal-app) {
 .cc-pill.swarm { color: var(--cc-swarm); border-color: color-mix(in srgb, var(--cc-swarm) 40%, transparent); }
 .cc-pill.advisor { color: var(--cc-advisor); border-color: color-mix(in srgb, var(--cc-advisor) 40%, transparent); }
 .cc-pill.hot { box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent); }
+.cc-pill.cc-pill-flash {
+  animation: cc-pill-flash 600ms ease-out;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .terminal-mini-bar i,
   .cc-swarm-status .running,
   .cc-card.cc-stage-active,
+  .cc-card.swarm.cc-swarm-enter,
+  .cc-session-row.cc-session-row-enter,
+  .cc-pill.cc-pill-flash,
   .cc-flow-connector.cc-flow-active span,
   .cc-flow-connector.cc-flow-active em { transition: none; animation: none; }
   .cc-flow-connector.cc-flow-active em { opacity: .85; top: 8px; }
+  .cc-card.swarm.cc-swarm-enter { opacity: 1; transform: none; }
 }
 
 [data-theme="light"] .terminal-app { --terminal-bg: #eef3f3; --terminal-surface: #f8fbfb; --terminal-surface-2: #e4eeee; --terminal-border: #b5c8cd; --terminal-text: #1c3036; --terminal-muted: #4e6870; --terminal-dim: #708990; --cc-lead: #b4651c; --cc-dispatch: #1f7a45; --cc-swarm: #1d5f8a; --cc-advisor: #6b3fa0; background: #eef3f3; color: #1c3036; }.terminal-app[data-theme="light"] .terminal-topbar, [data-theme="light"] .terminal-app .terminal-command-bar, [data-theme="light"] .terminal-app .terminal-keybar, .terminal-app[data-theme="light"] .cc-status-pills { background: rgba(238, 245, 245, .96); }.terminal-app[data-theme="light"] .terminal-main-panel { background: linear-gradient(rgba(41, 67, 78, .04) 1px, transparent 1px), linear-gradient(90deg, rgba(41, 67, 78, .04) 1px, transparent 1px), #f1f6f6; background-size: 38px 38px, 38px 38px, auto; }.terminal-app[data-theme="light"] .terminal-runtime-banner, .terminal-app[data-theme="light"] .terminal-topology, .terminal-app[data-theme="light"] .terminal-stat-grid > div, .terminal-app[data-theme="light"] .terminal-service-lane > div, .terminal-app[data-theme="light"] .terminal-worker-node, .terminal-app[data-theme="light"] .cc-card, .terminal-app[data-theme="light"] .cc-advisor { background: rgba(255, 255, 255, .72); }.terminal-app[data-theme="light"] .terminal-topology-node { background: #e5eeee; }.terminal-app[data-theme="light"] .terminal-command-rail, .terminal-app[data-theme="light"] .terminal-cluster-rail { background: #e8f0f0; }
