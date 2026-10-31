@@ -1333,7 +1333,17 @@ export function TerminalDashboard({
                 </> : <p className="terminal-empty-line">当前没有可查看的历史任务</p>}
               </section>
             </div>}
-            {view === "workers" && <div className="terminal-data-view"><WorkersPanel workers={workers} tasks={tasks} stale={grpcStale} onJumpTask={(id) => { onSelectTask(id); setView("tasks"); }} /></div>}
+            {view === "workers" && (
+              <div className="terminal-data-view terminal-workers-layout">
+                <WorkersPanel
+                  workers={workers}
+                  tasks={tasks}
+                  stale={grpcStale}
+                  variant="terminal"
+                  onJumpTask={(id) => { onSelectTask(id); setView("tasks"); }}
+                />
+              </div>
+            )}
             {view === "inference" && <div className="terminal-data-view"><InferencePanel /></div>}
             {view === "logs" && <div className="terminal-data-view"><EventLogPanel events={eventLog} stale={grpcStale} onSelectTask={(id) => { onSelectTask(id); setView("tasks"); }} /></div>}
             {view === "search" && <div className="terminal-data-view"><SearchPanel grpcState={grpcState} onNavigateFile={setFileBrowserNav} stale={grpcStale} /></div>}

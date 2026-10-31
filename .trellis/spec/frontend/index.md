@@ -39,7 +39,7 @@ The Python layer does not access storage backends directly. All storage operatio
 | [Quality Guidelines](./quality-guidelines.md) | pytest patterns, mocking, test organization | Filled |
 | [Type Safety](./type-safety.md) | Type annotations, Optional/List/Dict, Any for engine | Filled |
 | [TUI gRPC Spec](./tui-grpc-spec.md) | TUI gRPC client, React hooks, streaming, offline fallback, useReducer state model, scroll architecture, symbol strategy | Filled |
-| [Dashboard Command-Center Spec](./dashboard-command-center-spec.md) | Overview live board + Tasks view polish: status/action tokens, live strip, session InteractionLog roles, swarm subtask rows, list neon selection | Filled |
+| [Dashboard Command-Center Spec](./dashboard-command-center-spec.md) | Overview live board + Tasks/Workers view polish: status tokens, live strip, session roles, swarm rows, worker neon rails + mini-bar load | Filled |
 
 ---
 

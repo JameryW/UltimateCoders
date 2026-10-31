@@ -65,3 +65,19 @@ Extend the same visual language onto the **tasks** view (list + detail), still f
 ### Out of scope
 
 Overview/workers redesign, backend APIs.
+
+## Follow-up: Workers page Command-Center polish
+
+Extend the same visual language onto the **workers** view — frontend-only.
+
+### Requirements (workers view)
+
+1. Shell `.terminal-workers-layout` under terminal-data-view (parallel to tasks).
+2. Row neon: online/load→--cc-swarm, offline→red, stale→amber/lead; expanded glow like task selected.
+3. Load meter via `terminal-mini-bar` (replace orphaned load-bar*).
+4. Active assignment strip as swarm rows with jump-to-task.
+5. SSR tests locking CC classes (no Tailwind green/blue rails).
+
+### Out of scope
+
+Overview redesign, backend APIs.
