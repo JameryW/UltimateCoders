@@ -1289,15 +1289,41 @@ body:has(.terminal-app) {
 }
 
 /* Command-center live board ------------------------------------------------ */
+.cc-legend-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin-bottom: 14px;
+}
 .cc-legend {
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
-  margin-bottom: 14px;
+  margin-bottom: 0;
   color: var(--terminal-dim);
   font-size: 9px;
   letter-spacing: .04em;
 }
+.cc-stage-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 9px;
+  border: 1px solid var(--terminal-border);
+  border-radius: 2px;
+  color: var(--terminal-muted);
+  font-size: 9px;
+  letter-spacing: .06em;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+.cc-stage-chip.idle { color: var(--terminal-dim); border-color: color-mix(in srgb, var(--terminal-dim) 40%, transparent); }
+.cc-stage-chip.lead { color: var(--cc-lead); border-color: color-mix(in srgb, var(--cc-lead) 55%, transparent); box-shadow: 0 0 10px color-mix(in srgb, var(--cc-lead) 18%, transparent); }
+.cc-stage-chip.dispatch { color: var(--cc-dispatch); border-color: color-mix(in srgb, var(--cc-dispatch) 55%, transparent); box-shadow: 0 0 10px color-mix(in srgb, var(--cc-dispatch) 18%, transparent); }
+.cc-stage-chip.swarm { color: var(--cc-swarm); border-color: color-mix(in srgb, var(--cc-swarm) 55%, transparent); box-shadow: 0 0 10px color-mix(in srgb, var(--cc-swarm) 18%, transparent); }
+.cc-stage-chip.review { color: var(--cc-lead); border-color: color-mix(in srgb, var(--cc-lead) 55%, transparent); box-shadow: 0 0 10px color-mix(in srgb, var(--cc-lead) 18%, transparent); }
 .cc-legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .cc-legend-item i { width: 8px; height: 8px; border-radius: 1px; background: currentColor; }
 .cc-legend-item.lead { color: var(--cc-lead); }
@@ -1724,6 +1750,10 @@ body:has(.terminal-app) {
   .cc-flow-connector.cc-flow-active em { transition: none; animation: none; }
   .cc-flow-connector.cc-flow-active em { opacity: .85; top: 8px; }
   .cc-card.swarm.cc-swarm-enter { opacity: 1; transform: none; }
+  .cc-stage-chip.lead,
+  .cc-stage-chip.dispatch,
+  .cc-stage-chip.swarm,
+  .cc-stage-chip.review { box-shadow: none; }
 }
 
 [data-theme="light"] .terminal-app { --terminal-bg: #eef3f3; --terminal-surface: #f8fbfb; --terminal-surface-2: #e4eeee; --terminal-border: #b5c8cd; --terminal-text: #1c3036; --terminal-muted: #4e6870; --terminal-dim: #708990; --cc-lead: #b4651c; --cc-dispatch: #1f7a45; --cc-swarm: #1d5f8a; --cc-advisor: #6b3fa0; background: #eef3f3; color: #1c3036; }.terminal-app[data-theme="light"] .terminal-topbar, [data-theme="light"] .terminal-app .terminal-command-bar, [data-theme="light"] .terminal-app .terminal-keybar, .terminal-app[data-theme="light"] .cc-status-pills { background: rgba(238, 245, 245, .96); }.terminal-app[data-theme="light"] .terminal-main-panel { background: linear-gradient(rgba(41, 67, 78, .04) 1px, transparent 1px), linear-gradient(90deg, rgba(41, 67, 78, .04) 1px, transparent 1px), #f1f6f6; background-size: 38px 38px, 38px 38px, auto; }.terminal-app[data-theme="light"] .terminal-runtime-banner, .terminal-app[data-theme="light"] .terminal-topology, .terminal-app[data-theme="light"] .terminal-stat-grid > div, .terminal-app[data-theme="light"] .terminal-service-lane > div, .terminal-app[data-theme="light"] .terminal-worker-node, .terminal-app[data-theme="light"] .cc-card, .terminal-app[data-theme="light"] .cc-advisor { background: rgba(255, 255, 255, .72); }.terminal-app[data-theme="light"] .terminal-topology-node { background: #e5eeee; }.terminal-app[data-theme="light"] .terminal-command-rail, .terminal-app[data-theme="light"] .terminal-cluster-rail { background: #e8f0f0; }
