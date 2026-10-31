@@ -260,10 +260,12 @@ function taskEventToDashboardEvent(event: TaskEvent): DashboardEvent {
   };
 }
 
-export function sessionLogEventKey(event: DashboardEvent, index = 0): string {
+/** Stable identity for session rows — no list index (indexes shift when newer events prepend). */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested helper
+export function sessionLogEventKey(event: DashboardEvent): string {
   const taskId = typeof event.details?.task_id === "string" ? event.details.task_id : "";
   const subtaskId = typeof event.details?.subtask_id === "string" ? event.details.subtask_id : "";
-  return `${event.timestamp}|${event.type}|${taskId}|${subtaskId}|${index}`;
+  return `${event.timestamp}|${event.type}|${taskId}|${subtaskId}`;
 }
 
 /** Merge dashboard eventLog with selected/lead interaction events (newest first, capped). */
@@ -665,27 +667,36 @@ function OverviewView({
       }
     : tasks;
 
-  const sessionKeys = sessionEvents.map((event, index) => sessionLogEventKey(event, index));
+  const sessionKeys = sessionEvents.map((event) => sessionLogEventKey(event));
+  const sessionKeySignature = sessionKeys.join("|");
 
   useEffect(() => {
+    // Defer setState into timers so we never sync-setState in the effect body
+    // (react-hooks/set-state-in-effect). Keys are identity-stable — no index.
     if (previewMode) {
       knownSessionKeysRef.current = new Set(sessionKeys);
-      setEnteringSessionKeys(new Set());
-      return;
+      const clearTimer = window.setTimeout(() => {
+        setEnteringSessionKeys((prev) => (prev.size === 0 ? prev : new Set()));
+      }, 0);
+      return () => window.clearTimeout(clearTimer);
     }
     const known = knownSessionKeysRef.current;
     if (!known) {
       knownSessionKeysRef.current = new Set(sessionKeys);
-      setEnteringSessionKeys(new Set());
       return;
     }
     const fresh = sessionKeys.filter((key) => !known.has(key));
     knownSessionKeysRef.current = new Set(sessionKeys);
     if (fresh.length === 0) return;
-    setEnteringSessionKeys(new Set(fresh));
-    const timer = window.setTimeout(() => setEnteringSessionKeys(new Set()), 520);
-    return () => window.clearTimeout(timer);
-  }, [previewMode, sessionKeys.join("|")]);
+    const startTimer = window.setTimeout(() => setEnteringSessionKeys(new Set(fresh)), 0);
+    const clearTimer = window.setTimeout(() => setEnteringSessionKeys(new Set()), 520);
+    return () => {
+      window.clearTimeout(startTimer);
+      window.clearTimeout(clearTimer);
+    };
+    // sessionKeys is mirrored by sessionKeySignature for eslint-static deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- signature tracks key identity joins
+  }, [previewMode, sessionKeySignature]);
 
   return (
     <div className={`terminal-overview cc-board${previewMode ? " cc-preview" : ""}`} data-cc-preview={previewMode ? "sample" : "live"}>
@@ -840,7 +851,7 @@ function OverviewView({
             {showIdleTip ? COMMAND_CENTER_IDLE_TIP : "waiting for live events…"}
           </div>
         ) : sessionEvents.map((event, index) => {
-          const rowKey = sessionKeys[index] ?? sessionLogEventKey(event, index);
+          const rowKey = sessionKeys[index] ?? sessionLogEventKey(event);
           return (
             <button
               key={rowKey}
@@ -850,7 +861,7 @@ function OverviewView({
                   onView("logs");
                   return;
                 }
-                const taskId = typeof event.details.task_id === "string" ? event.details.task_id : null;
+                const taskId = typeof event.details?.task_id === "string" ? event.details.task_id : null;
                 if (taskId) {
                   onSelectTask(taskId);
                   onView("tasks");
@@ -920,23 +931,35 @@ function StatusPillBar({
   };
   const prevPillRef = useRef<StatusPillValues | null>(null);
   const [flashing, setFlashing] = useState<Set<keyof StatusPillValues>>(() => new Set());
+  const pillWorkers = pillValues.workers;
+  const pillTasks = pillValues.tasks;
+  const pillQueue = pillValues.queue;
+  const pillGrpc = pillValues.grpc;
+  const pillDash = pillValues.dash;
+  const pillEvents = pillValues.events;
+  const pillBackend = pillValues.backend;
 
   useEffect(() => {
-    const changed = changedPillKeys(prevPillRef.current, pillValues);
-    prevPillRef.current = pillValues;
+    const next: StatusPillValues = {
+      workers: pillWorkers,
+      tasks: pillTasks,
+      queue: pillQueue,
+      grpc: pillGrpc,
+      dash: pillDash,
+      events: pillEvents,
+      backend: pillBackend,
+    };
+    const changed = changedPillKeys(prevPillRef.current, next);
+    prevPillRef.current = next;
     if (changed.length === 0) return;
-    setFlashing(new Set(changed));
-    const timer = window.setTimeout(() => setFlashing(new Set()), 600);
-    return () => window.clearTimeout(timer);
-  }, [
-    pillValues.workers,
-    pillValues.tasks,
-    pillValues.queue,
-    pillValues.grpc,
-    pillValues.dash,
-    pillValues.events,
-    pillValues.backend,
-  ]);
+    // Timer-deferred setState avoids react-hooks/set-state-in-effect.
+    const startTimer = window.setTimeout(() => setFlashing(new Set(changed)), 0);
+    const clearTimer = window.setTimeout(() => setFlashing(new Set()), 600);
+    return () => {
+      window.clearTimeout(startTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [pillWorkers, pillTasks, pillQueue, pillGrpc, pillDash, pillEvents, pillBackend]);
 
   const flashClass = (key: keyof StatusPillValues) => (flashing.has(key) ? " cc-pill-flash" : "");
 

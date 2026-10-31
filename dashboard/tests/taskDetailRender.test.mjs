@@ -444,6 +444,9 @@ test("command-center preview activates offline with empty cluster and drops when
     assert.match(previewHtml, /data-active-stage="swarm"/);
     assert.doesNotMatch(previewHtml, /terminal-command-rail/);
     assert.doesNotMatch(previewHtml, /Opus|Sonnet|Haiku|Claude Code|JEV/);
+    // Connected idle tip must not leak into SAMPLE preview.
+    assert.doesNotMatch(previewHtml, /data-testid="cc-idle-tip"/);
+    assert.doesNotMatch(previewHtml, /» submit a task to see live flow/);
 
     // Offline + residual totals must not fake a sample board.
     assert.equal(shouldUseCommandCenterPreview({
@@ -493,6 +496,7 @@ test("command-center merges interactionLog into session feed and diffs pill flas
     const {
       TerminalDashboard,
       mergeSessionLogEvents,
+      sessionLogEventKey,
       changedPillKeys,
       isCommandCenterConnectedIdle,
       COMMAND_CENTER_IDLE_TIP,
@@ -528,6 +532,14 @@ test("command-center merges interactionLog into session feed and diffs pill flas
       8,
     );
     assert.equal(deduped.length, 1);
+
+    // Prepending a newer event must keep older row keys stable (no index suffix).
+    const older = { timestamp: "2026-10-31T12:00:10Z", type: "task_submitted", details: { task_id: "t1" } };
+    const newer = { timestamp: "2026-10-31T12:00:30Z", type: "tool_result", details: { task_id: "t1", subtask_id: "s1" } };
+    const beforeKeys = [older].map((event) => sessionLogEventKey(event));
+    const afterKeys = [newer, older].map((event) => sessionLogEventKey(event));
+    assert.equal(afterKeys[1], beforeKeys[0]);
+    assert.doesNotMatch(beforeKeys[0], /\|0$/);
 
     assert.deepEqual(changedPillKeys(null, {
       workers: "1/1", tasks: "0", queue: "0", grpc: "connected", dash: "connected", events: "0", backend: "online",
