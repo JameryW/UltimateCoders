@@ -547,7 +547,11 @@ docker compose \
 
 When the SDK is installed, the sandbox MCP server also exposes
 `recall_coding_memory` / `remember_coding_memory` (gated on both `mcp` and
-`hy-memory` being importable). `MEMORY_*` variables reach agent subprocesses
+`hy-memory` being importable). The three stdio MCP servers (engine/fs/lsp)
+target the **mcp 1.x** Server API and are pinned as `mcp>=1,<2` (install the
+optional extra with `pip install 'ultimate-coders[mcp]'`); mcp 2.x removed the
+`Server.list_tools` decorators and changed the stdio contract, so it is
+rejected with an actionable error. `MEMORY_*` variables reach agent subprocesses
 through the same deny-by-default allowlist as `UC_*`. See
 [docs/hy-memory.md](docs/hy-memory.md) for the full reference, the
 troubleshooting table and the test map.

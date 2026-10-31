@@ -26,7 +26,6 @@ import sys
 
 try:
     from mcp.server import Server
-    from mcp.server.stdio import stdio_server
     from mcp.types import TextContent, Tool
 except ImportError:
     # ponytail: mcp package is optional — only needed for sandbox agent tools.
@@ -51,6 +50,7 @@ from ultimate_coders.agent.deepseek_web import (
     is_configured as deepseek_web_configured,
 )
 from ultimate_coders.agent.hy_memory import CodingMemory, hy_memory_available
+from ultimate_coders.agent.mcp_stdio import run_stdio_server
 from ultimate_coders.agent.ontology import (
     list_terms as ontology_list_terms,
 )
@@ -616,9 +616,7 @@ def main() -> None:
 
     server = _create_server(engine)
 
-    import asyncio
-
-    asyncio.run(stdio_server(server).serve())
+    run_stdio_server(server)
 
 
 if __name__ == "__main__":

@@ -44,9 +44,9 @@ Fallback semantic mapping (best-effort, NOT LSP-precision):
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 import os
+import pathlib
 import re
 import sys
 from typing import TYPE_CHECKING
@@ -56,7 +56,6 @@ if TYPE_CHECKING:
 
 try:
     from mcp.server import Server
-    from mcp.server.stdio import stdio_server
     from mcp.types import TextContent, Tool
 except ImportError:
     # ponytail: mcp package is optional — only needed for stdio serve.
@@ -84,6 +83,8 @@ except ImportError:
     MultilspyLogger = None  # type: ignore[assignment,misc]
 
 
+from ultimate_coders.agent.mcp_stdio import run_stdio_server
+
 logger = logging.getLogger(__name__)
 
 # File extensions → multilspy code_language values.
@@ -105,6 +106,12 @@ _SUPPORTED_LANGS: dict[str, str] = {
 # MCP server's lifetime. multilspy startup is ~1s (jedi); reusing avoids
 # per-request latency.
 _ls_cache: dict[tuple[str, str], LanguageServer | None] = {}
+
+# Async start-context cache: multilspy 0.0.15 exposes `start_server()` as an
+# async context manager (it spawns/initializes the language server). The context
+# must stay entered for the MCP server's lifetime, so the entered context is
+# cached here (keyed by server identity) and requests are awaited directly.
+_ls_start_cms: dict[int, object] = {}
 
 # Cache of workspace → CodegraphClient, kept alive for the MCP server's
 # lifetime. CodegraphClient opens a SQLite connection lazily; reusing avoids
@@ -154,12 +161,28 @@ def _get_language_server(workspace: str, language: str) -> LanguageServer | None
         config = MultilspyConfig.from_dict({"code_language": language})
         log = MultilspyLogger()
         ls = LanguageServer.create(config, log, workspace)
-        ls.start_server()  # blocks until initialized; ~1s for jedi
     except Exception as e:  # noqa: BLE001 — multilspy is pre-alpha, catch all
         logger.warning("multilspy LanguageServer start failed for %s: %s", language, e)
         ls = None
     _ls_cache[cache_key] = ls
     return ls
+
+
+async def _ensure_started(ls: LanguageServer | None) -> None:
+    """Enter multilspy's async start context once per server instance.
+
+    multilspy 0.0.15's ``start_server()`` returns an async context manager that
+    spawns and initializes the language server; it must be entered before any
+    ``request_*`` call. Mocked servers used by unit tests are not real
+    ``LanguageServer`` instances, so they are passed through untouched.
+    """
+    if ls is None or LanguageServer is None or not isinstance(ls, LanguageServer):
+        return
+    if id(ls) in _ls_start_cms:
+        return
+    cm = ls.start_server()
+    await cm.__aenter__()
+    _ls_start_cms[id(ls)] = cm
 
 
 def _get_codegraph(workspace: str) -> CodegraphClient | None:
@@ -312,6 +335,31 @@ def _sync_file(ls: LanguageServer, abs_path: str) -> None:
         pass
 
 
+def _attr(obj: object, name: str, default: object = None) -> object:
+    """Read a field from either a dict-shaped or attribute-shaped LSP object."""
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+# LSP SymbolKind numeric values → readable names (a raw "12" is unhelpful).
+_SYMBOL_KINDS = {
+    1: "File", 2: "Module", 3: "Namespace", 4: "Package", 5: "Class",
+    6: "Method", 7: "Property", 8: "Field", 9: "Constructor", 10: "Enum",
+    11: "Interface", 12: "Function", 13: "Variable", 14: "Constant",
+    15: "String", 16: "Number", 17: "Boolean", 18: "Array", 19: "Object",
+    20: "Key", 21: "Null", 22: "EnumMember", 23: "Struct", 24: "Event",
+    25: "Operator", 26: "TypeParameter",
+}  # fmt: skip
+
+
+def _format_symbol_kind(kind: object) -> str:
+    """Render an LSP SymbolKind (numeric or string) as a readable label."""
+    if isinstance(kind, int):
+        return _SYMBOL_KINDS.get(kind, str(kind))
+    return str(kind)
+
+
 def _format_location(loc: object) -> str:
     """Format a multilspy Location-like object as a concise string."""
 
@@ -327,8 +375,10 @@ def _format_location(loc: object) -> str:
     if rng is not None:
         start = _get(rng, "start")
         if start is not None:
-            line = _get(start, "line") or "?"
-            char = _get(start, "character") or "?"
+            raw_line = _get(start, "line")
+            raw_char = _get(start, "character")
+            line = raw_line if raw_line is not None else "?"
+            char = raw_char if raw_char is not None else "?"
     # LSP lines/chars are 0-based; convert to 1-based for human display
     try:
         line = int(line) + 1  # type: ignore[arg-type]
@@ -645,11 +695,12 @@ async def _go_to_definition(workspace: str, args: dict) -> list[TextContent]:
             workspace, args["path"], int(args["line"]), int(args["character"]), reason
         )
     assert ls is not None and rel is not None
+    await _ensure_started(ls)
     # 1-based → 0-based
     line = int(args["line"]) - 1
     char = int(args["character"]) - 1
     _sync_file(ls, os.path.join(workspace, rel))
-    result = await asyncio.to_thread(ls.request_definition, rel, line, char)
+    result = await ls.request_definition(rel, line, char)
     if not result:
         return [TextContent(type="text", text="No definitions found.")]
     lines = [f"Definition: {_format_location(loc)}" for loc in result]
@@ -663,10 +714,11 @@ async def _find_references(workspace: str, args: dict) -> list[TextContent]:
             workspace, args["path"], int(args["line"]), int(args["character"]), reason
         )
     assert ls is not None and rel is not None
+    await _ensure_started(ls)
     line = int(args["line"]) - 1
     char = int(args["character"]) - 1
     _sync_file(ls, os.path.join(workspace, rel))
-    result = await asyncio.to_thread(ls.request_references, rel, line, char)
+    result = await ls.request_references(rel, line, char)
     if not result:
         return [TextContent(type="text", text="No references found.")]
     lines = [f"  {_format_location(loc)}" for loc in result]
@@ -681,10 +733,11 @@ async def _hover(workspace: str, args: dict) -> list[TextContent]:
             workspace, args["path"], int(args["line"]), int(args["character"]), reason
         )
     assert ls is not None and rel is not None
+    await _ensure_started(ls)
     line = int(args["line"]) - 1
     char = int(args["character"]) - 1
     _sync_file(ls, os.path.join(workspace, rel))
-    result = await asyncio.to_thread(ls.request_hover, rel, line, char)
+    result = await ls.request_hover(rel, line, char)
     if result is None:
         return [TextContent(type="text", text="No hover information available.")]
     # multilspy Hover has .contents (str) or dict-like structure
@@ -701,15 +754,22 @@ async def _document_symbols(workspace: str, args: dict) -> list[TextContent]:
     if reason is not None:
         return _fallback_document_symbols(workspace, args["path"], reason)
     assert ls is not None and rel is not None
+    await _ensure_started(ls)
     _sync_file(ls, os.path.join(workspace, rel))
-    symbols, tree_repr = await asyncio.to_thread(ls.request_document_symbols, rel)
+    symbols, tree_repr = await ls.request_document_symbols(rel)
     if not symbols:
         return [TextContent(type="text", text="No symbols found in file.")]
     lines = [str(tree_repr) if tree_repr else ""]
     for sym in symbols:
-        name = getattr(sym, "name", "?")
-        kind = getattr(sym, "kind", "?")
-        loc = getattr(sym, "location", None)
+        name = _attr(sym, "name", "?")
+        kind = _format_symbol_kind(_attr(sym, "kind", "?"))
+        loc = _attr(sym, "location", None)
+        if loc is None:
+            # DocumentSymbol carries a `range` but no `location`; synthesize one
+            # so the human-readable output still points at the file/position.
+            rng = _attr(sym, "range", None)
+            if rng is not None:
+                loc = {"uri": pathlib.Path(workspace, rel).as_uri(), "range": rng}
         loc_str = _format_location(loc) if loc else "?"
         lines.append(f"  {kind} {name} @ {loc_str}")
     return [TextContent(type="text", text="\n".join(lines).strip())]
@@ -721,10 +781,13 @@ async def _workspace_symbol(workspace: str, args: dict) -> list[TextContent]:
     ls = _get_language_server(workspace, "python")
     if ls is None:
         return _fallback_workspace_symbol(workspace, query)
-    result = await asyncio.to_thread(ls.request_workspace_symbol, query)
+    await _ensure_started(ls)
+    result = await ls.request_workspace_symbol(query)
     if not result:
         return [TextContent(type="text", text=f"No symbols matching '{query}'.")]
-    lines = [f"  {getattr(s, 'name', '?')} ({getattr(s, 'kind', '?')})" for s in result]
+    lines = [
+        f"  {_attr(s, 'name', '?')} ({_format_symbol_kind(_attr(s, 'kind', '?'))})" for s in result
+    ]
     return [TextContent(type="text", text=f"Symbols ({len(result)}):\n" + "\n".join(lines))]
 
 
@@ -740,7 +803,7 @@ def main() -> None:
     workspace = _resolve_workspace(args.workspace)
     server = _create_server(workspace)
 
-    asyncio.run(stdio_server(server).serve())
+    run_stdio_server(server)
 
 
 if __name__ == "__main__":

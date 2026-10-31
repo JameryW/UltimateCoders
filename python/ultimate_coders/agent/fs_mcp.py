@@ -29,7 +29,6 @@ import sys
 
 try:
     from mcp.server import Server
-    from mcp.server.stdio import stdio_server
     from mcp.types import TextContent, Tool
 except ImportError:
     # ponytail: mcp package is optional — only needed for stdio serve.
@@ -44,6 +43,9 @@ except ImportError:
         def __init__(self, type: str = "text", text: str = "") -> None:  # noqa: A002
             self.type = type
             self.text = text
+
+
+from ultimate_coders.agent.mcp_stdio import run_stdio_server
 
 
 def _resolve_workspace(arg: str) -> str:
@@ -248,9 +250,7 @@ def main() -> None:
     workspace = _resolve_workspace(args.workspace)
     server = _create_server(workspace)
 
-    import asyncio
-
-    asyncio.run(stdio_server(server).serve())
+    run_stdio_server(server)
 
 
 if __name__ == "__main__":
