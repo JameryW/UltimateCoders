@@ -5,6 +5,7 @@ import { InteractionLog } from "@/components/panels/InteractionLog";
 import { ContextManifestTrail } from "@/components/panels/ContextManifestPanel";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { renderMermaid } from "@/lib/mermaid";
+import { clampPercent, isSubtaskDone, isSubtaskRunning } from "@/lib/taskProgress";
 import { cn, shortId, truncate, statusBadgeClass } from "@/lib/utils";
 
 interface TaskDetailProps {
@@ -12,6 +13,16 @@ interface TaskDetailProps {
   interactionLog: TaskEvent[];
   onNavigateFile?: (nav: FileBrowserNavigateEvent) => void;
   repoId?: string;
+  /** Command-center: swarm subtask rows + session InteractionLog; no emoji timeline. */
+  variant?: "default" | "terminal";
+}
+
+function MiniBar({ value }: { value: number }) {
+  return (
+    <span className="terminal-mini-bar blue" aria-hidden="true">
+      <i style={{ width: `${clampPercent(value)}%` }} />
+    </span>
+  );
 }
 
 function OutputFiles({ events, onNavigateFile, repoId }: { events: TaskEvent[]; onNavigateFile?: (nav: FileBrowserNavigateEvent) => void; repoId?: string }) {
@@ -244,14 +255,56 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
   );
 }
 
-export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: TaskDetailProps) {
+function SwarmSubtaskRow({ st }: { st: SubtaskSummary }) {
+  const done = isSubtaskDone(st);
+  const running = isSubtaskRunning(st);
+  const pct = clampPercent(st.percent ?? (done ? 100 : 0));
+  const marker = done ? "✓ done" : running ? "◐ running" : "◇ idle";
+  return (
+    <div
+      className={cn("terminal-swarm-row", done && "is-done", running && "is-running")}
+      data-testid="terminal-swarm-row"
+      data-subtask-id={st.id}
+    >
+      <div className="terminal-swarm-row-topline">
+        <strong title={st.id}>{shortId(st.id, 12)}</strong>
+        <span className={cn("terminal-swarm-marker", done ? "done" : running ? "running" : "idle")}>
+          {marker}
+        </span>
+        <b className="terminal-swarm-pct">{pct}%</b>
+      </div>
+      <MiniBar value={pct} />
+      <div className="terminal-swarm-row-meta">
+        <span className="terminal-swarm-desc">{truncate(st.description, 48)}</span>
+        {st.phase && <span className="terminal-swarm-phase">{st.phase}</span>}
+        {st.step_agent && <span className="terminal-swarm-agent">{st.step_agent}</span>}
+        {st.assigned_worker && (
+          <span className="terminal-swarm-worker" title={st.assigned_worker}>
+            {shortId(st.assigned_worker)}
+          </span>
+        )}
+        <span className={cn("text-xs px-1 py-0 rounded", statusBadgeClass(st.status))}>{st.status}</span>
+      </div>
+    </div>
+  );
+}
+
+export function TaskDetail({ task, interactionLog, onNavigateFile, repoId, variant = "default" }: TaskDetailProps) {
+  const terminal = variant === "terminal";
   const subtasks = useMemo(() => task.subtasks ?? [], [task.subtasks]);
   const failedSubtasks = useMemo(() => subtasks.filter((s) => s.status === "failed"), [subtasks]);
   const [filterSubtaskId, setFilterSubtaskId] = useState("");
   const [expandedResults, setExpandedResults] = useState<Record<string, boolean>>({});
 
   return (
-    <div className="pl-5 py-2 text-xs text-[var(--text-secondary)] space-y-3" role="region" aria-label={`Task detail: ${task.description}`}>
+    <div
+      className={cn(
+        "pl-5 py-2 text-xs text-[var(--text-secondary)] space-y-3",
+        terminal && "terminal-task-detail",
+      )}
+      role="region"
+      aria-label={`Task detail: ${task.description}`}
+    >
       {/* Task ID with copy button */}
       <div className="flex items-center gap-2">
         <span className="font-mono text-[var(--text-muted)]">{shortId(task.id)}</span>
@@ -266,8 +319,8 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: Tas
           </svg>
         </button>
       </div>
-      {/* Progress bar */}
-      <SubtaskProgressBar subtasks={subtasks} />
+      {/* Progress bar — terminal mode uses history-head live strip instead */}
+      {!terminal && <SubtaskProgressBar subtasks={subtasks} />}
 
       {/* Historical and live execution output */}
       <div>
@@ -289,17 +342,23 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: Tas
             </select>
           )}
         </div>
-        <InteractionLog events={interactionLog} filterSubtaskId={filterSubtaskId || undefined} />
+        <InteractionLog
+          events={interactionLog}
+          filterSubtaskId={filterSubtaskId || undefined}
+          variant={terminal ? "terminal" : "default"}
+        />
       </div>
 
-      {/* Event timeline */}
-      <EventTimeline events={interactionLog} />
+      {/* Event timeline — emoji path folded into session log in terminal/CC mode */}
+      {!terminal && <EventTimeline events={interactionLog} />}
 
       {/* Subtask list */}
       {subtasks.length > 0 && (
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <p className="text-[var(--text-primary)] font-medium">Subtasks:</p>
+            <p className="text-[var(--text-primary)] font-medium">
+              {terminal ? "swarm · subtasks" : "Subtasks:"}
+            </p>
             {failedSubtasks.length > 0 && (
               <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded font-medium">
                 {failedSubtasks.length} failed
@@ -320,61 +379,78 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: Tas
               ))}
             </div>
           )}
-          <div className="space-y-0.5">
-            {subtasks.map((st) => (
-              <div key={st.id}>
-                <div className="flex items-center justify-between gap-1">
-                  <span className="truncate max-w-[200px]">
-                    {truncate(st.description, 50)}
-                    {st.depends_on.length > 0 && (
-                      <span className="text-[var(--text-muted)] ml-2">
-                        deps: {st.depends_on.map((d) => shortId(d)).join(", ")}
-                      </span>
-                    )}
-                  </span>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {st.assigned_worker && (
-                      <span className="text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-mono" title={`Worker: ${st.assigned_worker}`}>
-                        {shortId(st.assigned_worker)}
-                      </span>
-                    )}
-                    <span className={cn("text-xs px-1.5 py-0.5 rounded", statusBadgeClass(st.status))}>
-                      {st.status}
+          {terminal ? (
+            <div className="terminal-swarm-list" data-testid="terminal-swarm-list">
+              {subtasks.map((st) => (
+                <SwarmSubtaskRow key={st.id} st={st} />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-0.5">
+              {subtasks.map((st) => (
+                <div key={st.id}>
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="truncate max-w-[200px]">
+                      {truncate(st.description, 50)}
+                      {st.depends_on.length > 0 && (
+                        <span className="text-[var(--text-muted)] ml-2">
+                          deps: {st.depends_on.map((d) => shortId(d)).join(", ")}
+                        </span>
+                      )}
                     </span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {st.assigned_worker && (
+                        <span className="text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-mono" title={`Worker: ${st.assigned_worker}`}>
+                          {shortId(st.assigned_worker)}
+                        </span>
+                      )}
+                      <span className={cn("text-xs px-1.5 py-0.5 rounded", statusBadgeClass(st.status))}>
+                        {st.status}
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <SubtaskProgress st={st} />
-                {st.result && (
-                  <div className="mt-0.5 ml-2">
-                    {st.result.length > 120 && !expandedResults[st.id] ? (
-                      <p
-                        className="text-[10px] text-[var(--text-muted)] truncate cursor-pointer hover:text-[var(--text-secondary)]"
-                        title="Click to expand"
-                        onClick={() => setExpandedResults((prev) => ({ ...prev, [st.id]: true }))}
-                      >
-                        ↳ {truncate(st.result, 120)} <span className="text-cyan-500">[+]</span>
-                      </p>
-                    ) : st.result.length > 120 && expandedResults[st.id] ? (
-                      <div>
-                        <pre
-                          className="text-[10px] text-[var(--text-muted)] whitespace-pre-wrap break-words max-h-48 overflow-y-auto cursor-pointer hover:text-[var(--text-secondary)] bg-[var(--bg-primary)] border border-[var(--border-color)] rounded p-1.5 mt-0.5"
-                          onClick={() => setExpandedResults((prev) => ({ ...prev, [st.id]: false }))}
-                          title="Click to collapse"
+                  <SubtaskProgress st={st} />
+                  {st.result && (
+                    <div className="mt-0.5 ml-2">
+                      {st.result.length > 120 && !expandedResults[st.id] ? (
+                        <p
+                          className="text-[10px] text-[var(--text-muted)] truncate cursor-pointer hover:text-[var(--text-secondary)]"
+                          title="Click to expand"
+                          onClick={() => setExpandedResults((prev) => ({ ...prev, [st.id]: true }))}
                         >
-                          {st.result}
-                        </pre>
-                        <span className="text-[10px] text-cyan-500 cursor-pointer" onClick={() => setExpandedResults((prev) => ({ ...prev, [st.id]: false }))}>[-] collapse</span>
-                      </div>
-                    ) : (
-                      <p className="text-[10px] text-[var(--text-muted)] truncate" title={st.result}>
-                        ↳ {truncate(st.result, 120)}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+                          ↳ {truncate(st.result, 120)} <span className="text-cyan-500">[+]</span>
+                        </p>
+                      ) : st.result.length > 120 && expandedResults[st.id] ? (
+                        <div>
+                          <pre
+                            className="text-[10px] text-[var(--text-muted)] whitespace-pre-wrap break-words max-h-48 overflow-y-auto cursor-pointer hover:text-[var(--text-secondary)] bg-[var(--bg-primary)] border border-[var(--border-color)] rounded p-1.5 mt-0.5"
+                            onClick={() => setExpandedResults((prev) => ({ ...prev, [st.id]: false }))}
+                            title="Click to collapse"
+                          >
+                            {st.result}
+                          </pre>
+                          <span className="text-[10px] text-cyan-500 cursor-pointer" onClick={() => setExpandedResults((prev) => ({ ...prev, [st.id]: false }))}>[-] collapse</span>
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-[var(--text-muted)] truncate" title={st.result}>
+                          ↳ {truncate(st.result, 120)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {terminal && subtasks.some((st) => st.result) && (
+            <div className="mt-2 space-y-0.5">
+              {subtasks.filter((st) => st.result).map((st) => (
+                <p key={`result-${st.id}`} className="text-[10px] text-[var(--text-muted)] truncate" title={st.result}>
+                  ↳ {shortId(st.id)} · {truncate(st.result ?? "", 100)}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

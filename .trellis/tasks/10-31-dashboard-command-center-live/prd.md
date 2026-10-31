@@ -49,3 +49,19 @@ Restyle the operations dashboard overview into a dark, monospaced “command cen
 * Inventing multi-model agent personas (Opus/Sonnet/Haiku/JEV) as product copy
 * New Gateway RPCs
 * Redesigning HomePage marketing surface
+
+## Follow-up: Tasks page Command-Center polish
+
+Extend the same visual language onto the **tasks** view (list + detail), still frontend-only.
+
+### Requirements (tasks view)
+
+1. Terminal status/action tokens under `.terminal-task-*` using CC neon (`--cc-*`); define missing `.status-*` / `.btn-action-*` scoped to tasks.
+2. Selected-task history head live strip: aggregate subtask progress via `terminal-mini-bar` + first running `phase` / `step_agent`.
+3. `InteractionLog` under `.terminal-task-history` uses `.cc-session-row` role colors (task→lead, subtask→swarm, tool→dispatch, llm→advisor); drop emoji timeline or fold into session log.
+4. Subtask list as compact swarm rows (MiniBar + running/done markers).
+5. List rows: in_progress %/phase chip; selected row neon border glow (not Tailwind Card blue).
+
+### Out of scope
+
+Overview/workers redesign, backend APIs.

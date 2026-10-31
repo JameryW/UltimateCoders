@@ -264,6 +264,7 @@ def test_real_repo_is_reconciled() -> None:
         (2260, 2251),  # T20∪T21 merge: both ticket file sets on main.
         (2265, 2256),  # Dashboard command-center Trellis task artifacts.
         (2266, 2257),  # Command-center executable frontend spec added.
+        (2267, 2258),  # taskProgress.ts (+1 text) moved the census.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { taskListProgressChip } from "@/lib/taskProgress";
 import { cn, truncate, shortId, statusBadgeClass } from "@/lib/utils";
 
 // ponytail: format task duration from created_at to now/completed_at
@@ -49,13 +50,16 @@ import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import type { GrpcSubmitResult } from "@/hooks/useGrpcWeb";
 import type { TasksData, TaskEvent, SubtaskSummary, TaskSummary } from "@/types/dashboard";
 
-function statusBorderColor(status: string): string {
+function statusBorderClass(status: string): string {
   switch (status) {
-    case "completed": return "border-l-green-500";
-    case "failed": return "border-l-red-500";
-    case "paused": return "border-l-yellow-500";
-    case "in_progress": return "border-l-blue-500";
-    default: return "border-[var(--border-color)]";
+    case "completed": return "terminal-task-status-completed";
+    case "failed": return "terminal-task-status-failed";
+    case "paused": return "terminal-task-status-paused";
+    case "in_progress":
+    case "running":
+    case "assigned":
+      return "terminal-task-status-in_progress";
+    default: return "terminal-task-status-default";
   }
 }
 
@@ -268,18 +272,22 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
           />
 
           <ul className="space-y-1.5 max-h-[600px] overflow-y-auto" aria-label="Task list">
-            {visibleTasks.map((task) => (
+            {visibleTasks.map((task) => {
+              const isSelected = (onSelectTask ? selectedTaskId : expandedTaskId) === task.id;
+              const progressChip = taskListProgressChip(task);
+              return (
               <li key={task.id} ref={task.id === highlightTaskId ? highlightRef : undefined}>
                 <div
                   role="button"
                   tabIndex={0}
-                  aria-expanded={(onSelectTask ? selectedTaskId : expandedTaskId) === task.id}
+                  aria-expanded={isSelected}
                   aria-label={`${task.description}, status ${task.status}`}
+                  data-testid="terminal-task-row"
                   className={cn(
-                    "border-l-2 pl-2 py-1 cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded-r transition-all duration-200",
-                    statusBorderColor(task.status),
+                    "terminal-task-row border-l-2 pl-2 py-1 cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded-r transition-all duration-200",
+                    statusBorderClass(task.status),
                     task.id === highlightTaskId && "highlight-ring",
-                    task.id === selectedTaskId && "border-l-blue-500 bg-[var(--bg-surface-alt)]/30"
+                    isSelected && "is-selected",
                   )}
                   onClick={() => toggleExpand(task.id)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(task.id); } }}
@@ -289,6 +297,16 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                       {truncate(task.description, 40)}
                     </span>
                     <div className="flex items-center gap-1.5">
+                      {progressChip && (
+                        <span
+                          className="terminal-task-progress-chip"
+                          data-testid="terminal-task-progress-chip"
+                          title={progressChip.phase || undefined}
+                        >
+                          {progressChip.percent}%
+                          {progressChip.phase ? ` · ${truncate(progressChip.phase, 18)}` : ""}
+                        </span>
+                      )}
                       {task.status === "in_progress" && onPauseTask && (
                         <button
                           onClick={(e) => { e.stopPropagation(); onPauseTask(task.id); }}
@@ -330,7 +348,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   </div>
                 </div>
 
-                {showInlineDetail && (onSelectTask ? selectedTaskId : expandedTaskId) === task.id && (
+                {showInlineDetail && isSelected && (
                   <TaskDetail
                     task={task}
                     interactionLog={interactionLog[task.id] ?? []}
@@ -338,7 +356,8 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   />
                 )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         </>
       )}

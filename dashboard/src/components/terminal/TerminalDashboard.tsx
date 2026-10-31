@@ -11,6 +11,7 @@ import type { DashboardConnectionState } from "@/hooks/useDashboardGrpc";
 import type { Theme } from "@/hooks/useTheme";
 import { executeUcCommand } from "@/lib/ucCommands";
 import { latestDashboardEvents } from "@/lib/dashboardEvents";
+import { aggregateSubtaskProgress } from "@/lib/taskProgress";
 import { statusBadgeClass } from "@/lib/utils";
 import type {
   DashboardEvent,
@@ -70,6 +71,8 @@ interface TerminalDashboardProps {
   grpcSubmitTask?: (description: string, projectId: string) => Promise<GrpcSubmitResult>;
   onTaskCreated: (taskId: string) => void;
   onOptimisticAdd: (taskId: string, description: string, projectId: string, subtaskCount: number, subtasks?: TaskSummary["subtasks"]) => void;
+  /** Optional initial tab — defaults to overview (command-center first paint). */
+  initialView?: TerminalView;
 }
 
 function shortId(value: string, length = 10): string {
@@ -117,6 +120,24 @@ function MiniBar({ value, tone = "green" }: { value: number; tone?: BarTone }) {
     <span className={`terminal-mini-bar ${tone}`}>
       <i style={{ width: `${percent(value)}%` }} />
     </span>
+  );
+}
+
+function TaskHistoryLiveStrip({ task }: { task: TaskSummary }) {
+  const live = aggregateSubtaskProgress(task.subtasks);
+  if (live.total === 0) return null;
+  return (
+    <div className="terminal-task-live-strip" data-testid="terminal-task-live-strip">
+      <span className="terminal-task-live-count">{live.completed}/{live.total}</span>
+      <MiniBar value={live.percent} tone="blue" />
+      <b className="terminal-task-live-pct">{live.percent}%</b>
+      {(live.phase || live.stepAgent) && (
+        <span className="terminal-task-live-phase" data-testid="terminal-task-live-phase">
+          {live.phase || "running"}
+          {live.stepAgent ? ` · ${live.stepAgent}` : ""}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -1137,8 +1158,9 @@ export function TerminalDashboard({
   grpcSubmitTask,
   onTaskCreated,
   onOptimisticAdd,
+  initialView = "overview",
 }: TerminalDashboardProps) {
-  const [view, setView] = useState<TerminalView>("overview");
+  const [view, setView] = useState<TerminalView>(initialView);
   const [command, setCommand] = useState("");
   const [lastCommand, setLastCommand] = useState("—");
   const [notice, setNotice] = useState({ text: "Dashboard 就绪 — 正在读取真实 Docker Gateway", tone: "info" });
@@ -1304,9 +1326,10 @@ export function TerminalDashboard({
                   {selectedTask && <span className={statusBadgeClass(selectedTask.status)}>{selectedTask.status}</span>}
                 </div>
                 {selectedTask ? <>
+                  <TaskHistoryLiveStrip task={selectedTask} />
                   <strong className="terminal-task-history-title">{selectedTask.description}</strong>
                   <small className="terminal-task-history-meta">{selectedTask.id} · {taskHistoryLoading ? "正在读取历史日志…" : taskHistoryError ? `历史日志读取失败：${taskHistoryError}` : `${interactionLog[selectedTask.id]?.length ?? 0} 条日志`}</small>
-                  <TaskDetail key={selectedTask.id} task={selectedTask} interactionLog={interactionLog[selectedTask.id] ?? []} onNavigateFile={setFileBrowserNav} />
+                  <TaskDetail key={selectedTask.id} task={selectedTask} interactionLog={interactionLog[selectedTask.id] ?? []} onNavigateFile={setFileBrowserNav} variant="terminal" />
                 </> : <p className="terminal-empty-line">当前没有可查看的历史任务</p>}
               </section>
             </div>}

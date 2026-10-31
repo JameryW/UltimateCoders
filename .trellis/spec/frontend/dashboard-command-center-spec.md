@@ -245,3 +245,131 @@ key={`${event.timestamp}-${index}`}  // shifts on prepend → remount flicker
 ```typescript
 key={sessionLogEventKey(event)}
 ```
+
+---
+
+## Scenario: Tasks view command-center polish
+
+### 1. Scope / Trigger
+
+- Trigger: User opens the **tasks** tab in `TerminalDashboard` (list + selected-task history).
+- Pure frontend; reuses overview CC tokens (`--cc-lead|dispatch|swarm|advisor`); no new Gateway RPCs.
+- Out of scope: overview/workers redesign; Opus/Sonnet/Haiku/JEV branding.
+
+### 2. Signatures
+
+```typescript
+// dashboard/src/lib/taskProgress.ts
+export function aggregateSubtaskProgress(subtasks): AggregateSubtaskProgress;
+export function taskListProgressChip(task): { percent: number; phase: string } | null;
+export function sessionRoleForEventType(type: string): SessionEventRole;
+export function isSubtaskDone(subtask): boolean;
+export function isSubtaskRunning(subtask): boolean;
+
+// Components
+TasksPanel — rows use `terminal-task-row` + `is-selected`; in_progress chip via `taskListProgressChip`
+TaskDetail({ variant?: "default" | "terminal" })
+InteractionLog({ variant?: "default" | "terminal" })
+TerminalDashboard tasks history — `TaskHistoryLiveStrip` + `TaskDetail variant="terminal"`
+```
+
+### 3. Contracts
+
+#### Status / action tokens
+
+Under `.terminal-data-view` / `.terminal-task-layout` / `.terminal-task-history`:
+
+| Class | Token |
+|-------|-------|
+| `.status-in_progress` / `.status-assigned` | `--cc-swarm` |
+| `.status-completed` | `--cc-dispatch` |
+| `.status-failed` | `--terminal-red` |
+| `.status-paused` | `--cc-lead` |
+| `.status-default` | `--terminal-dim` |
+| `.btn-action-info` | swarm |
+| `.btn-action-ok` | dispatch |
+| `.btn-action-warn` | lead |
+| `.btn-action-error` | red |
+
+#### Selected-task live strip
+
+- When selected task has subtasks, history panel shows `data-testid="terminal-task-live-strip"`:
+  - `completed/total` + `terminal-mini-bar` at aggregate percent
+  - Aggregate percent = mean of reported subtask `percent` values, else `completed/total * 100`
+  - First running `phase` / `step_agent` in `data-testid="terminal-task-live-phase"` when present
+
+#### InteractionLog (terminal variant)
+
+- Rows use `.cc-session-row` + `.cc-session-role-{lead|swarm|dispatch|advisor}`
+- Role map: `task_*` → lead, `subtask_*` → swarm, `tool_*` → dispatch, `llm_*` → advisor
+- No emoji timeline icons on the terminal path; keep virtualization
+- `TaskDetail variant="terminal"` omits `EventTimeline` (emoji folded into session log)
+
+#### Subtask swarm strip
+
+- Terminal TaskDetail renders `.terminal-swarm-row` with MiniBar + `◐ running` / `✓ done` / `◇ idle`, percent, phase, step_agent, assigned_worker
+
+#### List row affordance
+
+- `in_progress` / `running` rows show `.terminal-task-progress-chip` (`%` + phase when known)
+- Selected row: `.terminal-task-row.is-selected` neon lead/swarm glow — **not** Tailwind `border-l-blue-500`
+
+#### Reduced motion
+
+- `.terminal-swarm-marker.running` pulse disabled under `prefers-reduced-motion: reduce`
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|-----------|----------|
+| Selected task, no subtasks | No live strip |
+| Selected task, running subtasks | Strip + phase/agent when set |
+| Terminal TaskDetail | Swarm rows; no emoji Timeline |
+| Default TaskDetail | Legacy list + EventTimeline unchanged |
+| Selected list row | `is-selected` class; no Card blue border |
+
+### 5. Good / Base / Bad Cases
+
+**Good**: in_progress task with 2/3 subtasks, one running at 42% phase `executing` → list chip, live strip, swarm ◐, session log role colors.
+
+**Base**: completed task with all done subtasks → strip 100%, ✓ done markers, no progress chip.
+
+**Bad**: Tailwind blue selected border; emoji tool/subtask timeline in terminal history; inventing model personas.
+
+### 6. Tests Required
+
+| Test | Assertion |
+|------|-----------|
+| List row selected | `terminal-task-row is-selected`; progress chip for in_progress |
+| Live strip | MiniBar width + phase/agent text |
+| InteractionLog terminal | `cc-session-row` + role class; no timeline emoji |
+| Swarm rows | `◐ running` / `✓ done` + percent |
+| CSS | status/btn-action tokens; reduced-motion for swarm marker |
+| Helpers | `aggregateSubtaskProgress` / `sessionRoleForEventType` |
+
+### 7. Wrong vs Correct
+
+#### Wrong: Tailwind Card blue for selection
+
+```tsx
+className={selected && "border-l-blue-500"}
+```
+
+#### Correct: neon selected class
+
+```tsx
+className={cn("terminal-task-row", isSelected && "is-selected")}
+```
+
+#### Wrong: Emoji timeline in terminal history
+
+```tsx
+<EventTimeline events={interactionLog} />  // always
+```
+
+#### Correct: Session log only in terminal variant
+
+```tsx
+{!terminal && <EventTimeline events={interactionLog} />}
+<InteractionLog variant={terminal ? "terminal" : "default"} ... />
+```
