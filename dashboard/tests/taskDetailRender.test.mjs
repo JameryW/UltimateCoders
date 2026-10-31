@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
+
+const dashboardRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 test("selecting a historical task renders persisted subtask state and result", async () => {
   const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
@@ -348,6 +353,11 @@ test("command-center active stage marches: dispatch queue and review terminal", 
     assert.match(reviewHtml, /data-active-stage="review"/);
     assert.match(reviewHtml, /cc-card review cc-stage-active/);
     assert.match(reviewHtml, /cc-flow-active[^>]*data-flow-from="swarm"|data-flow-from="swarm"[^>]*cc-flow-active/);
+
+    // prefers-reduced-motion must kill stage glow + connector particle motion.
+    const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-card\.cc-stage-active[\s\S]*?animation:\s*none/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-flow-connector\.cc-flow-active em[\s\S]*?animation:\s*none/);
   } finally {
     await vite.close();
   }

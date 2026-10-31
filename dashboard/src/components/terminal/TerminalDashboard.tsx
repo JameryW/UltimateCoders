@@ -218,6 +218,7 @@ export type CommandCenterStage = "idle" | "lead" | "dispatch" | "swarm" | "revie
 
 const STAGE_ORDER: CommandCenterStage[] = ["idle", "lead", "dispatch", "swarm", "review"];
 
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested stage helper shared with OverviewView
 export function deriveActiveStage(input: {
   connected: boolean;
   lead: TaskSummary | null;
