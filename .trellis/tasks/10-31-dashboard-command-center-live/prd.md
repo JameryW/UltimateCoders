@@ -81,3 +81,20 @@ Extend the same visual language onto the **workers** view — frontend-only.
 ### Out of scope
 
 Overview redesign, backend APIs.
+
+## Follow-up: Logs page Command-Center polish
+
+Extend the same visual language onto the **logs** (`EventLogPanel`) view — frontend-only.
+
+### Requirements (logs view)
+
+1. `variant="terminal"` + shell `.terminal-logs-layout`; drop Card chrome in terminal mode.
+2. Rows reuse `sessionRoleForEventType` / `.cc-session-row` role colors; replace dead `evt-*` + Tailwind status pills.
+3. Filters/export/Errors as terminal chips (not blue/red Tailwind).
+4. Virtualized stream fills `terminal-view-body`; “↓ Latest” as CC control.
+5. Empty/stale/header aligned with `cc-session-log-head`; keep onSelectTask → tasks.
+6. SSR tests locking CC classes.
+
+### Out of scope
+
+Search/Inference redesign, backend APIs.
