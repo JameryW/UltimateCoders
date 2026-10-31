@@ -12,7 +12,7 @@ import type { Theme } from "@/hooks/useTheme";
 import { executeUcCommand } from "@/lib/ucCommands";
 import { hashForView, viewFromHash, type TerminalView } from "@/lib/terminalView";
 import { latestDashboardEvents } from "@/lib/dashboardEvents";
-import { aggregateSubtaskProgress } from "@/lib/taskProgress";
+import { aggregateSubtaskProgress, subtaskShortLabel } from "@/lib/taskProgress";
 import { statusBadgeClass } from "@/lib/utils";
 import type {
   DashboardEvent,
@@ -252,7 +252,7 @@ function collectSwarmCards(lead: TaskSummary | null, workers: WorkersData) {
     .slice(0, 3)
     .map((subtask) => ({
       id: subtask.id,
-      title: shortId(subtask.id, 12),
+      title: subtaskShortLabel(subtask.id),
       detail: subtask.phase || subtask.step_summary || subtask.description || "subtask",
       value: percent(subtask.percent ?? 35),
       done: false,

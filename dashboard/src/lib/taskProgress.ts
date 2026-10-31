@@ -8,6 +8,23 @@ export function clampPercent(value: number | null | undefined): number {
   return Math.max(0, Math.min(100, Math.round(Number.isFinite(n) ? n : 0)));
 }
 
+/**
+ * Compact, collision-free label for a subtask id.
+ *
+ * Task-derived subtask ids look like `<task-uuid>-s<index>`. A naive 12-char
+ * truncation drops the `-sN` suffix, so every subtask of the same task rendered
+ * as the same string (they all share the task uuid prefix). Keep the suffix.
+ */
+export function subtaskShortLabel(id: string, baseLength = 8): string {
+  const match = /^(.*)-s(\d+)$/.exec(id);
+  if (match) {
+    const base = match[1] ?? "";
+    const short = base.length > baseLength ? `${base.slice(0, baseLength)}…` : base;
+    return `${short}-s${match[2]}`;
+  }
+  return id.length > 12 ? `${id.slice(0, 12)}…` : id;
+}
+
 export function isSubtaskDone(subtask: Pick<SubtaskSummary, "status" | "step_status" | "percent">): boolean {
   return DONE_STATUSES.has(subtask.status)
     || subtask.step_status === "completed"
