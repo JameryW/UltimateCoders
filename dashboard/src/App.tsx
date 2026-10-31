@@ -4,6 +4,7 @@ import { useDashboardGrpc } from "@/hooks/useDashboardGrpc";
 import { useGrpcWeb } from "@/hooks/useGrpcWeb";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
+import { viewFromHash } from "@/lib/terminalView";
 import { TerminalDashboard } from "@/components/terminal/TerminalDashboard";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
@@ -474,6 +475,8 @@ function App() {
         grpcSubmitTask={grpcSubmitTask}
         onTaskCreated={(taskId) => setSelectedTaskId(taskId)}
         onOptimisticAdd={dashboard.optimisticAddTask}
+        // Deep links: #/dashboard/tasks opens the tasks view directly.
+        initialView={viewFromHash(window.location.hash) ?? "overview"}
       />
     </>
   );
