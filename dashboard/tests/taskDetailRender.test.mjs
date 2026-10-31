@@ -728,6 +728,7 @@ test("command-center autofocus helper, stage chip, and first-visit dark preferen
     const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
     assert.match(css, /\.cc-stage-chip\.swarm/);
     assert.match(css, /\.cc-legend-row/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-stage-chip\.swarm[\s\S]*?box-shadow:\s*none/);
   } finally {
     await vite.close();
   }

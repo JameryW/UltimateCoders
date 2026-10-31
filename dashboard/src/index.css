@@ -1750,6 +1750,10 @@ body:has(.terminal-app) {
   .cc-flow-connector.cc-flow-active em { transition: none; animation: none; }
   .cc-flow-connector.cc-flow-active em { opacity: .85; top: 8px; }
   .cc-card.swarm.cc-swarm-enter { opacity: 1; transform: none; }
+  .cc-stage-chip.lead,
+  .cc-stage-chip.dispatch,
+  .cc-stage-chip.swarm,
+  .cc-stage-chip.review { box-shadow: none; }
 }
 
 [data-theme="light"] .terminal-app { --terminal-bg: #eef3f3; --terminal-surface: #f8fbfb; --terminal-surface-2: #e4eeee; --terminal-border: #b5c8cd; --terminal-text: #1c3036; --terminal-muted: #4e6870; --terminal-dim: #708990; --cc-lead: #b4651c; --cc-dispatch: #1f7a45; --cc-swarm: #1d5f8a; --cc-advisor: #6b3fa0; background: #eef3f3; color: #1c3036; }.terminal-app[data-theme="light"] .terminal-topbar, [data-theme="light"] .terminal-app .terminal-command-bar, [data-theme="light"] .terminal-app .terminal-keybar, .terminal-app[data-theme="light"] .cc-status-pills { background: rgba(238, 245, 245, .96); }.terminal-app[data-theme="light"] .terminal-main-panel { background: linear-gradient(rgba(41, 67, 78, .04) 1px, transparent 1px), linear-gradient(90deg, rgba(41, 67, 78, .04) 1px, transparent 1px), #f1f6f6; background-size: 38px 38px, 38px 38px, auto; }.terminal-app[data-theme="light"] .terminal-runtime-banner, .terminal-app[data-theme="light"] .terminal-topology, .terminal-app[data-theme="light"] .terminal-stat-grid > div, .terminal-app[data-theme="light"] .terminal-service-lane > div, .terminal-app[data-theme="light"] .terminal-worker-node, .terminal-app[data-theme="light"] .cc-card, .terminal-app[data-theme="light"] .cc-advisor { background: rgba(255, 255, 255, .72); }.terminal-app[data-theme="light"] .terminal-topology-node { background: #e5eeee; }.terminal-app[data-theme="light"] .terminal-command-rail, .terminal-app[data-theme="light"] .terminal-cluster-rail { background: #e8f0f0; }

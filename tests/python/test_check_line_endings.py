@@ -263,6 +263,7 @@ def test_real_repo_is_reconciled() -> None:
         (2254, 2245),  # T21 docs numeric pins: manifest + checker + test + workflow + task.
         (2260, 2251),  # T20∪T21 merge: both ticket file sets on main.
         (2265, 2256),  # Dashboard command-center Trellis task artifacts.
+        (2266, 2257),  # Command-center executable frontend spec added.
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
