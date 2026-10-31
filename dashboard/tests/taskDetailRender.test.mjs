@@ -841,8 +841,10 @@ test("inference command-center: terminal layout, rows, chips, recovery", async (
     assert.match(html, /data-tone="pending"/);
     assert.match(html, /data-testid="terminal-inference-chip-artifact"/);
     assert.match(html, /data-testid="terminal-inference-recovery"/);
+    assert.match(html, /terminal-inference-recovery tone-pending/);
     assert.match(html, /data-testid="terminal-inference-chip-reconcile"/);
     assert.match(html, /terminal-inference-chip/);
+    assert.match(html, /data-testid="terminal-inference-count"/);
     assert.doesNotMatch(html, /推理实验与资源/);
     assert.doesNotMatch(html, /bg-blue-|border-blue|text-blue-/);
     assert.doesNotMatch(html, /text-red-400|bg-red-500|border-l-blue-500/);
@@ -934,11 +936,16 @@ test("inference command-center: terminal layout, rows, chips, recovery", async (
     assert.match(css, /\.terminal-inference-layout/);
     assert.match(css, /\.terminal-view-body:has\(\.terminal-inference-layout\)/);
     assert.match(css, /\.terminal-inference-stat\.tone-healthy[\s\S]*?--cc-dispatch/);
+    assert.match(css, /\.terminal-inference-row\.tone-healthy[\s\S]*?--cc-dispatch/);
     assert.match(css, /\.terminal-inference-row\.tone-fail[\s\S]*?--terminal-red/);
     assert.match(css, /\.terminal-inference-row\.tone-pending[\s\S]*?--cc-lead/);
     assert.match(css, /\.terminal-inference-chip/);
     assert.match(css, /\.terminal-inference-recovery/);
-    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.terminal-inference-chip[\s\S]*?transition:\s*none/);
+    assert.match(css, /\.terminal-inference-recovery\.tone-fail[\s\S]*?--terminal-red/);
+    assert.match(
+      css,
+      /@media \(prefers-reduced-motion:\s*reduce\)\s*\{\s*\.terminal-inference-chip,\s*\.terminal-inference-row\s*\{\s*transition:\s*none/,
+    );
   } finally {
     await vite.close();
   }

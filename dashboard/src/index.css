@@ -3039,6 +3039,14 @@ body:has(.terminal-app) {
   border-left: 2px solid var(--cc-lead);
   background: color-mix(in srgb, var(--cc-lead) 6%, rgba(10, 14, 20, .85));
 }
+.terminal-inference-recovery.tone-pending {
+  border-left-color: var(--cc-lead);
+  border-color: color-mix(in srgb, var(--cc-lead) 45%, transparent);
+}
+.terminal-inference-recovery.tone-healthy {
+  border-left-color: var(--cc-dispatch);
+  border-color: color-mix(in srgb, var(--cc-dispatch) 40%, transparent);
+}
 .terminal-inference-recovery.tone-fail {
   border-left-color: var(--terminal-red);
   border-color: color-mix(in srgb, var(--terminal-red) 40%, transparent);
