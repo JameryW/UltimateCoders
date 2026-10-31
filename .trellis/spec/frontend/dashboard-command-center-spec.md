@@ -64,7 +64,18 @@ export function isCommandCenterConnectedIdle(input: {
   stage: CommandCenterStage;
 }): boolean;
 
+export function formatElapsed(
+  fromIso: string | null | undefined,
+  nowMs: number,
+): string;
+
+export function viewForCommandCenterStage(
+  stage: CommandCenterStage,
+  hasRunningSubtasks?: boolean,
+): "tasks" | "workers" | null;
+
 export const COMMAND_CENTER_IDLE_TIP = "» submit a task to see live flow";
+export const COMMAND_CENTER_LIVE_HANDOFF = "live · gateway connected";
 ```
 
 ### 3. Contracts
@@ -119,9 +130,32 @@ Active connectors (`cc-flow-active`) light only for edges **above** the active s
 - `isCommandCenterConnectedIdle` → show `COMMAND_CENTER_IDLE_TIP` on lead card + empty session log.
 - Must **not** appear during SAMPLE preview.
 
+#### Stage chip navigation
+
+- Stage chip is a `<button>` (`data-testid="cc-stage-chip"`) with keyboard activation.
+- `viewForCommandCenterStage` mapping:
+  - `lead` / `review` → `tasks`
+  - `dispatch` → `workers`
+  - `swarm` → `tasks` when lead has running subtasks, else `workers`
+  - `idle` → `null` (button disabled; no navigation)
+- Existing card `onClick` behaviors stay unchanged; chip is an additional jump target.
+
+#### Lead elapsed time
+
+- Lead card meta shows `elapsed HH:MM:SS` via `formatElapsed(lead.updated_at || lead.created_at, nowMs)`.
+- `formatElapsed`: missing/invalid ISO → `—`; negative delta clamps to `00:00:00`.
+- Overview mounts a 1s clock while the view is mounted so active-task elapsed advances live.
+- No lead → display `elapsed —`.
+
+#### Preview → live handoff
+
+- When `previewMode` flips `true → false` (gateway/data arrived), show `cc-live-banner` (`data-testid="cc-live-banner"`) with `COMMAND_CENTER_LIVE_HANDOFF` for ~2s.
+- Must never appear alongside the SAMPLE preview banner.
+- Reduced motion: keep the notice visible; skip enter animation only.
+
 #### Reduced motion
 
-- `@media (prefers-reduced-motion: reduce)` disables stage glow, connector particle/line animation, swarm enter, session-row enter, pill flash, and running ◐ pulse.
+- `@media (prefers-reduced-motion: reduce)` disables stage glow, connector particle/line animation, swarm enter, session-row enter, pill flash, live-handoff enter, and running ◐ pulse.
 
 #### Role mapping (product chrome)
 
@@ -139,10 +173,13 @@ Active connectors (`cc-flow-active`) light only for edges **above** the active s
 | Overview + null selection + active task | Autofocus selects that task once |
 | Overview + explicit selection | No autofocus call |
 | Offline empty cluster | SAMPLE preview board + banner |
+| Preview → connected | SAMPLE off; live handoff banner ~2s |
 | Connected empty cluster | Live idle tip, no SAMPLE |
+| Stage chip click (swarm + running subs) | Navigate to tasks |
+| Stage chip click (dispatch) | Navigate to workers |
 | Theme key absent + light | One-shot set dark |
 | Theme key `light` | Stay light |
-| `prefers-reduced-motion` | Animations off; static particle position |
+| `prefers-reduced-motion` | Animations off; static particle position; live banner static |
 
 ### 5. Good / Base / Bad Cases
 
@@ -157,7 +194,11 @@ Active connectors (`cc-flow-active`) light only for edges **above** the active s
 | Test | Assertion |
 |------|-----------|
 | `pickAutofocusTaskId` | Active when null selection; null when selected |
-| Stage chip in DOM | `data-testid="cc-stage-chip"` + `data-stage` |
+| Stage chip in DOM | `data-testid="cc-stage-chip"` + `data-stage`; chip is a button |
+| `viewForCommandCenterStage` | lead/review→tasks; dispatch→workers; swarm→tasks|workers; idle→null |
+| `formatElapsed` | valid ISO → HH:MM:SS; missing/invalid → `—` |
+| Lead meta elapsed | `data-testid="cc-lead-elapsed"` present when lead exists |
+| Live handoff | source + CSS `cc-live-banner`; reduced-motion skips animation |
 | `deriveActiveStage` march | lead → dispatch → swarm → review → idle |
 | Preview gate | offline empty on; connected/live data off |
 | Session merge + pill keys | newest-first, dedupe, stable keys, flash diffs |

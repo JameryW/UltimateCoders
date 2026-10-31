@@ -715,6 +715,9 @@ test("command-center autofocus helper, stage chip, and first-visit dark preferen
     assert.match(html, /data-stage="swarm"/);
     assert.match(html, /stage · swarm/);
     assert.match(html, /cc-stage-chip swarm/);
+    assert.match(html, /<button[^>]*data-testid="cc-stage-chip"/);
+    assert.match(html, /data-testid="cc-lead-elapsed"/);
+    assert.match(html, /elapsed \d+:\d{2}:\d{2}/);
     // SSR does not run effects — autofocus is covered by the pure helper above.
     assert.equal(selected, null);
 
@@ -729,6 +732,97 @@ test("command-center autofocus helper, stage chip, and first-visit dark preferen
     assert.match(css, /\.cc-stage-chip\.swarm/);
     assert.match(css, /\.cc-legend-row/);
     assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-stage-chip\.swarm[\s\S]*?box-shadow:\s*none/);
+  } finally {
+    await vite.close();
+  }
+});
+
+test("command-center stage nav, elapsed helper, and live handoff", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const mod = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+    const {
+      TerminalDashboard,
+      formatElapsed,
+      viewForCommandCenterStage,
+      COMMAND_CENTER_LIVE_HANDOFF,
+    } = mod;
+
+    assert.equal(formatElapsed(null, Date.parse("2026-10-31T12:00:00Z")), "—");
+    assert.equal(formatElapsed(undefined, Date.parse("2026-10-31T12:00:00Z")), "—");
+    assert.equal(formatElapsed("not-a-date", Date.parse("2026-10-31T12:00:00Z")), "—");
+    assert.equal(
+      formatElapsed("2026-10-31T12:00:00Z", Date.parse("2026-10-31T12:00:00Z")),
+      "00:00:00",
+    );
+    assert.equal(
+      formatElapsed("2026-10-31T11:47:56Z", Date.parse("2026-10-31T12:00:00Z")),
+      "00:12:04",
+    );
+    // Negative delta clamps to zero.
+    assert.equal(
+      formatElapsed("2026-10-31T13:00:00Z", Date.parse("2026-10-31T12:00:00Z")),
+      "00:00:00",
+    );
+
+    assert.equal(viewForCommandCenterStage("lead"), "tasks");
+    assert.equal(viewForCommandCenterStage("review"), "tasks");
+    assert.equal(viewForCommandCenterStage("dispatch"), "workers");
+    assert.equal(viewForCommandCenterStage("swarm", false), "workers");
+    assert.equal(viewForCommandCenterStage("swarm", true), "tasks");
+    assert.equal(viewForCommandCenterStage("idle"), null);
+
+    assert.equal(COMMAND_CENTER_LIVE_HANDOFF, "live · gateway connected");
+
+    const idleHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", version: "0.2.1", components: [] },
+      workers: { available: true, workers: [], total: 0, available_count: 0 },
+      tasks: { available: true, tasks: [], total: 0, status_counts: {}, pending_task_count: 0 },
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [],
+      metrics: null,
+      interactionLog: {},
+      selectedTask: null,
+      selectedTaskId: null,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+    }));
+    assert.match(idleHtml, /data-testid="cc-lead-elapsed"[^>]*>elapsed —</);
+    assert.match(idleHtml, /data-stage="idle"/);
+    assert.match(idleHtml, /<button[^>]*disabled[^>]*data-testid="cc-stage-chip"|<button[^>]*data-testid="cc-stage-chip"[^>]*disabled/);
+    // SSR: live handoff only appears after preview→live effect; absent on first paint.
+    assert.doesNotMatch(idleHtml, /data-testid="cc-live-banner"/);
+    assert.doesNotMatch(idleHtml, /data-testid="cc-preview-banner"/);
+
+    const source = readFileSync(join(dashboardRoot, "src/components/terminal/TerminalDashboard.tsx"), "utf8");
+    assert.match(source, /viewForCommandCenterStage/);
+    assert.match(source, /formatElapsed/);
+    assert.match(source, /COMMAND_CENTER_LIVE_HANDOFF/);
+    assert.match(source, /cc-live-banner/);
+    assert.match(source, /showLiveHandoff/);
+
+    const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
+    assert.match(css, /\.cc-live-banner/);
+    assert.match(css, /@keyframes cc-live-banner-enter/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-live-banner[\s\S]*?animation:\s*none/);
   } finally {
     await vite.close();
   }

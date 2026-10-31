@@ -88,6 +88,19 @@ function formatUptime(seconds?: number): string {
   return `${hours}:${minutes}:${remainder}`;
 }
 
+/**
+ * Format wall-clock elapsed since an ISO timestamp as `HH:MM:SS`.
+ * Invalid / missing `fromIso` → `—`. Negative deltas clamp to `00:00:00`.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested helper
+export function formatElapsed(fromIso: string | null | undefined, nowMs: number): string {
+  if (!fromIso) return "—";
+  const start = Date.parse(fromIso);
+  if (!Number.isFinite(start)) return "—";
+  const elapsedSec = Math.max(0, Math.floor((nowMs - start) / 1000));
+  return formatUptime(elapsedSec);
+}
+
 function formatClock(date: Date): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
@@ -261,6 +274,23 @@ const STAGE_ORDER: CommandCenterStage[] = ["idle", "lead", "dispatch", "swarm", 
 const PREVIEW_STAGE_CYCLE: CommandCenterStage[] = ["swarm", "dispatch", "swarm", "review", "lead"];
 
 export const COMMAND_CENTER_IDLE_TIP = "» submit a task to see live flow";
+export const COMMAND_CENTER_LIVE_HANDOFF = "live · gateway connected";
+
+/**
+ * Map active stage chip → dashboard view.
+ * swarm prefers tasks when the lead has running subtasks; otherwise workers.
+ * idle → null (chip is non-navigating).
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested helper
+export function viewForCommandCenterStage(
+  stage: CommandCenterStage,
+  hasRunningSubtasks = false,
+): "tasks" | "workers" | null {
+  if (stage === "lead" || stage === "review") return "tasks";
+  if (stage === "dispatch") return "workers";
+  if (stage === "swarm") return hasRunningSubtasks ? "tasks" : "workers";
+  return null;
+}
 
 type SwarmCard = {
   id: string;
@@ -621,6 +651,9 @@ function OverviewView({
   // Tick only advances while previewMode is on; leaving preview stops the timer
   // without a sync setState reset (react-hooks/set-state-in-effect).
   const [previewTick, setPreviewTick] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [showLiveHandoff, setShowLiveHandoff] = useState(false);
+  const wasPreviewRef = useRef(previewMode);
   const knownSessionKeysRef = useRef<Set<string> | null>(null);
   const [enteringSessionKeys, setEnteringSessionKeys] = useState<Set<string>>(() => new Set());
 
@@ -630,6 +663,26 @@ function OverviewView({
     if (reduced) return;
     const timer = window.setInterval(() => setPreviewTick((tick) => tick + 1), 3200);
     return () => window.clearInterval(timer);
+  }, [previewMode]);
+
+  // Lead elapsed clock — 1s while OverviewView is mounted.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Preview → live handoff: brief notice when SAMPLE flips off (gateway/data arrived).
+  useEffect(() => {
+    const wasPreview = wasPreviewRef.current;
+    wasPreviewRef.current = previewMode;
+    if (!wasPreview || previewMode) return;
+    const startTimer = window.setTimeout(() => setShowLiveHandoff(true), 0);
+    const clearTimer = window.setTimeout(() => setShowLiveHandoff(false), 2000);
+    return () => {
+      window.clearTimeout(startTimer);
+      window.clearTimeout(clearTimer);
+    };
   }, [previewMode]);
 
   const preview = previewMode ? buildPreviewBoard(previewTick) : null;
@@ -676,6 +729,11 @@ function OverviewView({
     previewMode,
     stage: activeStage,
   });
+  const hasRunningSubtasks = (lead?.subtasks ?? []).some(isSubtaskRunning);
+  const stageNavView = viewForCommandCenterStage(activeStage, hasRunningSubtasks);
+  const leadElapsed = lead
+    ? formatElapsed(lead.updated_at || lead.created_at, nowMs)
+    : "—";
   const flow = connectorFlowsFor(activeStage);
   const boardHealth = preview?.health ?? health;
   const boardEvents = preview?.advice ?? eventLog;
@@ -746,16 +804,27 @@ function OverviewView({
           <span>preview · not live data — waiting for gateway</span>
         </div>
       )}
+      {showLiveHandoff && !previewMode && (
+        <div className="cc-live-banner" role="status" data-testid="cc-live-banner">
+          <strong>LIVE</strong>
+          <span>{COMMAND_CENTER_LIVE_HANDOFF}</span>
+        </div>
+      )}
       <div className="cc-legend-row">
         <RoleLegend />
-        <span
+        <button
+          type="button"
           className={`cc-stage-chip ${activeStage}`}
           data-testid="cc-stage-chip"
           data-stage={activeStage}
-          aria-label={`Active stage ${activeStage}`}
+          aria-label={`Active stage ${activeStage}${stageNavView ? `, open ${stageNavView}` : ""}`}
+          disabled={!stageNavView}
+          onClick={() => {
+            if (stageNavView) onView(stageNavView);
+          }}
         >
           stage · {activeStage}
-        </span>
+        </button>
       </div>
       <div className="cc-layout">
         <AdvisorPanel
@@ -797,6 +866,7 @@ function OverviewView({
             <div className="cc-card-title">{lead ? shortId(lead.description || lead.id, 48) : "no active task"}</div>
             <div className="cc-card-meta">
               <span>{lead ? lead.status : connected ? "idle" : "offline"}</span>
+              <span data-testid="cc-lead-elapsed">elapsed {leadElapsed}</span>
               <span>{runningTasks} running · engine {boardHealth.version ?? "—"}</span>
             </div>
             {showIdleTip && (
