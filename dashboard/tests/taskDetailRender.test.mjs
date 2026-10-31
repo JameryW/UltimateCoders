@@ -589,9 +589,11 @@ test("logs command-center: session rows, terminal chips, shell layout", async ()
 
     const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
     assert.match(css, /\.terminal-logs-layout/);
+    assert.match(css, /\.terminal-view-body:has\(\.terminal-logs-layout\)/);
     assert.match(css, /\.terminal-log-chip/);
     assert.match(css, /\.terminal-log-chip\.is-active\.error[\s\S]*?--terminal-red/);
-    assert.match(css, /\.terminal-logs-stream/);
+    assert.match(css, /\.terminal-logs-stream[\s\S]*?flex:\s*1\s+1\s+auto/);
+    assert.doesNotMatch(css, /\.terminal-logs-stream[\s\S]{0,120}max-h-64/);
     assert.match(css, /\.terminal-logs-latest/);
     assert.match(css, /\.terminal-logs-panel \.cc-session-role-lead[\s\S]*?--cc-lead/);
     assert.match(css, /\.terminal-logs-panel \.cc-session-role-swarm[\s\S]*?--cc-swarm/);

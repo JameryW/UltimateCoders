@@ -2284,18 +2284,27 @@ body:has(.terminal-app) {
 }
 
 /* Logs view — command-center polish --------------------------------------- */
+.terminal-view-body:has(.terminal-logs-layout) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .terminal-logs-layout {
   max-width: none;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  flex: 1 1 auto;
   height: 100%;
+  margin-top: 12px;
+  margin-bottom: 0;
 }
 .terminal-logs-layout > .terminal-logs-panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex: 1 1 auto;
+  height: 100%;
   padding: 12px 14px 10px;
   border: 1px solid color-mix(in srgb, var(--cc-swarm) 35%, var(--terminal-border));
   border-radius: 2px;
@@ -2402,9 +2411,10 @@ body:has(.terminal-app) {
   flex: 1 1 auto;
 }
 .terminal-logs-stream {
+  flex: 1 1 auto;
   min-height: 180px;
   max-height: none;
-  height: min(62vh, calc(100dvh - 280px));
+  height: 100%;
   overflow-y: auto;
   border-top: 1px solid color-mix(in srgb, var(--terminal-border) 80%, transparent);
   padding-top: 6px;
@@ -2504,12 +2514,12 @@ body:has(.terminal-app) {
   .terminal-task-history { max-height: none; }
   .terminal-task-live-strip { grid-template-columns: auto minmax(0, 1fr) auto; }
   .terminal-task-live-phase { grid-column: 1 / -1; }
-  .terminal-logs-stream { height: min(48vh, calc(100dvh - 300px)); }
+  .terminal-logs-stream { min-height: 160px; }
 }
 
 @media (max-width: 620px) {
   .terminal-worker-load-row { grid-template-columns: minmax(0, 1fr); }
   .terminal-worker-row-topline { flex-wrap: wrap; }
-  .terminal-logs-stream { height: min(42vh, calc(100dvh - 320px)); }
+  .terminal-logs-stream { min-height: 140px; }
   .terminal-logs-layout > .terminal-logs-panel { padding: 10px; }
 }
