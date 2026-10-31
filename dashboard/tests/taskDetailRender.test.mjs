@@ -148,7 +148,7 @@ test("the operations dashboard opens on the live command-center overview", async
     assert.doesNotMatch(html, /swarm-b/);
     // Running subtasks drive the swarm stage + flow particles above it.
     assert.match(html, /data-active-stage="swarm"/);
-    assert.match(html, /cc-card swarm cc-stage-active/);
+    assert.match(html, /cc-card swarm(?: cc-swarm-enter)? cc-stage-active/);
     assert.match(html, /cc-flow-connector cc-flow-active[^>]*data-flow-from="lead"/);
     assert.match(html, /cc-flow-connector cc-flow-active[^>]*data-flow-from="dispatch"/);
     assert.doesNotMatch(html, /data-flow-from="swarm"[^>]*cc-flow-active|cc-flow-active[^>]*data-flow-from="swarm"/);
@@ -477,6 +477,140 @@ test("command-center preview activates offline with empty cluster and drops when
     assert.doesNotMatch(liveHtml, /data-cc-preview="sample"/);
     assert.doesNotMatch(liveHtml, /Ship command-center live board/);
     assert.match(liveHtml, /data-cc-preview="live"/);
+    assert.match(liveHtml, /data-testid="cc-idle-tip"/);
+    assert.match(liveHtml, /» submit a task to see live flow/);
+    assert.match(liveHtml, /data-testid="cc-idle-tip-log"/);
+    assert.match(liveHtml, /cc-swarm-enter/);
+  } finally {
+    await vite.close();
+  }
+});
+
+test("command-center merges interactionLog into session feed and diffs pill flashes", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const mod = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+    const {
+      TerminalDashboard,
+      mergeSessionLogEvents,
+      changedPillKeys,
+      isCommandCenterConnectedIdle,
+      COMMAND_CENTER_IDLE_TIP,
+    } = mod;
+
+    const merged = mergeSessionLogEvents(
+      [{ timestamp: "2026-10-31T12:00:10Z", type: "task_submitted", details: { task_id: "t1" } }],
+      [
+        {
+          timestamp: "2026-10-31T12:00:20Z",
+          type: "tool_call",
+          task_id: "t1",
+          subtask_id: "s1",
+          data: { tool: "read" },
+        },
+        {
+          timestamp: "2026-10-31T12:00:05Z",
+          type: "subtask_started",
+          task_id: "t1",
+          data: { worker_id: "w1" },
+        },
+      ],
+      8,
+    );
+    assert.deepEqual(merged.map((event) => event.type), ["tool_call", "task_submitted", "subtask_started"]);
+    assert.equal(merged[0].details.tool, "read");
+    assert.equal(merged[0].details.subtask_id, "s1");
+
+    // Duplicate timestamp+type+task+subtask collapses to one row.
+    const deduped = mergeSessionLogEvents(
+      [{ timestamp: "2026-10-31T12:00:20Z", type: "tool_call", details: { task_id: "t1", subtask_id: "s1", tool: "read" } }],
+      [{ timestamp: "2026-10-31T12:00:20Z", type: "tool_call", task_id: "t1", subtask_id: "s1", data: { tool: "read" } }],
+      8,
+    );
+    assert.equal(deduped.length, 1);
+
+    assert.deepEqual(changedPillKeys(null, {
+      workers: "1/1", tasks: "0", queue: "0", grpc: "connected", dash: "connected", events: "0", backend: "online",
+    }), []);
+    assert.deepEqual(changedPillKeys(
+      { workers: "1/1", tasks: "0", queue: "0", grpc: "connected", dash: "connected", events: "0", backend: "online" },
+      { workers: "2/2", tasks: "1", queue: "0", grpc: "connected", dash: "connected", events: "3", backend: "online" },
+    ), ["workers", "tasks", "events"]);
+
+    assert.equal(isCommandCenterConnectedIdle({ connected: true, previewMode: false, stage: "idle" }), true);
+    assert.equal(isCommandCenterConnectedIdle({ connected: true, previewMode: false, stage: "swarm" }), false);
+    assert.equal(isCommandCenterConnectedIdle({ connected: false, previewMode: true, stage: "idle" }), false);
+    assert.equal(COMMAND_CENTER_IDLE_TIP, "» submit a task to see live flow");
+
+    const running = {
+      id: "merge-task",
+      description: "Merge session feed",
+      status: "in_progress",
+      project_id: "repo",
+      subtask_count: 1,
+      created_at: "2026-09-24T01:00:00Z",
+      updated_at: "2026-09-24T02:00:00Z",
+      subtasks: [{
+        id: "merge-sub",
+        description: "Work",
+        status: "in_progress",
+        depends_on: [],
+        percent: 55,
+        step_status: "started",
+      }],
+    };
+    const html = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", version: "0.2.1", components: [] },
+      workers: { available: true, workers: [], total: 0, available_count: 0 },
+      tasks: { available: true, tasks: [running], total: 1, status_counts: { in_progress: 1 }, pending_task_count: 0 },
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [{ timestamp: "2026-10-31T12:00:00Z", type: "task_submitted", details: { task_id: running.id } }],
+      metrics: null,
+      interactionLog: {
+        [running.id]: [{
+          timestamp: "2026-10-31T12:00:30Z",
+          type: "tool_call",
+          task_id: running.id,
+          subtask_id: "merge-sub",
+          data: { tool: "edit" },
+        }],
+      },
+      selectedTask: running,
+      selectedTaskId: running.id,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+    }));
+    assert.match(html, /tool call →/);
+    assert.match(html, /tool=edit/);
+    assert.match(html, /task submitted →/);
+    assert.match(html, /cc-card swarm cc-swarm-enter/);
+    assert.doesNotMatch(html, /data-testid="cc-idle-tip"/);
+
+    const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
+    assert.match(css, /@keyframes cc-session-row-enter/);
+    assert.match(css, /@keyframes cc-pill-flash/);
+    assert.match(css, /@keyframes cc-swarm-enter/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-session-row\.cc-session-row-enter[\s\S]*?animation:\s*none/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-pill\.cc-pill-flash[\s\S]*?animation:\s*none/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.cc-card\.swarm\.cc-swarm-enter[\s\S]*?animation:\s*none/);
   } finally {
     await vite.close();
   }
