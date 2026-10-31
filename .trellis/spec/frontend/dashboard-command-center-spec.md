@@ -373,3 +373,132 @@ className={cn("terminal-task-row", isSelected && "is-selected")}
 {!terminal && <EventTimeline events={interactionLog} />}
 <InteractionLog variant={terminal ? "terminal" : "default"} ... />
 ```
+
+---
+
+## Scenario: Workers view command-center polish
+
+### 1. Scope / Trigger
+
+- Trigger: User opens the **workers** tab in `TerminalDashboard`.
+- Pure frontend; reuses overview CC tokens (`--cc-lead|dispatch|swarm|advisor`); no new Gateway RPCs.
+- Out of scope: overview redesign; Opus/Sonnet/Haiku/JEV branding.
+
+### 2. Signatures
+
+```typescript
+// dashboard/src/components/panels/WorkersPanel.tsx
+export type WorkerRowNeon = "online" | "loaded" | "offline" | "stale";
+export function workerRowNeon(worker): WorkerRowNeon;
+export function workerLoadTone(percent: number): "green" | "blue" | "amber" | "orange" | "purple" | "red";
+
+WorkersPanel({
+  workers, tasks, stale?, onJumpTask?, embedded?,
+  variant?: "default" | "terminal",
+})
+
+// TerminalDashboard workers shell
+<div className="terminal-data-view terminal-workers-layout">
+  <WorkersPanel variant="terminal" onJumpTask={…} … />
+</div>
+```
+
+### 3. Contracts
+
+#### Shell
+
+- Workers view wraps the panel in `.terminal-data-view.terminal-workers-layout` (parallel to `.terminal-task-layout`).
+- `onJumpTask(parentTaskId)` still navigates to the tasks view.
+
+#### Row neon
+
+Under `.terminal-workers-layout` / `variant="terminal"`:
+
+| State | Class | Token |
+|-------|-------|-------|
+| available + `load_percent > 0` | `.terminal-worker-row.is-loaded` | `--cc-swarm` |
+| available + idle load | `.terminal-worker-row.is-online` | `--cc-swarm` |
+| `!is_available` | `.terminal-worker-row.is-offline` | `--terminal-red` |
+| `heartbeat_stale` (and available) | `.terminal-worker-row.is-stale` | `--cc-lead` |
+| expanded | `.is-expanded` | lead/swarm glow (same idea as `.terminal-task-row.is-selected`) |
+
+- Terminal path must **not** use Tailwind `border-l-green-500` / `border-l-blue-500` / cyan Card rails.
+- Default variant may keep legacy Tailwind rails for non-CC surfaces.
+
+#### Load meter
+
+- Terminal rows use `.terminal-mini-bar` (testid `terminal-worker-load`) — **not** orphaned `load-bar` / `load-bar-fill`.
+- Tone via `workerLoadTone`: `>=100` → red, `>=75` → orange (lead), `>=40` → blue (swarm), else green (dispatch).
+- Monospace `current/max` + `%` beside the bar.
+
+#### Assignment strip
+
+- Join `tasks.tasks[].subtasks` where `assigned_worker === worker.id`.
+- Render as `.terminal-swarm-row` under `.terminal-worker-assignments` with `◐ running` / `✓ done` / `◇ idle`, percent, phase, `step_agent`.
+- Click / keyboard activates `onJumpTask(parentTaskId)` (map via subtask→task).
+
+#### Capabilities
+
+- Terminal chips use `.terminal-worker-cap` (monospace, dispatch-toned) — not generic surface pills alone.
+
+#### Reduced motion
+
+- `.terminal-worker-row` transition disabled under `prefers-reduced-motion: reduce` (swarm marker pulse already covered).
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|-----------|----------|
+| Online worker, load 0 | `is-online` swarm rail |
+| Online worker, load > 0 | `is-loaded` swarm rail + load bar |
+| Offline worker | `is-offline` red rail |
+| Stale heartbeat (available) | `is-stale` lead rail |
+| Expanded row | `is-expanded` glow |
+| Assigned subtasks present | swarm rows + jump-to-task |
+| No assignments | no assignments strip |
+| Default variant | legacy green/red Tailwind rails allowed |
+
+### 5. Good / Base / Bad Cases
+
+**Good**: Online worker at 55% load with one `in_progress` assigned subtask at 42% phase `executing` → swarm neon, mini-bar, assignment `◐ running`, click jumps to parent task.
+
+**Base**: Empty workers list → empty state; no neon rows.
+
+**Bad**: Tailwind `border-l-green-500` on terminal path; orphaned `load-bar*` classes in terminal mode; inventing model personas.
+
+### 6. Tests Required
+
+| Test | Assertion |
+|------|-----------|
+| `workerRowNeon` / `workerLoadTone` | offline/stale/loaded/online + threshold tones |
+| Terminal SSR row | `terminal-worker-row`, `data-neon`, mini-bar; no `border-l-green-500`/`border-l-blue-500` |
+| Assignment strip | `terminal-swarm-row` when `assigned_worker` set |
+| Caps | `terminal-worker-cap` monospace chips |
+| Shell | `terminal-workers-layout` + `variant="terminal"` from TerminalDashboard |
+| CSS | `.terminal-worker-row.is-expanded`, reduced-motion for worker-row |
+
+### 7. Wrong vs Correct
+
+#### Wrong: Tailwind green rail in terminal mode
+
+```tsx
+className={w.is_available ? "border-l-green-500" : "border-l-red-500"}
+```
+
+#### Correct: CC neon state class
+
+```tsx
+className={cn("terminal-worker-row", `is-${workerRowNeon(w)}`, expanded && "is-expanded")}
+```
+
+#### Wrong: Orphaned load-bar in terminal path
+
+```tsx
+<div className="load-bar"><div className={cn("load-bar-fill", loadBarColor(pct))} /></div>
+```
+
+#### Correct: shared mini-bar + CC tone
+
+```tsx
+<span className={`terminal-mini-bar ${workerLoadTone(pct)}`}><i style={{ width: `${pct}%` }} /></span>
+```

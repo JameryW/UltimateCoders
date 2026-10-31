@@ -3,12 +3,47 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, shortId, truncate, statusBadgeClass } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
+import { clampPercent, isSubtaskDone, isSubtaskRunning } from "@/lib/taskProgress";
 import type { WorkersData, WorkerInfo, TasksData, SubtaskSummary } from "@/types/dashboard";
 
-function loadBarColor(percent: number): string {
-  if (percent >= 100) return "bg-red-500";
-  if (percent >= 75) return "bg-yellow-500";
-  return "bg-green-500";
+type BarTone = "green" | "blue" | "amber" | "orange" | "purple" | "red";
+
+/** Neon rail state for a worker row under command-center chrome. */
+export type WorkerRowNeon = "online" | "loaded" | "offline" | "stale";
+
+/** Map worker availability / load / heartbeat → CC neon rail class. */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested helper
+export function workerRowNeon(worker: Pick<WorkerInfo, "is_available" | "load_percent" | "heartbeat_stale">): WorkerRowNeon {
+  if (!worker.is_available) return "offline";
+  if (worker.heartbeat_stale) return "stale";
+  if (clampPercent(worker.load_percent) > 0) return "loaded";
+  return "online";
+}
+
+/** Load meter tone from percent thresholds (CC tokens). */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested helper
+export function workerLoadTone(percent: number): BarTone {
+  const pct = clampPercent(percent);
+  if (pct >= 100) return "red";
+  if (pct >= 75) return "orange";
+  if (pct >= 40) return "blue";
+  return "green";
+}
+
+function MiniBar({
+  value,
+  tone = "blue",
+  testId,
+}: {
+  value: number;
+  tone?: BarTone;
+  testId?: string;
+}) {
+  return (
+    <span className={`terminal-mini-bar ${tone}`} data-testid={testId} aria-hidden="true">
+      <i style={{ width: `${clampPercent(value)}%` }} />
+    </span>
+  );
 }
 
 function formatHeartbeatAge(seconds: number): string {
@@ -30,41 +65,107 @@ function workerHostname(metadata?: string): string | null {
   }
 }
 
-function WorkerDetail({ worker, activeSubtasks, subtaskToTask, onJumpTask }: { worker: WorkerInfo; activeSubtasks: SubtaskSummary[]; subtaskToTask: Map<string, string>; onJumpTask?: (taskId: string) => void }) {
-  // ponytail: look up parent task ID from the subtask→task map (replaces fragile lastIndexOf heuristic)
-  const taskIdFromSubtask = (subtaskId: string) => subtaskToTask.get(subtaskId) ?? subtaskId;
+function AssignmentSwarmRow({
+  subtask,
+  parentTaskId,
+  onJumpTask,
+}: {
+  subtask: SubtaskSummary;
+  parentTaskId: string;
+  onJumpTask?: (taskId: string) => void;
+}) {
+  const done = isSubtaskDone(subtask);
+  const running = isSubtaskRunning(subtask);
+  const pct = clampPercent(subtask.percent ?? (done ? 100 : 0));
+  const marker = done ? "✓ done" : running ? "◐ running" : "◇ idle";
+  const interactive = Boolean(onJumpTask);
 
   return (
-    <div className="mt-2 ml-1 space-y-1.5 text-xs border-t border-[var(--border-color)] pt-2">
+    <div
+      className={cn("terminal-swarm-row", done && "is-done", running && "is-running")}
+      data-testid="terminal-swarm-row"
+      data-subtask-id={subtask.id}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={interactive ? () => onJumpTask?.(parentTaskId) : undefined}
+      onKeyDown={interactive ? (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          onJumpTask?.(parentTaskId);
+        }
+      } : undefined}
+    >
+      <div className="terminal-swarm-row-topline">
+        <strong title={subtask.id}>{shortId(subtask.id, 12)}</strong>
+        <span className={cn("terminal-swarm-marker", done ? "done" : running ? "running" : "idle")}>
+          {marker}
+        </span>
+        <b className="terminal-swarm-pct">{pct}%</b>
+      </div>
+      <MiniBar value={pct} tone="blue" />
+      <div className="terminal-swarm-row-meta">
+        <span className="terminal-swarm-desc">{truncate(subtask.description, 48)}</span>
+        {subtask.phase && <span className="terminal-swarm-phase">{subtask.phase}</span>}
+        {subtask.step_agent && <span className="terminal-swarm-agent">{subtask.step_agent}</span>}
+        <span className={cn("text-xs px-1 py-0 rounded", statusBadgeClass(subtask.status))}>{subtask.status}</span>
+      </div>
+    </div>
+  );
+}
+
+function WorkerDetail({
+  worker,
+  activeSubtasks,
+  subtaskToTask,
+  onJumpTask,
+  terminal,
+}: {
+  worker: WorkerInfo;
+  activeSubtasks: SubtaskSummary[];
+  subtaskToTask: Map<string, string>;
+  onJumpTask?: (taskId: string) => void;
+  terminal: boolean;
+}) {
+  const taskIdFromSubtask = (subtaskId: string) => subtaskToTask.get(subtaskId) ?? subtaskId;
+  const hostname = workerHostname(worker.metadata);
+
+  return (
+    <div className={cn(
+      "mt-2 ml-1 space-y-1.5 text-xs border-t pt-2",
+      terminal ? "terminal-worker-detail" : "border-[var(--border-color)]",
+    )}>
       <div className="flex items-start gap-2">
         <span className="text-[var(--text-muted)] shrink-0 w-20">Full ID</span>
         <span className="font-mono text-[var(--text-primary)] break-all">{worker.id}</span>
       </div>
-      {workerHostname(worker.metadata) && (
+      {hostname && (
         <div className="flex items-start gap-2">
           <span className="text-[var(--text-muted)] shrink-0 w-20">Host</span>
-          <span className="font-mono text-[var(--text-primary)]">{workerHostname(worker.metadata)}</span>
+          <span className="font-mono text-[var(--text-primary)]">{hostname}</span>
         </div>
       )}
       <div className="flex items-start gap-2">
         <span className="text-[var(--text-muted)] shrink-0 w-20">Heartbeat</span>
         <span className="text-[var(--text-primary)]">
-          {/* ponytail: empty/non-ISO last_heartbeat (worker never heartbeated) →
-            new Date("") yields "Invalid Date". Show a fallback instead. */}
           {worker.last_heartbeat ? new Date(worker.last_heartbeat).toLocaleString() : "—"}
         </span>
       </div>
       <div className="flex items-start gap-2">
         <span className="text-[var(--text-muted)] shrink-0 w-20">Age</span>
-        <span className={cn(worker.heartbeat_stale ? "text-yellow-400" : "text-[var(--text-primary)]")}>
+        <span className={cn(
+          worker.heartbeat_stale
+            ? (terminal ? "text-[var(--cc-lead)]" : "text-yellow-400")
+            : "text-[var(--text-primary)]",
+        )}>
           {formatHeartbeatAge(worker.heartbeat_age_seconds)}
           {worker.heartbeat_stale && " (stale)"}
         </span>
       </div>
       <div className="flex items-start gap-2">
         <span className="text-[var(--text-muted)] shrink-0 w-20">Load</span>
-        <span className="text-[var(--text-primary)]">
-          {worker.current_load} / {worker.max_capacity} ({worker.load_percent}%)
+        <span className="font-mono text-[var(--text-primary)]">
+          {worker.current_load} / {worker.max_capacity} ({clampPercent(worker.load_percent)}%)
         </span>
       </div>
       {worker.capabilities.length > 0 && (
@@ -74,7 +175,7 @@ function WorkerDetail({ worker, activeSubtasks, subtaskToTask, onJumpTask }: { w
             {worker.capabilities.map((cap) => (
               <span
                 key={cap}
-                className="bg-[var(--bg-surface-alt)] text-[var(--text-secondary)] px-1.5 py-0.5 rounded"
+                className={terminal ? "terminal-worker-cap" : "bg-[var(--bg-surface-alt)] text-[var(--text-secondary)] px-1.5 py-0.5 rounded"}
               >
                 {cap}
               </span>
@@ -82,7 +183,7 @@ function WorkerDetail({ worker, activeSubtasks, subtaskToTask, onJumpTask }: { w
           </div>
         </div>
       )}
-      {activeSubtasks.length > 0 && (
+      {!terminal && activeSubtasks.length > 0 && (
         <div className="flex items-start gap-2">
           <span className="text-[var(--text-muted)] shrink-0 w-20">Subtasks</span>
           <div className="space-y-0.5">
@@ -91,7 +192,7 @@ function WorkerDetail({ worker, activeSubtasks, subtaskToTask, onJumpTask }: { w
                 key={st.id}
                 className={cn(
                   "flex items-center gap-1",
-                  onJumpTask && "cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded px-1 -mx-1"
+                  onJumpTask && "cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded px-1 -mx-1",
                 )}
                 role={onJumpTask ? "button" : undefined}
                 tabIndex={onJumpTask ? 0 : undefined}
@@ -101,22 +202,15 @@ function WorkerDetail({ worker, activeSubtasks, subtaskToTask, onJumpTask }: { w
                 <span className={cn("px-1 rounded text-[10px]", statusBadgeClass(st.status))}>{st.status}</span>
                 <span className="text-[var(--text-primary)]">{shortId(st.id)} {truncate(st.description, 30)}</span>
                 {st.step_agent && (
-                  <span
-                    className="text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-mono shrink-0"
-                    title={`Coding agent: ${st.step_agent}`}
-                  >
+                  <span className="text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-mono shrink-0" title={`Coding agent: ${st.step_agent}`}>
                     {st.step_agent}
                   </span>
                 )}
                 {st.phase && (
-                  <span className="text-[10px] text-blue-400 truncate shrink-0" title={st.phase}>
-                    {st.phase}
-                  </span>
+                  <span className="text-[10px] text-blue-400 truncate shrink-0" title={st.phase}>{st.phase}</span>
                 )}
                 {st.percent != null && (
-                  <span className="text-[10px] text-[var(--text-muted)] tabular-nums shrink-0">
-                    {Math.round(st.percent)}%
-                  </span>
+                  <span className="text-[10px] text-[var(--text-muted)] tabular-nums shrink-0">{Math.round(st.percent)}%</span>
                 )}
               </div>
             ))}
@@ -127,12 +221,19 @@ function WorkerDetail({ worker, activeSubtasks, subtaskToTask, onJumpTask }: { w
   );
 }
 
+function loadBarColor(percent: number): string {
+  if (percent >= 100) return "bg-red-500";
+  if (percent >= 75) return "bg-yellow-500";
+  return "bg-green-500";
+}
+
 export const WorkersPanel = memo(function WorkersPanel({
   workers,
   tasks,
   stale,
   onJumpTask,
   embedded,
+  variant = "default",
 }: {
   workers: WorkersData;
   tasks: TasksData;
@@ -140,12 +241,14 @@ export const WorkersPanel = memo(function WorkersPanel({
   onJumpTask?: (taskId: string) => void;
   /** When true, render without Card wrapper (embedded in SidebarPanel) */
   embedded?: boolean;
+  /** Command-center: neon rails, mini-bar load, swarm assignment strip. */
+  variant?: "default" | "terminal";
 }) {
+  const terminal = variant === "terminal";
   const [expandedWorkerId, setExpandedWorkerId] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"load" | "name">("load");
   const [filterOnline, setFilterOnline] = useState<boolean | null>(null);
 
-  // ponytail: Map<workerId, SubtaskSummary[]> + Map<subtaskId, taskId> — built in one pass
   const { workerSubtasks, subtaskToTask } = useMemo(() => {
     const wMap = new Map<string, SubtaskSummary[]>();
     const sMap = new Map<string, string>();
@@ -162,7 +265,6 @@ export const WorkersPanel = memo(function WorkersPanel({
     return { workerSubtasks: wMap, subtaskToTask: sMap };
   }, [tasks]);
 
-  // ponytail: sort + filter workers
   const sortedWorkers = useMemo(() => {
     let list = [...workers.workers];
     if (filterOnline === true) list = list.filter((w) => w.is_available);
@@ -176,7 +278,6 @@ export const WorkersPanel = memo(function WorkersPanel({
     setExpandedWorkerId(expandedWorkerId === workerId ? null : workerId);
   };
 
-  // ponytail: cluster load summary
   const clusterSummary = useMemo(() => {
     if (!workers.available || workers.workers.length === 0) return null;
     const totalLoad = workers.workers.reduce((s, w) => s + w.current_load, 0);
@@ -193,127 +294,246 @@ export const WorkersPanel = memo(function WorkersPanel({
         <EmptyState icon="workers" title="No workers connected" description="Workers will appear here when they connect to the engine" />
       ) : (
         <>
-          <div className="flex items-center gap-2 mb-2">
+          <div className={cn("flex items-center gap-2 mb-2", terminal && "terminal-worker-filters")}>
             <button
               onClick={() => setSortBy(sortBy === "load" ? "name" : "load")}
-              className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+              className={cn(
+                "text-xs cursor-pointer",
+                terminal ? "terminal-worker-filter-btn" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]",
+              )}
             >
               Sort: {sortBy === "load" ? "Load" : "Name"}
             </button>
             <button
               onClick={() => setFilterOnline(filterOnline === true ? null : true)}
-              className={"text-xs cursor-pointer " + (filterOnline === true ? "text-green-400" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]")}
+              className={cn(
+                "text-xs cursor-pointer",
+                terminal
+                  ? cn("terminal-worker-filter-btn", filterOnline === true && "is-active swarm")
+                  : (filterOnline === true ? "text-green-400" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"),
+              )}
             >
               Online
             </button>
             <button
               onClick={() => setFilterOnline(filterOnline === false ? null : false)}
-              className={"text-xs cursor-pointer " + (filterOnline === false ? "text-red-400" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]")}
+              className={cn(
+                "text-xs cursor-pointer",
+                terminal
+                  ? cn("terminal-worker-filter-btn", filterOnline === false && "is-active offline")
+                  : (filterOnline === false ? "text-red-400" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"),
+              )}
             >
               Offline
             </button>
           </div>
-          <ul className="space-y-2">
-          {sortedWorkers.map((w) => {
-            const activeSubtasks = workerSubtasks.get(w.id) ?? [];
-            const activeCount = activeSubtasks.filter(
-              (s) => s.status === "in_progress" || s.status === "assigned"
-            ).length;
-            // ponytail: subtask progress bar — completed/total from all assigned subtasks
-            const subtaskCompleted = activeSubtasks.filter((s) => s.status === "completed").length;
-            const subtaskTotal = activeSubtasks.length;
-            const subtaskPercent = subtaskTotal > 0 ? Math.round((subtaskCompleted / subtaskTotal) * 100) : 0;
-            return (
-              <li
-                key={w.id}
-                className={cn(
-                  "border-l-2 pl-2 py-1",
-                  w.is_available ? "border-l-green-500" : "border-l-red-500"
-                )}
-              >
-                <div
-                  role="button"
-                  tabIndex={0}
-                  aria-expanded={expandedWorkerId === w.id}
-                  aria-label={`Worker ${shortId(w.id)}`}
-                  className="cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded-r"
-                  onClick={() => toggleExpand(w.id)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(w.id); } }}
-                >
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-[var(--text-primary)] flex items-center gap-1.5">
-                      {shortId(w.id)}
-                      {workerHostname(w.metadata) && (
-                        <span
-                          className="text-[10px] font-sans text-[var(--text-muted)] bg-[var(--bg-surface-alt)] px-1 py-0.5 rounded"
-                          title="Host this worker registered from"
-                        >
-                          @{workerHostname(w.metadata)}
-                        </span>
+          <ul className={cn(terminal ? "terminal-worker-list" : "space-y-2")} aria-label="Worker list">
+            {sortedWorkers.map((w) => {
+              const activeSubtasks = workerSubtasks.get(w.id) ?? [];
+              const activeCount = activeSubtasks.filter(
+                (s) => s.status === "in_progress" || s.status === "assigned" || isSubtaskRunning(s),
+              ).length;
+              const subtaskCompleted = activeSubtasks.filter((s) => isSubtaskDone(s)).length;
+              const subtaskTotal = activeSubtasks.length;
+              const subtaskPercent = subtaskTotal > 0 ? Math.round((subtaskCompleted / subtaskTotal) * 100) : 0;
+              const neon = workerRowNeon(w);
+              const expanded = expandedWorkerId === w.id;
+              const hostname = workerHostname(w.metadata);
+              const loadPct = clampPercent(w.load_percent);
+
+              if (terminal) {
+                return (
+                  <li key={w.id} className="terminal-worker-item">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={expanded}
+                      aria-label={`Worker ${shortId(w.id)}`}
+                      data-testid="terminal-worker-row"
+                      data-neon={neon}
+                      className={cn(
+                        "terminal-worker-row",
+                        `is-${neon}`,
+                        expanded && "is-expanded",
                       )}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      {activeCount > 0 && (
-                        <span className="text-xs bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded" title={`${activeCount} active subtask(s)`}>
-                          {activeCount} active
+                      onClick={() => toggleExpand(w.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleExpand(w.id);
+                        }
+                      }}
+                    >
+                      <div className="terminal-worker-row-topline">
+                        <span className="terminal-worker-id">
+                          {shortId(w.id)}
+                          {hostname && (
+                            <span className="terminal-worker-host" title="Host this worker registered from">
+                              @{hostname}
+                            </span>
+                          )}
                         </span>
-                      )}
-                      {/* ponytail: subtask progress micro-bar */}
+                        <div className="terminal-worker-row-badges">
+                          {activeCount > 0 && (
+                            <span className="terminal-worker-active" title={`${activeCount} active subtask(s)`}>
+                              {activeCount} active
+                            </span>
+                          )}
+                          {subtaskTotal > 0 && (
+                            <span className="terminal-worker-subtask-count" title={`${subtaskCompleted}/${subtaskTotal} subtasks completed`}>
+                              {subtaskCompleted}/{subtaskTotal}
+                            </span>
+                          )}
+                          {w.heartbeat_stale && (
+                            <span className="terminal-worker-stale" title="Heartbeat stale">stale</span>
+                          )}
+                          <span className={cn("terminal-worker-avail", w.is_available ? "online" : "offline")}>
+                            {w.is_available ? "online" : "offline"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="terminal-worker-load-row">
+                        <MiniBar value={loadPct} tone={workerLoadTone(loadPct)} testId="terminal-worker-load" />
+                        <span className="terminal-worker-load-meta">
+                          <b>{w.current_load}/{w.max_capacity}</b>
+                          <em>{loadPct}%</em>
+                        </span>
+                      </div>
+
                       {subtaskTotal > 0 && (
-                        <div className="flex items-center gap-1 text-xs text-[var(--text-muted)]" title={`${subtaskCompleted}/${subtaskTotal} subtasks completed`}>
-                          <div className="w-16 h-1.5 bg-[var(--bg-surface-alt)] rounded overflow-hidden">
-                            <div
-                              className={cn("h-full rounded", subtaskPercent >= 100 ? "bg-green-500" : subtaskPercent >= 50 ? "bg-cyan-500" : "bg-blue-500")}
-                              style={{ width: `${subtaskPercent}%` }}
-                            />
-                          </div>
-                          <span>{subtaskCompleted}/{subtaskTotal}</span>
+                        <div className="terminal-worker-assign-progress" title={`${subtaskCompleted}/${subtaskTotal} assigned complete`}>
+                          <MiniBar value={subtaskPercent} tone={subtaskPercent >= 100 ? "green" : "blue"} />
                         </div>
                       )}
-                      {w.heartbeat_stale && (
-                        <span className="text-yellow-500 text-xs" title="Heartbeat stale">
-                          &#9888;
-                        </span>
+
+                      {w.capabilities.length > 0 && (
+                        <div className="terminal-worker-caps">
+                          {w.capabilities.map((cap) => (
+                            <span key={cap} className="terminal-worker-cap">{cap}</span>
+                          ))}
+                        </div>
                       )}
                     </div>
-                  </div>
 
-                  <div className="mt-1">
-                    <div className="load-bar w-full">
-                      <div
-                        className={cn("load-bar-fill", loadBarColor(w.load_percent))}
-                        style={{ width: `${Math.min(w.load_percent, 100)}%` }}
+                    {activeSubtasks.length > 0 && (
+                      <div className="terminal-worker-assignments" data-testid="terminal-worker-assignments">
+                        <div className="terminal-worker-assignments-head">assigned · swarm</div>
+                        {activeSubtasks.map((st) => (
+                          <AssignmentSwarmRow
+                            key={st.id}
+                            subtask={st}
+                            parentTaskId={subtaskToTask.get(st.id) ?? st.id}
+                            onJumpTask={onJumpTask}
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                    {expanded && (
+                      <WorkerDetail
+                        worker={w}
+                        activeSubtasks={activeSubtasks}
+                        subtaskToTask={subtaskToTask}
+                        onJumpTask={onJumpTask}
+                        terminal
                       />
-                    </div>
-                    <div className="flex justify-between text-xs text-[var(--text-muted)] mt-0.5">
-                      <span>
-                        {w.current_load}/{w.max_capacity}
+                    )}
+                  </li>
+                );
+              }
+
+              return (
+                <li
+                  key={w.id}
+                  className={cn(
+                    "border-l-2 pl-2 py-1",
+                    w.is_available ? "border-l-green-500" : "border-l-red-500",
+                  )}
+                >
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={expanded}
+                    aria-label={`Worker ${shortId(w.id)}`}
+                    className="cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded-r"
+                    onClick={() => toggleExpand(w.id)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(w.id); } }}
+                  >
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-mono text-[var(--text-primary)] flex items-center gap-1.5">
+                        {shortId(w.id)}
+                        {hostname && (
+                          <span
+                            className="text-[10px] font-sans text-[var(--text-muted)] bg-[var(--bg-surface-alt)] px-1 py-0.5 rounded"
+                            title="Host this worker registered from"
+                          >
+                            @{hostname}
+                          </span>
+                        )}
                       </span>
-                      <span>{w.load_percent}%</span>
+                      <div className="flex items-center gap-1.5">
+                        {activeCount > 0 && (
+                          <span className="text-xs bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded" title={`${activeCount} active subtask(s)`}>
+                            {activeCount} active
+                          </span>
+                        )}
+                        {subtaskTotal > 0 && (
+                          <div className="flex items-center gap-1 text-xs text-[var(--text-muted)]" title={`${subtaskCompleted}/${subtaskTotal} subtasks completed`}>
+                            <div className="w-16 h-1.5 bg-[var(--bg-surface-alt)] rounded overflow-hidden">
+                              <div
+                                className={cn("h-full rounded", subtaskPercent >= 100 ? "bg-green-500" : subtaskPercent >= 50 ? "bg-cyan-500" : "bg-blue-500")}
+                                style={{ width: `${subtaskPercent}%` }}
+                              />
+                            </div>
+                            <span>{subtaskCompleted}/{subtaskTotal}</span>
+                          </div>
+                        )}
+                        {w.heartbeat_stale && (
+                          <span className="text-yellow-500 text-xs" title="Heartbeat stale">&#9888;</span>
+                        )}
+                      </div>
                     </div>
+
+                    <div className="mt-1">
+                      <div className="load-bar w-full">
+                        <div
+                          className={cn("load-bar-fill", loadBarColor(w.load_percent))}
+                          style={{ width: `${Math.min(w.load_percent, 100)}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-xs text-[var(--text-muted)] mt-0.5">
+                        <span>{w.current_load}/{w.max_capacity}</span>
+                        <span>{w.load_percent}%</span>
+                      </div>
+                    </div>
+
+                    {w.capabilities.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {w.capabilities.map((cap) => (
+                          <span
+                            key={cap}
+                            className="text-xs bg-[var(--bg-surface-alt)] text-[var(--text-secondary)] px-1.5 py-0.5 rounded"
+                          >
+                            {cap}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
-                  {w.capabilities.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {w.capabilities.map((cap) => (
-                        <span
-                          key={cap}
-                          className="text-xs bg-[var(--bg-surface-alt)] text-[var(--text-secondary)] px-1.5 py-0.5 rounded"
-                        >
-                          {cap}
-                        </span>
-                      ))}
-                    </div>
+                  {expanded && (
+                    <WorkerDetail
+                      worker={w}
+                      activeSubtasks={activeSubtasks}
+                      subtaskToTask={subtaskToTask}
+                      onJumpTask={onJumpTask}
+                      terminal={false}
+                    />
                   )}
-                </div>
-
-                {/* Detail expansion */}
-                {expandedWorkerId === w.id && (
-                  <WorkerDetail worker={w} activeSubtasks={activeSubtasks} subtaskToTask={subtaskToTask} onJumpTask={onJumpTask} />
-                )}
-              </li>
-            );
-          })}
+                </li>
+              );
+            })}
           </ul>
         </>
       )}
@@ -323,7 +543,7 @@ export const WorkersPanel = memo(function WorkersPanel({
   if (embedded) return content;
 
   return (
-    <Card stale={stale}>
+    <Card stale={stale} className={terminal ? "terminal-workers-card" : undefined}>
       <CardHeader>
         <CardTitle>Workers</CardTitle>
         <div className="flex items-center gap-2">
@@ -333,7 +553,9 @@ export const WorkersPanel = memo(function WorkersPanel({
           {clusterSummary && (
             <span className={cn(
               "text-xs font-mono",
-              clusterSummary.pct >= 80 ? "text-yellow-400" : "text-[var(--text-muted)]"
+              terminal
+                ? (clusterSummary.pct >= 80 ? "text-[var(--cc-lead)]" : "text-[var(--terminal-dim)]")
+                : (clusterSummary.pct >= 80 ? "text-yellow-400" : "text-[var(--text-muted)]"),
             )}>
               {clusterSummary.totalLoad}/{clusterSummary.totalCap} ({clusterSummary.pct}%)
             </span>

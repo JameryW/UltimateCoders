@@ -267,6 +267,192 @@ test("tasks command-center: list chip, live strip, swarm rows, session log roles
   }
 });
 
+test("workers command-center: neon rows, mini-bar load, assignment swarm strip", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const { WorkersPanel, workerRowNeon, workerLoadTone } = await vite.ssrLoadModule(
+      "/src/components/panels/WorkersPanel.tsx",
+    );
+    const { TerminalDashboard } = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+
+    assert.equal(workerRowNeon({ is_available: false, load_percent: 0, heartbeat_stale: false }), "offline");
+    assert.equal(workerRowNeon({ is_available: true, load_percent: 0, heartbeat_stale: true }), "stale");
+    assert.equal(workerRowNeon({ is_available: true, load_percent: 55, heartbeat_stale: false }), "loaded");
+    assert.equal(workerRowNeon({ is_available: true, load_percent: 0, heartbeat_stale: false }), "online");
+    assert.equal(workerLoadTone(100), "red");
+    assert.equal(workerLoadTone(80), "orange");
+    assert.equal(workerLoadTone(55), "blue");
+    assert.equal(workerLoadTone(10), "green");
+
+    const workers = {
+      available: true,
+      available_count: 2,
+      total: 3,
+      workers: [
+        {
+          id: "worker-alpha",
+          capabilities: ["code", "test"],
+          current_load: 1,
+          max_capacity: 2,
+          load_percent: 55,
+          last_heartbeat: "2026-10-31T12:00:00Z",
+          heartbeat_age_seconds: 3,
+          heartbeat_stale: false,
+          is_available: true,
+          metadata: JSON.stringify({ hostname: "box-a" }),
+        },
+        {
+          id: "worker-offline",
+          capabilities: ["code"],
+          current_load: 0,
+          max_capacity: 2,
+          load_percent: 0,
+          last_heartbeat: "2026-10-31T11:00:00Z",
+          heartbeat_age_seconds: 3600,
+          heartbeat_stale: true,
+          is_available: false,
+        },
+        {
+          id: "worker-stale",
+          capabilities: [],
+          current_load: 0,
+          max_capacity: 2,
+          load_percent: 0,
+          last_heartbeat: "2026-10-31T11:50:00Z",
+          heartbeat_age_seconds: 120,
+          heartbeat_stale: true,
+          is_available: true,
+        },
+      ],
+    };
+
+    const tasks = {
+      available: true,
+      total: 1,
+      status_counts: { in_progress: 1 },
+      pending_task_count: 0,
+      tasks: [{
+        id: "parent-task",
+        description: "Polish workers command center",
+        status: "in_progress",
+        project_id: "repo",
+        subtask_count: 2,
+        created_at: "2026-10-31T12:00:00Z",
+        updated_at: "2026-10-31T12:01:00Z",
+        subtasks: [
+          {
+            id: "assigned-run",
+            description: "Wire worker neon",
+            status: "in_progress",
+            depends_on: [],
+            assigned_worker: "worker-alpha",
+            percent: 42,
+            phase: "executing",
+            step_agent: "codex",
+            step_status: "started",
+          },
+          {
+            id: "assigned-done",
+            description: "Caps chips",
+            status: "completed",
+            depends_on: [],
+            assigned_worker: "worker-alpha",
+            percent: 100,
+            step_status: "completed",
+          },
+        ],
+      }],
+    };
+
+    const html = renderToStaticMarkup(React.createElement(WorkersPanel, {
+      workers,
+      tasks,
+      variant: "terminal",
+      onJumpTask: () => {},
+    }));
+    assert.match(html, /data-testid="terminal-worker-row"/);
+    assert.match(html, /data-neon="loaded"/);
+    assert.match(html, /data-neon="offline"/);
+    assert.match(html, /data-neon="stale"/);
+    assert.match(html, /terminal-worker-row[^"]*\bis-loaded\b|\bis-loaded\b[^"]*terminal-worker-row/);
+    assert.match(html, /terminal-mini-bar blue/);
+    assert.match(html, /data-testid="terminal-worker-load"/);
+    assert.match(html, /1\/2/);
+    assert.match(html, /55%/);
+    assert.match(html, /data-testid="terminal-worker-assignments"/);
+    assert.match(html, /data-testid="terminal-swarm-row"/);
+    assert.match(html, /◐ running/);
+    assert.match(html, /✓ done/);
+    assert.match(html, /executing/);
+    assert.match(html, /codex/);
+    assert.match(html, /terminal-worker-cap/);
+    assert.match(html, />code</);
+    assert.match(html, />test</);
+    assert.doesNotMatch(html, /border-l-green-500/);
+    assert.doesNotMatch(html, /border-l-blue-500/);
+    assert.doesNotMatch(html, /load-bar-fill|class="load-bar/);
+    assert.doesNotMatch(html, /Opus|Sonnet|Haiku|JEV/);
+
+    const legacyHtml = renderToStaticMarkup(React.createElement(WorkersPanel, {
+      workers,
+      tasks,
+      variant: "default",
+    }));
+    assert.match(legacyHtml, /border-l-green-500|border-l-red-500/);
+    assert.doesNotMatch(legacyHtml, /data-testid="terminal-worker-row"/);
+
+    const dashHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", version: "0.2.1", components: [] },
+      workers,
+      tasks,
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [],
+      metrics: null,
+      interactionLog: {},
+      selectedTask: null,
+      selectedTaskId: null,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+      initialView: "workers",
+    }));
+    assert.match(dashHtml, /terminal-workers-layout/);
+    assert.match(dashHtml, /data-testid="terminal-worker-row"/);
+    assert.match(dashHtml, /data-testid="terminal-swarm-row"/);
+    assert.match(dashHtml, /terminal-mini-bar/);
+    assert.doesNotMatch(dashHtml, /border-l-green-500/);
+    assert.doesNotMatch(dashHtml, /Opus|Sonnet|Haiku|Claude Code|JEV/);
+
+    const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
+    assert.match(css, /\.terminal-workers-layout/);
+    assert.match(css, /\.terminal-worker-row\.is-loaded[\s\S]*?--cc-swarm|\.terminal-worker-row\.is-online[\s\S]*?--cc-swarm/);
+    assert.match(css, /\.terminal-worker-row\.is-offline[\s\S]*?--terminal-red/);
+    assert.match(css, /\.terminal-worker-row\.is-stale[\s\S]*?--cc-lead/);
+    assert.match(css, /\.terminal-worker-row\.is-expanded/);
+    assert.match(css, /\.terminal-mini-bar\.red i[\s\S]*?--terminal-red/);
+    assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.terminal-worker-row[\s\S]*?transition:\s*none/);
+  } finally {
+    await vite.close();
+  }
+});
+
 test("the operations dashboard opens on the live command-center overview", async () => {
   const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
   try {
