@@ -213,6 +213,45 @@ function reviewCue(lead: TaskSummary | null, selectedTask: TaskSummary | null): 
   return { title: `review · ${focus.status}`, detail: shortId(focus.id, 16) };
 }
 
+/** Live command-center stage driven by UC runtime state (not a fake idle loop). */
+export type CommandCenterStage = "idle" | "lead" | "dispatch" | "swarm" | "review";
+
+const STAGE_ORDER: CommandCenterStage[] = ["idle", "lead", "dispatch", "swarm", "review"];
+
+export function deriveActiveStage(input: {
+  connected: boolean;
+  lead: TaskSummary | null;
+  selectedTask: TaskSummary | null;
+  pending: number;
+  swarm: Array<{ running: boolean }>;
+}): CommandCenterStage {
+  const { connected, lead, selectedTask, pending, swarm } = input;
+  const focus = selectedTask ?? lead;
+  const hasActiveTask = Boolean(lead && ACTIVE_TASK_STATUSES.has(lead.status));
+  const hasRunningSwarm = swarm.some((card) => card.running)
+    || (lead?.subtasks ?? []).some(isSubtaskRunning);
+
+  // Furthest-advanced hot stage wins when multiple conditions apply.
+  if (focus && TERMINAL_TASK_STATUSES.has(focus.status)) return "review";
+  if (hasRunningSwarm) return "swarm";
+  if (pending > 0 || (hasActiveTask && lead && (lead.status === "in_progress" || lead.status === "running") && !hasRunningSwarm)) {
+    return "dispatch";
+  }
+  if (hasActiveTask) return "lead";
+  if (!connected) return "idle";
+  return "idle";
+}
+
+function connectorFlowsFor(stage: CommandCenterStage): { afterLead: boolean; afterDispatch: boolean; afterSwarm: boolean } {
+  const index = STAGE_ORDER.indexOf(stage);
+  // Connectors above the active stage carry traveling light.
+  return {
+    afterLead: index >= STAGE_ORDER.indexOf("dispatch"),
+    afterDispatch: index >= STAGE_ORDER.indexOf("swarm"),
+    afterSwarm: index >= STAGE_ORDER.indexOf("review"),
+  };
+}
+
 function AdvisorPanel({
   connected,
   workers,
@@ -307,6 +346,14 @@ function OverviewView({
   const swarm = collectSwarmCards(lead, workers);
   const review = reviewCue(lead, selectedTask);
   const sessionEvents = latestDashboardEvents(eventLog ?? [], 8);
+  const activeStage = deriveActiveStage({
+    connected,
+    lead,
+    selectedTask,
+    pending,
+    swarm,
+  });
+  const flow = connectorFlowsFor(activeStage);
 
   return (
     <div className="terminal-overview cc-board">
@@ -322,9 +369,14 @@ function OverviewView({
           onView={onView}
         />
 
-        <section className="cc-flow" aria-label="Live execution flow">
+        <section
+          className={`cc-flow stage-${activeStage}`}
+          data-active-stage={activeStage}
+          aria-label="Live execution flow"
+        >
           <button
-            className="cc-card lead"
+            className={`cc-card lead${activeStage === "lead" ? " cc-stage-active" : ""}`}
+            data-stage="lead"
             onClick={() => {
               if (lead) {
                 onSelectTask(lead.id);
@@ -345,9 +397,19 @@ function OverviewView({
             </div>
           </button>
 
-          <div className="cc-flow-connector" aria-hidden="true"><i /><span /><b>▼</b></div>
+          <div
+            className={`cc-flow-connector${flow.afterLead ? " cc-flow-active" : activeStage === "idle" ? " cc-flow-idle" : ""}`}
+            data-flow-from="lead"
+            aria-hidden="true"
+          >
+            <i /><span /><em /><b>▼</b>
+          </div>
 
-          <button className="cc-card dispatch" onClick={() => onView("workers")}>
+          <button
+            className={`cc-card dispatch${activeStage === "dispatch" ? " cc-stage-active" : ""}`}
+            data-stage="dispatch"
+            onClick={() => onView("workers")}
+          >
             <div className="cc-card-topline">
               <strong>dispatch · fork layer</strong>
               <span className="cc-card-count">queue {pending}</span>
@@ -359,16 +421,22 @@ function OverviewView({
             </div>
           </button>
 
-          <div className="cc-flow-connector" aria-hidden="true"><i /><span /><b>▼</b></div>
+          <div
+            className={`cc-flow-connector${flow.afterDispatch ? " cc-flow-active" : activeStage === "idle" ? " cc-flow-idle" : ""}`}
+            data-flow-from="dispatch"
+            aria-hidden="true"
+          >
+            <i /><span /><em /><b>▼</b>
+          </div>
 
           <div className="cc-swarm-head">delegate to workers · swarm</div>
-          <div className="cc-swarm-row">
+          <div className={`cc-swarm-row${activeStage === "swarm" ? " cc-stage-active" : ""}`} data-stage="swarm">
             {swarm.length === 0 ? (
               <div className="cc-swarm-empty">no running subtasks or workers</div>
             ) : swarm.map((card) => (
               <button
                 key={card.id}
-                className="cc-card swarm"
+                className={`cc-card swarm${activeStage === "swarm" && card.running ? " cc-stage-active" : ""}`}
                 onClick={() => onView(lead?.subtasks?.length ? "tasks" : "workers")}
                 title={card.id}
               >
@@ -385,10 +453,17 @@ function OverviewView({
             ))}
           </div>
 
-          <div className="cc-flow-connector" aria-hidden="true"><i /><span /><b>▼</b></div>
+          <div
+            className={`cc-flow-connector${flow.afterSwarm ? " cc-flow-active" : activeStage === "idle" ? " cc-flow-idle" : ""}`}
+            data-flow-from="swarm"
+            aria-hidden="true"
+          >
+            <i /><span /><em /><b>▼</b>
+          </div>
 
           <button
-            className="cc-card review"
+            className={`cc-card review${activeStage === "review" ? " cc-stage-active" : ""}`}
+            data-stage="review"
             onClick={() => {
               if (selectedTask ?? lead) {
                 onSelectTask((selectedTask ?? lead)!.id);

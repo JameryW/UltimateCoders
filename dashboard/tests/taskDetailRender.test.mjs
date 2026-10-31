@@ -135,6 +135,12 @@ test("the operations dashboard opens on the live command-center overview", async
     assert.doesNotMatch(html, /Opus|Sonnet|Haiku|Claude Code|JEV/);
     // Completed subtasks must not steal the swarm row when nothing else is running.
     assert.doesNotMatch(html, /swarm-b/);
+    // Running subtasks drive the swarm stage + flow particles above it.
+    assert.match(html, /data-active-stage="swarm"/);
+    assert.match(html, /cc-card swarm cc-stage-active/);
+    assert.match(html, /cc-flow-connector cc-flow-active[^>]*data-flow-from="lead"/);
+    assert.match(html, /cc-flow-connector cc-flow-active[^>]*data-flow-from="dispatch"/);
+    assert.doesNotMatch(html, /data-flow-from="swarm"[^>]*cc-flow-active|cc-flow-active[^>]*data-flow-from="swarm"/);
   } finally {
     await vite.close();
   }
@@ -201,6 +207,147 @@ test("command-center swarm falls back to workers when no running subtasks", asyn
     assert.match(html, /worker-alpha/);
     assert.doesNotMatch(html, /done-only/);
     assert.match(html, /✓ done|◇ idle/);
+    // Planning with no running swarm → lead stage (no connector particles yet).
+    assert.match(html, /data-active-stage="lead"/);
+    assert.match(html, /cc-card lead cc-stage-active/);
+    assert.doesNotMatch(html, /cc-flow-active/);
+  } finally {
+    await vite.close();
+  }
+});
+
+test("command-center active stage marches: dispatch queue and review terminal", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const mod = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+    const { TerminalDashboard, deriveActiveStage } = mod;
+
+    assert.equal(deriveActiveStage({
+      connected: true,
+      lead: { id: "t1", description: "x", status: "planning", project_id: "", subtask_count: 0, created_at: "", updated_at: "", subtasks: [] },
+      selectedTask: null,
+      pending: 0,
+      swarm: [{ running: false }],
+    }), "lead");
+    assert.equal(deriveActiveStage({
+      connected: true,
+      lead: { id: "t1", description: "x", status: "in_progress", project_id: "", subtask_count: 1, created_at: "", updated_at: "", subtasks: [] },
+      selectedTask: null,
+      pending: 3,
+      swarm: [{ running: false }],
+    }), "dispatch");
+    assert.equal(deriveActiveStage({
+      connected: true,
+      lead: { id: "t1", description: "x", status: "in_progress", project_id: "", subtask_count: 1, created_at: "", updated_at: "" },
+      selectedTask: null,
+      pending: 3,
+      swarm: [{ running: true }],
+    }), "swarm");
+    assert.equal(deriveActiveStage({
+      connected: true,
+      lead: { id: "t1", description: "x", status: "completed", project_id: "", subtask_count: 1, created_at: "", updated_at: "" },
+      selectedTask: { id: "t1", description: "x", status: "completed", project_id: "", subtask_count: 1, created_at: "", updated_at: "" },
+      pending: 0,
+      swarm: [],
+    }), "review");
+    assert.equal(deriveActiveStage({
+      connected: false,
+      lead: null,
+      selectedTask: null,
+      pending: 0,
+      swarm: [],
+    }), "idle");
+
+    const queued = {
+      id: "queued-task",
+      description: "Waiting on workers",
+      status: "in_progress",
+      project_id: "repo",
+      subtask_count: 1,
+      created_at: "2026-09-24T01:00:00Z",
+      updated_at: "2026-09-24T02:00:00Z",
+      subtasks: [{ id: "pending-sub", description: "Not started", status: "pending", depends_on: [] }],
+    };
+    const dispatchHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", components: [] },
+      workers: { available: true, workers: [], total: 0, available_count: 0 },
+      tasks: { available: true, tasks: [queued], total: 1, status_counts: { in_progress: 1 }, pending_task_count: 4 },
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [],
+      metrics: null,
+      interactionLog: {},
+      selectedTask: queued,
+      selectedTaskId: queued.id,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+    }));
+    assert.match(dispatchHtml, /data-active-stage="dispatch"/);
+    assert.match(dispatchHtml, /cc-card dispatch cc-stage-active/);
+    assert.match(dispatchHtml, /cc-flow-connector cc-flow-active[^>]*data-flow-from="lead"/);
+    assert.doesNotMatch(dispatchHtml, /data-flow-from="dispatch"[^>]*cc-flow-active|cc-flow-active[^>]*data-flow-from="dispatch"/);
+
+    const done = {
+      id: "done-task",
+      description: "Ready for verify",
+      status: "completed",
+      project_id: "repo",
+      subtask_count: 1,
+      created_at: "2026-09-24T01:00:00Z",
+      updated_at: "2026-09-24T02:00:00Z",
+      subtasks: [{ id: "done-sub", description: "Finished", status: "completed", depends_on: [], percent: 100 }],
+    };
+    const reviewHtml = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", components: [] },
+      workers: { available: true, workers: [], total: 0, available_count: 0 },
+      tasks: { available: true, tasks: [done], total: 1, status_counts: { completed: 1 }, pending_task_count: 0 },
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [],
+      metrics: null,
+      interactionLog: {},
+      selectedTask: done,
+      selectedTaskId: done.id,
+      taskHistoryLoading: false,
+      onSelectTask: () => {},
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+    }));
+    assert.match(reviewHtml, /data-active-stage="review"/);
+    assert.match(reviewHtml, /cc-card review cc-stage-active/);
+    assert.match(reviewHtml, /cc-flow-active[^>]*data-flow-from="swarm"|data-flow-from="swarm"[^>]*cc-flow-active/);
   } finally {
     await vite.close();
   }
