@@ -10,6 +10,7 @@ import type { GrpcConnectionState, GrpcSubmitResult, GrpcTaskActionResult } from
 import type { DashboardConnectionState } from "@/hooks/useDashboardGrpc";
 import type { Theme } from "@/hooks/useTheme";
 import { executeUcCommand } from "@/lib/ucCommands";
+import { hashForView, viewFromHash, type TerminalView } from "@/lib/terminalView";
 import { latestDashboardEvents } from "@/lib/dashboardEvents";
 import { aggregateSubtaskProgress } from "@/lib/taskProgress";
 import { statusBadgeClass } from "@/lib/utils";
@@ -23,8 +24,6 @@ import type {
   TaskSummary,
   WorkersData,
 } from "@/types/dashboard";
-
-type TerminalView = "overview" | "tasks" | "workers" | "search" | "memory" | "logs" | "inference";
 
 const VIEWS: Array<{ id: TerminalView; label: string; meta: string; key: string; icon: string }> = [
   { id: "overview", label: "概览", meta: "CLUSTER", key: "1", icon: "◯" },
@@ -1174,6 +1173,22 @@ export function TerminalDashboard({
   useEffect(() => {
     const timer = window.setInterval(() => setClock(new Date()), 1000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  // Deep-linkable views: keep the URL hash in sync with the active tab and
+  // follow back/forward navigation. Hash-only history moves fire `hashchange`.
+  useEffect(() => {
+    const next = hashForView(view);
+    if (window.location.hash !== next) window.history.pushState(null, "", next);
+  }, [view]);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const parsed = viewFromHash(window.location.hash);
+      if (parsed) setView(parsed);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
   // Prefer dark CC chrome on first visit only (no uc_dashboard_theme key yet).
