@@ -217,6 +217,133 @@ function reviewCue(lead: TaskSummary | null, selectedTask: TaskSummary | null): 
 export type CommandCenterStage = "idle" | "lead" | "dispatch" | "swarm" | "review";
 
 const STAGE_ORDER: CommandCenterStage[] = ["idle", "lead", "dispatch", "swarm", "review"];
+/** Start on swarm so connector particles + stage glow are visible in the offline sample. */
+const PREVIEW_STAGE_CYCLE: CommandCenterStage[] = ["swarm", "dispatch", "swarm", "review", "lead"];
+
+type SwarmCard = {
+  id: string;
+  title: string;
+  detail: string;
+  value: number;
+  done: boolean;
+  running: boolean;
+};
+
+/** Offline + empty cluster → show unmistakably-labeled sample board (not production data). */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested preview gate
+export function shouldUseCommandCenterPreview(input: {
+  connected: boolean;
+  tasks: Pick<TasksData, "tasks" | "total">;
+  workers: Pick<WorkersData, "workers" | "total">;
+}): boolean {
+  if (input.connected) return false;
+  const taskCount = input.tasks.tasks?.length ?? 0;
+  const workerCount = input.workers.workers?.length ?? 0;
+  if (taskCount > 0 || workerCount > 0) return false;
+  if ((input.tasks.total ?? 0) > 0 || (input.workers.total ?? 0) > 0) return false;
+  return true;
+}
+
+const PREVIEW_LEAD_DESCRIPTION = "Ship command-center live board";
+
+function buildPreviewBoard(tick: number): {
+  lead: TaskSummary;
+  pending: number;
+  averageLoad: number;
+  onlineWorkers: number;
+  workerTotal: number;
+  onlineRatio: number;
+  queuePercent: number;
+  runningTasks: number;
+  swarm: SwarmCard[];
+  review: { title: string; detail: string };
+  sessionEvents: DashboardEvent[];
+  health: HealthData;
+  advice: DashboardEvent[];
+  stage: CommandCenterStage;
+} {
+  const phase = PREVIEW_STAGE_CYCLE[tick % PREVIEW_STAGE_CYCLE.length] ?? "swarm";
+  const drift = (tick % 5) * 3;
+  const swarm: SwarmCard[] = [
+    {
+      id: "preview-swarm-a",
+      title: "preview-a",
+      detail: "wire advisor rail",
+      value: Math.min(98, 92 + (tick % 3)),
+      done: true,
+      running: false,
+    },
+    {
+      id: "preview-swarm-b",
+      title: "preview-b",
+      detail: "dispatch bars",
+      value: percent(48 + drift),
+      done: false,
+      running: true,
+    },
+    {
+      id: "preview-swarm-c",
+      title: "preview-c",
+      detail: "session log polish",
+      value: percent(31 + drift),
+      done: false,
+      running: true,
+    },
+  ];
+  const lead: TaskSummary = {
+    id: "preview-task",
+    description: PREVIEW_LEAD_DESCRIPTION,
+    status: phase === "review" ? "completed" : "in_progress",
+    project_id: "preview",
+    subtask_count: 3,
+    created_at: "2026-10-31T00:00:00Z",
+    updated_at: "2026-10-31T00:01:00Z",
+    subtasks: swarm.map((card) => ({
+      id: card.id,
+      description: card.detail,
+      status: card.done ? "completed" : "in_progress",
+      depends_on: [],
+      percent: card.value,
+      phase: card.detail,
+      step_status: card.done ? "completed" : "started",
+    })),
+  };
+  const sessionEvents: DashboardEvent[] = [
+    { timestamp: "2026-10-31T12:04:18Z", type: "subtask_progress", details: { task_id: lead.id, percent: swarm[1]?.value } },
+    { timestamp: "2026-10-31T12:04:11Z", type: "subtask_started", details: { task_id: lead.id, worker_id: "preview-b" } },
+    { timestamp: "2026-10-31T12:03:58Z", type: "task_submitted", details: { task_id: lead.id, description: PREVIEW_LEAD_DESCRIPTION } },
+    { timestamp: "2026-10-31T12:03:40Z", type: "health_check", details: { status: "waiting", note: "gateway offline" } },
+  ];
+  return {
+    lead,
+    pending: 2,
+    averageLoad: 48,
+    onlineWorkers: 2,
+    workerTotal: 3,
+    onlineRatio: (2 / 3) * 100,
+    queuePercent: 40,
+    runningTasks: phase === "review" ? 0 : 1,
+    swarm,
+    review: phase === "review"
+      ? { title: "review · completed", detail: "verify outputs · inspect history" }
+      : { title: "review · in flight", detail: "awaiting verify after swarm completes" },
+    sessionEvents,
+    health: {
+      available: false,
+      status: "waiting",
+      version: "preview",
+      uptime_seconds: 0,
+      components: [
+        { name: "gateway", status: "offline" },
+        { name: "nats", status: "idle" },
+        { name: "workers", status: "sample" },
+        { name: "memory", status: "idle" },
+      ],
+    },
+    advice: sessionEvents.slice(0, 3),
+    stage: phase,
+  };
+}
 
 // eslint-disable-next-line react-refresh/only-export-components -- unit-tested stage helper shared with OverviewView
 export function deriveActiveStage(input: {
@@ -262,34 +389,42 @@ function AdvisorPanel({
   metrics,
   onView,
   compact = false,
+  preview = false,
 }: Pick<TerminalDashboardProps, "connected" | "workers" | "tasks" | "eventLog" | "health" | "metrics"> & {
   onView: (view: TerminalView) => void;
   compact?: boolean;
+  preview?: boolean;
 }) {
   const workerList = workers.workers ?? [];
   const onlineWorkers = workerList.filter((worker) => worker.is_available).length;
   const advice = latestDashboardEvents(eventLog ?? [], 4);
   const components = (health.components ?? []).slice(0, 4);
-  const phase = !connected
-    ? "waiting for gateway"
-    : health.status === "ok" || health.status === "healthy"
-      ? "cluster healthy"
-      : health.status || "checking health";
+  const focusIndex = Math.max(0, components.findIndex((component) => {
+    const status = component.status.toLowerCase();
+    return status !== "ok" && status !== "healthy" && status !== "idle";
+  }));
+  const phase = preview
+    ? "preview sample · waiting for gateway"
+    : !connected
+      ? "waiting for gateway"
+      : health.status === "ok" || health.status === "healthy"
+        ? "cluster healthy"
+        : health.status || "checking health";
 
   return (
-    <aside className={`cc-advisor ${compact ? "compact" : ""}`} aria-label="Health advisor">
+    <aside className={`cc-advisor ${compact ? "compact" : ""}${preview ? " preview" : ""}`} aria-label="Health advisor">
       <div className="cc-advisor-head">
         <span>HEALTH advisor · on call</span>
-        <b className={connected ? "online" : "offline"}>{connected ? "live" : "offline"}</b>
+        <b className={connected && !preview ? "online" : "offline"}>{preview ? "preview" : connected ? "live" : "offline"}</b>
       </div>
       <div className="cc-advisor-phase"><span className="cc-diamond">◆</span> {phase}</div>
       <div className="cc-advisor-section">
         <div className="cc-advisor-label">components</div>
         {components.length === 0 ? (
           <div className="cc-advisor-empty">no health components yet</div>
-        ) : components.map((component) => (
-          <div key={component.name} className="cc-advisor-line">
-            <span>◇ {component.name}</span>
+        ) : components.map((component, index) => (
+          <div key={component.name} className={`cc-advisor-line${index === focusIndex ? " focus" : ""}`}>
+            <span>{index === focusIndex ? "◆" : "◇"} {component.name}</span>
             <b>{component.status}</b>
           </div>
         ))}
@@ -313,11 +448,33 @@ function AdvisorPanel({
         <div><span>engine</span><b>{health.version ?? "—"}</b></div>
       </div>
       <div className="cc-advisor-foot">
-        <span>◇ {health.status || "unknown"}</span>
+        <span>{preview ? "◆" : "◇"} {health.status || "unknown"}</span>
         <button onClick={() => onView("logs")}>session log</button>
       </div>
     </aside>
   );
+}
+
+function formatSessionStamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "--:--:--";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+function sessionLogLine(event: DashboardEvent): string {
+  const type = event.type.replace(/_/g, " ");
+  const detailKeys = Object.keys(event.details ?? {});
+  let detail = "";
+  if (detailKeys.length > 0) {
+    detail = detailKeys.slice(0, 2).map((key) => {
+      const value = event.details[key];
+      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        return `${key}=${String(value).slice(0, 28)}`;
+      }
+      return key;
+    }).join(" · ");
+  }
+  return detail ? `${type} → ${detail}` : type;
 }
 
 function OverviewView({
@@ -334,51 +491,122 @@ function OverviewView({
   onView: (view: TerminalView) => void;
   onSelectTask: (taskId: string | null) => void;
 }) {
+  const previewMode = shouldUseCommandCenterPreview({ connected, tasks, workers });
+  const [previewTick, setPreviewTick] = useState(0);
+
+  useEffect(() => {
+    if (!previewMode) {
+      setPreviewTick(0);
+      return;
+    }
+    if (typeof window === "undefined") return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    if (reduced) return;
+    const timer = window.setInterval(() => setPreviewTick((tick) => tick + 1), 3200);
+    return () => window.clearInterval(timer);
+  }, [previewMode]);
+
+  const preview = previewMode ? buildPreviewBoard(previewTick) : null;
+
   const workerList = workers.workers ?? [];
-  const onlineWorkers = workerList.filter((worker) => worker.is_available).length;
-  const averageLoad = workerList.length
+  const liveOnlineWorkers = workerList.filter((worker) => worker.is_available).length;
+  const liveAverageLoad = workerList.length
     ? workerList.reduce((sum, worker) => sum + percent(worker.load_percent), 0) / workerList.length
     : 0;
-  const runningTasks = (tasks.tasks ?? []).filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
-  const pending = tasks.pending_task_count ?? 0;
-  const onlineRatio = workers.total ? (onlineWorkers / workers.total) * 100 : 0;
-  const queuePercent = tasks.total ? Math.min(100, (pending / Math.max(tasks.total, 1)) * 100) : pending > 0 ? 100 : 0;
-  const lead = pickLeadTask(tasks, selectedTask);
-  const swarm = collectSwarmCards(lead, workers);
-  const review = reviewCue(lead, selectedTask);
-  const sessionEvents = latestDashboardEvents(eventLog ?? [], 8);
-  const activeStage = deriveActiveStage({
+  const liveRunningTasks = (tasks.tasks ?? []).filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
+  const livePending = tasks.pending_task_count ?? 0;
+  const liveOnlineRatio = workers.total ? (liveOnlineWorkers / workers.total) * 100 : 0;
+  const liveQueuePercent = tasks.total
+    ? Math.min(100, (livePending / Math.max(tasks.total, 1)) * 100)
+    : livePending > 0 ? 100 : 0;
+  const liveLead = pickLeadTask(tasks, selectedTask);
+  const liveSwarm = collectSwarmCards(liveLead, workers);
+  const liveReview = reviewCue(liveLead, selectedTask);
+  const liveSessionEvents = latestDashboardEvents(eventLog ?? [], 8);
+  const liveStage = deriveActiveStage({
     connected,
-    lead,
+    lead: liveLead,
     selectedTask,
-    pending,
-    swarm,
+    pending: livePending,
+    swarm: liveSwarm,
   });
+
+  const lead = preview?.lead ?? liveLead;
+  const swarm = preview?.swarm ?? liveSwarm;
+  const review = preview?.review ?? liveReview;
+  const sessionEvents = preview?.sessionEvents ?? liveSessionEvents;
+  const pending = preview?.pending ?? livePending;
+  const averageLoad = preview?.averageLoad ?? liveAverageLoad;
+  const onlineWorkers = preview?.onlineWorkers ?? liveOnlineWorkers;
+  const workerTotal = preview?.workerTotal ?? workers.total;
+  const onlineRatio = preview?.onlineRatio ?? liveOnlineRatio;
+  const queuePercent = preview?.queuePercent ?? liveQueuePercent;
+  const runningTasks = preview?.runningTasks ?? liveRunningTasks;
+  const activeStage = preview?.stage ?? liveStage;
   const flow = connectorFlowsFor(activeStage);
+  const boardHealth = preview?.health ?? health;
+  const boardEvents = preview?.advice ?? eventLog;
+  const boardWorkers: WorkersData = preview
+    ? {
+        available: false,
+        total: preview.workerTotal,
+        available_count: preview.onlineWorkers,
+        workers: Array.from({ length: preview.workerTotal }, (_, index) => ({
+          id: `preview-worker-${index + 1}`,
+          capabilities: ["code"],
+          current_load: index < preview.onlineWorkers ? 1 : 0,
+          max_capacity: 2,
+          load_percent: index < preview.onlineWorkers ? preview.averageLoad : 0,
+          last_heartbeat: "2026-10-31T12:00:00Z",
+          heartbeat_age_seconds: 0,
+          heartbeat_stale: false,
+          is_available: index < preview.onlineWorkers,
+        })),
+      }
+    : workers;
+  const boardTasks: TasksData = preview
+    ? {
+        available: false,
+        tasks: [preview.lead],
+        total: 1,
+        status_counts: { in_progress: 1 },
+        pending_task_count: preview.pending,
+      }
+    : tasks;
 
   return (
-    <div className="terminal-overview cc-board">
+    <div className={`terminal-overview cc-board${previewMode ? " cc-preview" : ""}`} data-cc-preview={previewMode ? "sample" : "live"}>
+      {previewMode && (
+        <div className="cc-preview-banner" role="status" data-testid="cc-preview-banner">
+          preview · sample — waiting for gateway
+        </div>
+      )}
       <RoleLegend />
       <div className="cc-layout">
         <AdvisorPanel
           connected={connected}
-          workers={workers}
-          tasks={tasks}
-          eventLog={eventLog}
-          health={health}
-          metrics={metrics}
+          workers={boardWorkers}
+          tasks={boardTasks}
+          eventLog={boardEvents}
+          health={boardHealth}
+          metrics={previewMode ? null : metrics}
           onView={onView}
+          preview={previewMode}
         />
 
         <section
-          className={`cc-flow stage-${activeStage}`}
+          className={`cc-flow stage-${activeStage}${previewMode ? " cc-preview-flow" : ""}`}
           data-active-stage={activeStage}
-          aria-label="Live execution flow"
+          aria-label={previewMode ? "Preview execution flow" : "Live execution flow"}
         >
           <button
             className={`cc-card lead${activeStage === "lead" ? " cc-stage-active" : ""}`}
             data-stage="lead"
             onClick={() => {
+              if (previewMode) {
+                onView("tasks");
+                return;
+              }
               if (lead) {
                 onSelectTask(lead.id);
                 onView("tasks");
@@ -394,7 +622,7 @@ function OverviewView({
             <div className="cc-card-title">{lead ? shortId(lead.description || lead.id, 48) : "no active task"}</div>
             <div className="cc-card-meta">
               <span>{lead ? lead.status : connected ? "idle" : "offline"}</span>
-              <span>{runningTasks} running · engine {health.version ?? "—"}</span>
+              <span>{runningTasks} running · engine {boardHealth.version ?? "—"}</span>
             </div>
           </button>
 
@@ -418,7 +646,7 @@ function OverviewView({
             <div className="cc-dispatch-bars">
               <div className="cc-dispatch-row"><span>worker load</span><MiniBar value={averageLoad} tone="orange" /><b>{percent(averageLoad)}%</b></div>
               <div className="cc-dispatch-row"><span>pending queue</span><MiniBar value={queuePercent} tone="green" /><b>{pending}</b></div>
-              <div className="cc-dispatch-row"><span>online ratio</span><MiniBar value={onlineRatio} tone="blue" /><b>{onlineWorkers}/{workers.total}</b></div>
+              <div className="cc-dispatch-row"><span>online ratio</span><MiniBar value={onlineRatio} tone="blue" /><b>{onlineWorkers}/{workerTotal}</b></div>
             </div>
           </button>
 
@@ -438,7 +666,7 @@ function OverviewView({
               <button
                 key={card.id}
                 className={`cc-card swarm${activeStage === "swarm" && card.running ? " cc-stage-active" : ""}`}
-                onClick={() => onView(lead?.subtasks?.length ? "tasks" : "workers")}
+                onClick={() => onView(previewMode || lead?.subtasks?.length ? "tasks" : "workers")}
                 title={card.id}
               >
                 <strong>{card.title}</strong>
@@ -466,6 +694,10 @@ function OverviewView({
             className={`cc-card review${activeStage === "review" ? " cc-stage-active" : ""}`}
             data-stage="review"
             onClick={() => {
+              if (previewMode) {
+                onView("tasks");
+                return;
+              }
               if (selectedTask ?? lead) {
                 onSelectTask((selectedTask ?? lead)!.id);
                 onView("tasks");
@@ -492,6 +724,10 @@ function OverviewView({
             key={`${event.timestamp}-${event.type}-${index}`}
             className="cc-session-row"
             onClick={() => {
+              if (previewMode) {
+                onView("logs");
+                return;
+              }
               const taskId = typeof event.details.task_id === "string" ? event.details.task_id : null;
               if (taskId) {
                 onSelectTask(taskId);
@@ -501,14 +737,16 @@ function OverviewView({
               }
             }}
           >
-            <time>{new Date(event.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</time>
-            <span className="cc-session-role">{event.type.split("_")[0] || "uc"}</span>
-            <span className="cc-session-msg">{eventAdviceLine(event)}</span>
+            <span className="cc-session-line">
+              <time>{formatSessionStamp(event.timestamp)}</time>
+              {" "}
+              <span className="cc-session-msg">{sessionLogLine(event)}</span>
+            </span>
           </button>
         ))}
       </section>
 
-      <p className="terminal-help-line">提示：顶栏 <kbd>1</kbd>–<kbd>7</kbd> 切视图 · 左栏主操作 · <kbd>Ctrl</kbd><kbd>K</kbd> 聚焦命令 · <kbd>/</kbd> 命令行</p>
+      <p className="terminal-help-line">提示：顶栏 <kbd>1</kbd>–<kbd>7</kbd> 切视图 · <kbd>Ctrl</kbd><kbd>K</kbd> 聚焦命令 · <kbd>/</kbd> 命令行</p>
     </div>
   );
 }
@@ -706,22 +944,24 @@ export function TerminalDashboard({
       </div>
 
       <div className="terminal-workspace">
-        <aside className="terminal-command-rail">
-          <div className="terminal-command-rail-title"><span>快捷操作</span><b>5</b></div>
-          <div className="terminal-command-rail-hint">主操作 ×5 · history / 低频进 <kbd>Ctrl+K</kbd><br /><span>↵ 执行</span></div>
-          <div className="terminal-command-group-label">主操作</div>
-          <button className="selected" onClick={() => runQuickCommand("status")}><span>❯</span><strong>status</strong><small>集群摘要</small></button>
-          <button onClick={() => { setView("tasks"); setCommand("submit "); commandRef.current?.focus(); }}><span>❯</span><strong>submit</strong><small>入队…</small></button>
-          <button onClick={() => runQuickCommand(`pause ${selectedTaskForCommand ?? ""}`)} disabled={busy}><span>❯</span><strong>pause</strong><small>{selectedTaskForCommand ? shortId(selectedTaskForCommand) : "选择任务"}</small></button>
-          <button onClick={() => runQuickCommand(`resume ${selectedTaskForCommand ?? ""}`)} disabled={busy}><span>❯</span><strong>resume</strong><small>{selectedTaskForCommand ? shortId(selectedTaskForCommand) : "选择任务"}</small></button>
-          <button onClick={() => setNotice({ text: "事件流由后端推送，不生成假事件", tone: "info" })}><span>❯</span><strong>freeze</strong><small>暂停提示</small></button>
-          <div className="terminal-command-more"><span>更多命令</span><b>search · help · history</b><kbd>Ctrl+K</kbd></div>
-          <div className="terminal-last-command"><span>最近运行</span><b>{lastCommand}</b><small>执行命令后记在这里</small></div>
-          <div className="terminal-rail-spacer" />
-          <div className="terminal-rail-stat"><b>{workers.total}</b><span>工作节点在线</span></div>
-          <div className="terminal-rail-stat"><b>{tasks.total}</b><span>DAG 任务</span></div>
-          <div className="terminal-rail-stat wide"><b>gRPC-Web</b><span>真实 Docker Gateway</span></div>
-        </aside>
+        {view !== "overview" && (
+          <aside className="terminal-command-rail">
+            <div className="terminal-command-rail-title"><span>快捷操作</span><b>5</b></div>
+            <div className="terminal-command-rail-hint">主操作 ×5 · history / 低频进 <kbd>Ctrl+K</kbd><br /><span>↵ 执行</span></div>
+            <div className="terminal-command-group-label">主操作</div>
+            <button className="selected" onClick={() => runQuickCommand("status")}><span>❯</span><strong>status</strong><small>集群摘要</small></button>
+            <button onClick={() => { setView("tasks"); setCommand("submit "); commandRef.current?.focus(); }}><span>❯</span><strong>submit</strong><small>入队…</small></button>
+            <button onClick={() => runQuickCommand(`pause ${selectedTaskForCommand ?? ""}`)} disabled={busy}><span>❯</span><strong>pause</strong><small>{selectedTaskForCommand ? shortId(selectedTaskForCommand) : "选择任务"}</small></button>
+            <button onClick={() => runQuickCommand(`resume ${selectedTaskForCommand ?? ""}`)} disabled={busy}><span>❯</span><strong>resume</strong><small>{selectedTaskForCommand ? shortId(selectedTaskForCommand) : "选择任务"}</small></button>
+            <button onClick={() => setNotice({ text: "事件流由后端推送，不生成假事件", tone: "info" })}><span>❯</span><strong>freeze</strong><small>暂停提示</small></button>
+            <div className="terminal-command-more"><span>更多命令</span><b>search · help · history</b><kbd>Ctrl+K</kbd></div>
+            <div className="terminal-last-command"><span>最近运行</span><b>{lastCommand}</b><small>执行命令后记在这里</small></div>
+            <div className="terminal-rail-spacer" />
+            <div className="terminal-rail-stat"><b>{workers.total}</b><span>工作节点在线</span></div>
+            <div className="terminal-rail-stat"><b>{tasks.total}</b><span>DAG 任务</span></div>
+            <div className="terminal-rail-stat wide"><b>gRPC-Web</b><span>真实 Docker Gateway</span></div>
+          </aside>
+        )}
 
         <section className="terminal-main-panel">
           <div className="terminal-panel-head"><div><h1>{currentView.label}</h1><span>uc / {currentView.meta.toLowerCase()}</span></div><div className={`terminal-panel-meta ${connected ? "online" : "offline"}`}><i />{health.version ?? "engine"} · {connected ? "connected" : "waiting"}</div></div>
