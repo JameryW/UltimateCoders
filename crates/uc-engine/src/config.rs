@@ -21,6 +21,9 @@ impl EngineConfig {
     ///
     /// Env vars:
     /// - `UC_TIKV_PD_ENDPOINTS`: PD endpoint(s) for TiKV, comma-separated (default: "127.0.0.1:2379"). `UC_TIKV_ENDPOINT` is a legacy alias.
+    /// - `UC_SHORT_TERM_BACKEND`: `auto` (default) or `memory`. `memory` deliberately
+    ///   skips TiKV, reports short-term memory as healthy, and is the supported mode
+    ///   on platforms without a TiKV build (e.g. native Windows).
     /// - `UC_QDRANT_URL`: Qdrant gRPC URL (default: "http://127.0.0.1:6334")
     /// - `UC_PG_URL`: PostgreSQL connection string (default: "postgres://localhost/ultimatecoders")
     /// - `UC_NATS_URL`: NATS server URL (default: "nats://127.0.0.1:4222")
@@ -47,6 +50,14 @@ impl EngineConfig {
 pub struct StorageConfig {
     /// TiKV PD endpoints.
     pub tikv_pd_endpoints: Vec<String>,
+    /// Which short-term memory backend to use.
+    ///
+    /// `Auto` (default) connects to TiKV and degrades to in-memory on failure.
+    /// `Memory` deliberately skips TiKV and runs in-memory; health reporting
+    /// then treats the component as healthy because the operator opted in.
+    /// This exists for platforms without a TiKV build (e.g. native Windows).
+    #[serde(default)]
+    pub short_term_backend: ShortTermBackend,
     /// Qdrant gRPC URL.
     pub qdrant_url: String,
     /// Optional Qdrant API key.
@@ -59,10 +70,33 @@ pub struct StorageConfig {
     pub connect_timeout: Duration,
 }
 
+/// Short-term memory backend selection (`UC_SHORT_TERM_BACKEND`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ShortTermBackend {
+    /// Connect to TiKV; fall back to in-memory (reported as degraded) if unavailable.
+    #[default]
+    Auto,
+    /// Use in-memory storage deliberately; reported as healthy. Skips TiKV retries.
+    Memory,
+}
+
+impl ShortTermBackend {
+    /// Parse the `UC_SHORT_TERM_BACKEND` value. Unknown/empty values keep the
+    /// backward-compatible `Auto` behaviour.
+    pub fn from_env_value(value: Option<&str>) -> Self {
+        match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+            Some("memory") | Some("in-memory") | Some("inmemory") => Self::Memory,
+            _ => Self::Auto,
+        }
+    }
+}
+
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             tikv_pd_endpoints: vec!["127.0.0.1:2379".into()],
+            short_term_backend: ShortTermBackend::Auto,
             qdrant_url: "http://127.0.0.1:6334".into(),
             qdrant_api_key: None,
             pg_url: "postgres://localhost/ultimatecoders".into(),
@@ -92,6 +126,9 @@ impl StorageConfig {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_else(|| vec!["127.0.0.1:2379".into()]),
+            short_term_backend: ShortTermBackend::from_env_value(
+                std::env::var("UC_SHORT_TERM_BACKEND").ok().as_deref(),
+            ),
             qdrant_url: std::env::var("UC_QDRANT_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:6334".into()),
             // Empty string (compose "${UC_QDRANT_API_KEY:-}") = unauthenticated.
@@ -227,7 +264,55 @@ mod tests {
         unsafe {
             std::env::remove_var("UC_TIKV_PD_ENDPOINTS");
             std::env::remove_var("UC_TIKV_ENDPOINT");
+            std::env::remove_var("UC_SHORT_TERM_BACKEND");
         }
+    }
+
+    #[test]
+    fn short_term_backend_default_is_auto() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_tikv_env();
+        assert_eq!(
+            StorageConfig::from_env().short_term_backend,
+            ShortTermBackend::Auto
+        );
+    }
+
+    #[test]
+    fn short_term_backend_memory_opt_in() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_tikv_env();
+        unsafe {
+            std::env::set_var("UC_SHORT_TERM_BACKEND", "memory");
+        }
+        assert_eq!(
+            StorageConfig::from_env().short_term_backend,
+            ShortTermBackend::Memory
+        );
+        unsafe {
+            std::env::remove_var("UC_SHORT_TERM_BACKEND");
+        }
+    }
+
+    #[test]
+    fn short_term_backend_parsing_is_tolerant() {
+        assert_eq!(
+            ShortTermBackend::from_env_value(Some(" MEMORY ")),
+            ShortTermBackend::Memory
+        );
+        assert_eq!(
+            ShortTermBackend::from_env_value(Some("in-memory")),
+            ShortTermBackend::Memory
+        );
+        // Unknown values keep the backward-compatible behaviour.
+        assert_eq!(
+            ShortTermBackend::from_env_value(Some("tikv")),
+            ShortTermBackend::Auto
+        );
+        assert_eq!(
+            ShortTermBackend::from_env_value(None),
+            ShortTermBackend::Auto
+        );
     }
 
     #[test]

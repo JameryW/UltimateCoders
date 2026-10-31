@@ -941,12 +941,12 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/backend/database-guidelines.md", 64): (
             "crates/uc-engine/src/memory/short_term.rs",
             "ShortTermMemory",
-            45,
+            36,
         ),
         (".trellis/spec/backend/database-guidelines.md", 131): (
             "crates/uc-engine/src/memory/short_term.rs",
             "list_keys",
-            270,
+            302,
         ),
         (".trellis/spec/frontend/hook-guidelines.md", 19): (
             "crates/uc-engine/src/events.rs",

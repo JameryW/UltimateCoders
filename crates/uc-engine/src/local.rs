@@ -18,6 +18,8 @@ use uc_types::{
 
 use crate::checkpoint::{CheckpointConfig, CheckpointManager};
 use crate::config::EngineConfig;
+#[cfg(feature = "storage")]
+use crate::config::ShortTermBackend;
 use crate::conflict::{ConflictDetector, ConflictResult, EditIntent};
 use crate::events::{AgentEventType, InMemoryEventStore, TaskSnapshot};
 use crate::indexer::semantic::EmbeddingService;
@@ -119,14 +121,22 @@ impl LocalEngine {
         schedule_store: Option<Arc<dyn ScheduleStore>>,
         restore_text_index: bool,
     ) -> Result<Self, EngineError> {
-        // Initialize short-term memory (TiKV)
-        let short_term = Arc::new(
-            ShortTermMemory::new(
-                config.storage.tikv_pd_endpoints.clone(),
-                config.memory.task_ttl_seconds,
-            )
-            .await?,
-        );
+        // Initialize short-term memory (TiKV, or in-memory when explicitly configured).
+        // `UC_SHORT_TERM_BACKEND=memory` is the supported mode on platforms without a
+        // TiKV build (native Windows): it skips the TiKV retry loop entirely and is
+        // reported as healthy because the operator opted into in-memory storage.
+        let short_term = Arc::new(match config.storage.short_term_backend {
+            ShortTermBackend::Memory => {
+                ShortTermMemory::new_in_memory(config.memory.task_ttl_seconds)
+            }
+            ShortTermBackend::Auto => {
+                ShortTermMemory::new(
+                    config.storage.tikv_pd_endpoints.clone(),
+                    config.memory.task_ttl_seconds,
+                )
+                .await?
+            }
+        });
 
         // Initialize long-term memory (Qdrant)
         let long_term = Arc::new(

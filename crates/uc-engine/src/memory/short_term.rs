@@ -40,6 +40,12 @@ pub struct ShortTermMemory {
     fallback: Arc<RwLock<Vec<(String, StoredEntry)>>>,
     /// Default TTL for task-scoped entries (in seconds). 0 means no TTL.
     default_ttl_seconds: u64,
+    /// True when the in-memory store was explicitly selected by configuration
+    /// (`UC_SHORT_TERM_BACKEND=memory`), as opposed to falling back after a
+    /// TiKV connection failure. Health reporting treats an explicitly chosen
+    /// in-memory backend as healthy (the operator opted in) while an unexpected
+    /// fallback stays degraded.
+    intentional_memory: bool,
 }
 
 impl ShortTermMemory {
@@ -83,6 +89,7 @@ impl ShortTermMemory {
                     client: None,
                     fallback: Arc::new(RwLock::new(Vec::new())),
                     default_ttl_seconds: ttl_seconds,
+                    intentional_memory: false,
                 });
             }
         };
@@ -128,6 +135,7 @@ impl ShortTermMemory {
                 client: Some(client_arc),
                 fallback: Arc::new(RwLock::new(Vec::new())),
                 default_ttl_seconds: ttl_seconds,
+                intentional_memory: false,
             })
         } else {
             tracing::warn!("TiKV PD reachable but store not ready, using in-memory fallback for short-term memory");
@@ -135,6 +143,7 @@ impl ShortTermMemory {
                 client: None,
                 fallback: Arc::new(RwLock::new(Vec::new())),
                 default_ttl_seconds: ttl_seconds,
+                intentional_memory: false,
             })
         }
     }
@@ -153,6 +162,7 @@ impl ShortTermMemory {
             client: Some(client),
             fallback: Arc::new(RwLock::new(Vec::new())),
             default_ttl_seconds: ttl_seconds,
+            intentional_memory: false,
         }
     }
 
@@ -163,7 +173,29 @@ impl ShortTermMemory {
             client: None,
             fallback: Arc::new(RwLock::new(Vec::new())),
             default_ttl_seconds: ttl_seconds,
+            intentional_memory: false,
         }
+    }
+
+    /// Create an in-memory store that was explicitly selected by configuration.
+    ///
+    /// Unlike [`Self::new_fallback`] this is not a degraded state: the operator
+    /// chose in-memory short-term memory (e.g. on a platform without TiKV), so
+    /// [`Self::is_intentional_memory`] is true and health reporting stays green.
+    pub fn new_in_memory(ttl_seconds: u64) -> Self {
+        tracing::info!("Short-term memory configured as in-memory (UC_SHORT_TERM_BACKEND=memory)");
+        Self {
+            #[cfg(feature = "storage")]
+            client: None,
+            fallback: Arc::new(RwLock::new(Vec::new())),
+            default_ttl_seconds: ttl_seconds,
+            intentional_memory: true,
+        }
+    }
+
+    /// Whether in-memory mode was explicitly configured rather than a fallback.
+    pub fn is_intentional_memory(&self) -> bool {
+        self.intentional_memory
     }
 
     /// Read a memory entry by key.
@@ -478,6 +510,20 @@ mod tests {
     fn test_decode_invalid_key() {
         assert!(decode_key("invalid:key").is_none());
         assert!(decode_key("memory:unknown:foo").is_none());
+    }
+
+    #[test]
+    fn test_new_in_memory_is_intentional() {
+        let store = ShortTermMemory::new_in_memory(60);
+        assert!(!store.is_connected());
+        assert!(store.is_intentional_memory());
+    }
+
+    #[test]
+    fn test_new_fallback_is_not_intentional() {
+        let store = ShortTermMemory::new_fallback(60);
+        assert!(!store.is_connected());
+        assert!(!store.is_intentional_memory());
     }
 
     #[test]

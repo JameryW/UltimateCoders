@@ -587,6 +587,7 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_GRPC_ADDR` | `[::]:50051` | gRPC server listen address |
 | `UC_GRPC_ENDPOINT` | - | gRPC server endpoint (required for grpc mode) |
 | `UC_TIKV_PD_ENDPOINTS` | `127.0.0.1:2379` | TiKV Placement Driver endpoints (comma-separated) |
+| `UC_SHORT_TERM_BACKEND` | `auto` | Short-term memory backend: `auto` (TiKV, in-memory fallback reports degraded) or `memory` (deliberately in-memory; skips TiKV and reports healthy — the supported mode on platforms without a TiKV build, e.g. native Windows) |
 | `UC_QDRANT_URL` | `http://127.0.0.1:6333` | Qdrant REST API URL |
 | `UC_QDRANT_API_KEY` | - | Qdrant API key (optional) |
 | `UC_POSTGRES_URL` | `postgresql://localhost:5432/ultimatecoders` | PostgreSQL connection URL |
