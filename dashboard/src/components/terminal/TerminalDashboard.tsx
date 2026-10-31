@@ -1355,7 +1355,16 @@ export function TerminalDashboard({
                 />
               </div>
             )}
-            {view === "search" && <div className="terminal-data-view"><SearchPanel grpcState={grpcState} onNavigateFile={setFileBrowserNav} stale={grpcStale} /></div>}
+            {view === "search" && (
+              <div className="terminal-data-view terminal-search-layout">
+                <SearchPanel
+                  grpcState={grpcState}
+                  onNavigateFile={setFileBrowserNav}
+                  stale={grpcStale}
+                  variant="terminal"
+                />
+              </div>
+            )}
             {view === "memory" && <div className="terminal-empty-contract"><span className="terminal-empty-icon">◌</span><h2>Memory surface</h2><p>记忆检索仍由 EngineService 暴露；当前 dashboard Connect 合约未提供独立 Memory RPC。使用 Search 进入真实检索入口。</p><button onClick={() => setView("search")}>打开 Search</button></div>}
           </div>
           <div className={`terminal-notice ${notice.tone}`}><span>❯</span>{notice.text}</div>
