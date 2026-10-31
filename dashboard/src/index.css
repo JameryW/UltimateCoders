@@ -1313,11 +1313,21 @@ body:has(.terminal-app) {
   padding: 0 9px;
   border: 1px solid var(--terminal-border);
   border-radius: 2px;
+  background: transparent;
   color: var(--terminal-muted);
+  cursor: pointer;
+  font: inherit;
   font-size: 9px;
   letter-spacing: .06em;
   text-transform: lowercase;
   white-space: nowrap;
+}
+.cc-stage-chip:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+.cc-stage-chip:disabled {
+  cursor: default;
+  opacity: .72;
 }
 .cc-stage-chip.idle { color: var(--terminal-dim); border-color: color-mix(in srgb, var(--terminal-dim) 40%, transparent); }
 .cc-stage-chip.lead { color: var(--cc-lead); border-color: color-mix(in srgb, var(--cc-lead) 55%, transparent); box-shadow: 0 0 10px color-mix(in srgb, var(--cc-lead) 18%, transparent); }
@@ -1370,6 +1380,42 @@ body:has(.terminal-app) {
   letter-spacing: .16em;
 }
 .cc-preview-banner span {
+  color: var(--terminal-muted);
+  letter-spacing: .06em;
+  text-transform: lowercase;
+}
+
+@keyframes cc-live-banner-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.cc-live-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--cc-dispatch) 65%, transparent);
+  border-left: 4px solid var(--cc-dispatch);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--cc-dispatch) 14%, transparent), transparent 55%),
+    rgba(10, 14, 18, .9);
+  color: var(--terminal-text);
+  font-size: 10px;
+  letter-spacing: .04em;
+  animation: cc-live-banner-enter 320ms ease-out both;
+}
+.cc-live-banner strong {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--cc-dispatch) 70%, transparent);
+  background: color-mix(in srgb, var(--cc-dispatch) 22%, transparent);
+  color: var(--cc-dispatch);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .16em;
+}
+.cc-live-banner span {
   color: var(--terminal-muted);
   letter-spacing: .06em;
   text-transform: lowercase;
@@ -1746,10 +1792,12 @@ body:has(.terminal-app) {
   .cc-card.swarm.cc-swarm-enter,
   .cc-session-row.cc-session-row-enter,
   .cc-pill.cc-pill-flash,
+  .cc-live-banner,
   .cc-flow-connector.cc-flow-active span,
   .cc-flow-connector.cc-flow-active em { transition: none; animation: none; }
   .cc-flow-connector.cc-flow-active em { opacity: .85; top: 8px; }
   .cc-card.swarm.cc-swarm-enter { opacity: 1; transform: none; }
+  .cc-live-banner { opacity: 1; transform: none; }
   .cc-stage-chip.lead,
   .cc-stage-chip.dispatch,
   .cc-stage-chip.swarm,
