@@ -3,7 +3,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, shortId, truncate, statusBadgeClass } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
-import { clampPercent, isSubtaskDone, isSubtaskRunning } from "@/lib/taskProgress";
+import { clampPercent, isSubtaskDone, isSubtaskRunning, subtaskShortLabel } from "@/lib/taskProgress";
 import type { WorkersData, WorkerInfo, TasksData, SubtaskSummary } from "@/types/dashboard";
 
 type BarTone = "green" | "blue" | "amber" | "orange" | "purple" | "red";
@@ -97,7 +97,7 @@ function AssignmentSwarmRow({
       } : undefined}
     >
       <div className="terminal-swarm-row-topline">
-        <strong title={subtask.id}>{shortId(subtask.id, 12)}</strong>
+        <strong title={subtask.id}>{subtaskShortLabel(subtask.id)}</strong>
         <span className={cn("terminal-swarm-marker", done ? "done" : running ? "running" : "idle")}>
           {marker}
         </span>
@@ -200,7 +200,7 @@ function WorkerDetail({
                 onKeyDown={onJumpTask ? (e) => { if (e.key === "Enter") onJumpTask(taskIdFromSubtask(st.id)); } : undefined}
               >
                 <span className={cn("px-1 rounded text-[10px]", statusBadgeClass(st.status))}>{st.status}</span>
-                <span className="text-[var(--text-primary)]">{shortId(st.id)} {truncate(st.description, 30)}</span>
+                <span className="text-[var(--text-primary)]">{subtaskShortLabel(st.id)} {truncate(st.description, 30)}</span>
                 {st.step_agent && (
                   <span className="text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-mono shrink-0" title={`Coding agent: ${st.step_agent}`}>
                     {st.step_agent}

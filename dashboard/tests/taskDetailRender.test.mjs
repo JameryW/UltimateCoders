@@ -1738,3 +1738,20 @@ test("command-center stage nav, elapsed helper, and live handoff", async () => {
     await vite.close();
   }
 });
+
+test("subtask labels keep the -sN suffix so sibling subtasks do not collide", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const { subtaskShortLabel } = await vite.ssrLoadModule("/src/lib/taskProgress.ts");
+    const base = "11c4901e-2f86-42a2-8ab7-b4b1b6a8abb8";
+    // The task-uuid prefix is identical for every subtask of a task; the old
+    // 12-char truncation rendered `11c4901e-2f8` for all of them.
+    assert.equal(subtaskShortLabel(`${base}-s0`), "11c4901e…-s0");
+    assert.equal(subtaskShortLabel(`${base}-s5`), "11c4901e…-s5");
+    assert.notEqual(subtaskShortLabel(`${base}-s0`), subtaskShortLabel(`${base}-s5`));
+    assert.equal(subtaskShortLabel("plain-id"), "plain-id");
+    assert.equal(subtaskShortLabel("1234567890123456"), "123456789012…");
+  } finally {
+    await vite.close();
+  }
+});

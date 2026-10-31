@@ -5,7 +5,7 @@ import { InteractionLog } from "@/components/panels/InteractionLog";
 import { ContextManifestTrail } from "@/components/panels/ContextManifestPanel";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { renderMermaid } from "@/lib/mermaid";
-import { clampPercent, isSubtaskDone, isSubtaskRunning } from "@/lib/taskProgress";
+import { clampPercent, isSubtaskDone, isSubtaskRunning, subtaskShortLabel } from "@/lib/taskProgress";
 import { cn, shortId, truncate, statusBadgeClass } from "@/lib/utils";
 
 interface TaskDetailProps {
@@ -267,7 +267,7 @@ function SwarmSubtaskRow({ st }: { st: SubtaskSummary }) {
       data-subtask-id={st.id}
     >
       <div className="terminal-swarm-row-topline">
-        <strong title={st.id}>{shortId(st.id, 12)}</strong>
+        <strong title={st.id}>{subtaskShortLabel(st.id)}</strong>
         <span className={cn("terminal-swarm-marker", done ? "done" : running ? "running" : "idle")}>
           {marker}
         </span>
@@ -336,7 +336,7 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId, varia
               <option value="">All subtasks</option>
               {subtasks.map((st) => (
                 <option key={st.id} value={st.id}>
-                  {truncate(st.description, 25)} ({shortId(st.id)})
+                  {truncate(st.description, 25)} ({subtaskShortLabel(st.id)})
                 </option>
               ))}
             </select>
@@ -446,7 +446,7 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId, varia
             <div className="mt-2 space-y-0.5">
               {subtasks.filter((st) => st.result).map((st) => (
                 <p key={`result-${st.id}`} className="text-[10px] text-[var(--text-muted)] truncate" title={st.result}>
-                  ↳ {shortId(st.id)} · {truncate(st.result ?? "", 100)}
+                  ↳ {subtaskShortLabel(st.id)} · {truncate(st.result ?? "", 100)}
                 </p>
               ))}
             </div>
