@@ -2,6 +2,7 @@
 
 :root,
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg-primary: #0f172a;
   --bg-surface: #1e293b;
   --bg-surface-alt: #334155;
@@ -13,6 +14,7 @@
 }
 
 [data-theme="light"] {
+  color-scheme: light;
   --bg-primary: #f8fafc;
   --bg-surface: #ffffff;
   --bg-surface-alt: #f1f5f9;
@@ -50,6 +52,65 @@ input:focus-visible {
 
 ::selection {
   background: color-mix(in srgb, var(--terminal-green) 24%, transparent);
+}
+
+/* Scrollbars ------------------------------------------------------------- */
+/*
+ * Windows ships chunky, light-chrome scrollbars that look heavy next to the
+ * terminal UI. Use a slim, theme-aware bar instead: a transparent track and a
+ * rounded thumb that follows the text palette in both light and dark themes.
+ *
+ * Chromium/Safari get the WebKit pseudo-elements (which also let us hide the
+ * arrow buttons). Firefox has no such pseudos, so the standard properties are
+ * scoped to browsers without ::-webkit-scrollbar support: when Chromium sees
+ * `scrollbar-width`/`scrollbar-color` it ignores the pseudo-elements and paints
+ * its own bar instead, arrows included.
+ */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-muted) 55%, transparent) transparent;
+  }
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Chromium renders little arrow buttons when only the track/thumb are styled;
+ * hide them so the bar is a clean thumb on a transparent track. */
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--text-secondary) 65%, transparent);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background-color: color-mix(in srgb, var(--terminal-green) 55%, transparent);
+}
+
+/* Keep the primary reading areas from shifting when a bar appears. */
+.terminal-view-body,
+.terminal-task-history,
+.terminal-file-browser-fallback {
+  scrollbar-gutter: stable;
 }
 
 /* Product overview ------------------------------------------------------- */
