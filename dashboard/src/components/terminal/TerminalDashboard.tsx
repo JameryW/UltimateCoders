@@ -43,6 +43,8 @@ interface TerminalDashboardProps {
   lastUpdate?: string;
   theme: Theme;
   onToggleTheme: () => void;
+  /** Optional explicit setter — used for first-visit dark default without flipping a stored light preference. */
+  onSetTheme?: (theme: Theme) => void;
   onLogout: () => void;
   onReconnectGrpc: () => void;
   onReconnectDashGrpc: () => void;
@@ -157,6 +159,44 @@ function pickLeadTask(tasks: TasksData, selectedTask: TaskSummary | null): TaskS
   if (active) return active;
   if (selectedTask) return selectedTask;
   return list[0] ?? null;
+}
+
+/**
+ * Auto-select the first active/running task when overview has no selection.
+ * Returns null when the user already selected a task (never overrides).
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested helper
+export function pickAutofocusTaskId(
+  tasks: Pick<TasksData, "tasks">,
+  selectedTaskId: string | null | undefined,
+): string | null {
+  if (selectedTaskId) return null;
+  const list = tasks.tasks ?? [];
+  const active = list.find((task) => ACTIVE_TASK_STATUSES.has(task.status));
+  return active?.id ?? null;
+}
+
+const THEME_STORAGE_KEY = "uc_dashboard_theme";
+
+/**
+ * Prefer dark command-center chrome on first visit only.
+ * If `uc_dashboard_theme` is already set (user chose light or dark), return false
+ * so we never fight an explicit preference — including an explicit light theme.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- unit-tested helper
+export function shouldApplyCommandCenterDefaultDark(
+  theme: Theme,
+  readStored: (key: string) => string | null = (key) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      // Fail closed: treat storage as having a preference so we do not override.
+      return "dark";
+    }
+  },
+): boolean {
+  if (readStored(THEME_STORAGE_KEY) !== null) return false;
+  return theme === "light";
 }
 
 function isSubtaskDone(subtask: NonNullable<TaskSummary["subtasks"]>[number]): boolean {
@@ -706,7 +746,17 @@ function OverviewView({
           <span>preview · not live data — waiting for gateway</span>
         </div>
       )}
-      <RoleLegend />
+      <div className="cc-legend-row">
+        <RoleLegend />
+        <span
+          className={`cc-stage-chip ${activeStage}`}
+          data-testid="cc-stage-chip"
+          data-stage={activeStage}
+          aria-label={`Active stage ${activeStage}`}
+        >
+          stage · {activeStage}
+        </span>
+      </div>
       <div className="cc-layout">
         <AdvisorPanel
           connected={connected}
@@ -984,6 +1034,7 @@ export function TerminalDashboard({
   lastUpdate,
   theme,
   onToggleTheme,
+  onSetTheme,
   onLogout,
   onReconnectGrpc,
   onReconnectDashGrpc,
@@ -1018,11 +1069,34 @@ export function TerminalDashboard({
   const [fileBrowserNav, setFileBrowserNav] = useState<FileBrowserNavigateEvent | null>(null);
   const commandRef = useRef<HTMLInputElement>(null);
   const historyRef = useRef<HTMLElement>(null);
+  const appliedDefaultDarkRef = useRef(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  // Prefer dark CC chrome on first visit only (no uc_dashboard_theme key yet).
+  // Explicit light/dark in localStorage is always respected — never force-toggle.
+  useEffect(() => {
+    if (appliedDefaultDarkRef.current) return;
+    if (!shouldApplyCommandCenterDefaultDark(theme)) return;
+    appliedDefaultDarkRef.current = true;
+    if (onSetTheme) {
+      onSetTheme("dark");
+      return;
+    }
+    // Fallback when only toggle is wired: flip light → dark once.
+    onToggleTheme();
+  }, [theme, onSetTheme, onToggleTheme]);
+
+  // Overview autofocus: when selection is null and an active task exists, select it once
+  // so swarm cards + session log light up. Never overrides an explicit user selection.
+  useEffect(() => {
+    if (view !== "overview") return;
+    const autofocusId = pickAutofocusTaskId(tasks, selectedTaskId);
+    if (autofocusId) onSelectTask(autofocusId);
+  }, [view, tasks, selectedTaskId, onSelectTask]);
 
   useEffect(() => {
     if (view === "tasks" && selectedTaskId && window.innerWidth <= 1300) {

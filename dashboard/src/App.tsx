@@ -77,7 +77,7 @@ function LoginModal({ onLogin, loginError }: { onLogin: (password: string) => Pr
 
 function App() {
   const auth = useAuth();
-  const { theme, toggleTheme } = useTheme();
+  const { theme, setTheme, toggleTheme } = useTheme();
   const dashboard = useDashboard();
 
   // Dedup: content key + 2s window for gRPC-Web events
@@ -445,6 +445,7 @@ function App() {
         lastUpdate={lastUpdate}
         theme={theme}
         onToggleTheme={toggleTheme}
+        onSetTheme={setTheme}
         onLogout={auth.logout}
         onReconnectGrpc={grpcConnect}
         onReconnectDashGrpc={dashGrpcConnect}

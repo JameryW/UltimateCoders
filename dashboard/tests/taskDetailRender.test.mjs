@@ -627,3 +627,108 @@ test("command-center merges interactionLog into session feed and diffs pill flas
     await vite.close();
   }
 });
+
+test("command-center autofocus helper, stage chip, and first-visit dark preference", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const mod = await vite.ssrLoadModule("/src/components/terminal/TerminalDashboard.tsx");
+    const {
+      TerminalDashboard,
+      pickAutofocusTaskId,
+      shouldApplyCommandCenterDefaultDark,
+    } = mod;
+
+    const active = {
+      id: "active-autofocus",
+      description: "Wire autofocus",
+      status: "in_progress",
+      project_id: "repo",
+      subtask_count: 1,
+      created_at: "2026-09-24T01:00:00Z",
+      updated_at: "2026-09-24T02:00:00Z",
+      subtasks: [{
+        id: "active-sub",
+        description: "Running",
+        status: "in_progress",
+        depends_on: [],
+        percent: 40,
+        step_status: "started",
+      }],
+    };
+    const idle = {
+      id: "idle-other",
+      description: "Completed earlier",
+      status: "completed",
+      project_id: "repo",
+      subtask_count: 0,
+      created_at: "2026-09-24T00:00:00Z",
+      updated_at: "2026-09-24T00:30:00Z",
+    };
+    const tasks = { tasks: [idle, active] };
+
+    assert.equal(pickAutofocusTaskId(tasks, null), "active-autofocus");
+    assert.equal(pickAutofocusTaskId(tasks, undefined), "active-autofocus");
+    assert.equal(pickAutofocusTaskId(tasks, "user-picked"), null);
+    assert.equal(pickAutofocusTaskId(tasks, "active-autofocus"), null);
+    assert.equal(pickAutofocusTaskId({ tasks: [idle] }, null), null);
+    assert.equal(pickAutofocusTaskId({ tasks: [] }, null), null);
+
+    assert.equal(shouldApplyCommandCenterDefaultDark("light", () => null), true);
+    assert.equal(shouldApplyCommandCenterDefaultDark("dark", () => null), false);
+    assert.equal(shouldApplyCommandCenterDefaultDark("light", () => "light"), false);
+    assert.equal(shouldApplyCommandCenterDefaultDark("light", () => "dark"), false);
+    assert.equal(shouldApplyCommandCenterDefaultDark("dark", () => "light"), false);
+
+    let selected = null;
+    const html = renderToStaticMarkup(React.createElement(TerminalDashboard, {
+      connected: true,
+      grpcState: "connected",
+      grpcExhausted: false,
+      dashGrpcState: "connected",
+      theme: "dark",
+      onToggleTheme: () => {},
+      onLogout: () => {},
+      onReconnectGrpc: () => {},
+      onReconnectDashGrpc: () => {},
+      fetchErrors: {},
+      grpcStale: false,
+      health: { available: true, status: "healthy", version: "0.2.1", components: [] },
+      workers: { available: true, workers: [], total: 0, available_count: 0 },
+      tasks: { available: true, tasks: [active], total: 1, status_counts: { in_progress: 1 }, pending_task_count: 0 },
+      scheduler: { available: false, is_running: false, night_window: null, jobs: [], execution_history: [] },
+      eventLog: [],
+      metrics: null,
+      interactionLog: {},
+      selectedTask: active,
+      selectedTaskId: active.id,
+      taskHistoryLoading: false,
+      onSelectTask: (id) => { selected = id; },
+      onPauseTask: async () => ({ success: true }),
+      onResumeTask: async () => ({ success: true }),
+      onCancelTask: async () => ({ success: true }),
+      onRefresh: async () => {},
+      onFlush: () => {},
+      onTaskCreated: () => {},
+      onOptimisticAdd: () => {},
+    }));
+    assert.match(html, /data-testid="cc-stage-chip"/);
+    assert.match(html, /data-stage="swarm"/);
+    assert.match(html, /stage · swarm/);
+    assert.match(html, /cc-stage-chip swarm/);
+    // SSR does not run effects — autofocus is covered by the pure helper above.
+    assert.equal(selected, null);
+
+    const source = readFileSync(join(dashboardRoot, "src/components/terminal/TerminalDashboard.tsx"), "utf8");
+    assert.match(source, /pickAutofocusTaskId/);
+    assert.match(source, /shouldApplyCommandCenterDefaultDark/);
+    assert.match(source, /uc_dashboard_theme/);
+    assert.match(source, /Prefer dark CC chrome on first visit only/);
+    assert.doesNotMatch(source, /Opus|Sonnet|Haiku|Claude Code|JEV/);
+
+    const css = readFileSync(join(dashboardRoot, "src/index.css"), "utf8");
+    assert.match(css, /\.cc-stage-chip\.swarm/);
+    assert.match(css, /\.cc-legend-row/);
+  } finally {
+    await vite.close();
+  }
+});
