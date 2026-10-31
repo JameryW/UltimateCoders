@@ -159,24 +159,34 @@ function pickLeadTask(tasks: TasksData, selectedTask: TaskSummary | null): TaskS
   return list[0] ?? null;
 }
 
-function collectSwarmCards(lead: TaskSummary | null, workers: WorkersData) {
-  const subtasks = (lead?.subtasks ?? [])
-    .filter((subtask) => RUNNING_SUBTASK_STATUSES.has(subtask.status) || typeof subtask.percent === "number")
-    .slice(0, 3)
-    .map((subtask) => {
-      const done = DONE_SUBTASK_STATUSES.has(subtask.status) || subtask.step_status === "completed" || percent(subtask.percent ?? 0) >= 100;
-      const running = !done && (RUNNING_SUBTASK_STATUSES.has(subtask.status) || subtask.step_status === "started");
-      return {
-        id: subtask.id,
-        title: shortId(subtask.id, 12),
-        detail: subtask.phase || subtask.step_summary || subtask.description || "subtask",
-        value: percent(subtask.percent ?? (done ? 100 : running ? 35 : 0)),
-        done,
-        running,
-      };
-    });
+function isSubtaskDone(subtask: NonNullable<TaskSummary["subtasks"]>[number]): boolean {
+  return DONE_SUBTASK_STATUSES.has(subtask.status)
+    || subtask.step_status === "completed"
+    || percent(subtask.percent ?? 0) >= 100;
+}
 
-  if (subtasks.length > 0) return subtasks;
+function isSubtaskRunning(subtask: NonNullable<TaskSummary["subtasks"]>[number]): boolean {
+  if (isSubtaskDone(subtask)) return false;
+  return RUNNING_SUBTASK_STATUSES.has(subtask.status)
+    || subtask.step_status === "started"
+    || (typeof subtask.percent === "number" && percent(subtask.percent) > 0 && percent(subtask.percent) < 100);
+}
+
+function collectSwarmCards(lead: TaskSummary | null, workers: WorkersData) {
+  // Prefer live running subtasks; otherwise fall back to workers (not completed %).
+  const runningSubtasks = (lead?.subtasks ?? [])
+    .filter(isSubtaskRunning)
+    .slice(0, 3)
+    .map((subtask) => ({
+      id: subtask.id,
+      title: shortId(subtask.id, 12),
+      detail: subtask.phase || subtask.step_summary || subtask.description || "subtask",
+      value: percent(subtask.percent ?? 35),
+      done: false,
+      running: true,
+    }));
+
+  if (runningSubtasks.length > 0) return runningSubtasks;
 
   return (workers.workers ?? []).slice(0, 3).map((worker) => {
     const load = percent(worker.load_percent);
@@ -669,7 +679,7 @@ export function TerminalDashboard({
 
       <StatusPillBar connected={connected} grpcState={grpcState} dashGrpcState={dashGrpcState} workers={workers} tasks={tasks} eventLog={eventLog} />
       <footer className="terminal-command-bar"><span>uc ❯</span><input ref={commandRef} value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runCommand(); } }} placeholder='submit "fix flaky heartbeat test"' aria-label="uc 命令行" /><button onClick={() => void runCommand()} disabled={!command.trim() || busy}>运行</button><kbd>↵</kbd><small>运行 · / 聚焦</small><span className="terminal-footer-status">{connected ? "后端在线" : "后端离线"} · engine {health.version ?? "—"} · {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : "waiting"}</span></footer>
-      <div className="terminal-keybar"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>6</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
+      <div className="terminal-keybar"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>7</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
       <nav className="terminal-mobile-nav" aria-label="移动端视图导航">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav>
       {fileBrowserNav && <div className="terminal-file-browser-fallback"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} /></div>}
       <div className="terminal-connection-diagnostics" aria-label="Connection diagnostics"><ConnectionPill label="Task" state={grpcState} /><ConnectionPill label="Dashboard" state={dashGrpcState} />{grpcExhausted && <button onClick={onReconnectGrpc}>↻ retry gRPC</button>}<button onClick={onReconnectDashGrpc}>↻ retry dashboard</button></div>

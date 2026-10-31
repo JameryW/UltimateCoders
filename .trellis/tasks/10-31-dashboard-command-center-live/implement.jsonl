@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/10-31-dashboard-command-center-live/prd.md", "reason": "Locked Approach A requirements"}
+{"file": ".trellis/tasks/10-31-dashboard-command-center-live/research/grounding.md", "reason": "UC data→UI mapping and touch points"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend guideline index / checklist"}
+{"file": "dashboard/src/components/terminal/TerminalDashboard.tsx", "reason": "Existing terminal dashboard to redesign"}
+{"file": "dashboard/src/index.css", "reason": "Terminal CSS tokens and layout"}
+{"file": "dashboard/src/types/dashboard.ts", "reason": "Task/worker/event shapes for live progress"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Dashboard API contracts for live surfaces"}

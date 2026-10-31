@@ -1520,6 +1520,7 @@ body:has(.terminal-app) {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  height: 100%;
   overflow-x: auto;
   padding: 0 14px;
   border-top: 1px solid var(--terminal-border);
@@ -1527,6 +1528,7 @@ body:has(.terminal-app) {
   color: var(--terminal-dim);
   font-size: 9px;
   white-space: nowrap;
+  scrollbar-width: thin;
 }
 .cc-pill {
   display: inline-flex;
