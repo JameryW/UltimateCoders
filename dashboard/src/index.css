@@ -4005,3 +4005,65 @@ body:has(.terminal-app) {
     transition: none !important;
   }
 }
+@keyframes uc-route-flow {
+  0%, 100% { opacity: .35; transform: translateX(0); }
+  50% { opacity: 1; transform: translateX(2px); }
+}
+@keyframes uc-effort-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(240, 163, 94, .35); }
+  50% { box-shadow: 0 0 12px rgba(240, 163, 94, .7); }
+}
+
+/* Product map: staggered layer entrance, hover lift, flowing route arrows. */
+.home-system-layer-grid > .home-system-layer {
+  animation: uc-home-rise 460ms cubic-bezier(.2, .75, .3, 1) backwards;
+}
+.home-system-layer-grid > .home-system-layer:nth-child(2) { animation-delay: 55ms; }
+.home-system-layer-grid > .home-system-layer:nth-child(3) { animation-delay: 110ms; }
+.home-system-layer-grid > .home-system-layer:nth-child(4) { animation-delay: 165ms; }
+.home-system-layer-grid > .home-system-layer:nth-child(5) { animation-delay: 220ms; }
+.home-system-layer {
+  transition: transform .2s ease, background .2s ease;
+}
+.home-system-layer:hover {
+  transform: translateY(-2px);
+  background: linear-gradient(180deg, rgba(139, 240, 204, .08), transparent 72%);
+}
+.home-system-route i { animation: uc-route-flow 2.2s ease-in-out infinite; }
+.home-system-route i:nth-of-type(2) { animation-delay: 180ms; }
+.home-system-route i:nth-of-type(3) { animation-delay: 360ms; }
+
+/* Capability cards: underline shimmer on hover. */
+.home-card-line { overflow: hidden; }
+.home-card-line::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(139, 240, 204, .75), transparent);
+  transform: translateX(-130%);
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+.home-capability-card:hover .home-card-line::after {
+  opacity: 1;
+  animation: uc-bar-sheen 1.8s ease-in-out infinite;
+}
+
+/* Command-center effort meter: filled cells breathe with a stagger. */
+.cc-effort i.on { animation: uc-effort-pulse 2.2s ease-in-out infinite; }
+.cc-effort i.on:nth-child(2) { animation-delay: 120ms; }
+.cc-effort i.on:nth-child(3) { animation-delay: 240ms; }
+.cc-effort i.on:nth-child(4) { animation-delay: 360ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .home-system-layer-grid > .home-system-layer,
+  .home-system-route i,
+  .home-card-line::after,
+  .cc-effort i.on {
+    animation: none !important;
+  }
+  .home-system-layer,
+  .home-card-line::after {
+    transition: none !important;
+  }
+}
