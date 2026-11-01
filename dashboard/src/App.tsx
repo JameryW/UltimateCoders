@@ -9,7 +9,6 @@ import { TerminalDashboard } from "@/components/terminal/TerminalDashboard";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
 import { confirmAction } from "@/components/ui/confirm-dialog";
-import { KeyboardShortcuts } from "@/components/ui/keyboard-shortcuts";
 import { initMermaid } from "@/lib/mermaid";
 import type { GrpcTaskActionResult } from "@/hooks/useGrpcWeb";
 import type { TaskEvent, HealthData, TaskSummary } from "@/types/dashboard";
@@ -442,7 +441,6 @@ function App() {
     <>
       <ToastContainer />
       <ConfirmDialog />
-      <KeyboardShortcuts />
       <TerminalDashboard
         connected={dashGrpcState === "connected" || grpcState === "connected"}
         grpcState={grpcState}

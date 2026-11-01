@@ -36,6 +36,17 @@ const VIEWS: Array<{ id: TerminalView; label: string; meta: string; key: string;
   { id: "inference", label: "推理实验", meta: "INFERENCE", key: "7", icon: "◈" },
 ];
 
+/** Single-letter view shortcuts (shown in the "?" help sheet). */
+const LETTER_VIEWS: Record<string, TerminalView> = {
+  o: "overview",
+  t: "tasks",
+  w: "workers",
+  s: "search",
+  m: "memory",
+  e: "logs",
+  i: "inference",
+};
+
 interface TerminalDashboardProps {
   connected: boolean;
   grpcState: GrpcConnectionState;
@@ -1173,6 +1184,7 @@ export function TerminalDashboard({
   const [clock, setClock] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [fileBrowserNav, setFileBrowserNav] = useState<FileBrowserNavigateEvent | null>(null);
   const commandRef = useRef<HTMLInputElement>(null);
   const historyRef = useRef<HTMLElement>(null);
@@ -1271,22 +1283,46 @@ export function TerminalDashboard({
     }
   }, [command, grpcSubmitTask, onCancelTask, onOptimisticAdd, onPauseTask, onRefresh, onResumeTask, onTaskCreated, selectedTaskForCommand]);
   useEffect(() => {
+    const isTypingTarget = () => {
+      const tag = document.activeElement?.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setPaletteOpen(true);
+        setPaletteOpen((open) => !open);
+        return;
       }
-      if (event.key === "/" && document.activeElement?.tagName !== "INPUT") {
+      if (event.key === "Escape" && helpOpen) {
+        event.preventDefault();
+        setHelpOpen(false);
+        return;
+      }
+      if (isTypingTarget()) return;
+      if (event.key === "?") {
+        event.preventDefault();
+        setHelpOpen((open) => !open);
+        return;
+      }
+      if (helpOpen || paletteOpen) return;
+      if (event.key === "/") {
         event.preventDefault();
         commandRef.current?.focus();
+        return;
+      }
+      const letterView = LETTER_VIEWS[event.key.toLowerCase()];
+      if (letterView) {
+        event.preventDefault();
+        setView(letterView);
+        return;
       }
       const numeric = Number(event.key);
       const next = VIEWS.find((item) => item.key === String(numeric));
-      if (next && document.activeElement?.tagName !== "INPUT") setView(next.id);
+      if (next) setView(next.id);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [helpOpen, paletteOpen]);
 
   const currentView = useMemo(() => VIEWS.find((item) => item.id === view) ?? VIEWS[0]!, [view]);
   const runQuickCommand = (value: string) => { void runCommand(value); };
@@ -1455,6 +1491,48 @@ export function TerminalDashboard({
       {fileBrowserNav && <div className="terminal-file-browser-fallback" role="region" aria-label="File browser"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} /></div>}
       <div className="terminal-connection-diagnostics" role="region" aria-label="Connection diagnostics"><ConnectionPill label="Task" state={grpcState} /><ConnectionPill label="Dashboard" state={dashGrpcState} />{grpcExhausted && <button onClick={onReconnectGrpc}>↻ retry gRPC</button>}<button onClick={onReconnectDashGrpc}>↻ retry dashboard</button></div>
       {Object.keys(fetchErrors).length > 0 && <div className="terminal-fetch-warning" role="region" aria-label="Fetch warnings">⚠ 部分面板不可用：{Object.keys(fetchErrors).join(", ")}</div>}
+      {helpOpen && (
+        <div className="terminal-palette-backdrop" role="presentation" onClick={() => setHelpOpen(false)}>
+          <div
+            className="terminal-palette terminal-help-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Keyboard shortcuts"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="terminal-help-head">
+              <strong>键盘快捷键</strong>
+              <small>? 或 Esc 关闭</small>
+            </div>
+            <div className="terminal-help-grid">
+              <section>
+                <h3>视图</h3>
+                <ul>
+                  <li><kbd>1</kbd><kbd>…</kbd><kbd>7</kbd><span>按顺序切换视图</span></li>
+                  <li><kbd>O</kbd><span>概览</span></li>
+                  <li><kbd>T</kbd><span>任务</span></li>
+                  <li><kbd>W</kbd><span>工作节点</span></li>
+                  <li><kbd>S</kbd><span>检索</span></li>
+                  <li><kbd>M</kbd><span>记忆</span></li>
+                  <li><kbd>E</kbd><span>日志</span></li>
+                  <li><kbd>I</kbd><span>推理实验</span></li>
+                </ul>
+              </section>
+              <section>
+                <h3>命令</h3>
+                <ul>
+                  <li><kbd>Ctrl</kbd><kbd>K</kbd><span>命令面板</span></li>
+                  <li><kbd>/</kbd><span>聚焦命令栏</span></li>
+                  <li><kbd>↑</kbd><kbd>↓</kbd><span>主操作</span></li>
+                  <li><kbd>⏎</kbd><span>执行命令</span></li>
+                  <li><kbd>Tab</kbd><span>面板切换</span></li>
+                </ul>
+              </section>
+            </div>
+            <div className="terminal-palette-foot">? 帮助 · Esc 关闭 · Ctrl+K 命令面板</div>
+          </div>
+        </div>
+      )}
       <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
     </div>
   );

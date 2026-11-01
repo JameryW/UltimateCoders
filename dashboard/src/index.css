@@ -4217,3 +4217,46 @@ body:has(.terminal-app) {
   .terminal-palette-backdrop,
   .terminal-palette { animation: none !important; }
 }
+
+/* "?" keyboard help sheet ------------------------------------------------ */
+.terminal-help-panel { width: min(620px, 100%); padding-bottom: 0; }
+.terminal-help-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--terminal-border);
+}
+.terminal-help-head strong { color: var(--terminal-text); font-size: 13px; font-weight: 600; letter-spacing: .04em; }
+.terminal-help-head small { color: var(--terminal-dim); font-size: 9px; }
+.terminal-help-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 18px;
+  padding: 12px 16px 8px;
+}
+.terminal-help-grid section { min-width: 0; }
+.terminal-help-grid h3 {
+  margin: 0 0 8px;
+  color: var(--terminal-blue);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.terminal-help-grid ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.terminal-help-grid li { display: flex; align-items: center; gap: 6px; color: var(--terminal-muted); font-size: 10px; }
+.terminal-help-grid li span { margin-left: auto; color: var(--terminal-dim); text-align: right; }
+.terminal-help-grid kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--terminal-border);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--terminal-green) 8%, transparent);
+  color: var(--terminal-green);
+  font-family: inherit;
+  font-size: 9px;
+}
+@media (max-width: 620px) {
+  .terminal-help-grid { grid-template-columns: 1fr; }
+}
