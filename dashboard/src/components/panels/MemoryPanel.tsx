@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { createClient } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
 import {
+  DeleteMemoryRequestSchema,
   EngineService,
   ReadMemoryRequestSchema,
   SearchMemoryRequestSchema,
@@ -59,6 +60,7 @@ export function MemoryPanel({
   const [entry, setEntry] = useState<MemoryEntryProto | null>(null);
   const [results, setResults] = useState<MemorySearchResultProto[]>([]);
   const [message, setMessage] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const terminal = variant === "terminal";
   const disconnected = grpcState !== "connected" || stale;
@@ -145,6 +147,40 @@ export function MemoryPanel({
     [content, contentType, disconnected, importance, keyName, scope, scopeId, tags],
   );
 
+  const removeEntry = useCallback(async () => {
+    if (disconnected) {
+      setMessage({ tone: "warn", text: "gRPC 未连接，无法删除记忆" });
+      return;
+    }
+    setBusy("read");
+    try {
+      const client = createClient(EngineService, getSharedTransport());
+      const req = create(DeleteMemoryRequestSchema, {
+        keyScope: scope,
+        ...scopeIds(scope, scopeId),
+        key: keyName.trim(),
+      });
+      await unaryWithTimeout((signal) => client.deleteMemory(req, { signal }), "deleteMemory");
+      setEntry(null);
+      setResults([]);
+      setMessage({ tone: "ok", text: `已删除 ${scope}/${keyName.trim()}` });
+    } catch (error) {
+      setMessage({ tone: "warn", text: `删除失败：${String(error).slice(0, 140)}` });
+    } finally {
+      setBusy(null);
+      setConfirmDelete(false);
+    }
+  }, [disconnected, keyName, scope, scopeId]);
+
+  const copyEntry = useCallback(async () => {
+    if (!entry) return;
+    try {
+      await navigator.clipboard.writeText(entry.content);
+      setMessage({ tone: "ok", text: "已复制记忆内容" });
+    } catch {
+      setMessage({ tone: "warn", text: "当前环境不允许写剪贴板" });
+    }
+  }, [entry]);
   return (
     <div className={terminal ? "terminal-memory-panel" : "space-y-3"}>
       <div className="terminal-memory-head">
@@ -255,7 +291,20 @@ export function MemoryPanel({
             {entry.tags.length > 0 && <em>{entry.tags.join(" · ")}</em>}
           </header>
           <pre>{entry.content}</pre>
-          {entry.sourceAgent && <small>source: {entry.sourceAgent}</small>}
+          <div className="terminal-memory-entry-actions">
+            <button type="button" onClick={() => void copyEntry()}>复制内容</button>
+            {confirmDelete ? (
+              <>
+                <button type="button" className="is-danger" onClick={() => void removeEntry()} disabled={busy !== null}>
+                  {busy === "read" ? "删除中…" : "确认删除"}
+                </button>
+                <button type="button" onClick={() => setConfirmDelete(false)}>取消</button>
+              </>
+            ) : (
+              <button type="button" className="is-danger" onClick={() => setConfirmDelete(true)}>删除</button>
+            )}
+            {entry.sourceAgent && <small>source: {entry.sourceAgent}</small>}
+          </div>
         </article>
       )}
 

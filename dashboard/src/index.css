@@ -4549,3 +4549,25 @@ body:has(.terminal-app) {
 .terminal-app[data-theme="light"] .terminal-search-row:hover {
   background: rgba(31, 122, 69, .07);
 }
+
+.terminal-memory-entry-actions { display: flex; align-items: center; gap: 8px; padding-top: 2px; }
+.terminal-memory-entry-actions button {
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--terminal-border);
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 9px;
+}
+.terminal-memory-entry-actions button:hover {
+  border-color: color-mix(in srgb, var(--terminal-green) 40%, var(--terminal-border));
+  color: var(--terminal-text);
+}
+.terminal-memory-entry-actions button.is-danger {
+  border-color: color-mix(in srgb, var(--terminal-red) 35%, var(--terminal-border));
+  color: var(--terminal-red);
+}
+.terminal-memory-entry-actions button.is-danger:hover { color: var(--terminal-text); }
+.terminal-memory-entry-actions small { margin-left: auto; color: var(--terminal-dim); font-size: 9px; }
