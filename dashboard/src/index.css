@@ -3528,3 +3528,183 @@ body:has(.terminal-app) {
     transition: none !important;
   }
 }
+
+/* Surface motion: home sections + remaining dashboard views --------------- */
+/* Scroll-linked section reveals for the product home (progressive
+   enhancement), staggered card entrances, and motion for the workers,
+   search, inference, memory and advisor surfaces. */
+@keyframes uc-section-reveal {
+  from { opacity: 0; transform: translateY(26px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes uc-workflow-flow {
+  0% { background-position: -64px 0; }
+  100% { background-position: calc(100% + 64px) 0; }
+}
+@keyframes uc-empty-float {
+  0%, 100% { transform: translateY(0); box-shadow: 0 0 0 0 rgba(121, 215, 242, 0); }
+  50% { transform: translateY(-6px); box-shadow: 0 0 26px rgba(121, 215, 242, .22); }
+}
+@keyframes uc-advice-enter {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes uc-search-row-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes uc-table-row-enter {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes uc-loaded-glow {
+  0%, 100% { box-shadow: 0 0 10px color-mix(in srgb, var(--cc-swarm) 12%, transparent); }
+  50% { box-shadow: 0 0 22px color-mix(in srgb, var(--cc-swarm) 32%, transparent); }
+}
+@keyframes uc-chip-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent); }
+  50% { box-shadow: 0 0 14px color-mix(in srgb, currentColor 30%, transparent); }
+}
+
+/* Home: scroll reveal for sections, staggered cards, flowing workflow rail. */
+@supports (animation-timeline: view()) {
+  .home-section,
+  .home-final-cta {
+    animation: uc-section-reveal 1ms linear both;
+    animation-timeline: view();
+    animation-range: entry 8% entry 52%;
+  }
+}
+.home-capability-grid > .home-capability-card {
+  animation: uc-home-rise 480ms cubic-bezier(.2, .75, .3, 1) backwards;
+}
+.home-capability-grid > .home-capability-card:nth-child(2) { animation-delay: 50ms; }
+.home-capability-grid > .home-capability-card:nth-child(3) { animation-delay: 100ms; }
+.home-capability-grid > .home-capability-card:nth-child(4) { animation-delay: 150ms; }
+.home-capability-grid > .home-capability-card:nth-child(5) { animation-delay: 200ms; }
+.home-capability-grid > .home-capability-card:nth-child(6) { animation-delay: 250ms; }
+.home-scenario-grid > .home-scenario-card {
+  animation: uc-home-rise 520ms cubic-bezier(.2, .75, .3, 1) backwards;
+}
+.home-scenario-grid > .home-scenario-card:nth-child(2) { animation-delay: 60ms; }
+.home-scenario-grid > .home-scenario-card:nth-child(3) { animation-delay: 120ms; }
+.home-scenario-grid > .home-scenario-card:nth-child(4) { animation-delay: 180ms; }
+.home-workflow-track > .home-workflow-item {
+  animation: uc-home-rise 460ms cubic-bezier(.2, .75, .3, 1) backwards;
+}
+.home-workflow-track > .home-workflow-item:nth-child(2) { animation-delay: 55ms; }
+.home-workflow-track > .home-workflow-item:nth-child(3) { animation-delay: 110ms; }
+.home-workflow-track > .home-workflow-item:nth-child(4) { animation-delay: 165ms; }
+.home-workflow-track > .home-workflow-item:nth-child(5) { animation-delay: 220ms; }
+.home-workflow-marker i { overflow: hidden; }
+.home-workflow-marker i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .55), transparent);
+  background-size: 64px 100%;
+  background-repeat: no-repeat;
+  animation: uc-workflow-flow 2.8s linear infinite;
+}
+.home-final-cta a,
+.home-final-cta button {
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+.home-final-cta a:hover,
+.home-final-cta button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 22px color-mix(in srgb, #8bf0cc 22%, transparent);
+}
+
+/* Workers view: staggered rows, load-bar sheen, breathing loaded glow. */
+.terminal-worker-list > .terminal-worker-item {
+  animation: uc-home-rise 320ms cubic-bezier(.2, .75, .3, 1) backwards;
+}
+.terminal-worker-list > .terminal-worker-item:nth-child(2) { animation-delay: 45ms; }
+.terminal-worker-list > .terminal-worker-item:nth-child(3) { animation-delay: 90ms; }
+.terminal-worker-list > .terminal-worker-item:nth-child(4) { animation-delay: 135ms; }
+.terminal-worker-list > .terminal-worker-item:nth-child(5) { animation-delay: 180ms; }
+.terminal-worker-list > .terminal-worker-item:nth-child(6) { animation-delay: 225ms; }
+.terminal-worker-row .terminal-mini-bar i { position: relative; overflow: hidden; }
+.terminal-worker-row .terminal-mini-bar i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .32), transparent);
+  transform: translateX(-130%);
+  animation: uc-bar-sheen 3s ease-in-out infinite;
+}
+.terminal-worker-row.is-loaded { animation: uc-loaded-glow 2.8s ease-in-out infinite; }
+
+/* Search view: staggered results, hover slide. */
+.terminal-search-results > .terminal-search-row {
+  animation: uc-search-row-enter 300ms cubic-bezier(.2, .75, .3, 1) backwards;
+}
+.terminal-search-results > .terminal-search-row:nth-child(2) { animation-delay: 25ms; }
+.terminal-search-results > .terminal-search-row:nth-child(3) { animation-delay: 50ms; }
+.terminal-search-results > .terminal-search-row:nth-child(4) { animation-delay: 75ms; }
+.terminal-search-results > .terminal-search-row:nth-child(5) { animation-delay: 100ms; }
+.terminal-search-results > .terminal-search-row:nth-child(6) { animation-delay: 125ms; }
+.terminal-search-results > .terminal-search-row:nth-child(7) { animation-delay: 150ms; }
+.terminal-search-results > .terminal-search-row:nth-child(8) { animation-delay: 175ms; }
+.terminal-search-results > .terminal-search-row:nth-child(9) { animation-delay: 200ms; }
+.terminal-search-results > .terminal-search-row:nth-child(10) { animation-delay: 225ms; }
+.terminal-search-row { transition: transform .18s ease, border-color .18s ease, background .18s ease; }
+.terminal-search-row:hover { transform: translateX(2px); }
+
+/* Inference view: staggered table rows, hover slide, active-chip breathing. */
+.terminal-inference-table .terminal-inference-row {
+  animation: uc-table-row-enter 280ms cubic-bezier(.2, .75, .3, 1) backwards;
+}
+.terminal-inference-table .terminal-inference-row:nth-child(2) { animation-delay: 20ms; }
+.terminal-inference-table .terminal-inference-row:nth-child(3) { animation-delay: 40ms; }
+.terminal-inference-table .terminal-inference-row:nth-child(4) { animation-delay: 60ms; }
+.terminal-inference-table .terminal-inference-row:nth-child(5) { animation-delay: 80ms; }
+.terminal-inference-table .terminal-inference-row:nth-child(6) { animation-delay: 100ms; }
+.terminal-inference-table .terminal-inference-row:nth-child(7) { animation-delay: 120ms; }
+.terminal-inference-table .terminal-inference-row:nth-child(8) { animation-delay: 140ms; }
+.terminal-inference-row { transition: transform .18s ease, background .18s ease; }
+.terminal-inference-row:hover { transform: translateX(2px); }
+.terminal-inference-chip.is-active { animation: uc-chip-breathe 2.4s ease-in-out infinite; }
+
+/* Memory empty state + advisor rail. */
+.terminal-empty-icon { animation: uc-empty-float 3.2s ease-in-out infinite; }
+.terminal-empty-contract button { transition: transform .18s ease, box-shadow .18s ease; }
+.terminal-empty-contract button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--terminal-green) 30%, transparent);
+}
+.cc-advisor-advice { animation: uc-advice-enter 300ms cubic-bezier(.2, .75, .3, 1) backwards; }
+.cc-advisor-advice:nth-child(2) { animation-delay: 40ms; }
+.cc-advisor-advice:nth-child(3) { animation-delay: 80ms; }
+.cc-advisor-advice:nth-child(4) { animation-delay: 120ms; }
+.cc-advisor-advice:nth-child(5) { animation-delay: 160ms; }
+.cc-advisor-line.focus { animation: uc-live-glow 2.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .home-section,
+  .home-final-cta,
+  .home-capability-grid > .home-capability-card,
+  .home-scenario-grid > .home-scenario-card,
+  .home-workflow-track > .home-workflow-item,
+  .home-workflow-marker i::after,
+  .terminal-worker-list > .terminal-worker-item,
+  .terminal-worker-row .terminal-mini-bar i::after,
+  .terminal-worker-row.is-loaded,
+  .terminal-search-results > .terminal-search-row,
+  .terminal-inference-table .terminal-inference-row,
+  .terminal-inference-chip.is-active,
+  .terminal-empty-icon,
+  .cc-advisor-advice,
+  .cc-advisor-line.focus {
+    animation: none !important;
+  }
+  .terminal-search-row,
+  .terminal-inference-row,
+  .terminal-worker-row,
+  .terminal-empty-contract button,
+  .home-final-cta a,
+  .home-final-cta button {
+    transition: none !important;
+  }
+}

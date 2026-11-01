@@ -103,7 +103,7 @@ on:
 jobs:
   spec-refs:
     name: spec reference guard (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -128,7 +128,7 @@ jobs:
 
   tasks-refs:
     name: task context reference guard (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -161,7 +161,7 @@ jobs:
 
   scripts-lint:
     name: ruff lint (the whole scripts/ directory)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -176,7 +176,7 @@ jobs:
 
   line-endings:
     name: line ending guard (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
