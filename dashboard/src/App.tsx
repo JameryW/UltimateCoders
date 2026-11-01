@@ -10,8 +10,13 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
 import { confirmAction } from "@/components/ui/confirm-dialog";
 import { KeyboardShortcuts } from "@/components/ui/keyboard-shortcuts";
+import { initMermaid } from "@/lib/mermaid";
 import type { GrpcTaskActionResult } from "@/hooks/useGrpcWeb";
 import type { TaskEvent, HealthData, TaskSummary } from "@/types/dashboard";
+
+// The operations dashboard renders Mermaid task graphs. Initialize the lazy
+// renderer when the dashboard chunk loads (the product home never needs it).
+initMermaid();
 
 function eventKey(ev: TaskEvent): string {
   const dataHash = ev.type === "sync_required" ? "" : JSON.stringify(ev.data).slice(0, 80);

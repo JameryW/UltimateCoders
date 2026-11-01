@@ -1,7 +1,6 @@
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
-import { initMermaid } from "./lib/mermaid.ts";
 import { lazy, Suspense, useEffect, useState } from "react";
 
 // Route-level code splitting: the product home and the operations dashboard
@@ -21,10 +20,6 @@ try {
     document.documentElement.setAttribute("data-theme", "light");
   }
 } catch { /* ignore */ }
-
-// The operations dashboard renders Mermaid task graphs. Initialize its lazy
-// renderer once at the application boundary.
-initMermaid();
 
 // The product overview owns `/`; the operations dashboard remains at
 // `#/dashboard` for existing deep links.
