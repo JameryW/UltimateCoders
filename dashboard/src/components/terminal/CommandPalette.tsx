@@ -50,10 +50,15 @@ function PaletteDialog({ commands, onClose }: { commands: PaletteCommand[]; onCl
   const filtered = useMemo(() => filterPaletteCommands(commands, query), [commands, query]);
   const safeIndex = Math.min(activeIndex, Math.max(filtered.length - 1, 0));
 
-  // Focus the search field once the dialog is in the DOM (external system).
+  // Focus the search field once the dialog is in the DOM and hand focus back to
+  // whatever opened the palette when it unmounts (external DOM sync).
   useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const timer = window.setTimeout(() => inputRef.current?.focus(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      if (opener?.isConnected) opener.focus();
+    };
   }, []);
 
   useEffect(() => {
@@ -109,11 +114,12 @@ function PaletteDialog({ commands, onClose }: { commands: PaletteCommand[]; onCl
         {filtered.length === 0 ? (
           <div className="terminal-palette-empty">无匹配命令</div>
         ) : (
-          <ul className="terminal-palette-list" role="listbox" aria-label="Commands">
+          <ul className="terminal-palette-list" aria-label="Commands">
             {filtered.map((command, index) => (
-              <li key={command.id} role="option" aria-selected={index === safeIndex}>
+              <li key={command.id}>
                 <button
                   type="button"
+                  aria-current={index === safeIndex ? "true" : undefined}
                   className={`terminal-palette-item${index === safeIndex ? " is-active" : ""}`}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => {

@@ -1193,11 +1193,14 @@ export function TerminalDashboard({
   const [helpOpen, setHelpOpen] = useState(false);
   const [fileBrowserNav, setFileBrowserNav] = useState<FileBrowserNavigateEvent | null>(null);
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  const helpOpenerRef = useRef<HTMLElement | null>(null);
+  const fileBrowserOpenerRef = useRef<HTMLElement | null>(null);
   const [fileBrowserLabel, setFileBrowserLabel] = useState<string | null>(null);
   const commandRef = useRef<HTMLInputElement>(null);
   const historyRef = useRef<HTMLElement>(null);
   const appliedDefaultDarkRef = useRef(false);
   const openFileBrowser = useCallback((nav: FileBrowserNavigateEvent) => {
+    fileBrowserOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setFileBrowserNav(nav);
     setFileBrowserLabel(`${nav.repoId} · ${nav.path}${nav.line ? `:${nav.line}` : ""}`);
     setFileBrowserOpen(true);
@@ -1205,6 +1208,13 @@ export function TerminalDashboard({
   const closeFileBrowser = useCallback(() => {
     setFileBrowserOpen(false);
     setFileBrowserNav(null);
+    const opener = fileBrowserOpenerRef.current;
+    if (opener?.isConnected) opener.focus();
+  }, []);
+  const closeHelp = useCallback(() => {
+    setHelpOpen(false);
+    const opener = helpOpenerRef.current;
+    if (opener?.isConnected) opener.focus();
   }, []);
 
   useEffect(() => {
@@ -1317,13 +1327,18 @@ export function TerminalDashboard({
       }
       if (event.key === "Escape" && helpOpen) {
         event.preventDefault();
-        setHelpOpen(false);
+        closeHelp();
         return;
       }
       if (isTypingTarget()) return;
       if (event.key === "?") {
         event.preventDefault();
-        setHelpOpen((open) => !open);
+        if (helpOpen) {
+          closeHelp();
+        } else {
+          helpOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          setHelpOpen(true);
+        }
         return;
       }
       if (helpOpen || paletteOpen) return;
@@ -1344,7 +1359,7 @@ export function TerminalDashboard({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [helpOpen, paletteOpen, fileBrowserOpen, closeFileBrowser]);
+  }, [helpOpen, paletteOpen, fileBrowserOpen, closeFileBrowser, closeHelp]);
 
   const currentView = useMemo(() => VIEWS.find((item) => item.id === view) ?? VIEWS[0]!, [view]);
   const runQuickCommand = (value: string) => { void runCommand(value); };
@@ -1529,7 +1544,7 @@ export function TerminalDashboard({
       <div className="terminal-connection-diagnostics" role="region" aria-label="Connection diagnostics"><ConnectionPill label="Task" state={grpcState} /><ConnectionPill label="Dashboard" state={dashGrpcState} />{grpcExhausted && <button onClick={onReconnectGrpc}>↻ retry gRPC</button>}<button onClick={onReconnectDashGrpc}>↻ retry dashboard</button></div>
       {Object.keys(fetchErrors).length > 0 && <div className="terminal-fetch-warning" role="region" aria-label="Fetch warnings">⚠ 部分面板不可用：{Object.keys(fetchErrors).join(", ")}</div>}
       {helpOpen && (
-        <div className="terminal-palette-backdrop" role="presentation" onClick={() => setHelpOpen(false)}>
+        <div className="terminal-palette-backdrop" role="presentation" onClick={closeHelp}>
           <div
             className="terminal-palette terminal-help-panel"
             role="dialog"
