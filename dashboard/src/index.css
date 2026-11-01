@@ -4260,3 +4260,176 @@ body:has(.terminal-app) {
 @media (max-width: 620px) {
   .terminal-help-grid { grid-template-columns: 1fr; }
 }
+
+/* Lazy FileBrowser chunk placeholder ------------------------------------- */
+.terminal-panel-loading {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-height: 180px;
+  padding: 24px;
+  color: var(--terminal-dim);
+  font-size: 10px;
+  letter-spacing: .08em;
+}
+.terminal-panel-loading::before {
+  content: "";
+  width: 160px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(100deg,
+    color-mix(in srgb, var(--terminal-text) 5%, transparent) 20%,
+    color-mix(in srgb, var(--terminal-text) 14%, transparent) 42%,
+    color-mix(in srgb, var(--terminal-text) 5%, transparent) 64%);
+  background-size: 220% 100%;
+  animation: uc-skeleton-shimmer 1.5s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-panel-loading::before { animation: none !important; }
+}
+
+/* File browser panel opened from search results / task links ------------- */
+.terminal-file-browser-panel {
+  position: fixed;
+  right: 12px;
+  bottom: 88px;
+  z-index: 44;
+  display: flex;
+  flex-direction: column;
+  width: min(820px, calc(100vw - 24px));
+  max-height: 68vh;
+  overflow: hidden;
+  border: 1px solid var(--terminal-border);
+  background: #0d1a22;
+  box-shadow: var(--terminal-shadow);
+  animation: uc-slide-in-right 260ms cubic-bezier(.2, .75, .3, 1) backwards;
+}
+.terminal-app[data-theme="light"] .terminal-file-browser-panel { background: var(--terminal-surface); }
+.terminal-file-browser-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--terminal-border);
+  background: rgba(18, 32, 41, .96);
+}
+.terminal-app[data-theme="light"] .terminal-file-browser-head { background: var(--terminal-surface-2, var(--terminal-surface)); }
+.terminal-file-browser-head span { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.terminal-file-browser-head b { color: var(--terminal-text); font-size: 11px; font-weight: 600; letter-spacing: .06em; }
+.terminal-file-browser-head small {
+  overflow: hidden;
+  color: var(--terminal-dim);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.terminal-file-browser-head button {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--terminal-border);
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.terminal-file-browser-head button:hover {
+  border-color: color-mix(in srgb, var(--terminal-green) 45%, var(--terminal-border));
+  color: var(--terminal-text);
+}
+/* The old bottom-right card owned its own fixed frame; inside the panel it is
+   just the scroll body. */
+.terminal-file-browser-panel .terminal-file-browser-fallback {
+  position: static;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: auto;
+  max-height: none;
+  overflow: auto;
+  border: 0;
+  box-shadow: none;
+}
+@media (max-width: 620px) {
+  .terminal-file-browser-panel {
+    right: 8px;
+    bottom: calc(108px + env(safe-area-inset-bottom));
+    width: calc(100vw - 16px);
+    max-height: 56vh;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-file-browser-panel { animation: none !important; }
+}
+/* File code view: gutter line numbers + one highlighted <code> block ------- */
+.terminal-file-code-wrap {
+  display: flex;
+  align-items: stretch;
+  max-height: min(56vh, 520px);
+  overflow: auto;
+  border: 1px solid var(--terminal-border);
+  border-radius: 3px;
+  background: #081218;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.terminal-app[data-theme="light"] .terminal-file-code-wrap { background: #f5faf9; }
+.terminal-file-code-gutter {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  padding: 8px;
+  border-right: 1px solid var(--terminal-border);
+  color: var(--terminal-dim);
+  text-align: right;
+  user-select: none;
+}
+.terminal-file-code-gutter span { padding: 0 2px; }
+.terminal-file-code-gutter span.is-hit {
+  color: var(--terminal-green);
+  background: color-mix(in srgb, var(--terminal-green) 12%, transparent);
+}
+.terminal-file-code-wrap pre {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 12px;
+  background: transparent;
+  font: inherit;
+  white-space: pre;
+}
+.terminal-file-code-wrap code { background: transparent; font: inherit; }
+/* highlight.js token colours (terminal palette, theme-aware via vars) */
+.terminal-file-browser-panel .hljs-comment,
+.terminal-file-browser-panel .hljs-quote { color: var(--terminal-dim); }
+.terminal-file-browser-panel .hljs-keyword,
+.terminal-file-browser-panel .hljs-selector-tag,
+.terminal-file-browser-panel .hljs-literal,
+.terminal-file-browser-panel .hljs-doctag { color: var(--terminal-blue); }
+.terminal-file-browser-panel .hljs-string,
+.terminal-file-browser-panel .hljs-regexp,
+.terminal-file-browser-panel .hljs-symbol,
+.terminal-file-browser-panel .hljs-bullet { color: var(--terminal-green); }
+.terminal-file-browser-panel .hljs-number { color: var(--terminal-amber); }
+.terminal-file-browser-panel .hljs-title,
+.terminal-file-browser-panel .hljs-section { color: var(--terminal-text); font-weight: 500; }
+.terminal-file-browser-panel .hljs-attr,
+.terminal-file-browser-panel .hljs-attribute,
+.terminal-file-browser-panel .hljs-type,
+.terminal-file-browser-panel .hljs-built_in { color: var(--terminal-amber); }
+.terminal-file-browser-panel .hljs-variable,
+.terminal-file-browser-panel .hljs-template-variable,
+.terminal-file-browser-panel .hljs-params { color: var(--terminal-muted); }
+.terminal-file-browser-panel .hljs-meta { color: var(--terminal-dim); }
+
+/* The legacy Card chrome is redundant inside the file browser panel. */
+.terminal-file-browser-panel .rounded-xl {
+  margin: 0;
+  padding: 8px 10px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.terminal-file-browser-panel .rounded-xl > div:first-child { display: none; }

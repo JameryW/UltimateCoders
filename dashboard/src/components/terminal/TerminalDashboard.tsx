@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventLogPanel } from "@/components/panels/EventLogPanel";
-import { FileBrowser, type FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
+import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { SearchPanel } from "@/components/panels/SearchPanel";
 import { TaskDetail } from "@/components/panels/TaskDetail";
 import { TasksPanel } from "@/components/panels/TasksPanel";
@@ -12,6 +12,12 @@ import type { Theme } from "@/hooks/useTheme";
 import { executeUcCommand } from "@/lib/ucCommands";
 import { hashForView, viewFromHash, type TerminalView } from "@/lib/terminalView";
 import { CommandPalette, type PaletteCommand } from "@/components/terminal/CommandPalette";
+
+// FileBrowser pulls in highlight.js, so it loads on demand the first time the
+// search panel navigates to a file instead of riding in the dashboard bundle.
+const FileBrowser = lazy(() =>
+  import("@/components/panels/FileBrowser").then((module) => ({ default: module.FileBrowser })),
+);
 import { latestDashboardEvents } from "@/lib/dashboardEvents";
 import { aggregateSubtaskProgress, subtaskShortLabel } from "@/lib/taskProgress";
 import { statusBadgeClass } from "@/lib/utils";
@@ -1186,9 +1192,20 @@ export function TerminalDashboard({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [fileBrowserNav, setFileBrowserNav] = useState<FileBrowserNavigateEvent | null>(null);
+  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  const [fileBrowserLabel, setFileBrowserLabel] = useState<string | null>(null);
   const commandRef = useRef<HTMLInputElement>(null);
   const historyRef = useRef<HTMLElement>(null);
   const appliedDefaultDarkRef = useRef(false);
+  const openFileBrowser = useCallback((nav: FileBrowserNavigateEvent) => {
+    setFileBrowserNav(nav);
+    setFileBrowserLabel(`${nav.repoId} · ${nav.path}${nav.line ? `:${nav.line}` : ""}`);
+    setFileBrowserOpen(true);
+  }, []);
+  const closeFileBrowser = useCallback(() => {
+    setFileBrowserOpen(false);
+    setFileBrowserNav(null);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(new Date()), 1000);
@@ -1293,6 +1310,11 @@ export function TerminalDashboard({
         setPaletteOpen((open) => !open);
         return;
       }
+      if (event.key === "Escape" && fileBrowserOpen) {
+        event.preventDefault();
+        closeFileBrowser();
+        return;
+      }
       if (event.key === "Escape" && helpOpen) {
         event.preventDefault();
         setHelpOpen(false);
@@ -1322,7 +1344,7 @@ export function TerminalDashboard({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [helpOpen, paletteOpen]);
+  }, [helpOpen, paletteOpen, fileBrowserOpen, closeFileBrowser]);
 
   const currentView = useMemo(() => VIEWS.find((item) => item.id === view) ?? VIEWS[0]!, [view]);
   const runQuickCommand = (value: string) => { void runCommand(value); };
@@ -1426,7 +1448,7 @@ export function TerminalDashboard({
           <div className="terminal-view-body">
             {view === "overview" && <OverviewView health={health} workers={workers} tasks={tasks} eventLog={eventLog} metrics={metrics} connected={connected} selectedTask={selectedTask} interactionLog={interactionLog} onView={setView} onSelectTask={onSelectTask} />}
             {view === "tasks" && <div className="terminal-data-view terminal-task-layout">
-              <TasksPanel data={tasks} interactionLog={interactionLog} onFlush={onFlush} onPauseTask={onPauseTask} onResumeTask={onResumeTask} onCancelTask={onCancelTask} stale={grpcStale} grpcSubmitTask={grpcSubmitTask} onTaskCreated={onTaskCreated} onOptimisticAdd={onOptimisticAdd} onSelectTask={onSelectTask} selectedTaskId={selectedTaskId} showInlineDetail={false} onNavigateFile={setFileBrowserNav} />
+              <TasksPanel data={tasks} interactionLog={interactionLog} onFlush={onFlush} onPauseTask={onPauseTask} onResumeTask={onResumeTask} onCancelTask={onCancelTask} stale={grpcStale} grpcSubmitTask={grpcSubmitTask} onTaskCreated={onTaskCreated} onOptimisticAdd={onOptimisticAdd} onSelectTask={onSelectTask} selectedTaskId={selectedTaskId} showInlineDetail={false} onNavigateFile={openFileBrowser} />
               <section className="terminal-task-history" ref={historyRef} aria-label="Selected task history">
                 <div className="terminal-task-history-head">
                   <span>任务状态与历史日志</span>
@@ -1436,7 +1458,7 @@ export function TerminalDashboard({
                   <TaskHistoryLiveStrip task={selectedTask} />
                   <strong className="terminal-task-history-title">{selectedTask.description}</strong>
                   <small className="terminal-task-history-meta">{selectedTask.id} · {taskHistoryLoading ? "正在读取历史日志…" : taskHistoryError ? `历史日志读取失败：${taskHistoryError}` : `${interactionLog[selectedTask.id]?.length ?? 0} 条日志`}</small>
-                  <TaskDetail key={selectedTask.id} task={selectedTask} interactionLog={interactionLog[selectedTask.id] ?? []} onNavigateFile={setFileBrowserNav} variant="terminal" />
+                  <TaskDetail key={selectedTask.id} task={selectedTask} interactionLog={interactionLog[selectedTask.id] ?? []} onNavigateFile={openFileBrowser} variant="terminal" />
                 </> : <p className="terminal-empty-line">当前没有可查看的历史任务</p>}
               </section>
             </div>}
@@ -1470,7 +1492,7 @@ export function TerminalDashboard({
               <div className="terminal-data-view terminal-search-layout">
                 <SearchPanel
                   grpcState={grpcState}
-                  onNavigateFile={setFileBrowserNav}
+                  onNavigateFile={openFileBrowser}
                   stale={grpcStale}
                   variant="terminal"
                 />
@@ -1488,7 +1510,22 @@ export function TerminalDashboard({
       <footer className="terminal-command-bar"><span>uc ❯</span><input ref={commandRef} value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runCommand(); } }} placeholder='submit "fix flaky heartbeat test"' aria-label="uc 命令行" /><button className={busy ? "is-busy" : undefined} onClick={() => void runCommand()} disabled={!command.trim() || busy}>{busy ? "运行中" : "运行"}</button><kbd>↵</kbd><small>运行 · / 聚焦</small><span className="terminal-footer-status">{connected ? "后端在线" : "后端离线"} · engine {health.version ?? "—"} · {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : "waiting"}</span></footer>
       <div className="terminal-keybar" role="region" aria-label="Keyboard shortcuts"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>7</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
       <nav className="terminal-mobile-nav" aria-label="移动端视图导航">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav>
-      {fileBrowserNav && <div className="terminal-file-browser-fallback" role="region" aria-label="File browser"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} /></div>}
+      {fileBrowserOpen && (
+        <div className="terminal-file-browser-panel" role="dialog" aria-label="File browser">
+          <div className="terminal-file-browser-head">
+            <span>
+              <b>文件浏览器</b>
+              {fileBrowserLabel ? <small>{fileBrowserLabel}</small> : <small>选择一个仓库与文件</small>}
+            </span>
+            <button type="button" onClick={closeFileBrowser} aria-label="关闭文件浏览器">✕</button>
+          </div>
+          <div className="terminal-file-browser-fallback">
+            <Suspense fallback={<div className="terminal-panel-loading" role="status">载入文件浏览器…</div>}>
+              <FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} />
+            </Suspense>
+          </div>
+        </div>
+      )}
       <div className="terminal-connection-diagnostics" role="region" aria-label="Connection diagnostics"><ConnectionPill label="Task" state={grpcState} /><ConnectionPill label="Dashboard" state={dashGrpcState} />{grpcExhausted && <button onClick={onReconnectGrpc}>↻ retry gRPC</button>}<button onClick={onReconnectDashGrpc}>↻ retry dashboard</button></div>
       {Object.keys(fetchErrors).length > 0 && <div className="terminal-fetch-warning" role="region" aria-label="Fetch warnings">⚠ 部分面板不可用：{Object.keys(fetchErrors).join(", ")}</div>}
       {helpOpen && (

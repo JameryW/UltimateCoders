@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef, memo } from "react";
 // ponytail: common subset only (~37 langs) vs full 384-language bundle — saves ~350KB
-import hljs from "highlight.js/lib/common";
 import * as api from "@/api/endpoints";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import type { RepoInfo, DirEntry, FileContent } from "@/types/dashboard";
@@ -35,7 +34,7 @@ export const FileBrowser = memo(function FileBrowser({ initialNav, onNavConsumed
   const [error, setError] = useState("");
   const [highlightLine, setHighlightLine] = useState<number | null>(null);
   const codeBlockRef = useRef<HTMLDivElement>(null);
-  const lineRef = useRef<HTMLTableRowElement>(null);
+  const lineRef = useRef<HTMLSpanElement>(null);
   // ponytail: #8 - cross-repo navigation race guards.
   // navDrivenRepoChangeRef: suppress the [selectedRepo] root-dir autoload when
   //   the repo changed because an external nav (initialNav) set it - that nav
@@ -130,19 +129,33 @@ export const FileBrowser = memo(function FileBrowser({ initialNav, onNavConsumed
     onNavConsumed?.();
   }, [initialNav, selectedRepo, loadFile, loadDirectory, onNavConsumed]);
 
-  // Apply highlight.js to the entire code block after file content loads
+  // Apply highlight.js to the entire code block after file content loads.
+  // The highlighter is dynamically imported, so its grammars stay out of the
+  // dashboard bundle until a file is actually opened. Highlighting is optional
+  // polish: a failed import still renders the plain code block.
   // ponytail: highlight the parent <code> block wrapping all lines, not individual <code> per line
   useEffect(() => {
-    if (fileContent?.content && codeBlockRef.current) {
-      const codeEl = codeBlockRef.current.querySelector("code");
-      if (codeEl) {
-        codeEl.removeAttribute("data-highlighted");
-        hljs.highlightElement(codeEl);
-      }
+    const codeEl = fileContent?.content ? codeBlockRef.current?.querySelector("code") ?? null : null;
+    if (codeEl) {
+      let cancelled = false;
+      void (async () => {
+        try {
+          const { default: hljs } = await import("highlight.js/lib/common");
+          if (cancelled) return;
+          codeEl.removeAttribute("data-highlighted");
+          hljs.highlightElement(codeEl);
+        } catch {
+          // Keep the unhighlighted text; highlighting is decorative.
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
     }
     if (highlightLine && lineRef.current) {
-      lineRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+      lineRef.current.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
     }
+    return undefined;
   }, [fileContent, highlightLine]);
 
   // Breadcrumb segments
@@ -245,32 +258,27 @@ export const FileBrowser = memo(function FileBrowser({ initialNav, onNavConsumed
             Binary file ({fmtSize(fileContent.size)})
           </div>
         ) : (
-          <div ref={codeBlockRef} className="overflow-auto max-h-[500px] border border-[var(--border-color)] rounded text-xs font-mono">
-            {/* ponytail: single <pre><code> block for highlight.js to process the whole file at once */}
+          <div ref={codeBlockRef} className="terminal-file-code-wrap">
+            {/* Line numbers live in their own gutter: highlight.js rewrites the
+                <code> content, so it must stay a single text block to keep the
+                newlines it highlights. */}
+            <div className="terminal-file-code-gutter" aria-hidden="true">
+              {contentLines.map((_, i) => {
+                const lineNum = i + 1;
+                return (
+                  <span
+                    key={lineNum}
+                    ref={lineNum === highlightLine ? lineRef : undefined}
+                    className={lineNum === highlightLine ? "is-hit" : undefined}
+                  >
+                    {lineNum}
+                  </span>
+                );
+              })}
+            </div>
             <pre className={`m-0 p-0 bg-transparent ${fileContent.language ? `language-${fileContent.language}` : ""}`}>
               <code className={fileContent.language ? `language-${fileContent.language}` : ""}>
-                <table className="w-full">
-                  <tbody>
-                    {contentLines.map((line, i) => {
-                      const lineNum = i + 1;
-                      const isHighlighted = lineNum === highlightLine;
-                      return (
-                        <tr
-                          key={lineNum}
-                          ref={isHighlighted ? lineRef : undefined}
-                          className={isHighlighted ? "bg-yellow-500/20" : "hover:bg-[var(--bg-surface-alt)]"}
-                        >
-                          <td className="text-right text-[var(--text-muted)] pr-3 pl-2 select-none border-r border-[var(--border-color)] w-12 align-top">
-                            {lineNum}
-                          </td>
-                          <td className="pl-3 pr-2 whitespace-pre">
-                            {line}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                {contentLines.join("\n")}
               </code>
             </pre>
           </div>
