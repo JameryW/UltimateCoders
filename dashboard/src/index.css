@@ -3807,3 +3807,117 @@ body:has(.terminal-app) {
     transition: none !important;
   }
 }
+
+/* Transition & feedback polish ------------------------------------------- */
+/* Theme swaps, notice/toast entrances, the file-browser drawer and the logs
+   "jump to latest" pill. Motion-only; colors transition on container
+   surfaces so switching themes cross-fades instead of snapping. */
+@keyframes uc-notice-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes uc-slide-in-right {
+  from { opacity: 0; transform: translateX(26px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes uc-warn-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes uc-latest-in {
+  from { opacity: 0; transform: translateY(8px) scale(.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes uc-latest-glow {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--terminal-green) 0%, transparent); }
+  50% { box-shadow: 0 0 16px color-mix(in srgb, var(--terminal-green) 35%, transparent); }
+}
+
+/* Cross-fade theme changes on the big surfaces (not on every row). */
+.terminal-app,
+.terminal-app .terminal-topbar,
+.terminal-app .terminal-main-panel,
+.terminal-app .terminal-command-rail,
+.terminal-app .terminal-command-bar,
+.terminal-app .terminal-keybar,
+.terminal-app .terminal-notice,
+.terminal-app .terminal-view-body,
+.terminal-app .terminal-data-view > * {
+  transition: background-color .28s ease, color .28s ease, border-color .28s ease;
+}
+.terminal-theme-toggle {
+  transition: transform .3s ease, color .2s ease, border-color .2s ease;
+}
+.terminal-theme-toggle:active { transform: rotate(180deg); }
+
+/* Notice bar re-animates for every new message (keyed remount). */
+.terminal-notice { animation: uc-notice-in 220ms cubic-bezier(.2, .75, .3, 1) backwards; }
+
+/* File browser drawer + connection warnings slide in. */
+.terminal-file-browser-fallback { animation: uc-slide-in-right 260ms cubic-bezier(.2, .75, .3, 1) backwards; }
+.terminal-fetch-warning { animation: uc-warn-in 240ms ease-out backwards; }
+.terminal-connection-diagnostics { animation: uc-warn-in 240ms ease-out backwards; }
+
+/* Logs: "jump to latest" pill appears with a nudge and keeps breathing. */
+.terminal-logs-latest {
+  animation: uc-latest-in 220ms cubic-bezier(.2, .75, .3, 1) backwards,
+             uc-latest-glow 2.6s ease-in-out 420ms infinite;
+}
+
+/* Light theme keeps the focus ring readable. */
+[data-theme="light"] .terminal-app button:focus-visible,
+[data-theme="light"] .terminal-app a:focus-visible,
+[data-theme="light"] .terminal-app [role="button"]:focus-visible,
+[data-theme="light"] .terminal-app input:focus-visible,
+[data-theme="light"] .terminal-app select:focus-visible {
+  outline-color: rgba(16, 110, 82, .85);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-notice,
+  .terminal-file-browser-fallback,
+  .terminal-fetch-warning,
+  .terminal-connection-diagnostics,
+  .terminal-logs-latest {
+    animation: none !important;
+  }
+  .terminal-app,
+  .terminal-app .terminal-topbar,
+  .terminal-app .terminal-main-panel,
+  .terminal-app .terminal-command-rail,
+  .terminal-app .terminal-command-bar,
+  .terminal-app .terminal-keybar,
+  .terminal-app .terminal-notice,
+  .terminal-app .terminal-view-body,
+  .terminal-app .terminal-data-view > *,
+  .terminal-theme-toggle {
+    transition: none !important;
+  }
+}
+
+/* Light theme: keep cards, inputs and progress tracks on light surfaces. */
+.terminal-app[data-theme="light"] .terminal-worker-row,
+.terminal-app[data-theme="light"] .terminal-swarm-row {
+  background: var(--terminal-surface);
+  border-color: color-mix(in srgb, var(--cc-swarm) 30%, transparent);
+}
+.terminal-app[data-theme="light"] .terminal-worker-row.is-loaded,
+.terminal-app[data-theme="light"] .terminal-swarm-row.is-running {
+  box-shadow: 0 0 12px color-mix(in srgb, var(--cc-swarm) 14%, transparent);
+}
+.terminal-app[data-theme="light"] .terminal-mini-bar {
+  background: rgba(28, 48, 54, .1);
+  border-color: rgba(28, 48, 54, .16);
+}
+.terminal-app[data-theme="light"] .terminal-search-query,
+.terminal-app[data-theme="light"] .terminal-search-filters,
+.terminal-app[data-theme="light"] .terminal-search-lang,
+.terminal-app[data-theme="light"] .terminal-logs-search,
+.terminal-app[data-theme="light"] .terminal-logs-stream-wrap,
+.terminal-app[data-theme="light"] .terminal-empty-contract {
+  background: rgba(255, 255, 255, .72);
+  border-color: rgba(28, 48, 54, .18);
+}
+.terminal-app[data-theme="light"] .terminal-brand strong {
+  background-image: linear-gradient(100deg, #2f8f44 0%, #1c6f4a 38%, #2f8f44 72%);
+}

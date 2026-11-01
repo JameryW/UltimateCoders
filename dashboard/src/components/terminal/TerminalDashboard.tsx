@@ -1392,7 +1392,7 @@ export function TerminalDashboard({
             )}
             {view === "memory" && <div className="terminal-empty-contract"><span className="terminal-empty-icon">◌</span><h2>Memory surface</h2><p>记忆检索仍由 EngineService 暴露；当前 dashboard Connect 合约未提供独立 Memory RPC。使用 Search 进入真实检索入口。</p><button onClick={() => setView("search")}>打开 Search</button></div>}
           </div>
-          <div className={`terminal-notice ${notice.tone}`}><span>❯</span>{notice.text}</div>
+          <div key={notice.text} className={`terminal-notice ${notice.tone}`}><span>❯</span>{notice.text}</div>
         </section>
 
         {view !== "overview" && <AdvisorRail connected={connected} workers={workers} tasks={tasks} eventLog={eventLog} health={health} metrics={metrics} onView={setView} />}
