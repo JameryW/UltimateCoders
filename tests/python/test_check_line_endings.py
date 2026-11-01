@@ -268,6 +268,7 @@ def test_real_repo_is_reconciled() -> None:
         (2268, 2259),  # MCP stdio helper (mcp_stdio.py) adds one text file.
         (2270, 2261),  # Dashboard deep-link helper + its node test (2 text files).
         (2271, 2262),  # Public robots.txt for SEO/Lighthouse (+1 text file).
+        (2272, 2263),  # Ctrl+K command palette component (+1 text file).
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

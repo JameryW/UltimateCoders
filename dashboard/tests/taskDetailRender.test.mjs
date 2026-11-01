@@ -1755,3 +1755,34 @@ test("subtask labels keep the -sN suffix so sibling subtasks do not collide", as
     await vite.close();
   }
 });
+
+test("command palette filters commands case-insensitively and renders a dialog", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const { CommandPalette, filterPaletteCommands } = await vite.ssrLoadModule(
+      "/src/components/terminal/CommandPalette.tsx",
+    );
+    const commands = [
+      { id: "view-overview", label: "视图 · 概览", hint: "1 · cluster", keywords: "overview", run: () => {} },
+      { id: "cmd-status", label: "运行 · status", hint: "集群摘要", keywords: "status 状态", run: () => {} },
+    ];
+    assert.equal(filterPaletteCommands(commands, "").length, 2);
+    assert.deepEqual(filterPaletteCommands(commands, "STATUS").map((command) => command.id), ["cmd-status"]);
+    assert.deepEqual(filterPaletteCommands(commands, "视图").map((command) => command.id), ["view-overview"]);
+    assert.deepEqual(filterPaletteCommands(commands, " 集群 ").map((command) => command.id), ["cmd-status"]);
+    assert.equal(filterPaletteCommands(commands, "zzz").length, 0);
+
+    const html = renderToStaticMarkup(React.createElement(CommandPalette, { open: true, commands, onClose: () => {} }));
+    assert.match(html, /role="dialog"/);
+    assert.match(html, /aria-label="Command palette"/);
+    assert.match(html, /Command palette search/);
+    assert.match(html, /视图 · 概览/);
+    assert.match(html, /运行 · status/);
+    assert.match(html, /↑↓ 选择 · ⏎ 执行 · Esc 关闭/);
+
+    const closed = renderToStaticMarkup(React.createElement(CommandPalette, { open: false, commands, onClose: () => {} }));
+    assert.equal(closed, "");
+  } finally {
+    await vite.close();
+  }
+});

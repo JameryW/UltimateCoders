@@ -11,6 +11,7 @@ import type { DashboardConnectionState } from "@/hooks/useDashboardGrpc";
 import type { Theme } from "@/hooks/useTheme";
 import { executeUcCommand } from "@/lib/ucCommands";
 import { hashForView, viewFromHash, type TerminalView } from "@/lib/terminalView";
+import { CommandPalette, type PaletteCommand } from "@/components/terminal/CommandPalette";
 import { latestDashboardEvents } from "@/lib/dashboardEvents";
 import { aggregateSubtaskProgress, subtaskShortLabel } from "@/lib/taskProgress";
 import { statusBadgeClass } from "@/lib/utils";
@@ -1171,6 +1172,7 @@ export function TerminalDashboard({
   const [notice, setNotice] = useState({ text: "Dashboard 就绪 — 正在读取真实 Docker Gateway", tone: "info" });
   const [clock, setClock] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [fileBrowserNav, setFileBrowserNav] = useState<FileBrowserNavigateEvent | null>(null);
   const commandRef = useRef<HTMLInputElement>(null);
   const historyRef = useRef<HTMLElement>(null);
@@ -1272,7 +1274,7 @@ export function TerminalDashboard({
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        commandRef.current?.focus();
+        setPaletteOpen(true);
       }
       if (event.key === "/" && document.activeElement?.tagName !== "INPUT") {
         event.preventDefault();
@@ -1288,6 +1290,54 @@ export function TerminalDashboard({
 
   const currentView = useMemo(() => VIEWS.find((item) => item.id === view) ?? VIEWS[0]!, [view]);
   const runQuickCommand = (value: string) => { void runCommand(value); };
+
+  // Ctrl+K palette: every view plus the dashboard's quick actions.
+  const paletteCommands: PaletteCommand[] = [
+    ...VIEWS.map((item) => ({
+      id: `view-${item.id}`,
+      label: `视图 · ${item.label}`,
+      hint: `${item.key} · ${item.meta}`,
+      keywords: `${item.id} ${item.label} ${item.meta}`,
+      run: () => setView(item.id),
+    })),
+    { id: "cmd-status", label: "运行 · status", hint: "集群摘要", keywords: "status 状态 摘要", run: () => runQuickCommand("status") },
+    {
+      id: "cmd-submit",
+      label: "提交任务 · submit",
+      hint: "在命令栏输入 submit",
+      keywords: "submit 提交 任务 新建",
+      run: () => {
+        setView("tasks");
+        setCommand("submit ");
+        window.setTimeout(() => commandRef.current?.focus(), 0);
+      },
+    },
+    {
+      id: "cmd-pause",
+      label: "暂停任务 · pause",
+      hint: selectedTaskForCommand ? shortId(selectedTaskForCommand) : "未选择任务",
+      keywords: "pause 暂停",
+      run: () => runQuickCommand(`pause ${selectedTaskForCommand ?? ""}`),
+    },
+    {
+      id: "cmd-resume",
+      label: "恢复任务 · resume",
+      hint: selectedTaskForCommand ? shortId(selectedTaskForCommand) : "未选择任务",
+      keywords: "resume 恢复 继续",
+      run: () => runQuickCommand(`resume ${selectedTaskForCommand ?? ""}`),
+    },
+    { id: "cmd-search", label: "检索代码 · search", hint: "进入 Search", keywords: "search 检索 搜索 代码", run: () => setView("search") },
+    { id: "cmd-logs", label: "事件日志 · logs", hint: "进入 Logs", keywords: "logs 日志 事件", run: () => setView("logs") },
+    { id: "cmd-refresh", label: "刷新数据 · refresh", hint: "重新拉取面板数据", keywords: "refresh 刷新 重载", run: () => { void onRefresh(); } },
+    {
+      id: "cmd-theme",
+      label: "切换主题 · theme",
+      hint: theme === "dark" ? "切到亮色" : "切到暗色",
+      keywords: "theme 主题 暗色 亮色 dark light",
+      run: () => onToggleTheme(),
+    },
+    { id: "cmd-help", label: "帮助 · help", hint: "命令速查", keywords: "help 帮助 命令", run: () => runQuickCommand("help") },
+  ];
 
   return (
     <div className={`terminal-app ${view === "overview" ? "cc-mode" : ""}`} data-theme={theme}>
@@ -1405,6 +1455,7 @@ export function TerminalDashboard({
       {fileBrowserNav && <div className="terminal-file-browser-fallback" role="region" aria-label="File browser"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} /></div>}
       <div className="terminal-connection-diagnostics" role="region" aria-label="Connection diagnostics"><ConnectionPill label="Task" state={grpcState} /><ConnectionPill label="Dashboard" state={dashGrpcState} />{grpcExhausted && <button onClick={onReconnectGrpc}>↻ retry gRPC</button>}<button onClick={onReconnectDashGrpc}>↻ retry dashboard</button></div>
       {Object.keys(fetchErrors).length > 0 && <div className="terminal-fetch-warning" role="region" aria-label="Fetch warnings">⚠ 部分面板不可用：{Object.keys(fetchErrors).join(", ")}</div>}
+      <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }
