@@ -213,7 +213,7 @@ export default function HomePage() {
       <div className="home-grid-glow" aria-hidden="true" />
       <div className="home-shell">
         <nav className="home-nav" aria-label="Primary navigation">
-          <a className="home-brand" href="#/" aria-label="UltimateCoders overview">
+          <a className="home-brand" href="#/">
             <span className="home-brand-mark">UC</span>
             <span>
               <strong>UltimateCoders</strong>

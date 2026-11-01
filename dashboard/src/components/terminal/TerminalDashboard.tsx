@@ -851,7 +851,7 @@ function OverviewView({
           className={`cc-stage-chip ${activeStage}`}
           data-testid="cc-stage-chip"
           data-stage={activeStage}
-          aria-label={`Active stage ${activeStage}${stageNavView ? `, open ${stageNavView}` : ""}`}
+          aria-label={`stage · ${activeStage}${stageNavView ? ` · open ${stageNavView}` : ""}`}
           disabled={!stageNavView}
           onClick={() => {
             if (stageNavView) onView(stageNavView);
