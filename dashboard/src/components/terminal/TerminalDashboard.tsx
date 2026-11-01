@@ -570,11 +570,17 @@ function AdvisorPanel({
     const status = component.status.toLowerCase();
     return status !== "ok" && status !== "healthy" && status !== "idle";
   }));
+  const allComponentsHealthy = components.length > 0 && components.every((component) => {
+    const status = component.status.toLowerCase();
+    return status === "ok" || status === "healthy" || status === "idle";
+  });
+  const statusHealthy = health.status === "ok" || health.status === "healthy";
+  const healthLabel = statusHealthy || allComponentsHealthy ? "healthy" : health.status || "unknown";
   const phase = preview
     ? "preview sample · waiting for gateway"
     : !connected
       ? "waiting for gateway"
-      : health.status === "ok" || health.status === "healthy"
+      : statusHealthy || allComponentsHealthy
         ? "cluster healthy"
         : health.status || "checking health";
 
@@ -615,7 +621,7 @@ function AdvisorPanel({
         <div><span>engine</span><b>{health.version ?? "—"}</b></div>
       </div>
       <div className="cc-advisor-foot">
-        <span>{preview ? "◆" : "◇"} {health.status || "unknown"}</span>
+        <span>{preview ? "◆" : "◇"} {healthLabel}</span>
         <button onClick={() => onView("logs")}>session log</button>
       </div>
     </aside>
@@ -1393,7 +1399,7 @@ export function TerminalDashboard({
       </div>
 
       <StatusPillBar connected={connected} grpcState={grpcState} dashGrpcState={dashGrpcState} workers={workers} tasks={tasks} eventLog={eventLog} />
-      <footer className="terminal-command-bar"><span>uc ❯</span><input ref={commandRef} value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runCommand(); } }} placeholder='submit "fix flaky heartbeat test"' aria-label="uc 命令行" /><button onClick={() => void runCommand()} disabled={!command.trim() || busy}>运行</button><kbd>↵</kbd><small>运行 · / 聚焦</small><span className="terminal-footer-status">{connected ? "后端在线" : "后端离线"} · engine {health.version ?? "—"} · {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : "waiting"}</span></footer>
+      <footer className="terminal-command-bar"><span>uc ❯</span><input ref={commandRef} value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runCommand(); } }} placeholder='submit "fix flaky heartbeat test"' aria-label="uc 命令行" /><button className={busy ? "is-busy" : undefined} onClick={() => void runCommand()} disabled={!command.trim() || busy}>{busy ? "运行中" : "运行"}</button><kbd>↵</kbd><small>运行 · / 聚焦</small><span className="terminal-footer-status">{connected ? "后端在线" : "后端离线"} · engine {health.version ?? "—"} · {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : "waiting"}</span></footer>
       <div className="terminal-keybar"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>7</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
       <nav className="terminal-mobile-nav" aria-label="移动端视图导航">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav>
       {fileBrowserNav && <div className="terminal-file-browser-fallback"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} /></div>}

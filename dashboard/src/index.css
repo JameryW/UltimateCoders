@@ -3708,3 +3708,102 @@ body:has(.terminal-app) {
     transition: none !important;
   }
 }
+
+/* Interaction polish: keyboard focus, busy states, nav indicators --------- */
+@keyframes uc-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Keyboard focus rings (mouse users keep the current look). */
+.terminal-app button:focus-visible,
+.terminal-app a:focus-visible,
+.terminal-app [role="button"]:focus-visible,
+.terminal-app input:focus-visible,
+.terminal-app select:focus-visible,
+.home-page button:focus-visible,
+.home-page a:focus-visible,
+.home-page input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--terminal-green) 78%, transparent);
+  outline-offset: 2px;
+}
+.home-page button:focus-visible,
+.home-page a:focus-visible {
+  outline-color: rgba(139, 240, 204, .8);
+}
+
+/* Command bar: spinning busy indicator + press feedback. */
+.terminal-command-bar button.is-busy::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border: 1px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: uc-spin 700ms linear infinite;
+}
+.terminal-command-bar button:active:not(:disabled) {
+  transform: translateY(0) scale(.97);
+}
+
+/* Panel meta online dot pulse. */
+.terminal-panel-meta.online i { animation: uc-online-pulse 2.4s ease-out infinite; }
+
+/* Command rail: hover slide + neon rail for the selected action. */
+.terminal-command-rail > button {
+  transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+.terminal-command-rail > button:hover:not(:disabled) {
+  transform: translateX(3px);
+  box-shadow: -2px 0 0 color-mix(in srgb, var(--terminal-green) 45%, transparent);
+}
+.terminal-command-rail > button.selected {
+  box-shadow: -2px 0 0 var(--terminal-green);
+}
+
+/* Mobile nav: animated active indicator. */
+.terminal-mobile-nav button { position: relative; }
+.terminal-mobile-nav button.active::after {
+  content: "";
+  position: absolute;
+  right: 14%;
+  bottom: 3px;
+  left: 14%;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--terminal-green), transparent);
+  box-shadow: 0 0 8px var(--terminal-green);
+  animation: uc-tab-underline 240ms ease-out backwards;
+}
+
+/* Home nav: sliding underline. */
+.home-nav-link { position: relative; }
+.home-nav-link::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -6px;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #8bf0cc, transparent);
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform .22s ease;
+}
+.home-nav-link:hover::after,
+.home-nav-link-active::after { transform: scaleX(1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-command-bar button.is-busy::before,
+  .terminal-panel-meta.online i,
+  .terminal-mobile-nav button.active::after {
+    animation: none !important;
+  }
+  .terminal-command-rail > button,
+  .terminal-command-bar button,
+  .home-nav-link::after {
+    transition: none !important;
+  }
+}
