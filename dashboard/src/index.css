@@ -4084,3 +4084,58 @@ body:has(.terminal-app) {
 .terminal-app[data-theme="light"] .terminal-brand strong {
   background-image: linear-gradient(100deg, #1f7a45 0%, #145c38 38%, #1f7a45 72%);
 }
+
+/* Route-level code splitting: branded shimmer while a route chunk loads. */
+@keyframes uc-skeleton-shimmer {
+  0% { background-position: 160% 0; }
+  100% { background-position: -60% 0; }
+}
+.route-skeleton {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  min-height: 100vh;
+  padding: 52px 6vw;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+.route-skeleton-top,
+.route-skeleton-card {
+  border-radius: 8px;
+  background: linear-gradient(100deg,
+    color-mix(in srgb, var(--text-primary) 5%, transparent) 20%,
+    color-mix(in srgb, var(--text-primary) 12%, transparent) 42%,
+    color-mix(in srgb, var(--text-primary) 5%, transparent) 64%);
+  background-size: 220% 100%;
+  animation: uc-skeleton-shimmer 1.5s linear infinite;
+}
+.route-skeleton-top { height: 36px; width: min(380px, 62%); }
+.route-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.route-skeleton-card { height: 128px; }
+@media (max-width: 900px) { .route-skeleton-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .route-skeleton-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) {
+  .route-skeleton-top, .route-skeleton-card { animation: none !important; }
+}
+
+/* Skeleton is theme-aware: dark by default, light when the light theme is set. */
+.route-skeleton { background: #0b1218; color: #e8f3f1; }
+.route-skeleton-top,
+.route-skeleton-card {
+  background: linear-gradient(100deg,
+    rgba(255, 255, 255, .05) 20%,
+    rgba(255, 255, 255, .12) 42%,
+    rgba(255, 255, 255, .05) 64%);
+}
+[data-theme="light"] .route-skeleton { background: #eef3f3; color: #1c3036; }
+[data-theme="light"] .route-skeleton-top,
+[data-theme="light"] .route-skeleton-card {
+  background: linear-gradient(100deg,
+    rgba(28, 48, 54, .06) 20%,
+    rgba(28, 48, 54, .13) 42%,
+    rgba(28, 48, 54, .06) 64%);
+}

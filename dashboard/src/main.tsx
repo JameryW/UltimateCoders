@@ -1,10 +1,16 @@
 import { createRoot } from "react-dom/client";
 import "./index.css";
-import App from "./App.tsx";
-import HomePage from "./pages/HomePage.tsx";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { initMermaid } from "./lib/mermaid.ts";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
+
+// Route-level code splitting: the product home and the operations dashboard
+// are separate entry chunks, so `/` never downloads the dashboard bundle (and
+// vice versa). Both keep the same hash/deep-link behaviour.
+// eslint-disable-next-line react-refresh/only-export-components -- entry file with router
+const App = lazy(() => import("./App.tsx"));
+// eslint-disable-next-line react-refresh/only-export-components -- entry file with router
+const HomePage = lazy(() => import("./pages/HomePage.tsx"));
 
 // ponytail: apply stored theme synchronously before React renders, preventing FOUC.
 try {
@@ -33,8 +39,24 @@ function Root() {
     return () => window.removeEventListener("hashchange", handleHashChange);
   }, []);
 
-  if (isDashboardPath || hash.startsWith("#/dashboard")) return <App />;
-  return <HomePage />;
+  return (
+    <Suspense fallback={<RouteSkeleton />}>
+      {isDashboardPath || hash.startsWith("#/dashboard") ? <App /> : <HomePage />}
+    </Suspense>
+  );
+}
+
+/** Shimmer placeholder while the route chunk downloads (first paint stays branded). */
+// eslint-disable-next-line react-refresh/only-export-components -- entry file with router
+function RouteSkeleton() {
+  return (
+    <div className="route-skeleton" role="status" aria-live="polite" aria-label="Loading interface">
+      <div className="route-skeleton-top" />
+      <div className="route-skeleton-grid">
+        {Array.from({ length: 6 }, (_, index) => <div key={index} className="route-skeleton-card" />)}
+      </div>
+    </div>
+  );
 }
 
 /** Last-resort root error boundary for the overview and dashboard. */
