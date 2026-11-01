@@ -4541,3 +4541,11 @@ body:has(.terminal-app) {
   .terminal-memory-grid { grid-template-columns: minmax(0, 1fr); }
   .terminal-memory-actions { flex-wrap: wrap; }
 }
+
+/* Light theme: search result rows must not keep their dark terminal fill. */
+.terminal-app[data-theme="light"] .terminal-search-row {
+  background: rgba(255, 255, 255, .92);
+}
+.terminal-app[data-theme="light"] .terminal-search-row:hover {
+  background: rgba(31, 122, 69, .07);
+}
