@@ -42,6 +42,11 @@ const VIEWS: Array<{ id: TerminalView; label: string; meta: string; key: string;
   { id: "inference", label: "推理实验", meta: "INFERENCE", key: "7", icon: "◈" },
 ];
 
+/** Tasks still moving through the pipeline — listed before finished ones. */
+function isLiveTask(task: { status: string }): boolean {
+  return task.status === "inprogress" || task.status === "pending" || task.status === "paused";
+}
+
 /** Single-letter view shortcuts (shown in the "?" help sheet). */
 const LETTER_VIEWS: Record<string, TerminalView> = {
   o: "overview",
@@ -1372,7 +1377,21 @@ export function TerminalDashboard({
       hint: `${item.key} · ${item.meta}`,
       keywords: `${item.id} ${item.label} ${item.meta}`,
       run: () => setView(item.id),
-    })),
+    })),    // Recent tasks: running work first, then the newest finished units, so the
+    // palette can jump straight into a task from anywhere in the dashboard.
+    ...[...tasks.tasks]
+      .sort((a, b) => Number(isLiveTask(b)) - Number(isLiveTask(a)))
+      .slice(0, 4)
+      .map((task) => ({
+        id: `task-${task.id}`,
+        label: `任务 · ${task.description.slice(0, 24) || "未命名任务"}`,
+        hint: `${shortId(task.id)} · ${task.status}`,
+        keywords: `${task.id} ${task.description} 任务 task`,
+        run: () => {
+          onSelectTask(task.id);
+          setView("tasks");
+        },
+      })),
     { id: "cmd-status", label: "运行 · status", hint: "集群摘要", keywords: "status 状态 摘要", run: () => runQuickCommand("status") },
     {
       id: "cmd-submit",
