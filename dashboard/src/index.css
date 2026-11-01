@@ -1792,6 +1792,7 @@ body:has(.terminal-app) {
 .cc-session-row {
   display: block;
   width: 100%;
+  min-height: 24px;
   padding: 3px 0;
   border: 0;
   background: transparent;
@@ -4200,6 +4201,7 @@ body:has(.terminal-app) {
   text-align: left;
 }
 .terminal-palette-item small { color: var(--terminal-dim); font-size: 9px; }
+.terminal-palette-item.is-active small, .terminal-palette-item:hover small { color: var(--terminal-muted); }
 .terminal-palette-item.is-active,
 .terminal-palette-item:hover {
   border-color: color-mix(in srgb, var(--terminal-green) 35%, transparent);

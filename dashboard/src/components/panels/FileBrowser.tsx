@@ -200,6 +200,7 @@ export const FileBrowser = memo(function FileBrowser({ initialNav, onNavConsumed
     <div className="flex items-center gap-2 mb-2">
       <label className="text-xs text-[var(--text-muted)]">Repo:</label>
       <select
+        aria-label="仓库"
         value={selectedRepo}
         onChange={(e) => { setSelectedRepo(e.target.value); setFileContent(null); }}
         className="bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none"
