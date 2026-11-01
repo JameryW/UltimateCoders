@@ -95,7 +95,7 @@ on:
 jobs:
   readme-ci-table:
     name: README CI table (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:

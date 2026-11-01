@@ -68,7 +68,7 @@ on:
 jobs:
   lint:
     name: ruff lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -80,7 +80,7 @@ jobs:
   # ponytail: dashboard lint + import check
   dashboard:
     name: dashboard checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -95,7 +95,7 @@ jobs:
 
   test:
     name: test (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
