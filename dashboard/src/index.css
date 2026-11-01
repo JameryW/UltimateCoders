@@ -1529,9 +1529,12 @@ body:has(.terminal-app) {
 .cc-advisor-line b { color: var(--cc-advisor); font-weight: 400; }
 .cc-advisor.preview { border-style: dashed; }
 .cc-advisor-advice {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
   overflow: hidden;
   border: 0;
-  padding: 0;
+  padding: 2px 0;
   background: transparent;
   color: var(--cc-advisor);
   cursor: pointer;
