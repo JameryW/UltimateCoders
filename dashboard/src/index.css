@@ -4435,3 +4435,109 @@ body:has(.terminal-app) {
   box-shadow: none;
 }
 .terminal-file-browser-panel .rounded-xl > div:first-child { display: none; }
+
+/* Memory surface (EngineService Read/Write/SearchMemory) ------------------ */
+.terminal-memory-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--terminal-border);
+  background: rgba(14, 26, 34, .9);
+}
+.terminal-memory-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.terminal-memory-head strong { color: var(--terminal-text); font-size: 13px; font-weight: 500; letter-spacing: .04em; }
+.terminal-memory-head small { color: var(--terminal-dim); font-size: 9px; }
+.terminal-memory-chips { display: flex; gap: 6px; }
+.terminal-memory-chips button {
+  min-height: 24px;
+  padding: 3px 10px;
+  border: 1px solid var(--terminal-border);
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+}
+.terminal-memory-chips button.is-active {
+  border-color: color-mix(in srgb, var(--terminal-green) 45%, var(--terminal-border));
+  background: color-mix(in srgb, var(--terminal-green) 9%, transparent);
+  color: var(--terminal-text);
+}
+.terminal-memory-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.terminal-memory-grid label,
+.terminal-memory-content,
+.terminal-memory-actions label {
+  display: grid;
+  gap: 4px;
+  color: var(--terminal-dim);
+  font-size: 9px;
+  letter-spacing: .08em;
+}
+.terminal-memory-grid input,
+.terminal-memory-grid select,
+.terminal-memory-content textarea,
+.terminal-memory-actions input {
+  min-height: 26px;
+  padding: 4px 8px;
+  border: 1px solid var(--terminal-border);
+  background: rgba(6, 15, 20, .7);
+  color: var(--terminal-text);
+  font-family: inherit;
+  font-size: 10px;
+}
+.terminal-memory-content textarea { min-height: 72px; resize: vertical; }
+.terminal-app[data-theme="light"] .terminal-memory-grid input,
+.terminal-app[data-theme="light"] .terminal-memory-grid select,
+.terminal-app[data-theme="light"] .terminal-memory-content textarea,
+.terminal-app[data-theme="light"] .terminal-memory-actions input { background: #fff; }
+.terminal-memory-actions { display: flex; align-items: flex-end; gap: 8px; }
+.terminal-memory-actions label { flex: 1 1 auto; }
+.terminal-memory-actions button {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--terminal-green) 40%, var(--terminal-border));
+  background: color-mix(in srgb, var(--terminal-green) 8%, transparent);
+  color: var(--terminal-green);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+}
+.terminal-memory-actions button:first-of-type { color: var(--terminal-text); }
+.terminal-memory-actions button:disabled { opacity: .55; cursor: progress; }
+.terminal-memory-notice {
+  padding: 6px 9px;
+  border-left: 2px solid var(--terminal-green);
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+.terminal-memory-notice.warn { border-color: var(--terminal-amber); color: var(--terminal-amber); }
+.terminal-memory-entry,
+.terminal-memory-results li {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--terminal-border);
+  background: rgba(8, 20, 27, .75);
+}
+.terminal-memory-entry header,
+.terminal-memory-results header { display: flex; align-items: baseline; gap: 10px; color: var(--terminal-dim); font-size: 9px; }
+.terminal-memory-entry header b,
+.terminal-memory-results header b { color: var(--terminal-blue); font-weight: 500; }
+.terminal-memory-entry header em,
+.terminal-memory-results header em { margin-left: auto; color: var(--terminal-muted); font-style: normal; }
+.terminal-memory-entry pre {
+  margin: 0;
+  overflow: auto;
+  color: var(--terminal-text);
+  font: inherit;
+  font-size: 10px;
+  white-space: pre-wrap;
+}
+.terminal-memory-entry small { color: var(--terminal-dim); font-size: 9px; }
+.terminal-memory-results { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.terminal-memory-results p { margin: 0; color: var(--terminal-muted); font-size: 10px; }
+@media (max-width: 900px) { .terminal-memory-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) {
+  .terminal-memory-grid { grid-template-columns: minmax(0, 1fr); }
+  .terminal-memory-actions { flex-wrap: wrap; }
+}

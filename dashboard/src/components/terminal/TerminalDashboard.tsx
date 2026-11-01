@@ -6,6 +6,7 @@ import { TaskDetail } from "@/components/panels/TaskDetail";
 import { TasksPanel } from "@/components/panels/TasksPanel";
 import { WorkersPanel } from "@/components/panels/WorkersPanel";
 import { InferencePanel } from "@/components/panels/InferencePanel";
+import { MemoryPanel } from "@/components/panels/MemoryPanel";
 import type { GrpcConnectionState, GrpcSubmitResult, GrpcTaskActionResult } from "@/hooks/useGrpcWeb";
 import type { DashboardConnectionState } from "@/hooks/useDashboardGrpc";
 import type { Theme } from "@/hooks/useTheme";
@@ -1532,7 +1533,11 @@ export function TerminalDashboard({
                 />
               </div>
             )}
-            {view === "memory" && <div className="terminal-empty-contract"><span className="terminal-empty-icon">◌</span><h2>Memory surface</h2><p>记忆检索仍由 EngineService 暴露；当前 dashboard Connect 合约未提供独立 Memory RPC。使用 Search 进入真实检索入口。</p><button onClick={() => setView("search")}>打开 Search</button></div>}
+            {view === "memory" && (
+              <div className="terminal-data-view terminal-memory-layout">
+                <MemoryPanel grpcState={grpcState} stale={grpcStale} variant="terminal" />
+              </div>
+            )}
           </div>
           <div key={notice.text} className={`terminal-notice ${notice.tone}`}><span>❯</span>{notice.text}</div>
         </main>

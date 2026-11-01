@@ -1786,3 +1786,24 @@ test("command palette filters commands case-insensitively and renders a dialog",
     await vite.close();
   }
 });
+test("memory panel renders the read / write / search surface", async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  try {
+    const { MemoryPanel } = await vite.ssrLoadModule("/src/components/panels/MemoryPanel.tsx");
+    const html = renderToStaticMarkup(React.createElement(MemoryPanel, { grpcState: "connected" }));
+    assert.match(html, /分层记忆/);
+    assert.match(html, /Read \/ Write \/ SearchMemory/);
+    assert.match(html, /aria-label="记忆作用域 ID"/);
+    assert.match(html, /aria-label="记忆 Key"/);
+    assert.match(html, /aria-label="记忆内容"/);
+    assert.match(html, /aria-label="记忆标签"/);
+    assert.match(html, /写入/);
+    assert.match(html, /读取/);
+    assert.match(html, /语义搜索/);
+
+    const offline = renderToStaticMarkup(React.createElement(MemoryPanel, { grpcState: "disconnected" }));
+    assert.match(offline, /gRPC 未连接/);
+  } finally {
+    await vite.close();
+  }
+});
