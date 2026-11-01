@@ -1204,7 +1204,7 @@ input:focus-visible {
   --terminal-border-soft: rgba(69, 112, 125, .5);
   --terminal-text: #e8f3f1;
   --terminal-muted: #8ca3aa;
-  --terminal-dim: #607984;
+  --terminal-dim: #748f98;
   --terminal-green: #83e98d;
   --terminal-blue: #79d7f2;
   --terminal-amber: #e5bd68;
@@ -4066,4 +4066,21 @@ body:has(.terminal-app) {
   .home-card-line::after {
     transition: none !important;
   }
+}
+
+/* Readability: keep the muted "dim" token above WCAG AA on both themes. */
+.terminal-app[data-theme="light"] {
+  --terminal-dim: #4f6a72;
+}
+
+/* Light theme contrast: keep AA on the light surfaces. */
+.terminal-app[data-theme="light"] {
+  --terminal-green: #1f7a45;
+  --cc-lead: #9a5214;
+  --cc-dispatch: #166b3c;
+}
+.terminal-app[data-theme="light"] .terminal-brand > span { color: #4f6a72; }
+.terminal-app[data-theme="light"] .text-cyan-400\/70 { color: #0e7490 !important; }
+.terminal-app[data-theme="light"] .terminal-brand strong {
+  background-image: linear-gradient(100deg, #1f7a45 0%, #145c38 38%, #1f7a45 72%);
 }

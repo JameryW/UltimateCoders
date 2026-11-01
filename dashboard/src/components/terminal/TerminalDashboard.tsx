@@ -1118,7 +1118,7 @@ function StatusPillBar({
   const flashClass = (key: keyof StatusPillValues) => (flashing.has(key) ? " cc-pill-flash" : "");
 
   return (
-    <div className="cc-status-pills" aria-label="Live status">
+    <div className="cc-status-pills" role="region" aria-label="Live status" tabIndex={0}>
       <span className={`cc-pill swarm ${onlineWorkers > 0 ? "hot" : ""}${flashClass("workers")}`}>workers [{pillValues.workers}]</span>
       <span className={`cc-pill lead ${runningTasks > 0 ? "hot" : ""}${flashClass("tasks")}`}>tasks [{pillValues.tasks} running]</span>
       <span className={`cc-pill dispatch ${(tasks.pending_task_count ?? 0) > 0 ? "hot" : ""}${flashClass("queue")}`}>queue [{pillValues.queue}]</span>
@@ -1305,7 +1305,7 @@ export function TerminalDashboard({
         <button className="terminal-logout" onClick={onLogout} title="Logout">↪</button>
       </header>
 
-      <div className="terminal-mobile-actions" aria-label="快捷操作">
+      <div className="terminal-mobile-actions" role="region" aria-label="快捷操作">
         <button onClick={() => runQuickCommand("status")}>❯ status</button>
         <button onClick={() => { setView("tasks"); setCommand("submit "); commandRef.current?.focus(); }}>❯ submit</button>
         <button onClick={() => runQuickCommand(`pause ${selectedTaskForCommand ?? ""}`)} disabled={busy}>❯ pause</button>
@@ -1335,7 +1335,7 @@ export function TerminalDashboard({
           </aside>
         )}
 
-        <section className="terminal-main-panel">
+        <main className="terminal-main-panel" aria-label="Dashboard content">
           <div className="terminal-panel-head"><div><h1>{currentView.label}</h1><span>uc / {currentView.meta.toLowerCase()}</span></div><div className={`terminal-panel-meta ${connected ? "online" : "offline"}`}><i />{health.version ?? "engine"} · {connected ? "connected" : "waiting"}</div></div>
           <div className="terminal-view-body">
             {view === "overview" && <OverviewView health={health} workers={workers} tasks={tasks} eventLog={eventLog} metrics={metrics} connected={connected} selectedTask={selectedTask} interactionLog={interactionLog} onView={setView} onSelectTask={onSelectTask} />}
@@ -1393,18 +1393,18 @@ export function TerminalDashboard({
             {view === "memory" && <div className="terminal-empty-contract"><span className="terminal-empty-icon">◌</span><h2>Memory surface</h2><p>记忆检索仍由 EngineService 暴露；当前 dashboard Connect 合约未提供独立 Memory RPC。使用 Search 进入真实检索入口。</p><button onClick={() => setView("search")}>打开 Search</button></div>}
           </div>
           <div key={notice.text} className={`terminal-notice ${notice.tone}`}><span>❯</span>{notice.text}</div>
-        </section>
+        </main>
 
         {view !== "overview" && <AdvisorRail connected={connected} workers={workers} tasks={tasks} eventLog={eventLog} health={health} metrics={metrics} onView={setView} />}
       </div>
 
       <StatusPillBar connected={connected} grpcState={grpcState} dashGrpcState={dashGrpcState} workers={workers} tasks={tasks} eventLog={eventLog} />
       <footer className="terminal-command-bar"><span>uc ❯</span><input ref={commandRef} value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runCommand(); } }} placeholder='submit "fix flaky heartbeat test"' aria-label="uc 命令行" /><button className={busy ? "is-busy" : undefined} onClick={() => void runCommand()} disabled={!command.trim() || busy}>{busy ? "运行中" : "运行"}</button><kbd>↵</kbd><small>运行 · / 聚焦</small><span className="terminal-footer-status">{connected ? "后端在线" : "后端离线"} · engine {health.version ?? "—"} · {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : "waiting"}</span></footer>
-      <div className="terminal-keybar"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>7</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
+      <div className="terminal-keybar" role="region" aria-label="Keyboard shortcuts"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>7</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
       <nav className="terminal-mobile-nav" aria-label="移动端视图导航">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav>
-      {fileBrowserNav && <div className="terminal-file-browser-fallback"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} /></div>}
-      <div className="terminal-connection-diagnostics" aria-label="Connection diagnostics"><ConnectionPill label="Task" state={grpcState} /><ConnectionPill label="Dashboard" state={dashGrpcState} />{grpcExhausted && <button onClick={onReconnectGrpc}>↻ retry gRPC</button>}<button onClick={onReconnectDashGrpc}>↻ retry dashboard</button></div>
-      {Object.keys(fetchErrors).length > 0 && <div className="terminal-fetch-warning">⚠ 部分面板不可用：{Object.keys(fetchErrors).join(", ")}</div>}
+      {fileBrowserNav && <div className="terminal-file-browser-fallback" role="region" aria-label="File browser"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} /></div>}
+      <div className="terminal-connection-diagnostics" role="region" aria-label="Connection diagnostics"><ConnectionPill label="Task" state={grpcState} /><ConnectionPill label="Dashboard" state={dashGrpcState} />{grpcExhausted && <button onClick={onReconnectGrpc}>↻ retry gRPC</button>}<button onClick={onReconnectDashGrpc}>↻ retry dashboard</button></div>
+      {Object.keys(fetchErrors).length > 0 && <div className="terminal-fetch-warning" role="region" aria-label="Fetch warnings">⚠ 部分面板不可用：{Object.keys(fetchErrors).join(", ")}</div>}
     </div>
   );
 }
