@@ -87,6 +87,18 @@ kind（否则 `push` 会被压成 `owner/repo#0`，把多个 commit 折叠成一
 > `IngestTriggerRequest.open_case_if_unmatched` / `open_case_project_id`
 > （`engine.proto:1227-1230`），执行者是服务层，不是存储层。
 
+### 3.1 入库之后：唤醒等待中的 case
+
+匹配到订阅的事件不会停在「返回一个 case id」：入库成功后调用
+`uc_engine::governance::wake_matched_cases`（`crates/uc-engine/src/governance/case_wake.rs`），把停留在
+`waiting_event` 的 case 转回 `active`，并把它开放的 `waiting_event` 注意力项以 `EventReceived` 解掉。
+`needs_human` / `blocked` / `verifying` 一律不动（判断表见 [pr05-attention.md](pr05-attention.md) §5.1）。
+
+两个边界值得记住：
+
+- **重复投递不唤醒**：收件箱对重投立即返回 `duplicate` 且匹配列表为空，唤醒遍历没有输入。
+- **唤醒失败不回滚入库**：事件已持久化；把唤醒失败变成错误会让调用方重试，而重试会被当重复丢掉。
+  代价是「事件已记录但 case 仍是 waiting_event」这一窗口，下一次入库会修复（幂等）。
 ## 4. 订阅与匹配
 
 `Subscription { id, case_id, source, filter, active, created_at, last_event_at, event_count }`

@@ -577,3 +577,124 @@ async fn the_governance_services_answer_over_a_real_grpc_connection() {
         .expect("state present");
     assert_eq!(state.mode, "off");
 }
+
+// ── Waiting-event lifecycle: an arriving event wakes its case ──────
+
+/// A case parked in `waiting_event` holds no worker slot. The only thing that
+/// keeps that honest is an arriving subscribed event ending the wait — and it has
+/// to happen through the *service* path, because that is the path the dashboard
+/// and the webhook use. This test drives ingest over the gRPC impl and then reads
+/// the case and the attention item back through their own services.
+#[tokio::test]
+async fn an_arriving_event_wakes_a_waiting_case() {
+    use uc_types::governance::{
+        AttentionItem, AttentionKind, CaseStatus, SourceKind, Subscription, SubscriptionFilter,
+    };
+
+    let (permissions, principal) = dashboard(vec![
+        Permission::CaseCreate,
+        Permission::CaseControl,
+        Permission::TriggerIngest,
+        Permission::AttentionResolve,
+    ]);
+    let governance = planned_governance(permissions, principal).await;
+    let now = chrono::Utc::now();
+
+    // Seed the waiting state directly: creating a case and parking it is not the
+    // behaviour under test, and routing it through RPCs would need permissions
+    // this scenario deliberately does not grant.
+    let mut case = WorkCase::new(
+        "flaky build",
+        "the build keeps failing",
+        "proj",
+        CaseOrigin::from_trigger("github", Some("acme/widgets#7".to_string()), None),
+        now,
+    );
+    case.status = CaseStatus::WaitingEvent;
+    let (case, _) = governance.cases.create_unique(case).await.expect("case");
+    let case_id = case.id.0.clone();
+    governance
+        .triggers
+        .upsert_subscription(Subscription::new(
+            case_id.clone(),
+            SourceKind::GitHub,
+            SubscriptionFilter::thread("acme/widgets#7"),
+            now,
+        ))
+        .await
+        .expect("subscription");
+    governance
+        .attention
+        .raise(
+            AttentionItem::new(
+                "att-waiting",
+                case_id.clone(),
+                AttentionKind::WaitingEvent,
+                "waiting on the CI run",
+                now,
+            ),
+            now,
+        )
+        .await
+        .expect("attention item");
+
+    let triggers = uc_grpc::governance::TriggerServiceImpl::new(governance.clone());
+    let cases = uc_grpc::governance::CaseServiceImpl::new(governance.clone());
+    let attention = uc_grpc::governance::AttentionServiceImpl::new(governance.clone());
+
+    let ingested = triggers
+        .ingest_trigger(Request::new(IngestTriggerRequest {
+            source: "github".to_string(),
+            kind: "check_run".to_string(),
+            external_id: "check_run:42:completed:success".to_string(),
+            thread_key: Some("acme/widgets#7".to_string()),
+            repo: Some("acme/widgets".to_string()),
+            actor: Some("github-actions".to_string()),
+            payload_json: r#"{"conclusion":"success"}"#.to_string(),
+            delivery_id: None,
+            principal_kind: "service".to_string(),
+            principal_id: DASHBOARD_ID.to_string(),
+            open_case_if_unmatched: false,
+            open_case_project_id: None,
+        }))
+        .await
+        .expect("ingest answers")
+        .into_inner();
+    assert!(ingested.success);
+    assert_eq!(ingested.matched_cases, vec![case_id.clone()]);
+
+    // The case left `waiting_event` …
+    let fetched = cases
+        .get_case(Request::new(GetCaseRequest {
+            case_id: case_id.clone(),
+        }))
+        .await
+        .expect("get case answers")
+        .into_inner();
+    assert_eq!(
+        fetched.case.expect("case present").status,
+        "active",
+        "an arriving subscribed event must wake the case"
+    );
+
+    // … and the waiting item is resolved, not left in the worklist.
+    let listed = attention
+        .list_attention(Request::new(ListAttentionRequest {
+            include_resolved: true,
+            case_id: Some(case_id),
+            kind: None,
+            limit: 10,
+        }))
+        .await
+        .expect("list attention answers")
+        .into_inner();
+    let item = listed
+        .items
+        .iter()
+        .find(|item| item.id == "att-waiting")
+        .expect("the waiting item is still readable");
+    assert!(
+        item.resolved_at.is_some(),
+        "the waiting item must be resolved by the arriving event"
+    );
+}

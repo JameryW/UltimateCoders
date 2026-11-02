@@ -187,6 +187,20 @@ pub async fn ingest(
         .await
         .map_err(trigger_error)?;
 
+    // Waking the cases this event belongs to: a case parked in `waiting_event`
+    // holds no worker slot, so the only thing that keeps it honest is an arriving
+    // event ending the wait. Matching is the authorization — the subscription's
+    // filter already said which kinds this case cares about.
+    //
+    // Done before the duplicate/opened-case bookkeeping so a successful ingest
+    // always reports the wake; duplicates carry an empty match list and wake
+    // nothing. Failures here are logged, never returned: the event is already
+    // durable, and turning a wake failure into an ingestion error would make the
+    // caller retry a delivery the inbox would then drop as a duplicate.
+    let woken_cases =
+        uc_engine::governance::wake_matched_cases(governance, &outcome.matched_cases, &outcome.event_id, now)
+            .await;
+
     let mut opened_case_id = None;
     if !outcome.duplicate
         && outcome.matched_cases.is_empty()
@@ -217,6 +231,7 @@ pub async fn ingest(
             source = source.as_str(),
             kind = event.kind.as_str(),
             matched = outcome.matched_cases.len(),
+            woken = woken_cases.len(),
             opened_case = opened_case_id.as_deref().unwrap_or(""),
             "trigger ingested"
         );

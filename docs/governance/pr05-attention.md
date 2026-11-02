@@ -100,6 +100,34 @@ Rust 侧对应 `AttentionBoard::capacity(..., reserved_human)`，由调用方传
 `reserved_human.min(worker_slots_total)`（`crates/uc-engine/src/governance/attention.rs:198-227`）——
 「留多少余量」是运维设定，不是项的属性，所以不写死在板子里。
 
+## 5.1 等待中的 case 由「事件到达」结束（`case_wake.rs`）
+
+注意力项不是锁，`waiting_event` 也不是「等到天荒地老」。结束等待的只有一个触发点：
+**订阅匹配到的 trigger 事件入库时**（`crates/uc-engine/src/governance/case_wake.rs::wake_matched_cases`，
+由 `crates/uc-grpc/src/governance/trigger_service.rs` 的 `ingest` 调用）。
+
+判定顺序与理由：
+
+| case 当前状态 | 事件到达时 | 为什么 |
+| --- | --- | --- |
+| `waiting_event` | 转为 `active`，并把它开放的 `waiting_event` 注意力项以 `EventReceived{trigger_id}` 解决 | 它等的就是这个事件；不结束等待，注意力项永远没人能手动处理，容量投影也会把「早已结束的等待」继续算成省下的槽位 |
+| `needs_human` | **不动** | 待决的是人的决定；一条 webhook 不能替人回答 |
+| `blocked` | 不动 | blocked 不是「等事件」，解除原因不同（依赖/预算/授权），解除者也不同 |
+| `verifying` | 不动 | run 已结束、验证在飞；事件不能把 case 拉回 `active` 绕过验证器 |
+| 终态 | 不动 | 没有可唤醒的东西 |
+
+两条关键设计判断：
+
+1. **匹配即授权**。唤醒只看「这个 case 的某条订阅匹配了事件」，不解析 payload —— payload 里写什么都不能
+   决定它唤醒谁。订阅的 `SubscriptionFilter` 已经声明了这个 case 关心的事件 kind，这是可审计的授权来源。
+2. **失败不失败整个入库**。唤醒失败（store 抖动、case 被别处改了状态）只 `tracing::warn!` 并继续，因为事件
+   本身已经持久化；把唤醒失败变成入库错误会让调用方重试，而重试会被收件箱当重复丢掉，反而永久丢失唤醒。
+
+测试：`a_matched_event_wakes_the_case_and_resolves_its_attention`、
+`a_needs_human_case_is_not_woken_by_an_incoming_event`、`a_duplicate_delivery_wakes_nothing`、
+`a_waiting_case_without_an_attention_item_still_wakes`（注意力板是投影，丢了项也不能把 case 卡死）；
+服务层接线由 `crates/uc-grpc/tests/governance_services.rs::an_arriving_event_wakes_a_waiting_case` 覆盖
+（经 gRPC impl 入库，再用 `GetCase` / `ListAttention` 读回状态）。
 ## 6. 容量快照与「省下来的槽位」指标
 
 `CapacitySnapshot`（`attention.rs:230-269`）九个字段：
