@@ -44,8 +44,8 @@ use uc_engine::governance::Governance;
 use uc_types::governance::{SubmissionId, SubmissionRecord, SubmissionRequest, SubmitOnceOutcome};
 
 use super::{
-    attention_service, case_service, optional_text, policy_interceptor, proactive_service,
-    trigger_service, OpError, OpResult,
+    approval_service, attention_service, case_service, optional_text, policy_interceptor,
+    proactive_service, trigger_service, OpError, OpResult,
 };
 
 /// Subject the bridge subscribes to. Cluster-internal: the NATS connection is the
@@ -559,7 +559,7 @@ async fn handle_request(
 /// Only `trigger.ingest` uses them: a subscription that opted into `auto_resume`
 /// may start a run, and that needs the same task store the `SubmitTask` RPC uses.
 /// Everything else in the bridge is governance-only, which is why this is an
-/// optional context rather than a parameter on all 27 operations.
+/// optional context rather than a parameter on all 30 operations.
 #[derive(Clone)]
 pub struct DispatchContext {
     pub task_store: std::sync::Arc<tokio::sync::Mutex<crate::server::TaskStore>>,
@@ -759,6 +759,23 @@ async fn dispatch_result(
                 attention_service::resolve_attention(governance, decode(op, payload)?).await?;
             Ok(serde_json::json!({ "item": to_value(&item)? }))
         }
+        // ── Approvals (human-tier tools: request -> decide -> single-use permit) ──
+        "approval.request" => {
+            let outcome =
+                approval_service::request_approval(governance, decode(op, payload)?).await?;
+            to_value(&outcome)
+        }
+        "approval.list" => {
+            let approvals =
+                approval_service::list_approvals(governance, decode(op, payload)?).await?;
+            Ok(serde_json::json!({ "approvals": to_value(&approvals)? }))
+        }
+        "approval.decide" => {
+            let approval =
+                approval_service::decide_approval(governance, decode(op, payload)?).await?;
+            Ok(serde_json::json!({ "approval": to_value(&approval)? }))
+        }
+
         "capacity.get" => {
             // Decoded only to reject a payload that is not an object; the op has
             // no fields.
@@ -1005,6 +1022,30 @@ bridge_request!(UpsertSubscriptionRequest {
 
 bridge_request!(DeleteSubscriptionRequest {
     subscription_id: String
+});
+
+bridge_request!(RequestApprovalRequest {
+    tool: String,
+    case_id: Option<String>,
+    project_id: Option<String>,
+    action_digest: Option<String>,
+    reason: Option<String>,
+    principal_kind: String,
+    principal_id: String,
+    ttl_minutes: Option<u32>,
+});
+
+bridge_request!(ListApprovalsRequest {
+    state: Option<String>,
+    limit: u32,
+});
+
+bridge_request!(DecideApprovalRequest {
+    approval_id: String,
+    approve: bool,
+    note: Option<String>,
+    principal_kind: String,
+    principal_id: String,
 });
 
 bridge_request!(ListAttentionRequest {

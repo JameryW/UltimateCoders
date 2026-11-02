@@ -7,6 +7,7 @@ concern — inbound triggers, attention/worklist, proactive control:
 * :mod:`ultimate_coders.dashboard.attention_api`  — ``/api/attention``,
   ``/api/capacity``, ``/api/cases*``
 * :mod:`ultimate_coders.dashboard.proactive_api` — ``/api/proactive/*``, ``/api/watchdog/*``
+* :mod:`ultimate_coders.dashboard.approval_api` — ``/api/approvals*``
 
 They are included here rather than imported directly in ``app.py`` so that one
 broken router (e.g. a missing optional dependency) degrades to a logged warning
@@ -29,6 +30,7 @@ GOVERNANCE_ROUTER_MODULES = (
     "ultimate_coders.dashboard.trigger_api",
     "ultimate_coders.dashboard.attention_api",
     "ultimate_coders.dashboard.proactive_api",
+    "ultimate_coders.dashboard.approval_api",
 )
 
 

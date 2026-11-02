@@ -20,8 +20,8 @@ Three properties of the guard shape this harness:
 
 Census note (governance PR01–PR06): the docs under `docs/governance/` are
 citation-dense by design (every claim names its file), so adding them moved the
-real-corpus census from 130 refs / 508 mentions to 321 refs / 646 mentions, and
-shifted the composite pins below (OK 226 / STALE 23 / AMBIGUOUS 72, 220 named /
+real-corpus census from 130 refs / 508 mentions to 321 refs / 650 mentions, and
+shifted the composite pins below (OK 224 / STALE 25 / AMBIGUOUS 72, 220 named /
 161 diverging, 190 line-unchecked / 125 unanchored / 59 symbol-anchored).  Those
 pins were re-measured in the same change that added the docs — the mechanism
 tests above are untouched.
@@ -887,7 +887,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # T21 docs numeric pin CI: map + ticket 21 landing names the manifest,
     # checker, test, and workflow (492 -> 500 on T21 alone). Merged:
     # 492 + 8 + 8 = 508, all resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 646
+    assert sum(1 for r in rows if r["kind"] == "mention") == 650
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1404,8 +1404,8 @@ def test_real_corpus_moves_only_where_predicted():
     # pattern that no longer exists in that file at all -- it now names
     # `worker.py:1369-1422, _save_checkpoint`, which is where the best-effort
     # persistence actually lives. That repair is what keeps OK at 112.
-    assert sum(1 for r in rows if r["verdict"] == "OK") == 226
-    assert sum(1 for r in rows if r["verdict"] == "STALE") == 23
+    assert sum(1 for r in rows if r["verdict"] == "OK") == 224
+    assert sum(1 for r in rows if r["verdict"] == "STALE") == 25
     assert sum(1 for r in rows if r["verdict"] == "AMBIGUOUS") == 72
     assert sum(1 for r in rows if r["symbol"] is not None) == 59
     assert sum(1 for r in rows if r["unanchored"]) == 125

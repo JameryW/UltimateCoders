@@ -21,6 +21,7 @@
 //!   ([`submission::SubmissionStore::recover_unfinished`]);
 //! * an attention item is not a lock: it is a projection and can be rebuilt.
 
+pub mod approvals;
 pub mod attention;
 pub mod case_resume;
 pub mod case_store;
@@ -35,6 +36,7 @@ pub mod watchdog;
 
 use std::sync::Arc;
 
+pub use approvals::{ApprovalStore, ApprovalStoreError, APPROVAL_NAMESPACE};
 pub use attention::{AttentionBoard, AttentionBoardError};
 pub use case_resume::{plan_resume, ResumePlan, ResumeSkip};
 pub use case_store::{CaseStore, CaseStoreError, MandateStore};
@@ -66,6 +68,7 @@ pub struct Governance {
     pub outbox: Arc<OutboxQueue>,
     pub cases: Arc<CaseStore>,
     pub mandates: Arc<MandateStore>,
+    pub approvals: Arc<ApprovalStore>,
     pub policy: Arc<PolicyEngine>,
     pub triggers: Arc<TriggerInbox>,
     pub attention: Arc<AttentionBoard>,
@@ -86,8 +89,12 @@ impl Governance {
     pub fn new(records: Arc<dyn RecordStore>) -> Self {
         let cases = Arc::new(CaseStore::new(records.clone()));
         let mandates = Arc::new(MandateStore::new(records.clone()));
-        let policy = Arc::new(PolicyEngine::new(records.clone(), mandates.clone()));
+        let approvals = Arc::new(ApprovalStore::new(records.clone()));
+        let policy = Arc::new(
+            PolicyEngine::new(records.clone(), mandates.clone()).with_approvals(approvals.clone()),
+        );
         Self {
+            approvals,
             submissions: Arc::new(SubmissionStore::new(records.clone())),
             outbox: Arc::new(OutboxQueue::new(records.clone())),
             triggers: Arc::new(TriggerInbox::new(records.clone())),

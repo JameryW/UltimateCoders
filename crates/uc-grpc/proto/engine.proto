@@ -1555,3 +1555,70 @@ message ListAuditResponse {
     repeated AuditEntryProto entries = 1;
 }
 
+// ── Approval Service (human-tier tools: request → decide → single-use permit) ──
+
+service ApprovalService {
+    rpc RequestApproval(RequestApprovalRequest) returns (RequestApprovalResponse);
+    rpc ListApprovals(ListApprovalsRequest) returns (ListApprovalsResponse);
+    rpc DecideApproval(DecideApprovalRequest) returns (DecideApprovalResponse);
+}
+
+message ApprovalProto {
+    string id = 1;
+    string tool = 2;
+    optional string case_id = 3;
+    optional string project_id = 4;
+    optional string action_digest = 5;
+    string requested_by_kind = 6;
+    string requested_by_id = 7;
+    optional string reason = 8;
+    string state = 9;
+    int64 requested_at = 10;
+    int64 expires_at = 11;
+    optional int64 decided_at = 12;
+    optional string decided_by_id = 13;
+    optional string note = 14;
+    optional int64 used_at = 15;
+}
+
+message RequestApprovalRequest {
+    string tool = 1;
+    optional string case_id = 2;
+    optional string project_id = 3;
+    optional string action_digest = 4;
+    optional string reason = 5;
+    string principal_kind = 6;
+    string principal_id = 7;
+    optional uint32 ttl_minutes = 8;
+}
+
+message RequestApprovalResponse {
+    bool success = 1;
+    ApprovalProto approval = 2;
+    // False when an identical request already existed (idempotent retry).
+    bool created = 3;
+    optional string error = 4;
+}
+
+message ListApprovalsRequest {
+    optional string state = 1;
+    uint32 limit = 2;
+}
+
+message ListApprovalsResponse {
+    repeated ApprovalProto approvals = 1;
+}
+
+message DecideApprovalRequest {
+    string approval_id = 1;
+    bool approve = 2;
+    optional string note = 3;
+    string principal_kind = 4;
+    string principal_id = 5;
+}
+
+message DecideApprovalResponse {
+    bool success = 1;
+    ApprovalProto approval = 2;
+    optional string error = 3;
+}

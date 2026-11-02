@@ -1,6 +1,6 @@
 """Wiring test: the dashboard must actually mount the governance routers.
 
-This is the integration seam between `DashboardApp` and the three PR04/PR05/PR06
+This is the integration seam between `DashboardApp` and the four PR04/PR05/PR06/PR03
 FastAPI routers. It exists because a router can be perfect and still be dead code:
 the failure mode this test rules out is "the module was written but never
 included", which no unit test of the router can catch.
@@ -25,20 +25,22 @@ def dashboard() -> DashboardApp:
     return DashboardApp(None)
 
 
-def test_all_three_governance_routers_are_importable() -> None:
+def test_all_four_governance_routers_are_importable() -> None:
     assert GOVERNANCE_ROUTER_MODULES == (
         "ultimate_coders.dashboard.trigger_api",
         "ultimate_coders.dashboard.attention_api",
         "ultimate_coders.dashboard.proactive_api",
+        "ultimate_coders.dashboard.approval_api",
     )
     from ultimate_coders.dashboard.governance_routes import governance_routers
 
     routers = governance_routers()
-    assert len(routers) == 3, "a governance router failed to import or expose `router`"
+    assert len(routers) == 4, "a governance router failed to import or expose `router`"
     paths: list[str] = []
     for router in routers:
         paths.extend(getattr(route, "path", "") for route in router.routes)
     for expected in (
+        "/api/approvals",
         "/api/attention",
         "/api/capacity",
         "/api/cases",

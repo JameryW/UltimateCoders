@@ -501,7 +501,7 @@ async fn proactive_mode_off_refuses_to_record_a_proposal() {
     assert!(audit.entries.iter().any(|entry| !entry.allowed));
 }
 
-// ── Transport: the four services actually serve ───────────────────
+// ── Transport: the five services actually serve ───────────────────
 
 #[tokio::test]
 async fn the_governance_services_answer_over_a_real_grpc_connection() {
@@ -509,7 +509,7 @@ async fn the_governance_services_answer_over_a_real_grpc_connection() {
     let governance = planned_governance(permissions, principal).await;
 
     let server = GrpcServer::new(LocalEngine::new_fallback()).with_governance(governance);
-    let (case_service, trigger_service, attention_service, proactive_service) =
+    let (case_service, trigger_service, attention_service, proactive_service, approval_service) =
         server.into_governance_services();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -523,6 +523,7 @@ async fn the_governance_services_answer_over_a_real_grpc_connection() {
             .add_service(trigger_service)
             .add_service(attention_service)
             .add_service(proactive_service)
+            .add_service(approval_service)
             .serve_with_incoming(incoming)
             .await
             .expect("test server serves");

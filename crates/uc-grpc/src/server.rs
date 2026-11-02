@@ -25,8 +25,10 @@ use crate::conversions::{
     subtask_status_to_proto, task_snapshot_to_proto, task_status_to_proto,
 };
 use crate::governance::{
-    AttentionServiceImpl, CaseServiceImpl, ProactiveServiceImpl, TriggerServiceImpl,
+    ApprovalServiceImpl, AttentionServiceImpl, CaseServiceImpl, ProactiveServiceImpl,
+    TriggerServiceImpl,
 };
+use crate::ultimate_coders::approval_service_server::ApprovalServiceServer;
 use crate::ultimate_coders::attention_service_server::AttentionServiceServer;
 use crate::ultimate_coders::case_service_server::CaseServiceServer;
 use crate::ultimate_coders::dashboard_service_server::DashboardServiceServer;
@@ -2876,6 +2878,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         TriggerServiceServer<TriggerServiceImpl>,
         AttentionServiceServer<AttentionServiceImpl>,
         ProactiveServiceServer<ProactiveServiceImpl>,
+        ApprovalServiceServer<ApprovalServiceImpl>,
     ) {
         // The trigger service gets the execution-plane handles: an event from a
         // subscription that opted into `auto_resume` is allowed to start a run, and
@@ -2902,6 +2905,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         Intercepted<TriggerServiceServer<TriggerServiceImpl>>,
         Intercepted<AttentionServiceServer<AttentionServiceImpl>>,
         Intercepted<ProactiveServiceServer<ProactiveServiceImpl>>,
+        Intercepted<ApprovalServiceServer<ApprovalServiceImpl>>,
     ) {
         let governance = self.governance.clone();
         let task_store = self.inner.task_store.clone();
@@ -2921,7 +2925,11 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 interceptor.clone(),
             ),
             ProactiveServiceServer::with_interceptor(
-                ProactiveServiceImpl::new(governance),
+                ProactiveServiceImpl::new(governance.clone()),
+                interceptor.clone(),
+            ),
+            ApprovalServiceServer::with_interceptor(
+                ApprovalServiceImpl::new(governance),
                 interceptor,
             ),
         )

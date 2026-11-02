@@ -27,6 +27,7 @@
 //! "message"}}` with the very same code strings, so a dashboard cannot tell
 //! which transport answered — which is the point.
 
+pub mod approval_service;
 pub mod attention_service;
 pub mod bridge;
 pub mod case_service;
@@ -40,6 +41,7 @@ use tonic::{Code, Status};
 use uc_engine::governance::Governance;
 use uc_types::governance::PolicyDecision;
 
+pub use approval_service::{ApprovalServiceImpl, ApprovalView};
 pub use attention_service::{AttentionItemView, AttentionServiceImpl, CapacityView};
 pub use bridge::OUTBOX_DRAIN_LIMIT;
 pub use case_service::{CaseRunView, CaseServiceImpl, CaseView, MandateView};
@@ -64,6 +66,7 @@ pub const MAX_LIST_LIMIT: u32 = uc_engine::governance::GOVERNANCE_LIST_LIMIT as 
 /// so the execution-plane services keep their own tuple (widening that one would
 /// break every existing caller) and so a test can build the governance plane
 /// without constructing an engine.
+#[allow(clippy::type_complexity)] // 5-tuple of distinct services is inherently complex
 pub fn services(
     governance: std::sync::Arc<Governance>,
 ) -> (
@@ -71,7 +74,9 @@ pub fn services(
     crate::ultimate_coders::trigger_service_server::TriggerServiceServer<TriggerServiceImpl>,
     crate::ultimate_coders::attention_service_server::AttentionServiceServer<AttentionServiceImpl>,
     crate::ultimate_coders::proactive_service_server::ProactiveServiceServer<ProactiveServiceImpl>,
+    crate::ultimate_coders::approval_service_server::ApprovalServiceServer<ApprovalServiceImpl>,
 ) {
+    use crate::ultimate_coders::approval_service_server::ApprovalServiceServer;
     use crate::ultimate_coders::attention_service_server::AttentionServiceServer;
     use crate::ultimate_coders::case_service_server::CaseServiceServer;
     use crate::ultimate_coders::proactive_service_server::ProactiveServiceServer;
@@ -81,7 +86,8 @@ pub fn services(
         CaseServiceServer::new(CaseServiceImpl::new(governance.clone())),
         TriggerServiceServer::new(TriggerServiceImpl::new(governance.clone())),
         AttentionServiceServer::new(AttentionServiceImpl::new(governance.clone())),
-        ProactiveServiceServer::new(ProactiveServiceImpl::new(governance)),
+        ProactiveServiceServer::new(ProactiveServiceImpl::new(governance.clone())),
+        ApprovalServiceServer::new(ApprovalServiceImpl::new(governance)),
     )
 }
 
@@ -111,7 +117,9 @@ pub fn services_with_context(
     crate::ultimate_coders::trigger_service_server::TriggerServiceServer<TriggerServiceImpl>,
     crate::ultimate_coders::attention_service_server::AttentionServiceServer<AttentionServiceImpl>,
     crate::ultimate_coders::proactive_service_server::ProactiveServiceServer<ProactiveServiceImpl>,
+    crate::ultimate_coders::approval_service_server::ApprovalServiceServer<ApprovalServiceImpl>,
 ) {
+    use crate::ultimate_coders::approval_service_server::ApprovalServiceServer;
     use crate::ultimate_coders::attention_service_server::AttentionServiceServer;
     use crate::ultimate_coders::case_service_server::CaseServiceServer;
     use crate::ultimate_coders::proactive_service_server::ProactiveServiceServer;
@@ -131,7 +139,8 @@ pub fn services_with_context(
         CaseServiceServer::new(CaseServiceImpl::new(governance.clone())),
         TriggerServiceServer::new(trigger),
         AttentionServiceServer::new(attention),
-        ProactiveServiceServer::new(ProactiveServiceImpl::new(governance)),
+        ProactiveServiceServer::new(ProactiveServiceImpl::new(governance.clone())),
+        ApprovalServiceServer::new(ApprovalServiceImpl::new(governance)),
     )
 }
 
