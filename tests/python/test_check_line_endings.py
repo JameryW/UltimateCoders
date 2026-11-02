@@ -272,8 +272,8 @@ def test_real_repo_is_reconciled() -> None:
         # Governance plane (PR01–PR06): uc-types/uc-engine/uc-grpc governance
         # modules, gRPC services + integration test, gateway boot helper, Python
         # trigger/attention/proactive packages, dashboard routers + panel, docs.
-        # Watchdog wiring: watchdog_bridge.py and its test add two text files.
-        (2352, 2343),
+        # Proactive wiring: proactive_bridge.py and its test add two text files.
+        (2354, 2345),
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
