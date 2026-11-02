@@ -23,6 +23,7 @@ import asyncio
 import logging
 import os
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -43,6 +44,10 @@ from ultimate_coders.agent.types import (
     SubtaskStatus,
     Task,
     TaskStatus,
+)
+from ultimate_coders.agent.watchdog_bridge import (
+    consult_watchdog,
+    stopping_action,
 )
 from ultimate_coders.agent.worker import WorkerInfo
 
@@ -182,6 +187,7 @@ class Orchestrator:
         merge_arbiter: Any = None,
         merge_gate: Any = None,
         model_router: Any = None,
+        governance_client: Any = None,
     ) -> None:
         self.engine = engine
         self.nats_publisher = nats_publisher
@@ -198,6 +204,12 @@ class Orchestrator:
         # The arbiter must hold a grant BEFORE merging; when None, legacy
         # un-gated arbitration is preserved (no-gateway deployments).
         self.merge_gate = merge_gate
+
+        # Governance bridge (optional). When set, the bounded stall staircase is
+        # owned by the gateway's watchdog: this orchestrator asks what to do
+        # instead of deciding alone. When None (no bridge, older gateway), the
+        # pre-existing local redispatch policy runs unchanged.
+        self.governance_client = governance_client
         # Advisory in-memory result aggregator. Runs at task completion
         # (before MergeArbiter) to surface same-file conflicts between
         # concurrent subtasks early. Advisory only — does NOT write merged
@@ -658,7 +670,9 @@ class Orchestrator:
 
                     redispatched = False
                     if not result.success:
-                        redispatched = self._maybe_stall_agent_redispatch(st, result)
+                        redispatched = await self._maybe_stall_agent_redispatch_governed(
+                            task, st, result
+                        )
 
                     if redispatched:
                         # Worker binding is done; free capacity for the reopen.
@@ -693,6 +707,79 @@ class Orchestrator:
                     # Evict terminal tasks to bound memory on long-running workers.
                     self.evict_terminal_tasks()
                     return
+
+    async def _maybe_stall_agent_redispatch_governed(
+        self, task: Task, subtask: Subtask, result: SubtaskResult
+    ) -> bool:
+        """Ask the gateway watchdog, then obey it; fall back to local policy.
+
+        The gateway owns the staircase (attempts, replans, escalation), so this
+        method asks it first when a bridge is attached and records the verdict on
+        the stall signal so the published failure event carries it. On
+        ``escalate`` / ``stop`` it stops retrying (the gateway has already
+        projected the escalation onto the attention board); on ``replan`` it also
+        stops, because a replan is the gateway's decision surface and a worker
+        must not invent plan edits. ``continue`` / ``retry_same_contract`` keep
+        the existing local decision, capped by the gateway's remaining budget.
+        Without a bridge the old behaviour is exactly preserved: an outage must
+        not freeze recovery.
+
+        Returns True when the subtask was reopened for another attempt.
+        """
+        stall = stall_signal_from_mapping(result.stall_signal)
+        if stall is None or self.governance_client is None:
+            return self._maybe_stall_agent_redispatch(subtask, result)
+
+        try:
+            action = await consult_watchdog(
+                self.governance_client,
+                task_id=getattr(task, "id", ""),
+                subtask_id=subtask.id,
+                no_progress_count=stall.stalled_streak,
+                evidence_signature=stall.error_signature or None,
+                last_error=(result.error or None),
+                attempts_used=getattr(result, "retry_count", 0),
+                already_retried=getattr(result, "retry_count", 0) > 0,
+                case_id=getattr(task, "case_id", None),
+            )
+        except Exception as exc:  # noqa: BLE001 - a bad verdict must not crash the loop
+            logger.warning(
+                "Watchdog verdict rejected for subtask %s (%s); treating it as escalate",
+                subtask.id[:8],
+                exc,
+            )
+            result.retryable = False
+            return False
+
+        if action is None:
+            return self._maybe_stall_agent_redispatch(subtask, result)
+
+        if isinstance(result.stall_signal, Mapping):
+            result.stall_signal = {
+                **result.stall_signal,
+                "verdict": action.action,
+                "verdict_source": "gateway",
+            }
+
+        if stopping_action(action):
+            result.retryable = False
+            logger.info(
+                "Watchdog verdict %s for subtask %s; not retrying (reason: %s)",
+                action.action,
+                subtask.id[:8],
+                action.reason or "none given",
+            )
+            return False
+
+        if action.attempts_remaining == 0:
+            result.retryable = False
+            logger.info(
+                "Watchdog has no attempts left for subtask %s; not retrying",
+                subtask.id[:8],
+            )
+            return False
+
+        return self._maybe_stall_agent_redispatch(subtask, result)
 
     def _maybe_stall_agent_redispatch(self, subtask: Subtask, result: SubtaskResult) -> bool:
         """Apply same-contract one-shot agent swap when policy says swap_once.
