@@ -43,6 +43,14 @@ export default defineConfig({
         target: "http://localhost:8080",
         changeOrigin: true,
       },
+      // Governance plane projections (PR04 triggers / PR05 attention / PR06
+      // proactive) → the same FastAPI backend. Those routers are mounted with
+      // no prefix, so their paths already carry /api and must be proxied here
+      // as well; additive only — /dashboard/api keeps serving the legacy API.
+      "/api": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
     },
   },
 });

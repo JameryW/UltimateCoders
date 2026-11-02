@@ -77,6 +77,9 @@ impl GrpcEngineClient {
         let req = SubmitTaskRequest {
             description: description.to_string(),
             project_id: project_id.to_string(),
+            // Submission identity is optional: absent means "derive one from the
+            // principal + project + request text", which is still replay-safe.
+            ..Default::default()
         };
         let response = client.submit_task(req).await.map_err(from_status)?;
         Ok(response.into_inner().into())
@@ -834,6 +837,7 @@ impl EngineApi for GrpcEngineClient {
         let req = SubmitTaskRequest {
             description,
             project_id,
+            ..Default::default()
         };
         let response = client.submit_task(req).await.map_err(from_status)?;
         let resp = response.into_inner();
@@ -948,3 +952,4 @@ mod tests {
         assert!(matches!(err, EngineError::ConflictError { .. }));
     }
 }
+

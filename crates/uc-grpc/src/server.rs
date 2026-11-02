@@ -24,9 +24,16 @@ use crate::conversions::{
     memory_key_from_proto, proto_status_to_task_status, proto_subtask_status_from_str,
     subtask_status_to_proto, task_snapshot_to_proto, task_status_to_proto,
 };
+use crate::governance::{
+    AttentionServiceImpl, CaseServiceImpl, ProactiveServiceImpl, TriggerServiceImpl,
+};
+use crate::ultimate_coders::attention_service_server::AttentionServiceServer;
+use crate::ultimate_coders::case_service_server::CaseServiceServer;
 use crate::ultimate_coders::dashboard_service_server::DashboardServiceServer;
 use crate::ultimate_coders::engine_service_server::{EngineService, EngineServiceServer};
+use crate::ultimate_coders::proactive_service_server::ProactiveServiceServer;
 use crate::ultimate_coders::task_service_server::{TaskService, TaskServiceServer};
+use crate::ultimate_coders::trigger_service_server::TriggerServiceServer;
 use crate::ultimate_coders::worker_service_server::WorkerServiceServer;
 use crate::ultimate_coders::*;
 use crate::worker_service::WorkerRegistry;
@@ -1285,7 +1292,22 @@ impl TaskStore {
         description: String,
         project_id: String,
     ) -> (uc_types::Task, Vec<TaskEvent>) {
-        let task_id = uc_types::TaskId::new();
+        self.submit_task_pending_with_id(uc_types::TaskId::new(), description, project_id)
+    }
+
+    /// Create a Planning task under a caller-supplied id.
+    ///
+    /// PR01 (reliable submit) derives the logical task id from the submission id
+    /// (`uc_types::governance::derive_task_id`), so a retried submission names
+    /// the *same* task instead of creating a second one. This is exactly
+    /// `submit_task_pending` with the identity supplied by the caller; both share
+    /// one construction so the two paths cannot drift.
+    pub fn submit_task_pending_with_id(
+        &mut self,
+        task_id: uc_types::TaskId,
+        description: String,
+        project_id: String,
+    ) -> (uc_types::Task, Vec<TaskEvent>) {
         let now = chrono::Utc::now();
 
         let task = uc_types::Task {
@@ -2546,6 +2568,18 @@ struct GrpcServerInner<E: EngineApi + Send + Sync + 'static> {
 /// When NATS is unavailable, falls back to local task decomposition.
 pub struct GrpcServer<E: EngineApi + Send + Sync + 'static> {
     inner: Arc<GrpcServerInner<E>>,
+    /// The governance plane (work cases, mandates, policy, triggers, attention,
+    /// proactive proposals, submissions + outbox).
+    ///
+    /// It lives on the handle rather than in [`GrpcServerInner`] because it can
+    /// be attached *after* construction ([`GrpcServer::with_governance`]) and
+    /// because it is a separate domain from execution state: the execution plane
+    /// (task store, worker registry, checkpoints) never consults it. Swapping an
+    /// `Arc` inside `inner` after construction is impossible in the NATS
+    /// constructors — they spawn background tasks holding `inner` clones — so the
+    /// swappable half lives here, where `with_governance` can replace it before
+    /// `into_services` hands it to the services.
+    governance: Arc<uc_engine::governance::Governance>,
 }
 
 /// A business gRPC service wrapped with [`crate::AuthInterceptor`].
@@ -2581,6 +2615,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 nats_client: None,
                 event_tx,
             }),
+            governance: Self::default_governance(),
         }
     }
 
@@ -2624,6 +2659,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 nats_client: None,
                 event_tx,
             }),
+            governance: Self::default_governance(),
         }
     }
 
@@ -2706,7 +2742,10 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             );
         }
 
-        Self { inner }
+        Self {
+            inner,
+            governance: Self::default_governance(),
+        }
     }
 
     /// Create a new gRPC server with NATS integration and custom heartbeat timeout.
@@ -2753,7 +2792,10 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             );
         }
 
-        Self { inner }
+        Self {
+            inner,
+            governance: Self::default_governance(),
+        }
     }
 
     /// Convert into tonic services ready to be served.
@@ -2767,6 +2809,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     ) {
         let engine_service = EngineServiceServer::new(Self {
             inner: self.inner.clone(),
+            governance: self.governance.clone(),
         });
         let task_service = TaskServiceServer::new(self.clone());
         let dashboard_service = DashboardServiceServer::new(self.clone());
@@ -2802,6 +2845,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         let engine_service = EngineServiceServer::with_interceptor(
             Self {
                 inner: self.inner.clone(),
+                governance: self.governance.clone(),
             },
             interceptor.clone(),
         );
@@ -2814,6 +2858,59 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             task_service,
             dashboard_service,
             worker_service,
+        )
+    }
+
+    /// Build the four governance services over the attached plane.
+    ///
+    /// Deliberately a separate factory from [`Self::into_services`]: the
+    /// execution-plane tuple is part of the crate's existing surface (tests and
+    /// the server binary destructure it), so widening it would be a breaking
+    /// change for a cosmetic gain. A gateway serves both sets; call this once,
+    /// before or after [`Self::into_services`] — both consume the same plane.
+    #[allow(clippy::type_complexity)] // 4-tuple of distinct services is inherently complex
+    pub fn into_governance_services(
+        self,
+    ) -> (
+        CaseServiceServer<CaseServiceImpl>,
+        TriggerServiceServer<TriggerServiceImpl>,
+        AttentionServiceServer<AttentionServiceImpl>,
+        ProactiveServiceServer<ProactiveServiceImpl>,
+    ) {
+        crate::governance::services(self.governance.clone())
+    }
+
+    /// Same as [`Self::into_governance_services`], wrapped with the bearer-token
+    /// interceptor so the governance RPCs are behind the same transport auth as
+    /// the execution-plane ones.
+    #[allow(clippy::type_complexity)]
+    pub fn into_intercepted_governance_services(
+        self,
+        interceptor: crate::AuthInterceptor,
+    ) -> (
+        Intercepted<CaseServiceServer<CaseServiceImpl>>,
+        Intercepted<TriggerServiceServer<TriggerServiceImpl>>,
+        Intercepted<AttentionServiceServer<AttentionServiceImpl>>,
+        Intercepted<ProactiveServiceServer<ProactiveServiceImpl>>,
+    ) {
+        let governance = self.governance.clone();
+        (
+            CaseServiceServer::with_interceptor(
+                CaseServiceImpl::new(governance.clone()),
+                interceptor.clone(),
+            ),
+            TriggerServiceServer::with_interceptor(
+                TriggerServiceImpl::new(governance.clone()),
+                interceptor.clone(),
+            ),
+            AttentionServiceServer::with_interceptor(
+                AttentionServiceImpl::new(governance.clone()),
+                interceptor.clone(),
+            ),
+            ProactiveServiceServer::with_interceptor(
+                ProactiveServiceImpl::new(governance),
+                interceptor,
+            ),
         )
     }
 
@@ -2867,6 +2964,39 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         E: Clone,
     {
         self.inner.engine.clone()
+    }
+
+    // ── Governance plane ───────────────────────────────────────────────
+
+    /// The in-memory governance plane used when the binary attaches none.
+    ///
+    /// A gateway that never calls [`Self::with_governance`] still serves the
+    /// governance services — they must not panic on a missing plane — but its
+    /// cases, mandates and submissions do not survive a restart. `is_durable()`
+    /// on the plane reports that instead of pretending otherwise.
+    fn default_governance() -> Arc<uc_engine::governance::Governance> {
+        Arc::new(uc_engine::governance::Governance::in_memory())
+    }
+
+    /// Attach the governance plane.
+    ///
+    /// Called by the server binary after construction and **before**
+    /// `into_services` / `into_intercepted_services`: those consume the handle
+    /// and hand the plane to the four governance services. Attaching after they
+    /// have been built only affects the handle, never the services already
+    /// built from it — which is why the documented call order matters.
+    pub fn with_governance(mut self, governance: Arc<uc_engine::governance::Governance>) -> Self {
+        tracing::info!(
+            durable = governance.is_durable(),
+            "Governance plane attached to the gRPC server"
+        );
+        self.governance = governance;
+        self
+    }
+
+    /// The attached governance plane, for wiring the NATS bridge and for tests.
+    pub fn governance(&self) -> &Arc<uc_engine::governance::Governance> {
+        &self.governance
     }
 
     /// Publish a task status change event (pause/resume) to NATS
@@ -3315,6 +3445,7 @@ impl<E: EngineApi + Send + Sync + 'static> Clone for GrpcServer<E> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            governance: self.governance.clone(),
         }
     }
 }
@@ -5177,11 +5308,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         if req.description.is_empty() {
             return Ok(Response::new(SubmitTaskResponse {
                 success: false,
-                task_id: String::new(),
-                status: String::new(),
-                subtask_count: 0,
-                subtasks: Vec::new(),
                 error: Some("Task description cannot be empty".to_string()),
+                ..Default::default()
             }));
         }
 
@@ -5191,148 +5319,248 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         if req.project_id.trim().is_empty() {
             return Ok(Response::new(SubmitTaskResponse {
                 success: false,
-                task_id: String::new(),
-                status: String::new(),
-                subtask_count: 0,
-                subtasks: Vec::new(),
                 error: Some(
                     "project_id cannot be empty — every task must declare a project scope \
                      (D8 #645)"
                         .to_string(),
                 ),
+                ..Default::default()
             }));
         }
 
-        #[cfg(feature = "messaging")]
-        {
-            // Try NATS publish first
-            if let Some(nats_client) = &self.inner.nats_client {
-                // Create task in Planning status and extract the data we need,
-                // then release the lock BEFORE the async NATS publish.
-                // Holding the lock across an async publish would block all
-                // other TaskStore operations (get_task, list_tasks, etc.).
-                let (task_id_str, submit_payload, new_events) = {
-                    let mut store = self.inner.task_store.lock().await;
-                    let (task, events) =
-                        store.submit_task_pending(req.description.clone(), req.project_id.clone());
+        // ── Caller identity ────────────────────────────────────────────
+        // Absent fields mean the operator surface (see policy_interceptor);
+        // a declared `external_trigger`/`anonymous` is refused.
+        let principal = crate::governance::policy_interceptor::resolve_declared_principal(
+            req.principal_kind.as_deref(),
+            req.principal_id.as_deref(),
+        )?;
+        let description = req.description.clone();
+        let project_id = req.project_id.clone();
+        let case_id = req
+            .case_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
 
-                    let payload = NatsTaskSubmit {
-                        task_id: task.id.0.clone(),
-                        description: req.description.clone(),
-                        project_id: req.project_id.clone(),
-                        // Real-time gRPC submission — no `scheduled` flag.
-                        // The Python consumer treats absent as `False`
-                        // (subject to night-window deferral).
-                        scheduled: None,
-                        verify_command: None,
-                    };
-                    (task.id.0.clone(), payload, events)
-                };
-                // Broadcast TaskCreated event to WatchTask streams
-                for event in new_events {
-                    let _ = self.inner.event_tx.send(event);
-                }
-
-                let payload_bytes = match serde_json::to_vec(&submit_payload) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "Failed to serialize NATS submit payload"
-                        );
-                        // Remove the Planning placeholder
-                        {
-                            let mut store = self.inner.task_store.lock().await;
-                            store.tasks.remove(&task_id_str);
-                            store.events.retain(|e| {
-                                !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
-                            });
-                        }
-                        return Ok(Response::new(SubmitTaskResponse {
-                            success: false,
-                            task_id: String::new(),
-                            status: String::new(),
-                            subtask_count: 0,
-                            subtasks: Vec::new(),
-                            error: Some(format!("NATS payload serialization failed: {e}")),
-                        }));
-                    }
-                };
-
-                match nats_client
-                    .publish(NATS_SUBJECT_TASK_SUBMIT.to_string(), payload_bytes.into())
-                    .await
-                {
-                    Ok(()) => {
-                        tracing::info!(
-                            task_id = %task_id_str,
-                            "Task submitted via NATS, awaiting Python Orchestrator"
-                        );
-                        // Read the task back to build the response
-                        let store = self.inner.task_store.lock().await;
-                        let task = store.get_task(&task_id_str).expect("task just inserted");
-                        let subtask_protos: Vec<SubtaskProto> =
-                            task.subtasks.clone().into_iter().map(Into::into).collect();
-
-                        return Ok(Response::new(SubmitTaskResponse {
-                            success: true,
-                            task_id: task.id.0.clone(),
-                            status: task_status_to_proto(&task.status).to_string(),
-                            subtask_count: task.subtasks.len() as u32,
-                            subtasks: subtask_protos,
-                            error: None,
-                        }));
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "NATS publish failed, falling back to local worker bridge"
-                        );
-                        // Remove the Planning placeholder created for NATS path
-                        {
-                            let mut store = self.inner.task_store.lock().await;
-                            store.tasks.remove(&task_id_str);
-                            store.events.retain(|e| {
-                                !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
-                            });
-                        }
-                        // Fall through to local worker bridge
-                    }
-                }
+        // ── PR01: one logical task per submission ──────────────────────
+        // A caller-supplied key is used verbatim; otherwise it is derived from
+        // (principal, project, description) — still replay-safe, but two
+        // genuinely identical requests from one principal collapse into one
+        // task, which is the correct reading of "identical submission".
+        let submission_id = match req.submission_id.as_deref().map(str::trim) {
+            Some(key) if !key.is_empty() => {
+                uc_types::governance::SubmissionId::caller_supplied(key)
             }
+            _ => uc_types::governance::SubmissionId::derive(&principal, &project_id, &description),
+        };
+        let mut submission = uc_types::governance::SubmissionRequest::new(
+            principal,
+            project_id.clone(),
+            description.clone(),
+            Some(submission_id.clone()),
+        );
+        if let Some(case_id) = &case_id {
+            // Refuse an unknown case *before* anything durable is written: a
+            // submission that can never become a governed run must not poison
+            // its idempotency key.
+            let known = self
+                .governance
+                .cases
+                .get(case_id)
+                .await
+                .map_err(|error| Status::internal(format!("case store failed: {error}")))?
+                .is_some();
+            if !known {
+                return Ok(Response::new(SubmitTaskResponse {
+                    success: false,
+                    error: Some(format!("unknown case_id '{case_id}'")),
+                    submission_id: Some(submission_id.to_string()),
+                    ..Default::default()
+                }));
+            }
+            submission = submission.with_case(case_id.clone());
         }
 
-        // No NATS or NATS publish failed — local fallback
-        // Create the task locally (same as NATS path) but mark it as
-        // locally submitted. The TypeScript orchestrator will decompose
-        // locally and execute subtasks with prefer_remote dispatch.
-        tracing::info!(
-            description = %req.description,
-            "Task submitted locally (NATS unavailable), orchestrator will handle decomposition"
-        );
-        let (task_id_str, new_events) = {
+        let now = chrono::Utc::now();
+        let outcome = self
+            .governance
+            .submissions
+            .submit_once(&submission, &self.governance.outbox, now)
+            .await
+            .map_err(|error| {
+                tracing::error!(
+                    error = %error,
+                    submission_id = %submission_id,
+                    "submit-once record failed"
+                );
+                Status::internal(format!("submission store failed: {error}"))
+            })?;
+
+        if let uc_types::governance::SubmitOnceOutcome::Conflict {
+            submission_id: conflicting,
+            ..
+        } = &outcome
+        {
+            tracing::warn!(
+                submission_id = %conflicting,
+                "submission_id reused with a different request body"
+            );
+            return Ok(Response::new(SubmitTaskResponse {
+                success: false,
+                error: Some(format!(
+                    "submission_id '{conflicting}' was already used for a different request; \
+                     use a fresh idempotency key"
+                )),
+                submission_id: Some(submission_id.to_string()),
+                ..Default::default()
+            }));
+        }
+        let dedup_replayed = outcome.is_replayed();
+        let record = outcome
+            .record()
+            .ok_or_else(|| Status::internal("submission outcome carried no record"))?
+            .clone();
+
+        // The logical task is created under the *derived* id, so a replay —
+        // including a replay after a crash between the record and the task —
+        // converges on the same task instead of creating a second one.
+        let (task, new_events) = {
             let mut store = self.inner.task_store.lock().await;
-            let (task, events) =
-                store.submit_task_pending(req.description.clone(), req.project_id.clone());
-            (task.id.0.clone(), events)
+            match store.get_task(&record.task_id).cloned() {
+                Some(existing) => (existing, Vec::new()),
+                None => store.submit_task_pending_with_id(
+                    uc_types::TaskId(record.task_id.clone()),
+                    description.clone(),
+                    project_id.clone(),
+                ),
+            }
         };
         // Broadcast TaskCreated event to WatchTask streams
         for event in new_events {
             let _ = self.inner.event_tx.send(event);
         }
 
-        let store = self.inner.task_store.lock().await;
-        let task = store.get_task(&task_id_str).expect("task just inserted");
-        let subtask_protos: Vec<SubtaskProto> =
-            task.subtasks.clone().into_iter().map(Into::into).collect();
+        // ── Case linkage ───────────────────────────────────────────────
+        // Opening the run is idempotent by task id: a replayed submission must
+        // not open a second run (the case's one-open-run invariant would refuse
+        // it, and a duplicate run would be duplicate work).
+        if let Some(case_id) = &case_id {
+            let already_linked = match self.governance.cases.get(case_id).await {
+                Ok(Some((case, _))) => case.runs.iter().any(|run| run.task_id == record.task_id),
+                Ok(None) => false,
+                Err(error) => {
+                    tracing::warn!(error = %error, case_id, "case lookup failed after submit");
+                    false
+                }
+            };
+            if !already_linked {
+                if let Err(error) = self
+                    .governance
+                    .cases
+                    .open_run(
+                        case_id,
+                        &record.task_id,
+                        Some(record.submission_id.to_string()),
+                        now,
+                    )
+                    .await
+                {
+                    // The task exists but cannot be governed under this case.
+                    // Record the submission as failed so the caller retries a
+                    // fixed request instead of running ungoverned work.
+                    let _ = self
+                        .governance
+                        .submissions
+                        .mark_failed(&submission_id, error.to_string(), now)
+                        .await;
+                    tracing::warn!(case_id, error = %error, "case run could not be opened");
+                    return Ok(Response::new(SubmitTaskResponse {
+                        success: false,
+                        task_id: record.task_id.clone(),
+                        error: Some(format!("case run could not be opened: {error}")),
+                        dedup_replayed,
+                        submission_id: Some(submission_id.to_string()),
+                        ..Default::default()
+                    }));
+                }
+            }
+        }
+
+        // ── Publication ────────────────────────────────────────────────
+        // `submit_once` wrote the outbox entry *before* this point, so the
+        // publish below only drains it. A transport failure leaves the entry
+        // Pending with backoff and the dispatcher re-drives it (at-least-once);
+        // the submission is recorded either way, which is what makes the
+        // no-NATS fallback safe instead of a silent loss.
+        #[cfg(feature = "messaging")]
+        if let Some(nats_client) = &self.inner.nats_client {
+            let drained = crate::governance::bridge::drain_outbox(
+                &self.governance,
+                nats_client,
+                now,
+                crate::governance::bridge::OUTBOX_DRAIN_LIMIT,
+            )
+            .await;
+            if drained.delivered > 0 || drained.retried > 0 {
+                tracing::info!(
+                    delivered = drained.delivered,
+                    retried = drained.retried,
+                    "Outbox drained for task submission"
+                );
+            }
+        }
+
+        // `published` is only claimed when the entry actually left the gateway.
+        // `applied` is the gateway's own commitment that the logical task exists
+        // under the derived id — the consumer dedupes on the same identity, so a
+        // redelivery cannot create a second task.
+        let outbox_key = uc_engine::governance::submission::outbox_key(&submission_id);
+        let delivered = match self.governance.outbox.get(&outbox_key).await {
+            Ok(Some(entry)) => matches!(entry.state, uc_types::governance::OutboxState::Delivered),
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(error = %error, "outbox entry lookup failed");
+                false
+            }
+        };
+        if delivered {
+            if let Err(error) = self
+                .governance
+                .submissions
+                .mark_published(&submission_id, now)
+                .await
+            {
+                tracing::warn!(error = %error, "mark_published failed");
+            }
+        }
+        if let Err(error) = self
+            .governance
+            .submissions
+            .mark_applied(&submission_id, now)
+            .await
+        {
+            tracing::warn!(error = %error, "mark_applied failed");
+        }
+
+        tracing::info!(
+            task_id = %task.id.0,
+            submission_id = %submission_id,
+            dedup_replayed,
+            published = delivered,
+            "Task submitted (submit-once)"
+        );
 
         Ok(Response::new(SubmitTaskResponse {
             success: true,
             task_id: task.id.0.clone(),
             status: task_status_to_proto(&task.status).to_string(),
             subtask_count: task.subtasks.len() as u32,
-            subtasks: subtask_protos,
+            subtasks: task.subtasks.clone().into_iter().map(Into::into).collect(),
             error: None,
+            dedup_replayed,
+            submission_id: Some(submission_id.to_string()),
         }))
     }
 
@@ -8033,6 +8261,7 @@ mod tests {
                 .submit_task(tonic::Request::new(SubmitTaskRequest {
                     description: "Scoped task".to_string(),
                     project_id: project_id.to_string(),
+                    ..Default::default()
                 }))
                 .await
                 .unwrap()
@@ -8060,6 +8289,7 @@ mod tests {
             .submit_task(tonic::Request::new(SubmitTaskRequest {
                 description: "Scoped task".to_string(),
                 project_id: "proj-1".to_string(),
+                ..Default::default()
             }))
             .await
             .unwrap()

@@ -284,6 +284,22 @@ class DashboardApp:
             allow_headers=["*"],
         )
 
+        # ── Governance plane projections (PR04 / PR05 / PR06) ──────────────
+        # The Rust gateway owns submissions, work cases, mandates, trigger
+        # dedup, attention items and proactive proposals. These routers only
+        # *project* that state through `ultimate_coders.governance_client`
+        # (NATS request/reply); on transport failure they answer 503 rather
+        # than inventing a second source of truth locally.
+        from ultimate_coders.dashboard.governance_routes import mount_governance_routers
+        from ultimate_coders.governance_client import GovernanceClient
+
+        self._governance_client = GovernanceClient(self._nats_client)
+        app.state.governance_client = self._governance_client
+        # The governance routers are part of the authenticated dashboard surface:
+        # give them the same password check the /dashboard/api handlers use.
+        app.state.dashboard_auth_check = self._check_auth
+        mount_governance_routers(app)
+
         # Add X-Task-Version header to task mutation responses for conflict detection.
         # Dashboard clients should compare this with the version they last saw.
         # If different, another client has mutated the task — refresh before acting.
@@ -1932,6 +1948,11 @@ class DashboardApp:
         """Subscribe to the dashboard NATS subjects on the current client."""
         if self._nats_client is None:
             return
+        # The governance bridge shares this connection: attach it here so both
+        # the first-connect path and the background retry path arm it.
+        if getattr(self, "_governance_client", None) is not None:
+            self._governance_client.attach(self._nats_client)
+
         try:
             sub = await self._nats_client.subscribe(
                 NATS_SUBJECT_TASK_EVENT,

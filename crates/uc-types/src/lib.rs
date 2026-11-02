@@ -7,6 +7,7 @@ pub mod agent;
 pub mod engine;
 pub mod envelope;
 pub mod error;
+pub mod governance;
 pub mod graph;
 pub mod index;
 pub mod memory;

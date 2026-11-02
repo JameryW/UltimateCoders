@@ -8,6 +8,7 @@ pub mod config;
 pub mod conflict;
 pub mod events;
 pub mod git;
+pub mod governance;
 pub mod graph_store;
 pub mod indexer;
 pub mod local;
@@ -81,3 +82,4 @@ pub use scheduler::PostgresScheduleStore;
 
 #[cfg(feature = "messaging")]
 pub use scheduler::publish_window_event;
+

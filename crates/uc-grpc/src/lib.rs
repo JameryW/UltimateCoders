@@ -11,6 +11,7 @@ pub mod auth;
 pub mod client;
 pub mod conversions;
 pub mod dashboard_service;
+pub mod governance;
 pub mod placement;
 pub mod scheduler_dispatch;
 pub mod server;
