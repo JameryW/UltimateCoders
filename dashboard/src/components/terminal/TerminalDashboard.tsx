@@ -6,6 +6,7 @@ import { TaskDetail } from "@/components/panels/TaskDetail";
 import { TasksPanel } from "@/components/panels/TasksPanel";
 import { WorkersPanel } from "@/components/panels/WorkersPanel";
 import { InferencePanel } from "@/components/panels/InferencePanel";
+import { AttentionPanel } from "@/components/panels/AttentionPanel";
 import { MemoryPanel } from "@/components/panels/MemoryPanel";
 import type { GrpcConnectionState, GrpcSubmitResult, GrpcTaskActionResult } from "@/hooks/useGrpcWeb";
 import type { DashboardConnectionState } from "@/hooks/useDashboardGrpc";
@@ -41,6 +42,7 @@ const VIEWS: Array<{ id: TerminalView; label: string; meta: string; key: string;
   { id: "memory", label: "记忆", meta: "MEMORY", key: "5", icon: "◌" },
   { id: "logs", label: "日志", meta: "EVENTS", key: "6", icon: "☷" },
   { id: "inference", label: "推理实验", meta: "INFERENCE", key: "7", icon: "◈" },
+  { id: "attention", label: "待办", meta: "ATTENTION", key: "8", icon: "☑" },
 ];
 
 /** Tasks still moving through the pipeline — listed before finished ones. */
@@ -1538,6 +1540,11 @@ export function TerminalDashboard({
                 <MemoryPanel grpcState={grpcState} stale={grpcStale} variant="terminal" />
               </div>
             )}
+            {view === "attention" && (
+              <div className="terminal-data-view">
+                <AttentionPanel />
+              </div>
+            )}
           </div>
           <div key={notice.text} className={`terminal-notice ${notice.tone}`}><span>❯</span>{notice.text}</div>
         </main>
@@ -1547,7 +1554,7 @@ export function TerminalDashboard({
 
       <StatusPillBar connected={connected} grpcState={grpcState} dashGrpcState={dashGrpcState} workers={workers} tasks={tasks} eventLog={eventLog} />
       <footer className="terminal-command-bar"><span>uc ❯</span><input ref={commandRef} value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runCommand(); } }} placeholder='submit "fix flaky heartbeat test"' aria-label="uc 命令行" /><button className={busy ? "is-busy" : undefined} onClick={() => void runCommand()} disabled={!command.trim() || busy}>{busy ? "运行中" : "运行"}</button><kbd>↵</kbd><small>运行 · / 聚焦</small><span className="terminal-footer-status">{connected ? "后端在线" : "后端离线"} · engine {health.version ?? "—"} · {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : "waiting"}</span></footer>
-      <div className="terminal-keybar" role="region" aria-label="Keyboard shortcuts"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>7</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
+      <div className="terminal-keybar" role="region" aria-label="Keyboard shortcuts"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>8</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
       <nav className="terminal-mobile-nav" aria-label="移动端视图导航">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav>
       {fileBrowserOpen && (
         <div className="terminal-file-browser-panel" role="dialog" aria-label="File browser">

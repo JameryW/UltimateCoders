@@ -57,6 +57,7 @@ from ultimate_coders.dashboard.event_history import (
     list_event_history,
 )
 from ultimate_coders.engine import Engine
+from ultimate_coders.submission_dedup import SubmissionDedup, submission_identity
 
 logger = logging.getLogger(__name__)
 
@@ -1895,6 +1896,41 @@ class NatsWorker:
             )
             return
 
+        # PR01 consumer idempotency: the gateway publishes at-least-once, so the
+        # same submission can arrive twice (crash before ack, dispatcher restart).
+        # Drop the duplicate here instead of decomposing the task twice.
+        submission_id, _task_id_from_payload = submission_identity(payload)
+        dedup = None
+        if task_id:
+            dedup = SubmissionDedup(await self._state_store())
+            try:
+                claim = await asyncio.to_thread(dedup.observe, submission_id, task_id)
+            except Exception:
+                logger.warning(
+                    "Submit dedup observation failed for task_id=%s; processing anyway",
+                    task_id,
+                    exc_info=True,
+                )
+                claim = None
+            if claim is not None and claim.duplicate:
+                logger.info(
+                    "Ignoring duplicate submit for task_id=%s (submission_id=%s, attempts=%d)",
+                    task_id,
+                    submission_id or "-",
+                    claim.attempts,
+                )
+                if msg.reply:
+                    await msg.respond(
+                        json.dumps(
+                            {
+                                "task_id": claim.applied_task_id or task_id,
+                                "duplicate": True,
+                                "submission_id": submission_id,
+                            }
+                        ).encode()
+                    )
+                return
+
         logger.info(
             "Received task submit: task_id=%s description=%.80s project_id=%s scheduled=%s",
             task_id,
@@ -1918,6 +1954,20 @@ class NatsWorker:
                 task.status.value,
                 len(task.subtasks),
             )
+
+            if dedup is not None:
+                try:
+                    await asyncio.to_thread(
+                        dedup.mark_applied, submission_id, task_id, task.id
+                    )
+                except Exception:
+                    # The task is already accepted; a lost dedup record only costs a
+                    # future duplicate re-apply, which is the safe direction.
+                    logger.warning(
+                        "Could not record submit dedup state for task_id=%s",
+                        task_id,
+                        exc_info=True,
+                    )
 
             # A cancel event can arrive while LLM decomposition is in flight,
             # before submit_task has inserted the task in the Orchestrator.

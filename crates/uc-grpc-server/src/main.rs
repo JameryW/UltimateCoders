@@ -23,6 +23,7 @@
 //! tonic-web is enabled for gRPC-Web browser support (unary + server-streaming).
 //! CORS is configured to allow dashboard origins.
 
+mod governance_boot;
 mod window_watcher;
 
 use std::net::SocketAddr;
@@ -813,6 +814,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create task store backend (in-memory or PostgreSQL)
     let (task_backend, event_store) = create_task_backend().await;
 
+    // Governance plane (PR01–PR06): submissions/outbox (reliable submit),
+    // work cases + mandates, policy, trigger inbox, attention and proactive
+    // state. Boot recovery re-queues orphaned outbox entries and unfinished
+    // submissions with their original derived task ids, so a restart cannot
+    // create a second logical task. See governance_boot.rs.
+    let governance = governance_boot::create_governance().await;
+
     // Create gRPC server, optionally with NATS integration.
     // NOTE: GrpcServer is created BEFORE start_scheduler so we can extract
     // the NATS client and pass it to the scheduler dispatcher. When NATS is
@@ -822,15 +830,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let grpc_server = match std::env::var("UC_NATS_URL") {
         Ok(nats_url) => {
             tracing::info!(nats_url = %nats_url, "Attempting NATS connection for TaskService");
-            GrpcServer::with_nats_and_backends(engine, &nats_url, task_backend, event_store).await
+            GrpcServer::with_nats_and_backends(engine, &nats_url, task_backend, event_store)
+                .await
+                .with_governance(governance.clone())
         }
         Err(_) => {
             tracing::info!(
                 "No UC_NATS_URL set, TaskService running without NATS (tasks stored insert-only)"
             );
             GrpcServer::with_backends(engine, task_backend, event_store)
+                .with_governance(governance.clone())
         }
     };
+
+    // Drive the transactional outbox and answer dashboard governance requests.
+    // Without this the submit path would record a submission and never publish
+    // it, and every `/api/*` governance endpoint would answer 503.
+    #[cfg(feature = "messaging")]
+    if let Some(client) = grpc_server.nats_client() {
+        uc_grpc::governance::bridge::spawn_nats_bridge(
+            client,
+            grpc_server.governance().clone(),
+            Some(uc_grpc::governance::bridge::DispatchContext {
+                task_store: grpc_server.task_store().clone(),
+                event_tx: grpc_server.event_tx(),
+                worker_registry: Some(grpc_server.worker_registry().clone()),
+            }),
+        )
+        .await;
+        tracing::info!(
+            "Governance NATS bridge started (uc.governance.request + outbox dispatcher)"
+        );
+    }
 
     grpc_server
         .worker_registry()
@@ -1045,6 +1076,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_builder = if dashboard_token.is_empty() {
         tracing::info!("gRPC auth disabled (no UC_DASHBOARD_TOKEN — open access)");
 
+        let (case_service, trigger_service, attention_service, proactive_service) =
+            grpc_server.clone().into_governance_services();
         let (engine_service, task_service, dashboard_service, worker_service) =
             grpc_server.into_services();
 
@@ -1057,10 +1090,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .add_service(task_service)
             .add_service(dashboard_service)
             .add_service(worker_service)
+            .add_service(case_service)
+            .add_service(trigger_service)
+            .add_service(attention_service)
+            .add_service(proactive_service)
     } else {
         tracing::info!("gRPC auth enabled (UC_DASHBOARD_TOKEN set)");
 
         let interceptor = AuthInterceptor::new(Arc::from(dashboard_token.as_str()));
+        let (case_service, trigger_service, attention_service, proactive_service) = grpc_server
+            .clone()
+            .into_intercepted_governance_services(interceptor.clone());
         let (engine_service, task_service, dashboard_service, worker_service) =
             grpc_server.into_intercepted_services(interceptor);
 
@@ -1073,6 +1113,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .add_service(task_service)
             .add_service(dashboard_service)
             .add_service(worker_service)
+            .add_service(case_service)
+            .add_service(trigger_service)
+            .add_service(attention_service)
+            .add_service(proactive_service)
     };
 
     // health_service is added unconditionally OUTSIDE the auth gate so kube /

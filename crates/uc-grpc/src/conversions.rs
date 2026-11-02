@@ -1793,6 +1793,7 @@ mod tests {
             subtask_count: 0,
             subtasks: vec![],
             error: None,
+            ..Default::default()
         };
         let task: Task = resp.into();
         assert_eq!(task.id.0, "task-1");

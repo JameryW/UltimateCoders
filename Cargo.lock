@@ -4460,6 +4460,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-stream",
  "tonic 0.12.3",

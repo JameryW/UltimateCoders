@@ -273,6 +273,16 @@ message ComponentHealthProto {
 message SubmitTaskRequest {
     string description = 1;
     string project_id = 2;
+    // Stable caller-supplied idempotency key (PR01 SubmitTaskOnce). Absent =
+    // the gateway derives one from (principal, project_id, description), which
+    // is still replay-safe but collapses two genuinely identical requests.
+    optional string submission_id = 3;
+    // Optional caller identity. When absent the gateway uses the authenticated
+    // interceptor identity (or "api"/"anonymous").
+    optional string principal_kind = 4;
+    optional string principal_id = 5;
+    // Optional WorkCase link: the created task becomes a run of this case.
+    optional string case_id = 6;
 }
 
 message SubmitTaskResponse {
@@ -282,6 +292,11 @@ message SubmitTaskResponse {
     uint32 subtask_count = 4;
     repeated SubtaskProto subtasks = 5;
     optional string error = 6;
+    // true = this submission id had already created the task; no new work was
+    // created and `task_id` is the originally recorded task.
+    bool dedup_replayed = 7;
+    // Echo of the submission identity (caller-supplied or derived).
+    optional string submission_id = 8;
 }
 
 message GetTaskRequest {
@@ -921,3 +936,622 @@ message ScaleWorkersResponse {
     // Human-readable summary of the action result.
     string message = 4;
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Governance plane
+//   Source → Trigger → Policy → Mandate → WorkCase → Subscription → Attention
+//
+// Additive only: these services are registered alongside EngineService /
+// TaskService / WorkerService / DashboardService. Nothing here changes the
+// existing execution contract (Task → DAG → NATS → Worker).
+//
+// Scope fields are carried as JSON strings (`scopes_json`, `payload_json`,
+// `completion_conditions_json`) so the governance types keep one canonical
+// serde representation in Rust and Python rather than three parallel proto
+// encodings that can drift.
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── Case Service (WorkCase + Mandate + policy checks) ──
+
+service CaseService {
+    // Create (or return the existing) case for a thread. Deterministic when
+    // source+external_ref are supplied: re-delivery converges on one case.
+    rpc CreateCase(CreateCaseRequest) returns (CreateCaseResponse);
+    rpc GetCase(GetCaseRequest) returns (GetCaseResponse);
+    rpc ListCases(ListCasesRequest) returns (ListCasesResponse);
+    // Transition a case between governance states (active / waiting_event /
+    // needs_human / blocked / verifying / completed / failed / cancelled).
+    rpc TransitionCase(TransitionCaseRequest) returns (TransitionCaseResponse);
+    // Link a TaskRun (logical task) to the case. Rejected when the case is
+    // quiescent, terminal, or already has an open run.
+    rpc OpenCaseRun(OpenCaseRunRequest) returns (OpenCaseRunResponse);
+    rpc FinishCaseRun(FinishCaseRunRequest) returns (FinishCaseRunResponse);
+    rpc IssueMandate(IssueMandateRequest) returns (IssueMandateResponse);
+    rpc RevokeMandate(RevokeMandateRequest) returns (RevokeMandateResponse);
+    rpc GetMandate(GetMandateRequest) returns (GetMandateResponse);
+    // Stateless authorization check: permission ceiling + mandate scope +
+    // tool allow table + sandbox profile. Fail-closed.
+    rpc Authorize(AuthorizeRequest) returns (AuthorizeResponse);
+}
+
+message CaseProto {
+    string id = 1;
+    string title = 2;
+    string description = 3;
+    string project_id = 4;
+    string status = 5;
+    CaseOriginProto origin = 6;
+    optional string contract_digest = 7;
+    optional string completion_conditions_json = 8;
+    optional string mandate_id = 9;
+    repeated string subscriptions = 10;
+    repeated CaseRunProto runs = 11;
+    uint32 compacted_runs = 12;
+    uint32 priority = 13;
+    repeated string labels = 14;
+    int64 created_at = 15;
+    int64 updated_at = 16;
+    uint64 version = 17;
+}
+
+message CaseOriginProto {
+    string source = 1;
+    optional string external_ref = 2;
+    optional string thread_key = 3;
+    optional string trigger_id = 4;
+}
+
+message CaseRunProto {
+    string run_id = 1;
+    string task_id = 2;
+    uint32 attempt = 3;
+    optional string submission_id = 4;
+    int64 started_at = 5;
+    optional int64 ended_at = 6;
+    optional string outcome = 7;
+    optional string detail = 8;
+}
+
+message MandateProto {
+    string id = 1;
+    string case_id = 2;
+    string grantor_kind = 3;
+    string grantor_id = 4;
+    uint64 policy_version = 5;
+    // JSON-encoded `Vec<MandateScope>`.
+    string scopes_json = 6;
+    int64 issued_at = 7;
+    optional int64 expires_at = 8;
+    optional int64 revoked_at = 9;
+    optional string revoke_reason = 10;
+    optional string revoked_by = 11;
+    string origin = 12;
+    optional string delegated_from = 13;
+}
+
+message CreateCaseRequest {
+    string title = 1;
+    string description = 2;
+    string project_id = 3;
+    // Provenance: github / ci / lark / dashboard / api / cron / manual.
+    string source = 4;
+    // Source-native thread (`owner/repo#123`). When set, case identity is
+    // derived from it, so a re-delivered event reuses the same case.
+    optional string external_ref = 5;
+    optional string thread_key = 6;
+    optional string trigger_id = 7;
+    optional uint32 priority = 8;
+    optional string completion_conditions_json = 9;
+    optional string contract_digest = 10;
+    // Caller identity. Authorized against the case-create permission.
+    string principal_kind = 11;
+    string principal_id = 12;
+    // When true a mandate is issued with the same request (atomic for the
+    // caller: a case that can never execute is useless in practice).
+    bool issue_mandate = 13;
+    // JSON-encoded `Vec<MandateScope>` for the issued mandate.
+    optional string mandate_scopes_json = 14;
+    optional int64 mandate_expires_at = 15;
+    repeated string labels = 16;
+}
+
+message CreateCaseResponse {
+    bool success = 1;
+    CaseProto case = 2;
+    MandateProto mandate = 3;
+    // true = the case already existed for this thread (no new case created).
+    bool dedup_replayed = 4;
+    optional string error = 5;
+}
+
+message GetCaseRequest {
+    string case_id = 1;
+}
+
+message GetCaseResponse {
+    bool available = 1;
+    CaseProto case = 2;
+}
+
+message ListCasesRequest {
+    // Filter by status; empty = all non-terminal first.
+    optional string status = 1;
+    optional string project_id = 2;
+    optional string thread_key = 3;
+    uint32 limit = 4;
+    bool include_terminal = 5;
+}
+
+message ListCasesResponse {
+    repeated CaseProto cases = 1;
+    uint32 total = 2;
+}
+
+message TransitionCaseRequest {
+    string case_id = 1;
+    string status = 2;
+    optional string reason = 3;
+    string principal_kind = 4;
+    string principal_id = 5;
+}
+
+message TransitionCaseResponse {
+    bool success = 1;
+    CaseProto case = 2;
+    optional string error = 3;
+}
+
+message OpenCaseRunRequest {
+    string case_id = 1;
+    string task_id = 2;
+    optional string submission_id = 3;
+}
+
+message OpenCaseRunResponse {
+    bool success = 1;
+    CaseRunProto run = 2;
+    optional string error = 3;
+}
+
+message FinishCaseRunRequest {
+    string case_id = 1;
+    string run_id = 2;
+    // succeeded | failed | cancelled | superseded
+    string outcome = 3;
+    optional string detail = 4;
+}
+
+message FinishCaseRunResponse {
+    bool success = 1;
+    CaseProto case = 2;
+    optional string error = 3;
+}
+
+message IssueMandateRequest {
+    string case_id = 1;
+    string scopes_json = 2;
+    optional int64 expires_at = 3;
+    string principal_kind = 4;
+    string principal_id = 5;
+    // When set, the issued mandate must be a narrow subset of this parent.
+    optional string delegated_from = 6;
+    optional uint64 policy_version = 7;
+}
+
+message IssueMandateResponse {
+    bool success = 1;
+    MandateProto mandate = 2;
+    optional string error = 3;
+}
+
+message RevokeMandateRequest {
+    string mandate_id = 1;
+    string reason = 2;
+    string principal_kind = 3;
+    string principal_id = 4;
+}
+
+message RevokeMandateResponse {
+    bool success = 1;
+    MandateProto mandate = 2;
+    optional string error = 3;
+}
+
+message GetMandateRequest {
+    optional string mandate_id = 1;
+    optional string case_id = 2;
+}
+
+message GetMandateResponse {
+    bool available = 1;
+    MandateProto mandate = 2;
+}
+
+message AuthorizeRequest {
+    string principal_kind = 1;
+    string principal_id = 2;
+    // Permission token, e.g. "worker_scale", "mandate_issue".
+    string permission = 3;
+    optional string project_id = 4;
+    // When set, the case's mandate is also checked.
+    optional string case_id = 5;
+    // Mandate request dimension.
+    optional string tool = 6;
+    optional string action = 7;
+    optional string repo = 8;
+    optional string branch = 9;
+    optional string path = 10;
+    optional uint64 tokens = 11;
+    optional double cost_usd = 12;
+    // Sandbox profile to validate (JSON). Absent = not checked.
+    optional string sandbox_profile_json = 13;
+    optional uint64 policy_version = 14;
+}
+
+message AuthorizeResponse {
+    bool allowed = 1;
+    optional string deny_code = 2;
+    optional string deny_detail = 3;
+    bool permission_allowed = 4;
+    bool mandate_allowed = 5;
+    bool sandbox_allowed = 6;
+}
+
+// ── Trigger Service (Source → Trigger Inbox → Subscription) ──
+
+service TriggerService {
+    // Ingest one external event. Idempotent by dedup key; returns the cases
+    // whose subscription matched.
+    rpc IngestTrigger(IngestTriggerRequest) returns (IngestTriggerResponse);
+    rpc ListSubscriptions(ListSubscriptionsRequest) returns (ListSubscriptionsResponse);
+    rpc UpsertSubscription(UpsertSubscriptionRequest) returns (UpsertSubscriptionResponse);
+    rpc DeleteSubscription(DeleteSubscriptionRequest) returns (DeleteSubscriptionResponse);
+}
+
+message IngestTriggerRequest {
+    // github | ci | lark | dashboard | api | cron | manual
+    string source = 1;
+    // issue_opened | issue_comment | pull_request_opened | ... | check_run
+    string kind = 2;
+    string external_id = 3;
+    optional string thread_key = 4;
+    optional string repo = 5;
+    optional string actor = 6;
+    string payload_json = 7;
+    // Source delivery identity (GitHub's X-GitHub-Delivery). Metadata for audit
+    // only: it is deliberately NOT part of the dedup key, because a webhook
+    // delivery and its polling-reconciler twin must converge on one event while
+    // carrying different delivery ids. Identity is (source, kind, external_id,
+    // payload digest) — see uc_types::governance::trigger::TriggerEvent::dedup_key.
+    optional string delivery_id = 8;
+    // Caller identity — must hold trigger_ingest.
+    string principal_kind = 9;
+    string principal_id = 10;
+    // When the event matches no subscription and this is set, a case is opened
+    // for the thread (used by the explicit "label a PR" entry point).
+    bool open_case_if_unmatched = 11;
+    optional string open_case_project_id = 12;
+}
+
+message IngestTriggerResponse {
+    bool success = 1;
+    bool accepted = 2;
+    bool duplicate = 3;
+    string event_id = 4;
+    string dedup_key = 5;
+    repeated string matched_cases = 6;
+    optional string unmatched_reason = 7;
+    optional string opened_case_id = 8;
+    optional string error = 9;
+    // Tasks started because a matched case's subscription opted into auto_resume
+    // and the case was woken by this event. Empty for observe-only subscriptions.
+    repeated string resumed_task_ids = 10;
+}
+
+message SubscriptionProto {
+    string id = 1;
+    string case_id = 2;
+    string source = 3;
+    optional string repo = 4;
+    optional string thread_key = 5;
+    repeated string kinds = 6;
+    repeated string labels = 7;
+    bool active = 8;
+    int64 created_at = 9;
+    uint64 event_count = 10;
+    optional int64 last_event_at = 11;
+    bool auto_resume = 12;
+}
+
+message ListSubscriptionsRequest {
+    optional string case_id = 1;
+    optional string source = 2;
+    uint32 limit = 3;
+}
+
+message ListSubscriptionsResponse {
+    repeated SubscriptionProto subscriptions = 1;
+}
+
+message UpsertSubscriptionRequest {
+    optional string subscription_id = 1;
+    string case_id = 2;
+    string source = 3;
+    optional string repo = 4;
+    optional string thread_key = 5;
+    repeated string kinds = 6;
+    repeated string labels = 7;
+    bool active = 8;
+    // Opt in to starting a new run when a matching event arrives. The gateway still
+    // requires a live mandate with the `dispatch` action class, so this flag alone
+    // cannot start ungoverned work.
+    bool auto_resume = 9;
+}
+
+message UpsertSubscriptionResponse {
+    bool success = 1;
+    SubscriptionProto subscription = 2;
+    optional string error = 3;
+}
+
+message DeleteSubscriptionRequest {
+    string subscription_id = 1;
+}
+
+message DeleteSubscriptionResponse {
+    bool success = 1;
+    optional string error = 2;
+}
+
+// ── Attention Service (NEEDS_HUMAN / WAITING_EVENT / BLOCKED / VERIFYING) ──
+
+service AttentionService {
+    rpc ListAttention(ListAttentionRequest) returns (ListAttentionResponse);
+    rpc RaiseAttention(RaiseAttentionRequest) returns (RaiseAttentionResponse);
+    rpc ResolveAttention(ResolveAttentionRequest) returns (ResolveAttentionResponse);
+    // Worker/human capacity accounting, including the human-priority reserve.
+    rpc GetCapacity(GetCapacityRequest) returns (GetCapacityResponse);
+}
+
+message AttentionItemProto {
+    string id = 1;
+    string case_id = 2;
+    optional string task_id = 3;
+    string kind = 4;
+    string summary = 5;
+    optional string detail = 6;
+    int64 since = 7;
+    uint32 priority = 8;
+    optional string human_action = 9;
+    optional int64 resolved_at = 10;
+    optional string resolution_summary = 11;
+}
+
+message ListAttentionRequest {
+    bool include_resolved = 1;
+    optional string case_id = 2;
+    optional string kind = 3;
+    uint32 limit = 4;
+}
+
+message ListAttentionResponse {
+    repeated AttentionItemProto items = 1;
+    CapacityProto capacity = 2;
+}
+
+message RaiseAttentionRequest {
+    string case_id = 1;
+    // waiting_event | needs_human | blocked | verifying
+    string kind = 2;
+    string summary = 3;
+    optional string detail = 4;
+    optional string human_action = 5;
+    optional string task_id = 6;
+    optional uint32 priority = 7;
+    string principal_kind = 8;
+    string principal_id = 9;
+}
+
+message RaiseAttentionResponse {
+    bool success = 1;
+    AttentionItemProto item = 2;
+    optional string error = 3;
+}
+
+message ResolveAttentionRequest {
+    string attention_id = 1;
+    // human_decision | event_received | automatic | case_closed
+    string resolution_kind = 2;
+    optional string by = 3;
+    optional string detail = 4;
+    string principal_kind = 5;
+    string principal_id = 6;
+}
+
+message ResolveAttentionResponse {
+    bool success = 1;
+    AttentionItemProto item = 2;
+    optional string error = 3;
+}
+
+message GetCapacityRequest {}
+
+message CapacityProto {
+    uint32 worker_slots_total = 1;
+    uint32 worker_slots_busy = 2;
+    uint32 worker_slots_reserved_human = 3;
+    uint32 waiting_event_cases = 4;
+    uint32 verifying_cases = 5;
+    uint32 needs_human_items = 6;
+    uint32 blocked_cases = 7;
+    uint32 worker_slots_available = 8;
+    uint32 slots_saved_by_quiet_waiting = 9;
+}
+
+message GetCapacityResponse {
+    CapacityProto capacity = 1;
+}
+
+// ── Proactive Service (Off / Observe / Propose / Execute + Watchdog) ──
+
+service ProactiveService {
+    rpc GetProactiveState(GetProactiveStateRequest) returns (GetProactiveStateResponse);
+    rpc SetProactiveMode(SetProactiveModeRequest) returns (SetProactiveModeResponse);
+    rpc SubmitProposal(SubmitProposalRequest) returns (SubmitProposalResponse);
+    rpc ListProposals(ListProposalsRequest) returns (ListProposalsResponse);
+    rpc DecideProposal(DecideProposalRequest) returns (DecideProposalResponse);
+    // Deterministic watchdog input (from the Python progress detector).
+    rpc ReportStall(ReportStallRequest) returns (ReportStallResponse);
+    rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
+}
+
+message ProactiveStateProto {
+    string mode = 1;
+    uint32 max_open_proposals = 2;
+    optional uint64 max_tokens_per_action = 3;
+    bool always_require_approval = 4;
+    uint32 open_proposals = 5;
+    uint64 evaluated_count = 6;
+    uint64 approved_count = 7;
+    uint64 rejected_count = 8;
+    uint64 executed_count = 9;
+}
+
+message GetProactiveStateRequest {}
+
+message GetProactiveStateResponse {
+    ProactiveStateProto state = 1;
+}
+
+message SetProactiveModeRequest {
+    // off | observe | propose | execute
+    string mode = 1;
+    optional uint32 max_open_proposals = 2;
+    optional uint64 max_tokens_per_action = 3;
+    optional bool always_require_approval = 4;
+    string principal_kind = 5;
+    string principal_id = 6;
+    optional string reason = 7;
+}
+
+message SetProactiveModeResponse {
+    bool success = 1;
+    ProactiveStateProto state = 2;
+    optional string error = 3;
+}
+
+message ProposalProto {
+    string id = 1;
+    optional string case_id = 2;
+    string kind = 3;
+    string title = 4;
+    string rationale = 5;
+    float confidence = 6;
+    repeated string evidence = 7;
+    optional string proposed_request = 8;
+    optional string project_id = 9;
+    optional uint64 estimated_tokens = 10;
+    string mode_at_creation = 11;
+    string status = 12;
+    int64 created_at = 13;
+    optional int64 decided_at = 14;
+    optional string decided_by = 15;
+    optional string executed_case_id = 16;
+}
+
+message SubmitProposalRequest {
+    optional string case_id = 1;
+    string kind = 2;
+    string title = 3;
+    string rationale = 4;
+    float confidence = 5;
+    repeated string evidence = 6;
+    optional string proposed_request = 7;
+    optional string project_id = 8;
+    optional uint64 estimated_tokens = 9;
+    string principal_kind = 10;
+    string principal_id = 11;
+}
+
+message SubmitProposalResponse {
+    bool success = 1;
+    bool accepted = 2;
+    ProposalProto proposal = 3;
+    optional string deny_code = 4;
+    optional string deny_detail = 5;
+    optional string error = 6;
+}
+
+message ListProposalsRequest {
+    optional string status = 1;
+    optional string case_id = 2;
+    uint32 limit = 3;
+}
+
+message ListProposalsResponse {
+    repeated ProposalProto proposals = 1;
+}
+
+message DecideProposalRequest {
+    string proposal_id = 1;
+    // approve | reject
+    string decision = 2;
+    string by = 3;
+    optional string reason = 4;
+    string principal_kind = 5;
+    string principal_id = 6;
+}
+
+message DecideProposalResponse {
+    bool success = 1;
+    ProposalProto proposal = 2;
+    optional string error = 3;
+}
+
+message ReportStallRequest {
+    string task_id = 1;
+    optional string subtask_id = 2;
+    uint32 no_progress_count = 3;
+    optional string evidence_signature = 4;
+    optional string last_error = 5;
+    repeated string confirmed_effect_ids = 6;
+    uint32 attempts_used = 7;
+    uint32 replans_used = 8;
+    bool already_retried = 9;
+    optional string case_id = 10;
+}
+
+message ReportStallResponse {
+    bool success = 1;
+    // continue | retry_same_contract | replan | escalate_needs_human | stop
+    string verdict = 2;
+    optional uint32 attempt = 3;
+    optional uint64 delay_ms = 4;
+    repeated string preserve_effects = 5;
+    optional string reason = 6;
+    uint32 replans_remaining = 7;
+    uint32 attempts_remaining = 8;
+    optional string error = 9;
+}
+
+message AuditEntryProto {
+    int64 at = 1;
+    string mode = 2;
+    string action = 3;
+    optional string proposal_id = 4;
+    optional string case_id = 5;
+    bool allowed = 6;
+    optional string reason = 7;
+    optional string detail = 8;
+}
+
+message ListAuditRequest {
+    uint32 limit = 1;
+    optional string proposal_id = 2;
+    optional string case_id = 3;
+}
+
+message ListAuditResponse {
+    repeated AuditEntryProto entries = 1;
+}
+

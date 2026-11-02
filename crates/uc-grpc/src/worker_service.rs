@@ -253,6 +253,35 @@ impl WorkerRegistry {
     }
 
     /// Get all registered workers.
+    /// Slot totals over the workers that can actually take work.
+    ///
+    /// `(total, busy)` where `total` sums `max_capacity` and `busy` sums
+    /// `current_load`, counting only workers that are (a) fresh — heartbeat inside
+    /// the stale window — and (b) contract-versioned, because a legacy worker is
+    /// accepted for observability but never dispatched to, so counting its slots
+    /// would inflate capacity that no task can use.
+    ///
+    /// This is the read-only numbers source for the attention plane: the governance
+    /// layer reports capacity but must not own the worker pool, so the gateway
+    /// hands it these totals instead of it reading the registry.
+    pub fn capacity_totals(&self) -> (u32, u32) {
+        let stale = Self::STALE_TIMEOUT_SECS;
+        let mut total = 0u32;
+        let mut busy = 0u32;
+        for worker in self.workers.values() {
+            if worker.contract_version.trim().is_empty() {
+                continue;
+            }
+            let fresh = (chrono::Utc::now() - worker.last_heartbeat).num_seconds() as f64 <= stale;
+            if !fresh {
+                continue;
+            }
+            total = total.saturating_add(worker.max_capacity);
+            busy = busy.saturating_add(worker.current_load.min(worker.max_capacity));
+        }
+        (total, busy)
+    }
+
     pub fn workers(&self) -> &HashMap<String, RegisteredWorker> {
         &self.workers
     }
@@ -735,11 +764,36 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
         &self,
         request: Request<ScaleWorkersRequest>,
     ) -> Result<Response<ScaleWorkersResponse>, Status> {
+        // PR03: resizing the pool (and force-deregistering a worker) is the
+        // highest-blast-radius operation the gateway exposes, so it is
+        // policy-gated **before** any side effect — including before the
+        // docker-compose dry-run, which must not run for an unauthorized caller.
+        // The request message carries no identity field, so the caller is
+        // resolved from metadata and defaults to the dashboard operator surface
+        // (see `policy_interceptor`).
+        let principal =
+            crate::governance::policy_interceptor::resolve_principal_from_metadata(&request)?;
+        let now = chrono::Utc::now();
+        if let Err(status) = crate::governance::policy_interceptor::require_scale_workers(
+            self.governance().as_ref(),
+            &principal,
+            now,
+        ) {
+            tracing::warn!(
+                principal = %principal,
+                action = %request.get_ref().action,
+                deny_code = status.message(),
+                "ScaleWorkers denied by policy"
+            );
+            return Err(status);
+        }
+
         let req = request.into_inner();
         tracing::info!(
             action = %req.action,
             target_count = req.target_count,
             worker_id = %req.worker_id,
+            principal = %principal,
             "ScaleWorkers request received"
         );
 
@@ -1398,7 +1452,7 @@ mod tests {
 
     #[tokio::test]
     async fn register_worker_rpc_refuses_mismatched_version() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .register_worker(Request::new(RegisterWorkerRequest {
                 worker_id: "w-skew".to_string(),
@@ -1424,7 +1478,7 @@ mod tests {
 
     #[tokio::test]
     async fn register_worker_rpc_accepts_matched_and_empty_versions() {
-        let server = make_server();
+        let server = make_server().await;
         let matched = server
             .register_worker(Request::new(RegisterWorkerRequest {
                 worker_id: "w-matched".to_string(),
@@ -1462,7 +1516,7 @@ mod tests {
 
     #[tokio::test]
     async fn heartbeat_rpc_refuses_mismatched_version_accepted_matched() {
-        let server = make_server();
+        let server = make_server().await;
         server
             .register_worker(Request::new(RegisterWorkerRequest {
                 worker_id: "w-hb".to_string(),
@@ -1529,13 +1583,35 @@ mod tests {
     use tonic::Request;
     use uc_engine::LocalEngine;
 
-    fn make_server() -> GrpcServer<LocalEngine> {
+    /// A server whose governance plane authorizes the dashboard principal for
+    /// `ScaleWorkers`.
+    ///
+    /// The handler is policy-gated (PR03), so these tests install the operator
+    /// grant up front and then exercise the *action* paths. The denial path has its
+    /// own test in `tests/governance_services.rs`
+    /// (`scale_workers_is_denied_for_a_service_principal_without_worker_scale`).
+    async fn make_server() -> GrpcServer<LocalEngine> {
+        use uc_types::governance::{Grant, Permission, PolicySnapshot, PolicyVersion, Principal};
+
+        let governance = uc_engine::governance::Governance::in_memory();
+        let snapshot = PolicySnapshot::empty(PolicyVersion::initial())
+            .with_grant(Grant::new(
+                Principal::service(crate::governance::policy_interceptor::DEFAULT_PRINCIPAL_ID),
+                vec![Permission::WorkerScale],
+            ))
+            .expect("the operator grant is structurally valid");
+        governance
+            .policy
+            .install(snapshot)
+            .await
+            .expect("the operator snapshot installs");
         GrpcServer::new(LocalEngine::new_fallback())
+            .with_governance(std::sync::Arc::new(governance))
     }
 
     #[tokio::test]
     async fn scale_workers_deregister_removes_worker() {
-        let server = make_server();
+        let server = make_server().await;
         // Seed the registry with a worker via the register RPC.
         server
             .register_worker(Request::new(RegisterWorkerRequest {
@@ -1577,7 +1653,7 @@ mod tests {
 
     #[tokio::test]
     async fn scale_workers_deregister_unknown_worker_fails() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .scale_workers(Request::new(ScaleWorkersRequest {
                 action: "deregister".to_string(),
@@ -1594,7 +1670,7 @@ mod tests {
 
     #[tokio::test]
     async fn scale_workers_deregister_empty_id_fails() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .scale_workers(Request::new(ScaleWorkersRequest {
                 action: "deregister".to_string(),
@@ -1615,7 +1691,7 @@ mod tests {
         // docker daemon. They are combined into one test to avoid env-var races
         // (UC_COMPOSE_FILE is process-global; parallel tests would contend).
 
-        let server = make_server();
+        let server = make_server().await;
 
         // ── Case 1: compose file does not exist ──
         std::env::set_var("UC_COMPOSE_FILE", "/nonexistent/uc-test-compose-12345.yml");
@@ -1712,7 +1788,7 @@ mod tests {
 
     #[tokio::test]
     async fn scale_workers_unknown_action_fails() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .scale_workers(Request::new(ScaleWorkersRequest {
                 action: "bogus".to_string(),
@@ -2006,7 +2082,7 @@ mod tests {
 
     #[tokio::test]
     async fn register_worker_rpc_carries_projects() {
-        let server = make_server();
+        let server = make_server().await;
         let resp = server
             .register_worker(Request::new(RegisterWorkerRequest {
                 worker_id: "w-scope-rpc".to_string(),
@@ -2044,7 +2120,7 @@ mod tests {
     /// constant and could not pin it.
     #[tokio::test]
     async fn placement_signals_survive_the_rpc_boundary() {
-        let server = make_server();
+        let server = make_server().await;
 
         let registered = server
             .register_worker(Request::new(RegisterWorkerRequest {
@@ -2765,6 +2841,53 @@ mod tests {
             WorkerDispatchGate::NoScopeMatchedWorker {
                 workers: vec!["w-scoped".to_string()]
             }
+        );
+    }
+
+    #[test]
+    fn capacity_totals_counts_only_usable_workers() {
+        let mut registry = WorkerRegistry::new();
+        registry
+            .register(
+                "w1".to_string(),
+                vec!["code".to_string()],
+                2,
+                String::new(),
+                uc_types::CONTRACT_VERSION.to_string(),
+            )
+            .expect("register w1");
+        registry
+            .register(
+                "w2".to_string(),
+                vec!["code".to_string()],
+                3,
+                String::new(),
+                uc_types::CONTRACT_VERSION.to_string(),
+            )
+            .expect("register w2");
+        // Legacy worker: observable, never dispatched to, so its slots do not exist.
+        registry
+            .register(
+                "legacy".to_string(),
+                vec!["code".to_string()],
+                4,
+                String::new(),
+                String::new(),
+            )
+            .expect("register legacy");
+        assert_eq!(
+            registry.capacity_totals(),
+            (5, 0),
+            "legacy slots are not capacity"
+        );
+
+        // Load is counted but capped at each worker's own capacity.
+        registry.heartbeat("w1", 1).expect("heartbeat w1");
+        registry.heartbeat("w2", 9).expect("heartbeat w2");
+        assert_eq!(
+            registry.capacity_totals(),
+            (5, 4),
+            "busy is min(load, capacity)"
         );
     }
 }

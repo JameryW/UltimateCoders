@@ -56,6 +56,16 @@ The executor selector permits local fallback only for `read_only`/`local_safe` n
 
 Explicit review nodes require the opt-in `review` capability and a structured JSON verdict. Shared overflow does not guarantee reviewer independence. Runtime diagnostics read persisted history and report missing measurements; they do not autonomously tune execution or implement monetary worker auctions.
 
+## Governance plane (PR01–PR06)
+
+A governance layer modelled on the DeepSeek Engineering Agent OS design sits **beside** the execution plane and never replaces it: `Source → Trigger → Policy → Mandate → WorkCase → Subscription → Attention` (types in `crates/uc-types/src/governance/`, durable stores in `crates/uc-engine/src/governance/`, protobuf in `crates/uc-grpc/proto/engine.proto`). It records **why** work exists and **under what authority**; `Task → DAG/Node → Attempt → Worker → EffectLedger` remains the only execution authority. An inbound trigger, an agent, a worker or a memory entry can never widen a mandate — authority originates only from a human-issued (or explicitly system-defaulted) mandate and can thereafter only be narrowed.
+
+| Layer | Entities | Durability | Status | Documentation |
+| --- | --- | --- | --- | --- |
+| Governance | submission/outbox, WorkCase/CaseRun, mandate/policy, trigger inbox, attention items, proactive proposals + watchdog decisions | namespaced JSON documents with a CAS version in one `governance_records` table (in-memory or PostgreSQL) | landed end to end: types + stores + four gRPC services + NATS JSON bridge + gateway boot (`crates/uc-grpc-server/src/governance_boot.rs`) + Python dashboard projections; the proto is the authoritative contract | [docs/governance](governance/README.md) |
+
+The dashboard projects this state over NATS request/reply (`uc.governance.request`, envelope `{"op","payload"}` → `{"ok","result"|"error"}`). When the bridge is unreachable the governance endpoints answer `503 governance_unavailable` instead of fabricating an empty state. Environment variables with their safe defaults, per-PR manual acceptance, and the upgrade order (gateway before workers, contract version lockstep) are documented in [the governance operations guide](governance/operations.md).
+
 ## Inference infrastructure and model backends
 
 `InferenceInfraAgent` is an optional engineering domain. Workers probe live schemas and advertise only supported operation capabilities, while `inference_benchmark` remains local. The `metainfer` adapter launches the UC inference runner and delegates generation/analysis to an external service. UC retains worktree leases, operation identity, cancellation and acceptance; no MetaInfer source or GPU library enters its Worker image.

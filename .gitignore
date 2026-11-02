@@ -135,3 +135,5 @@ docker/docker-compose.override.yaml
 # `git add -A` would stage the whole lot into whatever commit came next.
 .workbuddy/
 .scratch/
+# pytest's per-run temp root when it is created inside the checkout
+pytest-of-*/
