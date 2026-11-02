@@ -177,8 +177,10 @@ call   authorize_tool(...)                                    ->  消费许可 -
 `the_sweeper_expires_what_nobody_answered`；策略层 `a_human_approval_unlocks_a_human_tier_tool_for_exactly_one_call`、
 `a_permit_is_not_spent_when_a_later_check_denies`；服务层 `only_a_human_with_operator_authority_can_decide`。
 
-仍留空的：仪表盘只有 HTTP 面（`/api/approvals`），没有专门的 React 审批面板——它出现在注意力待办里，
-点开仍是「注意力」视图。
+仪表盘侧：`dashboard/src/lib/approvalApi.ts` + `dashboard/src/components/panels/ApprovalPanel.tsx`，
+视图「审批」（`#/dashboard/approvals`，快捷键 `9`）。队列排序与网关一致：**待决优先**，其次按 `expires_at`
+由近到远（一次两分钟后过期的决定比今晚过期的更急），再按 id 稳定排序。离线（503）只显示一条静默提示并清空
+列表——不在陈旧队列上让人做决定；`401` 说明部署要求 `UC_DASHBOARD_TOKEN`，就地提示而不是显示成「没有待办」。
 
 ## 6. 沙箱硬化档
 
