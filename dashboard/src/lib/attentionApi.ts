@@ -152,7 +152,7 @@ function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
+export function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return null;
   }
@@ -171,7 +171,7 @@ function errorToken(payload: unknown): string | null {
  * come back as `{ok: false}` — a thrown error in a poll loop becomes a toast
  * per poll, which is exactly the storm the offline state exists to prevent.
  */
-async function requestJson(
+export async function requestJson(
   path: string,
   init: { method?: string; body?: unknown } = {},
 ): Promise<ApiResult<unknown>> {
@@ -219,7 +219,7 @@ function requiredText(value: unknown): string | null {
   return null;
 }
 
-function optionalText(value: unknown): string | undefined {
+export function optionalText(value: unknown): string | undefined {
   const text = requiredText(value);
   return text === null ? undefined : text;
 }

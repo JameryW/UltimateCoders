@@ -272,9 +272,9 @@ def test_real_repo_is_reconciled() -> None:
         # Governance plane (PR01–PR06): uc-types/uc-engine/uc-grpc governance
         # modules, gRPC services + integration test, gateway boot helper, Python
         # trigger/attention/proactive packages, dashboard routers + panel, docs.
-        # Approval loop: approval.rs, approvals.rs, approval_service.rs,
-        # approval_api.py and its test add text files.
-        (2347, 2338),
+        # Approval loop + its dashboard surface: approvalApi.ts, ApprovalPanel.tsx
+        # and approval-api.test.mjs add three more text files.
+        (2350, 2341),
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
