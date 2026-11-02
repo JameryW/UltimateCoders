@@ -1557,6 +1557,12 @@ class NatsWorker:
             merge_arbiter=merge_arbiter,
             merge_gate=merge_gate,
         )
+        # PR06: the bounded stall staircase belongs to the gateway's watchdog.
+        # Attaching a client lets a stall ask it before the local policy decides;
+        # an unreachable bridge fails open in `watchdog_bridge`, so pre-PR06
+        # recovery behaviour is preserved on deployments without a governance
+        # plane. `UC_WATCHDOG_BRIDGE=off` opts out entirely.
+        self._orchestrator.governance_client = self._watchdog_governance_client()
 
         # Worker — sandbox-only, always
         from ultimate_coders.agent.network_mode import resolve_network_default
@@ -1726,6 +1732,30 @@ class NatsWorker:
         )
 
     # ── Message handlers ─────────────────────────────────────────
+
+    def _watchdog_governance_client(self) -> Any:
+        """Governance client used to ask the gateway about a stall.
+
+        Returns ``None`` when the bridge is switched off, when this worker has no
+        NATS connection, or when the client cannot be imported — every one of
+        those is a "keep the local policy" answer, never an error, because the
+        stall path already runs when things are going wrong.
+        """
+        raw = os.environ.get("UC_WATCHDOG_BRIDGE", "").strip().lower()
+        if raw in {"off", "0", "false", "no", "disabled"}:
+            logger.info("Watchdog bridge disabled (UC_WATCHDOG_BRIDGE=%s)", raw)
+            return None
+        if self._nc is None:
+            logger.debug("Watchdog bridge unavailable: worker has no NATS connection")
+            return None
+        try:
+            from ultimate_coders.governance_client import GovernanceClient
+
+            logger.info("Watchdog bridge wired to the governance plane")
+            return GovernanceClient(self._nc)
+        except Exception:  # pragma: no cover - import is a hard dependency
+            logger.warning("Watchdog bridge could not be created", exc_info=True)
+            return None
 
     def _spawn_bg(self, coro: Any) -> asyncio.Task[Any]:
         """Schedule a background task and hold a strong ref so the GC can't reap it.

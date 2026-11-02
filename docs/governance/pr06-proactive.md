@@ -230,5 +230,34 @@ principal 缺省为 `user`/`dashboard`，那是**归属默认**，不是授权�
 | 提案过期清扫 | `ProposalStatus::Expired` 已定义，但没有清扫任务把它写进去 | 过期策略（多久算久）属于团队约定；没有清扫时提案停在 `proposed`，是可见状态 |
 | 模型/LLM 直接产出提案 | 未实现。`judge` 只能细化 confidence，且失败不影响评估 | 不可审计的建议正是本 PR 要防的失败模式 |
 | 自主执行的完整链路 | `admit_execution` 已就绪，但执行入口（谁在批准后真的提交工作）未接线 | 与 `uc-grpc` 并行改动一起落地；在此之前 `execute` 模式只是「允许」，不会自己动 |
-| watchdog 的实际重试/重规划执行 | 未实现于本层：Rust 只给 verdict，Python `apply_verdict` 返回一个 orchestrator 动作，`delay_ms` 交由调用方遵守（模块明确「不在此处 sleep/重试」） | 派发与重排属于执行面；治理层只负责「有界」与「可审计」 |
+| 重规划之后的执行 | verdict 已接线（见 §「在既有循环里」），但 `replan` 之后的**新计划**仍由网关/操作者决定：Python worker 只停止重试并上报 verdict，不自己改计划 | 改计划是网关的决策面，worker 自己重写计划就是第二套 planner |
 | 预算台账（token 记账） | 未实现于本层：`max_tokens_per_action` 只比较**预估**值，`estimated_tokens` 是每 kind 的固定先验，不是预留 | 真实预算台账在执行面的 `effect_ledger`/预算模块；这里只做「明显超限就不批」 |
+
+## 在既有循环里：watchdog 的实际接线
+
+verdict 不再是「一个没人调用的库」。接线只有一处，且不新增调度器：
+
+```
+ProgressTracker（既有）→ stall_signal（既有）→ Orchestrator._apply_result（既有）
+      └─> _maybe_stall_agent_redispatch_governed（新）
+              └─> watchdog.stall.report  →  Rust Watchdog::decide（权威 staircase）
+                      └─> apply_verdict  →  按 verdict 决定「还重试不重试」
+```
+
+| verdict | worker/orchestrator 动作 | 为什么 |
+| --- | --- | --- |
+| `continue` / `retry_same_contract` | 交给**既有**本地策略（是否换 agent），但 `attempts_remaining == 0` 时不再重试 | 阶梯预算归网关，本地策略只决定「换不换执行者」 |
+| `replan` | 停止重试并上报 verdict，**不改计划** | 改计划是网关的决策面；worker 自己重写计划就是第二套 planner |
+| `escalate_needs_human` / `stop` | 停止重试（`retryable = False`） | 网关已在服务端把升级投影成 `needs_human` 注意力项，worker 只需照做 |
+| verdict 不可读（契约违约） | 按 `escalate` 处理 | 把畸形答复当「继续」会让它一直转下去 |
+| 桥不可达 / 未接客户端 | **回到接线前的行为**（本地策略原样运行） | 桥故障不该冻结恢复；但也不能假装收到了 verdict |
+
+两条实现细节：verdict 会被写回 `stall_signal`（`verdict` / `verdict_source=gateway`），随失败事件一起
+发布，所以「是谁决定的」不用翻日志；凭空构造的 verdict 不会出现在事件里——没收到就不写。
+
+开关与失败模式：`UC_WATCHDOG_BRIDGE=off` 显式关闭；worker 没有 NATS 连接或治理平面不存在时，请求失败被
+`consult_watchdog` 降级为 `None`（一次 warn 日志），本地策略继续工作。
+
+测试：`tests/python/test_watchdog_bridge.py`（15 个）——payload 形状与可选字段省略、transport 失败降级、
+未知 verdict 抛契约错误、`replan` 丢已确认副作用被拒、`escalate`/`replan`/预算耗尽各自停止、桥不可达时
+原行为不变、畸形 verdict 不落到重试。
