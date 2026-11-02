@@ -99,6 +99,29 @@ kind（否则 `push` 会被压成 `owner/repo#0`，把多个 commit 折叠成一
 - **重复投递不唤醒**：收件箱对重投立即返回 `duplicate` 且匹配列表为空，唤醒遍历没有输入。
 - **唤醒失败不回滚入库**：事件已持久化；把唤醒失败变成错误会让调用方重试，而重试会被当重复丢掉。
   代价是「事件已记录但 case 仍是 waiting_event」这一窗口，下一次入库会修复（幂等）。
+### 3.2 自动恢复：订阅 opt-in + 四道闸（`case_resume.rs`）
+
+唤醒只改状态，不会自己开始工作。开启工作要经过 `uc_engine::governance::plan_resume`
+（`crates/uc-engine/src/governance/case_resume.rs`），四道闸全过才提交一次新 run：
+
+| 闸 | 检查 | 不过时的码 | 为什么必须单独成闸 |
+| --- | --- | --- | --- |
+| 1 订阅 opt-in | `Subscription.auto_resume == true`（默认 false，`with_auto_resume()` 显式打开） | `not_opted_in` | 「观察」和「开工」是两种意图；默认开工会让一个只读订阅偷偷变成驱动器 |
+| 2 case 可运行 | 终态不恢复；只有 `active` 能开新 run；已有 open run 时拒绝 | `case_terminal` / `case_not_runnable` / `run_already_open` | `needs_human`、`blocked` 必须由人或别的原因解除；并发开两个 run 是重复劳动 |
+| 3 授权仍在 | mandate 存在、未吊销、未过期，且**允许 `dispatch` 动作类** | `no_live_mandate` | 「授权还有效」不等于「允许派活」：只读 mandate 不能因为没过期就启动编码 |
+| 4 稳定提交身份 | `submission_id = case-resume:<case>:<event dedup_key>`，描述只由事件身份构成 | —（由 submit-once 兜底） | 重投/重试/崩溃后仍然只产生一个逻辑 task；payload 文本不能塑造工作描述 |
+
+提交走的是与 `SubmitTask` RPC **完全相同**的 submit-once 路径（同一 outbox、同一派生 task id），
+所以恢复出来的 run 与人工提交的 task 在下游不可区分；`IngestTriggerResponse.resumed_task_ids`
+回报本次真正起了哪些 task（空数组是常态，不是错误）。
+
+测试：引擎侧 `an_opted_in_active_case_with_a_dispatch_mandate_resumes`、
+`the_submission_identity_is_stable_for_the_same_event`、`a_subscription_that_did_not_opt_in_never_starts_work`、
+`needs_human_is_never_resumed_by_an_event`、`an_open_run_blocks_a_second_one`、
+`a_revoked_or_read_only_mandate_blocks_the_resume`、`a_case_without_a_mandate_cannot_resume`；
+服务层 `an_opted_in_event_resumes_the_case_with_a_governed_task`（重投不重复起 run）、
+`an_observe_only_subscription_wakes_without_starting_work`。
+
 ## 4. 订阅与匹配
 
 `Subscription { id, case_id, source, filter, active, created_at, last_event_at, event_count }`

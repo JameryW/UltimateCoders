@@ -97,6 +97,7 @@ impl TriggerInbox {
 
         let subscriptions = self.subscriptions.list::<Subscription>(1000).await?;
         let mut matched_cases: Vec<String> = Vec::new();
+        let mut auto_resume_cases: Vec<String> = Vec::new();
         let mut unmatched_reason = None;
         for (mut subscription, version) in subscriptions {
             if !subscription.active || subscription.source != event.source {
@@ -107,6 +108,13 @@ impl TriggerInbox {
             }
             if !matched_cases.contains(&subscription.case_id) {
                 matched_cases.push(subscription.case_id.clone());
+            }
+            // Recorded separately from `matched_cases`: matching routes the event,
+            // `auto_resume` is what may start work. Keeping them apart means the
+            // inbox never has to guess and the caller never has to re-read the
+            // subscription to find out.
+            if subscription.auto_resume && !auto_resume_cases.contains(&subscription.case_id) {
+                auto_resume_cases.push(subscription.case_id.clone());
             }
             subscription.record_event(now);
             match self
@@ -137,6 +145,7 @@ impl TriggerInbox {
             duplicate: false,
             matched_cases,
             unmatched_reason,
+            auto_resume_cases,
         })
     }
 

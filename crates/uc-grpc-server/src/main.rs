@@ -848,7 +848,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // it, and every `/api/*` governance endpoint would answer 503.
     #[cfg(feature = "messaging")]
     if let Some(client) = grpc_server.nats_client() {
-        uc_grpc::governance::bridge::spawn_nats_bridge(client, grpc_server.governance().clone()).await;
+        uc_grpc::governance::bridge::spawn_nats_bridge(
+            client,
+            grpc_server.governance().clone(),
+            Some(uc_grpc::governance::bridge::DispatchContext {
+                task_store: grpc_server.task_store().clone(),
+                event_tx: grpc_server.event_tx(),
+            }),
+        )
+        .await;
         tracing::info!("Governance NATS bridge started (uc.governance.request + outbox dispatcher)");
     }
 

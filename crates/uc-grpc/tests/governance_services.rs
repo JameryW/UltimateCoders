@@ -698,3 +698,249 @@ async fn an_arriving_event_wakes_a_waiting_case() {
         "the waiting item must be resolved by the arriving event"
     );
 }
+
+// ── Closed loop: an opted-in subscription starts the next run ──────
+
+/// The end of the loop PR04 was for: an event arrives, the case wakes, and — because
+/// its subscription opted into `auto_resume` and it holds a live mandate that permits
+/// dispatch — a real task exists afterwards. Everything goes through the same
+/// submit-once path the `SubmitTask` RPC uses, so the resumed task is a governed task,
+/// not a side channel.
+#[tokio::test]
+async fn an_opted_in_event_resumes_the_case_with_a_governed_task() {
+    use tokio::sync::{broadcast, Mutex};
+    use uc_types::governance::{
+        ActionClass, AttentionItem, AttentionKind, CaseStatus, Mandate, MandateOrigin,
+        MandateScope, PolicyVersion, SourceKind, Subscription, SubscriptionFilter,
+    };
+
+    let (permissions, principal) = dashboard(vec![
+        Permission::CaseCreate,
+        Permission::CaseControl,
+        Permission::TriggerIngest,
+    ]);
+    let governance = planned_governance(permissions, principal).await;
+    let now = chrono::Utc::now();
+
+    // A waiting case that is allowed to dispatch and subscribed with auto_resume.
+    let mut case = WorkCase::new(
+        "flaky build",
+        "the build keeps failing",
+        "proj",
+        CaseOrigin::from_trigger("github", Some("acme/widgets#7".to_string()), None),
+        now,
+    );
+    case.status = CaseStatus::WaitingEvent;
+    let (case, _) = governance.cases.create_unique(case).await.expect("case");
+    let case_id = case.id.0.clone();
+    let mandate = Mandate::new(
+        case_id.as_str(),
+        uc_types::governance::Principal::user("alice"),
+        MandateOrigin::HumanIssued,
+        vec![
+            MandateScope::Action {
+                class: ActionClass::Dispatch,
+            },
+            MandateScope::Action {
+                class: ActionClass::Write,
+            },
+            MandateScope::MaxRuns { max: 5 },
+        ],
+        PolicyVersion(1),
+        now,
+    );
+    governance.mandates.put_new(&mandate).await.expect("mandate");
+    governance
+        .cases
+        .update(case_id.as_str(), |stored| {
+            stored.mandate_id = Some(mandate.id.0.clone());
+            Ok(())
+        })
+        .await
+        .expect("case mandate link");
+    governance
+        .triggers
+        .upsert_subscription(
+            Subscription::new(
+                case_id.clone(),
+                SourceKind::GitHub,
+                SubscriptionFilter::thread("acme/widgets#7"),
+                now,
+            )
+            .with_auto_resume(),
+        )
+        .await
+        .expect("subscription");
+    governance
+        .attention
+        .raise(
+            AttentionItem::new(
+                "att-waiting",
+                case_id.clone(),
+                AttentionKind::WaitingEvent,
+                "waiting on the CI run",
+                now,
+            ),
+            now,
+        )
+        .await
+        .expect("attention item");
+
+    let task_store = Arc::new(Mutex::new(uc_grpc::server::TaskStore::new()));
+    let (event_tx, _events) = broadcast::channel(16);
+    let triggers = uc_grpc::governance::TriggerServiceImpl::with_dispatch(
+        governance.clone(),
+        task_store.clone(),
+        event_tx,
+    );
+
+    let request = || {
+        Request::new(IngestTriggerRequest {
+            source: "github".to_string(),
+            kind: "check_run".to_string(),
+            external_id: "check_run:42:completed:success".to_string(),
+            thread_key: Some("acme/widgets#7".to_string()),
+            repo: Some("acme/widgets".to_string()),
+            actor: Some("github-actions".to_string()),
+            payload_json: r#"{"conclusion":"success"}"#.to_string(),
+            delivery_id: None,
+            principal_kind: "service".to_string(),
+            principal_id: DASHBOARD_ID.to_string(),
+            open_case_if_unmatched: false,
+            open_case_project_id: None,
+        })
+    };
+    let ingested = triggers
+        .ingest_trigger(request())
+        .await
+        .expect("ingest answers")
+        .into_inner();
+    assert!(ingested.success);
+    assert_eq!(
+        ingested.resumed_task_ids.len(),
+        1,
+        "an opted-in event must start exactly one run"
+    );
+    let task_id = ingested.resumed_task_ids[0].clone();
+
+    // The task is real and governed by the case.
+    let stored = task_store.lock().await;
+    assert!(
+        stored.get_task(&task_id).is_some(),
+        "the resumed task must exist in the task store"
+    );
+    drop(stored);
+    let (case, _) = governance.cases.get(&case_id).await.unwrap().unwrap();
+    assert_eq!(case.status, CaseStatus::Active);
+    assert_eq!(case.runs.len(), 1, "exactly one run was opened");
+    assert_eq!(case.runs[0].task_id, task_id);
+
+    // A redelivery is a duplicate and must not start a second run.
+    let again = triggers
+        .ingest_trigger(request())
+        .await
+        .expect("ingest answers")
+        .into_inner();
+    assert!(again.duplicate);
+    assert!(
+        again.resumed_task_ids.is_empty(),
+        "a redelivered event must not resume twice"
+    );
+    let (case, _) = governance.cases.get(&case_id).await.unwrap().unwrap();
+    assert_eq!(case.runs.len(), 1);
+}
+
+#[tokio::test]
+async fn an_observe_only_subscription_wakes_without_starting_work() {
+    use tokio::sync::{broadcast, Mutex};
+    use uc_types::governance::{
+        ActionClass, CaseStatus, Mandate, MandateOrigin, MandateScope, PolicyVersion, SourceKind,
+        Subscription, SubscriptionFilter,
+    };
+
+    let (permissions, principal) = dashboard(vec![
+        Permission::CaseCreate,
+        Permission::CaseControl,
+        Permission::TriggerIngest,
+    ]);
+    let governance = planned_governance(permissions, principal).await;
+    let now = chrono::Utc::now();
+    let mut case = WorkCase::new(
+        "flaky build",
+        "the build keeps failing",
+        "proj",
+        CaseOrigin::from_trigger("github", Some("acme/widgets#8".to_string()), None),
+        now,
+    );
+    case.status = CaseStatus::WaitingEvent;
+    let (case, _) = governance.cases.create_unique(case).await.unwrap();
+    let case_id = case.id.0.clone();
+    let mandate = Mandate::new(
+        case_id.as_str(),
+        uc_types::governance::Principal::user("alice"),
+        MandateOrigin::HumanIssued,
+        vec![
+            MandateScope::Action {
+                class: ActionClass::Dispatch,
+            },
+            MandateScope::MaxRuns { max: 5 },
+        ],
+        PolicyVersion(1),
+        now,
+    );
+    governance.mandates.put_new(&mandate).await.unwrap();
+    governance
+        .cases
+        .update(case_id.as_str(), |stored| {
+            stored.mandate_id = Some(mandate.id.0.clone());
+            Ok(())
+        })
+        .await
+        .unwrap();
+    // Deliberately NOT `with_auto_resume()`.
+    governance
+        .triggers
+        .upsert_subscription(Subscription::new(
+            case_id.clone(),
+            SourceKind::GitHub,
+            SubscriptionFilter::thread("acme/widgets#8"),
+            now,
+        ))
+        .await
+        .unwrap();
+
+    let task_store = Arc::new(Mutex::new(uc_grpc::server::TaskStore::new()));
+    let (event_tx, _events) = broadcast::channel(16);
+    let triggers = uc_grpc::governance::TriggerServiceImpl::with_dispatch(
+        governance.clone(),
+        task_store.clone(),
+        event_tx,
+    );
+    let ingested = triggers
+        .ingest_trigger(Request::new(IngestTriggerRequest {
+            source: "github".to_string(),
+            kind: "check_run".to_string(),
+            external_id: "check_run:88:completed:success".to_string(),
+            thread_key: Some("acme/widgets#8".to_string()),
+            repo: Some("acme/widgets".to_string()),
+            actor: None,
+            payload_json: "{}".to_string(),
+            delivery_id: None,
+            principal_kind: "service".to_string(),
+            principal_id: DASHBOARD_ID.to_string(),
+            open_case_if_unmatched: false,
+            open_case_project_id: None,
+        }))
+        .await
+        .expect("ingest answers")
+        .into_inner();
+    assert!(ingested.resumed_task_ids.is_empty());
+    assert!(task_store.lock().await.get_task("anything").is_none());
+    let (case, _) = governance.cases.get(&case_id).await.unwrap().unwrap();
+    assert_eq!(
+        case.status,
+        CaseStatus::Active,
+        "the wake still happens for an observe-only subscription"
+    );
+    assert!(case.runs.is_empty(), "observing must not start work");
+}

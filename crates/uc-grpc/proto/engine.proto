@@ -1243,6 +1243,9 @@ message IngestTriggerResponse {
     optional string unmatched_reason = 7;
     optional string opened_case_id = 8;
     optional string error = 9;
+    // Tasks started because a matched case's subscription opted into auto_resume
+    // and the case was woken by this event. Empty for observe-only subscriptions.
+    repeated string resumed_task_ids = 10;
 }
 
 message SubscriptionProto {
@@ -1257,6 +1260,7 @@ message SubscriptionProto {
     int64 created_at = 9;
     uint64 event_count = 10;
     optional int64 last_event_at = 11;
+    bool auto_resume = 12;
 }
 
 message ListSubscriptionsRequest {
@@ -1278,6 +1282,10 @@ message UpsertSubscriptionRequest {
     repeated string kinds = 6;
     repeated string labels = 7;
     bool active = 8;
+    // Opt in to starting a new run when a matching event arrives. The gateway still
+    // requires a live mandate with the `dispatch` action class, so this flag alone
+    // cannot start ungoverned work.
+    bool auto_resume = 9;
 }
 
 message UpsertSubscriptionResponse {

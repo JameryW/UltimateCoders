@@ -22,6 +22,7 @@
 //! * an attention item is not a lock: it is a projection and can be rebuilt.
 
 pub mod attention;
+pub mod case_resume;
 pub mod case_store;
 pub mod case_wake;
 pub mod outbox;
@@ -36,6 +37,7 @@ use std::sync::Arc;
 
 pub use attention::{AttentionBoard, AttentionBoardError};
 pub use case_store::{CaseStore, CaseStoreError, MandateStore};
+pub use case_resume::{plan_resume, ResumePlan, ResumeSkip};
 pub use case_wake::{wake_matched_cases, CaseWake};
 pub use outbox::{OutboxError, OutboxQueue};
 pub use policy::{PolicyEngine, PolicyEngineError};

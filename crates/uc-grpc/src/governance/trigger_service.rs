@@ -48,6 +48,9 @@ pub struct SubscriptionView {
     pub event_count: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_event_at: Option<DateTime<Utc>>,
+    /// Whether a matching event may start a new run for the case.
+    #[serde(default)]
+    pub auto_resume: bool,
 }
 
 impl SubscriptionView {
@@ -73,6 +76,7 @@ impl SubscriptionView {
             created_at: subscription.created_at,
             event_count: subscription.event_count,
             last_event_at: subscription.last_event_at,
+            auto_resume: subscription.auto_resume,
         }
     }
 
@@ -89,6 +93,7 @@ impl SubscriptionView {
             created_at: encode_timestamp(self.created_at),
             event_count: self.event_count,
             last_event_at: encode_optional_timestamp(self.last_event_at),
+            auto_resume: self.auto_resume,
         }
     }
 }
@@ -107,11 +112,34 @@ pub struct IngestView {
     /// Case opened because nothing matched and the caller asked for one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opened_case_id: Option<String>,
+    /// Tasks created because a case whose subscription opted into `auto_resume`
+    /// was woken by this event. Empty when nothing resumed — which is the normal
+    /// case for an observe-only subscription.
+    #[serde(default)]
+    pub resumed_task_ids: Vec<String>,
 }
 
 /// Ingest one external event and fan it out to matching subscriptions.
+///
+/// The gateway-less form: no task store, so `auto_resume` can only wake a case,
+/// never start a run. The server and the NATS bridge call
+/// [`ingest_with_dispatch`] instead.
 pub async fn ingest(
     governance: &Governance,
+    request: crate::ultimate_coders::IngestTriggerRequest,
+) -> OpResult<IngestView> {
+    ingest_with_dispatch(governance, None, None, request).await
+}
+
+/// Ingest one external event, wake the cases it belongs to, and resume the ones
+/// that opted in.
+///
+/// `task_store` is what lets a resume materialise a logical task; without it the
+/// wake still happens and the resume is declined with a logged reason.
+pub async fn ingest_with_dispatch(
+    governance: &Governance,
+    task_store: Option<&Arc<tokio::sync::Mutex<crate::server::TaskStore>>>,
+    event_tx: Option<&tokio::sync::broadcast::Sender<crate::ultimate_coders::TaskEvent>>,
     request: crate::ultimate_coders::IngestTriggerRequest,
 ) -> OpResult<IngestView> {
     let now = super::now();
@@ -201,6 +229,20 @@ pub async fn ingest(
         uc_engine::governance::wake_matched_cases(governance, &outcome.matched_cases, &outcome.event_id, now)
             .await;
 
+    // Resume runs *after* the wake: a case becomes runnable by being woken, so the
+    // resume plan sees `active` with no open run. The plan itself re-checks every
+    // gate (opt-in, live dispatch mandate, no open run), so this call cannot start
+    // work that the governance plane did not authorize.
+    let resumed_task_ids = crate::governance::resume_flow::execute_resumes(
+        governance,
+        task_store,
+        event_tx,
+        &outcome.auto_resume_cases,
+        &event,
+        now,
+    )
+    .await;
+
     let mut opened_case_id = None;
     if !outcome.duplicate
         && outcome.matched_cases.is_empty()
@@ -232,6 +274,7 @@ pub async fn ingest(
             kind = event.kind.as_str(),
             matched = outcome.matched_cases.len(),
             woken = woken_cases.len(),
+            resumed = resumed_task_ids.len(),
             opened_case = opened_case_id.as_deref().unwrap_or(""),
             "trigger ingested"
         );
@@ -245,6 +288,7 @@ pub async fn ingest(
         matched_cases: outcome.matched_cases,
         unmatched_reason: outcome.unmatched_reason,
         opened_case_id,
+        resumed_task_ids,
     })
 }
 
@@ -461,6 +505,9 @@ pub async fn upsert_subscription(
         subscription.id = SubscriptionId(id);
     }
     subscription.active = request.active;
+    // Enabling auto-resume is a governance act: the plan gate still requires a live
+    // `dispatch` mandate, so this flag alone can never start ungoverned work.
+    subscription.auto_resume = request.auto_resume;
 
     let subscription = governance
         .triggers
@@ -472,6 +519,7 @@ pub async fn upsert_subscription(
         case_id = %subscription.case_id,
         source = subscription.source.as_str(),
         active = subscription.active,
+        auto_resume = subscription.auto_resume,
         "subscription upserted"
     );
     Ok(SubscriptionView::from_subscription(&subscription))
@@ -510,14 +558,37 @@ fn trigger_error(error: TriggerInboxError) -> OpError {
 }
 
 /// gRPC adapter over the operations above.
+///
+/// Holds the task-store handles because ingestion is allowed to start work when a
+/// subscription opted in. `new` builds the observe-only form (no task store, so
+/// `auto_resume` declines); [`Self::with_dispatch`] is what the gateway uses.
 #[derive(Clone)]
 pub struct TriggerServiceImpl {
     governance: Arc<Governance>,
+    task_store: Option<Arc<tokio::sync::Mutex<crate::server::TaskStore>>>,
+    event_tx: Option<tokio::sync::broadcast::Sender<crate::ultimate_coders::TaskEvent>>,
 }
 
 impl TriggerServiceImpl {
     pub fn new(governance: Arc<Governance>) -> Self {
-        Self { governance }
+        Self {
+            governance,
+            task_store: None,
+            event_tx: None,
+        }
+    }
+
+    /// Attach the execution-plane handles so an opted-in event can start a run.
+    pub fn with_dispatch(
+        governance: Arc<Governance>,
+        task_store: Arc<tokio::sync::Mutex<crate::server::TaskStore>>,
+        event_tx: tokio::sync::broadcast::Sender<crate::ultimate_coders::TaskEvent>,
+    ) -> Self {
+        Self {
+            governance,
+            task_store: Some(task_store),
+            event_tx: Some(event_tx),
+        }
     }
 
     pub fn governance(&self) -> &Arc<Governance> {
@@ -531,7 +602,13 @@ impl TriggerService for TriggerServiceImpl {
         &self,
         request: Request<crate::ultimate_coders::IngestTriggerRequest>,
     ) -> Result<Response<crate::ultimate_coders::IngestTriggerResponse>, Status> {
-        let outcome = ingest(&self.governance, request.into_inner()).await?;
+        let outcome = ingest_with_dispatch(
+            &self.governance,
+            self.task_store.as_ref(),
+            self.event_tx.as_ref(),
+            request.into_inner(),
+        )
+        .await?;
         Ok(Response::new(
             crate::ultimate_coders::IngestTriggerResponse {
                 success: true,
@@ -542,6 +619,7 @@ impl TriggerService for TriggerServiceImpl {
                 matched_cases: outcome.matched_cases,
                 unmatched_reason: outcome.unmatched_reason,
                 opened_case_id: outcome.opened_case_id,
+                resumed_task_ids: outcome.resumed_task_ids,
                 error: None,
             },
         ))
@@ -735,6 +813,7 @@ mod tests {
     async fn upsert_is_idempotent_and_keeps_the_delivery_counters() {
         let governance = ingesting_plane().await;
         let request = crate::ultimate_coders::UpsertSubscriptionRequest {
+            auto_resume: false,
             subscription_id: Some("sub-fixed".to_string()),
             case_id: "case-1".to_string(),
             source: "github".to_string(),
@@ -773,6 +852,7 @@ mod tests {
         let subscription = upsert_subscription(
             &governance,
             crate::ultimate_coders::UpsertSubscriptionRequest {
+                auto_resume: false,
                 subscription_id: None,
                 case_id: "case-1".to_string(),
                 source: "ci".to_string(),

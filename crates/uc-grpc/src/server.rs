@@ -2877,7 +2877,14 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         AttentionServiceServer<AttentionServiceImpl>,
         ProactiveServiceServer<ProactiveServiceImpl>,
     ) {
-        crate::governance::services(self.governance.clone())
+        // The trigger service gets the execution-plane handles: an event from a
+        // subscription that opted into `auto_resume` is allowed to start a run, and
+        // that needs the same task store the `SubmitTask` RPC writes to.
+        crate::governance::services_with_dispatch(
+            self.governance.clone(),
+            self.inner.task_store.clone(),
+            self.inner.event_tx.clone(),
+        )
     }
 
     /// Same as [`Self::into_governance_services`], wrapped with the bearer-token
@@ -2894,13 +2901,19 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         Intercepted<ProactiveServiceServer<ProactiveServiceImpl>>,
     ) {
         let governance = self.governance.clone();
+        let task_store = self.inner.task_store.clone();
+        let event_tx = self.inner.event_tx.clone();
         (
             CaseServiceServer::with_interceptor(
                 CaseServiceImpl::new(governance.clone()),
                 interceptor.clone(),
             ),
             TriggerServiceServer::with_interceptor(
-                TriggerServiceImpl::new(governance.clone()),
+                TriggerServiceImpl::with_dispatch(
+                    governance.clone(),
+                    task_store.clone(),
+                    event_tx.clone(),
+                ),
                 interceptor.clone(),
             ),
             AttentionServiceServer::with_interceptor(
@@ -2928,6 +2941,11 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// Access the shared TaskStore.
     pub fn task_store(&self) -> &Arc<Mutex<TaskStore>> {
         &self.inner.task_store
+    }
+
+    /// Access the task-event broadcast channel (WatchTask streams).
+    pub fn event_tx(&self) -> tokio::sync::broadcast::Sender<TaskEvent> {
+        self.inner.event_tx.clone()
     }
 
     /// Access the CheckpointManager (event-sourcing snapshot/recover).

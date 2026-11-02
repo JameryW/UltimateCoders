@@ -453,7 +453,11 @@ pub fn spawn_outbox_dispatcher(client: async_nats::Client, governance: Arc<Gover
 /// Returns immediately; the loops live in background tasks for the process
 /// lifetime.
 #[cfg(feature = "messaging")]
-pub async fn spawn_nats_bridge(client: async_nats::Client, governance: Arc<Governance>) {
+pub async fn spawn_nats_bridge(
+    client: async_nats::Client,
+    governance: Arc<Governance>,
+    dispatch: Option<DispatchContext>,
+) {
     // Recovery first: an entry left `InFlight` must be re-queued before the drain
     // loop or a request handler starts publishing.
     recover_outbox(&governance).await;
@@ -486,8 +490,9 @@ pub async fn spawn_nats_bridge(client: async_nats::Client, governance: Arc<Gover
         while let Some(message) = subscription.next().await {
             let governance = governance.clone();
             let client = client.clone();
+            let dispatch = dispatch.clone();
             tokio::spawn(async move {
-                handle_request(&governance, &client, message).await;
+                handle_request(&governance, &client, dispatch.as_ref(), message).await;
             });
         }
         tracing::warn!(
@@ -502,6 +507,7 @@ pub async fn spawn_nats_bridge(client: async_nats::Client, governance: Arc<Gover
 async fn handle_request(
     governance: &Arc<Governance>,
     client: &async_nats::Client,
+    dispatch: Option<&DispatchContext>,
     message: async_nats::Message,
 ) {
     let Some(reply_subject) = message.reply.clone() else {
@@ -531,7 +537,7 @@ async fn handle_request(
         request.payload
     };
     let op = request.op;
-    let reply = dispatch_op(governance, &op, payload).await;
+    let reply = dispatch_op_with(governance, dispatch, &op, payload).await;
 
     // A submit must reach the transport before the caller's timeout: drain the
     // queue inline instead of waiting up to one dispatcher tick.
@@ -547,6 +553,18 @@ async fn handle_request(
     }
 
     publish_reply(client, &reply_subject, &reply).await;
+}
+
+/// Execution-plane handles the bridge needs for work-starting operations.
+///
+/// Only `trigger.ingest` uses them: a subscription that opted into `auto_resume`
+/// may start a run, and that needs the same task store the `SubmitTask` RPC uses.
+/// Everything else in the bridge is governance-only, which is why this is an
+/// optional context rather than a parameter on all 27 operations.
+#[derive(Clone)]
+pub struct DispatchContext {
+    pub task_store: std::sync::Arc<tokio::sync::Mutex<crate::server::TaskStore>>,
+    pub event_tx: tokio::sync::broadcast::Sender<crate::ultimate_coders::TaskEvent>,
 }
 
 #[cfg(feature = "messaging")]
@@ -581,7 +599,18 @@ pub async fn dispatch_op(
     op: &str,
     payload: serde_json::Value,
 ) -> BridgeReply {
-    match dispatch_result(governance, op, payload).await {
+    dispatch_op_with(governance, None, op, payload).await
+}
+
+/// [`dispatch_op`] with the execution-plane handles attached, so `trigger.ingest`
+/// can resume a case whose subscription opted in.
+pub async fn dispatch_op_with(
+    governance: &Governance,
+    dispatch: Option<&DispatchContext>,
+    op: &str,
+    payload: serde_json::Value,
+) -> BridgeReply {
+    match dispatch_result(governance, dispatch, op, payload).await {
         Ok(result) => BridgeReply::ok(result),
         Err(error) => {
             tracing::info!(
@@ -599,6 +628,7 @@ pub async fn dispatch_op(
 /// same function the gRPC service calls, and shapes the response object.
 async fn dispatch_result(
     governance: &Governance,
+    dispatch: Option<&DispatchContext>,
     op: &str,
     payload: serde_json::Value,
 ) -> OpResult<serde_json::Value> {
@@ -680,7 +710,16 @@ async fn dispatch_result(
 
         // ── Triggers + subscriptions (PR04) ──────────────────────────
         "trigger.ingest" => {
-            let outcome = trigger_service::ingest(governance, decode(op, payload)?).await?;
+            // The only op that may start work: with a dispatch context a resumed
+            // case gets a real task; without one the wake still happens and the
+            // resume is declined with a logged reason.
+            let outcome = trigger_service::ingest_with_dispatch(
+                governance,
+                dispatch.map(|context| &context.task_store),
+                dispatch.map(|context| &context.event_tx),
+                decode(op, payload)?,
+            )
+            .await?;
             to_value(&outcome)
         }
         "trigger.subscription.list" => {
@@ -950,6 +989,7 @@ bridge_request!(UpsertSubscriptionRequest {
     kinds: Vec<String>,
     labels: Vec<String>,
     active: bool,
+    auto_resume: bool,
 });
 
 bridge_request!(DeleteSubscriptionRequest { subscription_id: String });

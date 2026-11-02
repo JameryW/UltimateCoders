@@ -351,6 +351,15 @@ pub struct Subscription {
     /// yet" from "subscription broken".
     #[serde(default)]
     pub event_count: u64,
+    /// Opt-in: when a matching event arrives, start a new governed run for the
+    /// case (the `case_wake` path wakes it, the resume path submits work).
+    ///
+    /// Default **false**: a subscription that only observes must never be able to
+    /// start work. Turning it on is a per-case decision made by an operator, and
+    /// the resume path still requires a live mandate — the subscription is the
+    /// "do I want work to start", the mandate is the "am I allowed".
+    #[serde(default)]
+    pub auto_resume: bool,
 }
 
 impl Subscription {
@@ -369,7 +378,18 @@ impl Subscription {
             active: true,
             last_event_at: None,
             event_count: 0,
+            auto_resume: false,
         }
+    }
+
+    /// Opt this subscription into starting new runs when its events arrive.
+    ///
+    /// Kept as an explicit builder rather than a constructor flag so enabling it
+    /// is always visible at the call site: it is the one subscription property
+    /// that makes the system start work by itself.
+    pub fn with_auto_resume(mut self) -> Self {
+        self.auto_resume = true;
+        self
     }
 
     pub fn record_event(&mut self, now: DateTime<Utc>) {
@@ -393,6 +413,11 @@ pub struct IngestOutcome {
     /// ``"thread_has_no_case"``), for the dashboard's trigger inspector.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unmatched_reason: Option<String>,
+    /// Matched cases whose subscription opted into `auto_resume`. The resume plan
+    /// is still gated by the case's mandate and run state; this is only "the
+    /// subscription asked for work to start".
+    #[serde(default)]
+    pub auto_resume_cases: Vec<String>,
 }
 
 impl IngestOutcome {
@@ -404,6 +429,7 @@ impl IngestOutcome {
             duplicate: true,
             matched_cases: Vec::new(),
             unmatched_reason: None,
+            auto_resume_cases: Vec::new(),
         }
     }
 }
@@ -546,6 +572,33 @@ mod tests {
         assert!(TriggerKind::PullRequestReview.is_thread_update());
         assert!(!TriggerKind::IssueOpened.is_thread_update());
         assert!(!TriggerKind::Manual.is_thread_update());
+    }
+
+    #[test]
+    fn auto_resume_is_opt_in_and_off_by_default() {
+        let observe = Subscription::new(
+            "case-1",
+            SourceKind::GitHub,
+            SubscriptionFilter::thread("acme/widgets#1"),
+            now(),
+        );
+        assert!(
+            !observe.auto_resume,
+            "a subscription that only observes must never start work"
+        );
+        let resume = observe.with_auto_resume();
+        assert!(resume.auto_resume);
+        // Serialized form keeps the default explicit for older readers.
+        let json = serde_json::to_value(&resume).expect("serializes");
+        assert_eq!(json["auto_resume"], serde_json::json!(true));
+        let observe_json = serde_json::to_value(Subscription::new(
+            "case-2",
+            SourceKind::GitHub,
+            SubscriptionFilter::thread("acme/widgets#2"),
+            now(),
+        ))
+        .expect("serializes");
+        assert_eq!(observe_json["auto_resume"], serde_json::json!(false));
     }
 
     #[test]

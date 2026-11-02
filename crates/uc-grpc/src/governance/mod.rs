@@ -31,6 +31,7 @@ pub mod attention_service;
 pub mod bridge;
 pub mod case_service;
 pub mod policy_interceptor;
+pub mod resume_flow;
 pub mod proactive_service;
 pub mod trigger_service;
 
@@ -79,6 +80,37 @@ pub fn services(
     (
         CaseServiceServer::new(CaseServiceImpl::new(governance.clone())),
         TriggerServiceServer::new(TriggerServiceImpl::new(governance.clone())),
+        AttentionServiceServer::new(AttentionServiceImpl::new(governance.clone())),
+        ProactiveServiceServer::new(ProactiveServiceImpl::new(governance)),
+    )
+}
+
+/// Same as [`services`], but the trigger service may start work: ingestion of an
+/// opted-in event can resume a case, which needs the task store and the task-event
+/// channel the `SubmitTask` RPC writes to.
+#[allow(clippy::type_complexity)]
+pub fn services_with_dispatch(
+    governance: std::sync::Arc<Governance>,
+    task_store: std::sync::Arc<tokio::sync::Mutex<crate::server::TaskStore>>,
+    event_tx: tokio::sync::broadcast::Sender<crate::ultimate_coders::TaskEvent>,
+) -> (
+    crate::ultimate_coders::case_service_server::CaseServiceServer<CaseServiceImpl>,
+    crate::ultimate_coders::trigger_service_server::TriggerServiceServer<TriggerServiceImpl>,
+    crate::ultimate_coders::attention_service_server::AttentionServiceServer<AttentionServiceImpl>,
+    crate::ultimate_coders::proactive_service_server::ProactiveServiceServer<ProactiveServiceImpl>,
+) {
+    use crate::ultimate_coders::attention_service_server::AttentionServiceServer;
+    use crate::ultimate_coders::case_service_server::CaseServiceServer;
+    use crate::ultimate_coders::proactive_service_server::ProactiveServiceServer;
+    use crate::ultimate_coders::trigger_service_server::TriggerServiceServer;
+
+    (
+        CaseServiceServer::new(CaseServiceImpl::new(governance.clone())),
+        TriggerServiceServer::new(TriggerServiceImpl::with_dispatch(
+            governance.clone(),
+            task_store,
+            event_tx,
+        )),
         AttentionServiceServer::new(AttentionServiceImpl::new(governance.clone())),
         ProactiveServiceServer::new(ProactiveServiceImpl::new(governance)),
     )
