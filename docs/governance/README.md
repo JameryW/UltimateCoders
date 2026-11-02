@@ -148,10 +148,10 @@
 
 | 空白 | 现状 | 原因 |
 | --- | --- | --- |
-| gRPC 服务与 NATS 桥的 Rust 侧实现 | **已落地**：`crates/uc-grpc/proto/engine.proto` 的 `CaseService`/`TriggerService`/`AttentionService`/`ProactiveService`，对应实现 `crates/uc-grpc/src/governance/*.rs`，NATS 请求/回复桥（27 个 op）+ outbox 分发器 `bridge.rs`，网关接线 `GrpcServer::with_governance` / `into_governance_services` 与启动引导 `crates/uc-grpc-server/src/governance_boot.rs`。Python 端请求方为 `python/ultimate_coders/governance_client.py` | **以 proto 为权威**；桥接只镜像同一批 op（一份实现，两种传输） |
+| gRPC 服务与 NATS 桥的 Rust 侧实现 | **已落地**：`crates/uc-grpc/proto/engine.proto` 的 `CaseService`/`TriggerService`/`AttentionService`/`ProactiveService`/`ApprovalService`，对应实现 `crates/uc-grpc/src/governance/*.rs`，NATS 请求/回复桥（30 个 op）+ outbox 分发器 `bridge.rs`，网关接线 `GrpcServer::with_governance` / `into_governance_services` 与启动引导 `crates/uc-grpc-server/src/governance_boot.rs`。Python 端请求方为 `python/ultimate_coders/governance_client.py` | **以 proto 为权威**；桥接只镜像同一批 op（一份实现，两种传输） |
 | Graph-backed fencing 纳入治理 | 未纳入。`WorkCase` 明确不存 DAG | 执行面租约/fencing 已有独立设计（见 `docs/architecture.md` 的 Durable Runtime 一节），治理层重复实现会产生第二权威 |
 | 消费端去重（`uc.task.submit` 订阅方） | **已落地**：`python/ultimate_coders/submission_dedup.py`（`(submission_id, task_id)` 持久记录 + `observe`/`mark_applied`）接入 `nats_worker._handle_submit`；重复投递被丢弃并回 `duplicate:true`，崩溃在 `observe` 与 `mark_applied` 之间时**重放而不是丢弃**。执行面 `TaskStore` 仍是主键兜底 | 归执行面改造；治理层只保证**身份稳定**并把 `submission_id`/`task_id` 放进 payload |
-| 交互式审批流（提案 → 人工确认 → 执行） | `human_approval` 已强制但形式是「操作者层级即批准」：`scale_workers` / `docker_run` 额外要求 `proactive_execute`，agent/worker 被结构性天花板挡住（`deny_code=tool_requires_human_approval`）；没有交互式确认队列 | 真实审批通道属于 PR06 的 proactive 面；在 UI 与队列落地前，把「谁有权触发」收紧到操作者层级是唯一可强制的边界 |
+| 审批的 React 面板 | 回路已落地：`approval.request` / `approval.list` / `approval.decide` + `/api/approvals`（决定需要 token），许可是单次且会过期；缺的只是专门的 UI 面板——请求会作为 `needs_human` 项出现在已有待办视图里 | 先把「谁判、判给谁、判几次」做对；面板后置 |
 | 非 GitHub 的 webhook 签名方案 | 未实现。`SourceKind` 有 `ci`/`lark`，但只有 GitHub 的 `sha256=` HMAC 校验 | 各 provider 的签名算法不同，猜一个比不支持更危险 |
 | 多主机调度 / 容量拍卖 | 不在本层 | 属于既有 scheduler + `UC_SCALE_HOSTS` 的职责，见 `AGENTS.md` |
 | `UC_GOVERNANCE_BACKEND` 的读取点 | **已落地**：`crates/uc-grpc-server/src/governance_boot.rs::choose_record_store`（`memory` / `postgres` / `pg`；未知值降级为内存并 warning） | 见 [operations.md](operations.md) §1 |

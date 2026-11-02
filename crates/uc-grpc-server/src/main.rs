@@ -1076,7 +1076,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_builder = if dashboard_token.is_empty() {
         tracing::info!("gRPC auth disabled (no UC_DASHBOARD_TOKEN — open access)");
 
-        let (case_service, trigger_service, attention_service, proactive_service) =
+        let (case_service, trigger_service, attention_service, proactive_service, approval_service) =
             grpc_server.clone().into_governance_services();
         let (engine_service, task_service, dashboard_service, worker_service) =
             grpc_server.into_services();
@@ -1094,13 +1094,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .add_service(trigger_service)
             .add_service(attention_service)
             .add_service(proactive_service)
+            .add_service(approval_service)
     } else {
         tracing::info!("gRPC auth enabled (UC_DASHBOARD_TOKEN set)");
 
         let interceptor = AuthInterceptor::new(Arc::from(dashboard_token.as_str()));
-        let (case_service, trigger_service, attention_service, proactive_service) = grpc_server
-            .clone()
-            .into_intercepted_governance_services(interceptor.clone());
+        let (case_service, trigger_service, attention_service, proactive_service, approval_service) =
+            grpc_server
+                .clone()
+                .into_intercepted_governance_services(interceptor.clone());
         let (engine_service, task_service, dashboard_service, worker_service) =
             grpc_server.into_intercepted_services(interceptor);
 
@@ -1117,6 +1119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .add_service(trigger_service)
             .add_service(attention_service)
             .add_service(proactive_service)
+            .add_service(approval_service)
     };
 
     // health_service is added unconditionally OUTSIDE the auth gate so kube /

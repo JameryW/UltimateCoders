@@ -150,9 +150,35 @@ gRPC 层在结构性天花板之外再加一道**身份声明**闸口：`x-uc-pr
 因为 `PrincipalKind::may_hold` 拒绝 agent/worker 持有 `proactive_execute`，这一条同时把「agent 自己给自己
 批准高风险工具」堵死。
 
-边界说明：这里是**操作者层级即批准**，没有交互式审批来回（"提案 → 人工点确认 → 执行" 的通道属于 PR06 的
-proactive 面，见 [pr06-proactive.md](pr06-proactive.md)）。这一点是刻意的：在审批 UI 存在之前，把「谁有权
-触发」收紧到操作者层级，比假装有一个没人维护的审批队列更安全。
+### 5.1 人工审批回路（`approval.rs` / `approvals.rs` / `approval_service.rs`）
+
+「操作者层级」不是唯一出路。human-tier 工具还有第二条门，是一条**有记录、单人判、一次性**的回路：
+
+```
+agent  approval.request(tool, case, action_digest, reason)   ->  Pending（默认 15 分钟，上限 1 天）
+human  approval.decide(id, approve=true, note)               ->  Approved（并 resolve 对应 needs_human 项）
+call   authorize_tool(...)                                    ->  消费许可 -> Used（下一次再要一份）
+```
+
+| 规则 | 为什么 |
+| --- | --- |
+| 许可 id 由 `(tool, case, requester, action_digest)` 派生 | 重试收敛到同一条待办，而不是把人的工作清单刷满 |
+| 只有 `user` 能决定，且不能决定自己发起的请求 | 「服务说同意」「agent 自己批自己」都不是人的同意 |
+| 决定还要求 `proactive_execute`（两道门） | 操作者 token ≠ 被等的那个人的同意 |
+| **先偷看、后消费**：`find_approved` 读，`settle_tool_decision` 在所有其它检查通过后才 `consume` | 一次因为别的原因（缺 mandate、项目越界）被拒的调用，不该烧掉人的许可 |
+| 一次性（`Used`）+ 过期（`Expired`） | 一次同意不是一张空白支票；过期由 sweeper（`expire_stale`）清理 |
+| 请求会 raise 一条 `needs_human` 注意力项 | 人照常在已有的待办界面看到它；该项只是**指针**，丢了不影响许可本身 |
+
+一次被消费的许可能在任何后续调用里被审计（`ApprovalState::Used` + `used_at` + `decided_by`），
+而拒绝码仍然是 `tool_requires_human_approval` —— 调用方只需重试「申请」，不用理解内部状态。
+
+测试：类型层 `only_a_human_who_is_not_the_requester_can_decide`、`a_permit_is_single_use`、
+`coverage_is_tool_and_case_exact`；存储层 `peeking_does_not_spend_the_permit`、
+`the_sweeper_expires_what_nobody_answered`；策略层 `a_human_approval_unlocks_a_human_tier_tool_for_exactly_one_call`、
+`a_permit_is_not_spent_when_a_later_check_denies`；服务层 `only_a_human_with_operator_authority_can_decide`。
+
+仍留空的：仪表盘只有 HTTP 面（`/api/approvals`），没有专门的 React 审批面板——它出现在注意力待办里，
+点开仍是「注意力」视图。
 
 ## 6. 沙箱硬化档
 
@@ -248,7 +274,7 @@ proactive 面，见 [pr06-proactive.md](pr06-proactive.md)）。这一点是刻�
 
 | 项 | 现状 | 原因 |
 | --- | --- | --- |
-| 交互式审批流（提案 → 人工确认 → 执行） | 未实现；当前是「操作者层级即批准」：`human_approval` 工具要求 `proactive_execute`（见 §5） | 真正的审批队列与 UI 属于 PR06 的 proactive 面；在它成熟前收紧到操作者层级是更安全的默认 |
+| 审批的 React 面板 | 只有 HTTP 面（`/api/approvals`）与注意力待办；没有专门的审批 UI | 审批先要「可审计 + 一次性」正确，界面后置；现有待办视图已经能看见它 |
 | `ScaleWorkers` 的授权接线 | **已落地**（见 §7）：`worker_service.rs:745-752` 前置鉴权，空快照默认拒绝 | — |
 | 工具**参数**级检查 | 未实现（只检查工具名与 action 类） | 参数语义因工具而异（例如 `Bash` 的命令串），假装能通用检查会给出虚假安全感 |
 | `read_only_rootfs` 强制 | 未实现（见 §6） | 现有 worker 镜像不以只读根文件系统运行 |

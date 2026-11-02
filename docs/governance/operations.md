@@ -9,7 +9,7 @@
 | --- | --- |
 | 治理类型与判定（`crates/uc-types/src/governance/`） | 已落地，带内联测试 |
 | 治理存储（`crates/uc-engine/src/governance/`） | 已落地：`RecordStore`（内存 + PostgreSQL）、提交/外发箱、case/mandate、policy、trigger、attention、proactive、watchdog |
-| gRPC 服务与 NATS 桥（`crates/uc-grpc/src/governance/`） | **已落地**：身份/授权闸口 `policy_interceptor.rs`、四个服务（`case_service.rs` / `trigger_service.rs` / `attention_service.rs` / `proactive_service.rs`）、NATS 请求/回复分发（27 个 op，`bridge.rs`）、`spawn_nats_bridge`（含 2s outbox 分发器 + 启动时 `outbox.recover`）、`GrpcServer::with_governance` 与 `into_governance_services` / `into_intercepted_governance_services` 接线。网关 bootstrap 见 `crates/uc-grpc-server/src/governance_boot.rs`。**契约以 `crates/uc-grpc/proto/engine.proto` 为权威**，错误码映射见 `crates/uc-grpc/src/governance/mod.rs` |
+| gRPC 服务与 NATS 桥（`crates/uc-grpc/src/governance/`） | **已落地**：身份/授权闸口 `policy_interceptor.rs`、五个服务（`case_service.rs` / `trigger_service.rs` / `attention_service.rs` / `proactive_service.rs` / `approval_service.rs`）、NATS 请求/回复分发（30 个 op，`bridge.rs`）、`spawn_nats_bridge`（含 2s outbox 分发器 + 启动时 `outbox.recover`）、`GrpcServer::with_governance` 与 `into_governance_services` / `into_intercepted_governance_services` 接线。网关 bootstrap 见 `crates/uc-grpc-server/src/governance_boot.rs`。**契约以 `crates/uc-grpc/proto/engine.proto` 为权威**，错误码映射见 `crates/uc-grpc/src/governance/mod.rs` |
 | Python 请求方（`python/ultimate_coders/governance_client.py`） | 已落地：NATS request/reply 客户端（submission / case / mandate / trigger / attention / capacity / proactive / watchdog 各组 op） |
 | Python 投影与 HTTP 面（`trigger`/`attention`/`proactive` 包 + `dashboard/{trigger,attention,proactive}_api.py`） | 已落地，且已挂进 `dashboard/app.py` |
 

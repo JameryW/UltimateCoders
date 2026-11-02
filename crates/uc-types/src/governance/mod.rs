@@ -32,6 +32,7 @@
 //! 5. **Bounded autonomy** ([`proactive`]) — Off/Observe/Propose/Execute is an
 //!    explicit mode, proposals are auditable, watchdog replans are capped.
 
+pub mod approval;
 pub mod attention;
 pub mod mandate;
 pub mod policy;
@@ -40,6 +41,10 @@ pub mod submission;
 pub mod trigger;
 pub mod workcase;
 
+pub use approval::{
+    approval_id, ApprovalError, ApprovalRequest, ApprovalState, ToolApproval, APPROVAL_TTL_MINUTES,
+    MAX_APPROVAL_TTL_MINUTES,
+};
 pub use attention::{
     AttentionItem, AttentionKind, AttentionResolution, CapacitySnapshot, ATTENTION_NAMESPACE,
 };
