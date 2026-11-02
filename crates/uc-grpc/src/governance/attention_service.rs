@@ -84,10 +84,7 @@ impl AttentionItemView {
             priority: u32::from(item.priority),
             human_action: item.human_action.clone(),
             resolved_at: item.resolved_at,
-            resolution_summary: item
-                .resolution
-                .as_ref()
-                .map(AttentionResolution::summary),
+            resolution_summary: item.resolution.as_ref().map(AttentionResolution::summary),
         }
     }
 
@@ -198,7 +195,12 @@ pub async fn list_attention_with(
         .await
         .map_err(attention_error)?
         .iter()
-        .filter(|item| case_id.as_deref().map(|id| item.case_id == id).unwrap_or(true))
+        .filter(|item| {
+            case_id
+                .as_deref()
+                .map(|id| item.case_id == id)
+                .unwrap_or(true)
+        })
         .filter(|item| kind.map(|kind| item.kind == kind).unwrap_or(true))
         .map(AttentionItemView::from_item)
         .collect();
@@ -344,8 +346,12 @@ pub async fn resolve_attention(
         "event_received" => AttentionResolution::EventReceived {
             trigger_id: detail.clone(),
         },
-        "automatic" => AttentionResolution::Automatic { detail: detail.clone() },
-        "case_closed" => AttentionResolution::CaseClosed { status: detail.clone() },
+        "automatic" => AttentionResolution::Automatic {
+            detail: detail.clone(),
+        },
+        "case_closed" => AttentionResolution::CaseClosed {
+            status: detail.clone(),
+        },
         other => {
             return Err(OpError::invalid(
                 "unknown_resolution_kind",
@@ -487,7 +493,11 @@ impl AttentionService for AttentionServiceImpl {
         .await?;
         Ok(Response::new(
             crate::ultimate_coders::ListAttentionResponse {
-                items: outcome.items.iter().map(AttentionItemView::to_proto).collect(),
+                items: outcome
+                    .items
+                    .iter()
+                    .map(AttentionItemView::to_proto)
+                    .collect(),
                 capacity: Some(outcome.capacity.to_proto()),
             },
         ))
@@ -525,13 +535,10 @@ impl AttentionService for AttentionServiceImpl {
         &self,
         _request: Request<crate::ultimate_coders::GetCapacityRequest>,
     ) -> Result<Response<crate::ultimate_coders::GetCapacityResponse>, Status> {
-        let capacity =
-            get_capacity_with(&self.governance, self.worker_registry.as_ref()).await?;
-        Ok(Response::new(
-            crate::ultimate_coders::GetCapacityResponse {
-                capacity: Some(capacity.to_proto()),
-            },
-        ))
+        let capacity = get_capacity_with(&self.governance, self.worker_registry.as_ref()).await?;
+        Ok(Response::new(crate::ultimate_coders::GetCapacityResponse {
+            capacity: Some(capacity.to_proto()),
+        }))
     }
 }
 

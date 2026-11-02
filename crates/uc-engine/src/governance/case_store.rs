@@ -29,12 +29,16 @@ pub const MANDATE_NAMESPACE: &str = "mandate";
 #[derive(Debug, Clone, PartialEq)]
 pub enum CaseStoreError {
     Store(RecordError),
-    NotFound { case_id: String },
+    NotFound {
+        case_id: String,
+    },
     /// The case state machine refused the transition (illegal edge, terminal,
     /// quiescent, run already open, or no mandate).
     Transition(CaseTransitionError),
     /// A bounded CAS loop never converged; another writer is hammering the case.
-    Contended { case_id: String },
+    Contended {
+        case_id: String,
+    },
 }
 
 impl From<RecordError> for CaseStoreError {
@@ -125,7 +129,11 @@ impl CaseStore {
     }
 
     /// Apply a mutation under CAS, retrying a bounded number of times.
-    pub async fn update<F, T>(&self, case_id: &str, mutate: F) -> Result<(WorkCase, T), CaseStoreError>
+    pub async fn update<F, T>(
+        &self,
+        case_id: &str,
+        mutate: F,
+    ) -> Result<(WorkCase, T), CaseStoreError>
     where
         F: Fn(&mut WorkCase) -> Result<T, CaseTransitionError>,
     {
@@ -174,7 +182,8 @@ impl CaseStore {
             if case.status == CaseStatus::Open {
                 case.transition(CaseStatus::Active, now)?;
             }
-            case.open_run(task_id, submission_id.clone(), now).map(|_| ())
+            case.open_run(task_id, submission_id.clone(), now)
+                .map(|_| ())
         })
         .await
         .map(|(case, _)| case)
@@ -207,7 +216,10 @@ impl CaseStore {
     }
 
     /// Count cases per status — the dashboard's case board.
-    pub async fn status_counts(&self, limit: usize) -> Result<Vec<(CaseStatus, usize)>, CaseStoreError> {
+    pub async fn status_counts(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(CaseStatus, usize)>, CaseStoreError> {
         let cases = self.view.list::<WorkCase>(limit).await?;
         let mut counts: Vec<(CaseStatus, usize)> = Vec::new();
         for (case, _version) in cases {
@@ -277,10 +289,7 @@ impl MandateStore {
             .map_err(MandateStoreError::Store)
     }
 
-    pub async fn get(
-        &self,
-        mandate_id: &str,
-    ) -> Result<Option<(Mandate, u64)>, MandateStoreError> {
+    pub async fn get(&self, mandate_id: &str) -> Result<Option<(Mandate, u64)>, MandateStoreError> {
         Ok(self.view.get::<Mandate>(mandate_id).await?)
     }
 
@@ -540,7 +549,11 @@ mod tests {
             now() + chrono::Duration::hours(1),
         );
         mandates.put_new(&newer).await.unwrap();
-        let latest = mandates.latest_for_case("case-1", 10).await.unwrap().unwrap();
+        let latest = mandates
+            .latest_for_case("case-1", 10)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(latest.id, newer.id);
     }
 
@@ -564,5 +577,3 @@ mod tests {
         assert_eq!(open, 2);
     }
 }
-
-

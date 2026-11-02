@@ -102,7 +102,9 @@ impl AttentionBoard {
                     }));
                 };
                 existing.since = current.since;
-                self.view.put(&existing.id, &existing, Some(version)).await?;
+                self.view
+                    .put(&existing.id, &existing, Some(version))
+                    .await?;
                 existing
             }
             Err(other) => return Err(AttentionBoardError::Store(other)),
@@ -168,7 +170,10 @@ impl AttentionBoard {
         include_resolved: bool,
         limit: usize,
     ) -> Result<Vec<AttentionItem>, AttentionBoardError> {
-        let items = self.view.list::<AttentionItem>(limit.saturating_mul(4).max(50)).await?;
+        let items = self
+            .view
+            .list::<AttentionItem>(limit.saturating_mul(4).max(50))
+            .await?;
         let mut items: Vec<AttentionItem> = items
             .into_iter()
             .map(|(item, _version)| item)
@@ -238,9 +243,8 @@ mod tests {
     }
 
     fn board() -> AttentionBoard {
-        let records: Arc<dyn RecordStore> = Arc::new(
-            crate::governance::record_store::InMemoryRecordStore::new(),
-        );
+        let records: Arc<dyn RecordStore> =
+            Arc::new(crate::governance::record_store::InMemoryRecordStore::new());
         AttentionBoard::new(records)
     }
 
@@ -307,7 +311,10 @@ mod tests {
     async fn worklist_puts_human_first_then_priority() {
         let board = board();
         board
-            .raise(item("case-blocked", AttentionKind::Blocked).with_priority(9), now())
+            .raise(
+                item("case-blocked", AttentionKind::Blocked).with_priority(9),
+                now(),
+            )
             .await
             .unwrap();
         board
@@ -359,4 +366,3 @@ mod tests {
         assert!(matches!(error, AttentionBoardError::NotFound { .. }));
     }
 }
-

@@ -32,9 +32,9 @@ use std::sync::Arc;
 
 use chrono::Utc;
 
-use uc_engine::governance::{Governance, InMemoryRecordStore, PolicyEngine, RecordStore};
 #[cfg(feature = "storage")]
 use uc_engine::governance::PostgresRecordStore;
+use uc_engine::governance::{Governance, InMemoryRecordStore, PolicyEngine, RecordStore};
 use uc_types::governance::{
     Grant, Permission, PolicySnapshot, PolicyVersion, Principal, PrincipalKind, ProactiveMode,
 };
@@ -178,7 +178,8 @@ pub async fn bootstrap_policy(governance: &Governance) {
     if let Ok(raw) = std::env::var("UC_POLICY_GRANTS_JSON") {
         match parse_grants(&raw) {
             Ok(grants) => {
-                let mut built = snapshot.unwrap_or_else(|| PolicySnapshot::empty(PolicyVersion::initial()));
+                let mut built =
+                    snapshot.unwrap_or_else(|| PolicySnapshot::empty(PolicyVersion::initial()));
                 let mut applied = 0usize;
                 for grant in grants {
                     match built.clone().with_grant(grant) {
@@ -196,7 +197,10 @@ pub async fn bootstrap_policy(governance: &Governance) {
                         }
                     }
                 }
-                tracing::info!(grants = applied, "Loaded policy grants from UC_POLICY_GRANTS_JSON");
+                tracing::info!(
+                    grants = applied,
+                    "Loaded policy grants from UC_POLICY_GRANTS_JSON"
+                );
                 snapshot = Some(built);
             }
             Err(error) => tracing::error!(
@@ -208,7 +212,9 @@ pub async fn bootstrap_policy(governance: &Governance) {
 
     match snapshot {
         Some(snapshot) => match governance.policy.install(snapshot).await {
-            Ok(version) => tracing::info!(version = version.0, "Installed governance policy snapshot"),
+            Ok(version) => {
+                tracing::info!(version = version.0, "Installed governance policy snapshot")
+            }
             Err(error) => tracing::error!(
                 error = %error,
                 "Failed to install the governance policy snapshot — all governance \
@@ -239,15 +245,8 @@ pub async fn bootstrap_proactive(governance: &Governance) {
         );
         return;
     };
-    match governance
-        .proactive
-        .set_mode(mode, None, None, None)
-        .await
-    {
-        Ok(state) => tracing::info!(
-            mode = state.mode.as_str(),
-            "Proactive mode configured"
-        ),
+    match governance.proactive.set_mode(mode, None, None, None).await {
+        Ok(state) => tracing::info!(mode = state.mode.as_str(), "Proactive mode configured"),
         Err(error) => tracing::warn!(error = %error, "Failed to persist the proactive mode"),
     }
 }
@@ -319,7 +318,10 @@ mod tests {
         assert_eq!(grants.len(), 2);
         let mut snapshot = PolicySnapshot::empty(PolicyVersion::initial());
         for grant in grants {
-            snapshot = snapshot.clone().with_grant(grant).expect("structurally valid");
+            snapshot = snapshot
+                .clone()
+                .with_grant(grant)
+                .expect("structurally valid");
         }
         let now = Utc::now();
         assert!(snapshot
@@ -350,9 +352,13 @@ mod tests {
 
     #[test]
     fn a_typo_in_a_permission_is_an_error_not_a_silent_skip() {
-        let error = parse_grants(r#"[{"kind":"user","id":"alice","permissions":["task_submitt"]}]"#)
-            .expect_err("unknown permission must be rejected");
-        assert!(error.contains("task_submitt"), "error names the bad token: {error}");
+        let error =
+            parse_grants(r#"[{"kind":"user","id":"alice","permissions":["task_submitt"]}]"#)
+                .expect_err("unknown permission must be rejected");
+        assert!(
+            error.contains("task_submitt"),
+            "error names the bad token: {error}"
+        );
     }
 
     #[test]
@@ -366,8 +372,9 @@ mod tests {
 
     #[test]
     fn an_authority_granting_permission_for_an_agent_is_refused_by_the_ceiling() {
-        let grants = parse_grants(r#"[{"kind":"agent","id":"planner","permissions":["worker_scale"]}]"#)
-            .expect("parses");
+        let grants =
+            parse_grants(r#"[{"kind":"agent","id":"planner","permissions":["worker_scale"]}]"#)
+                .expect("parses");
         let result = PolicySnapshot::empty(PolicyVersion::initial()).with_grant(grants[0].clone());
         assert!(
             result.is_err(),

@@ -100,10 +100,7 @@ impl std::fmt::Display for SubmissionId {
 pub fn normalize_request(description: &str) -> String {
     let unified = description.replace("\r\n", "\n").replace('\r', "\n");
     let trimmed_lines: Vec<&str> = unified.split('\n').map(|line| line.trim_end()).collect();
-    trimmed_lines
-        .join("\n")
-        .trim_matches('\n')
-        .to_string()
+    trimmed_lines.join("\n").trim_matches('\n').to_string()
 }
 
 /// Digest identifying the *content* of a submission.

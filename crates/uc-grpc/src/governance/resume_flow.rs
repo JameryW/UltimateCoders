@@ -25,7 +25,7 @@ use chrono::{DateTime, Utc};
 use tokio::sync::Mutex;
 
 use uc_engine::governance::{plan_resume, Governance, ResumeSkip};
-use uc_types::governance::{TriggerEvent, SubmitOnceOutcome};
+use uc_types::governance::{SubmitOnceOutcome, TriggerEvent};
 
 use crate::server::TaskStore;
 use crate::ultimate_coders::TaskEvent;

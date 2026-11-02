@@ -771,15 +771,14 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
         // The request message carries no identity field, so the caller is
         // resolved from metadata and defaults to the dashboard operator surface
         // (see `policy_interceptor`).
-        let principal = crate::governance::policy_interceptor::resolve_principal_from_metadata(&request)?;
+        let principal =
+            crate::governance::policy_interceptor::resolve_principal_from_metadata(&request)?;
         let now = chrono::Utc::now();
-        if let Err(status) =
-            crate::governance::policy_interceptor::require_scale_workers(
-                self.governance().as_ref(),
-                &principal,
-                now,
-            )
-        {
+        if let Err(status) = crate::governance::policy_interceptor::require_scale_workers(
+            self.governance().as_ref(),
+            &principal,
+            now,
+        ) {
             tracing::warn!(
                 principal = %principal,
                 action = %request.get_ref().action,
@@ -2876,11 +2875,19 @@ mod tests {
                 String::new(),
             )
             .expect("register legacy");
-        assert_eq!(registry.capacity_totals(), (5, 0), "legacy slots are not capacity");
+        assert_eq!(
+            registry.capacity_totals(),
+            (5, 0),
+            "legacy slots are not capacity"
+        );
 
         // Load is counted but capped at each worker's own capacity.
         registry.heartbeat("w1", 1).expect("heartbeat w1");
         registry.heartbeat("w2", 9).expect("heartbeat w2");
-        assert_eq!(registry.capacity_totals(), (5, 4), "busy is min(load, capacity)");
+        assert_eq!(
+            registry.capacity_totals(),
+            (5, 4),
+            "busy is min(load, capacity)"
+        );
     }
 }

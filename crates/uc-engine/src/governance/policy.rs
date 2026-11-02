@@ -35,10 +35,15 @@ pub enum PolicyEngineError {
     /// The mandate being issued is wider than its parent.
     Widening(String),
     /// The referenced mandate does not exist.
-    UnknownMandate { mandate_id: String },
+    UnknownMandate {
+        mandate_id: String,
+    },
     /// The case already has a live (non-revoked, non-expired) mandate; issue a new
     /// one explicitly only after revoking (prevents accidental double authority).
-    MandateConflict { case_id: String, existing: String },
+    MandateConflict {
+        case_id: String,
+        existing: String,
+    },
 }
 
 impl From<RecordError> for PolicyEngineError {
@@ -142,7 +147,10 @@ impl PolicyEngine {
 
     /// Install a new snapshot (bumps the version if the caller did not) and
     /// persist it so a restart keeps the same policy generation.
-    pub async fn install(&self, snapshot: PolicySnapshot) -> Result<PolicyVersion, PolicyEngineError> {
+    pub async fn install(
+        &self,
+        snapshot: PolicySnapshot,
+    ) -> Result<PolicyVersion, PolicyEngineError> {
         // Always advance the generation unless the caller supplied a snapshot
         // that is already newer (importing a policy from elsewhere).
         let version = if snapshot.version > self.version() {
@@ -150,7 +158,10 @@ impl PolicyEngine {
         } else {
             self.version().next()
         };
-        let snapshot = PolicySnapshot { version, ..snapshot };
+        let snapshot = PolicySnapshot {
+            version,
+            ..snapshot
+        };
         self.view.put("current", &snapshot, None).await?;
         self.install_in_memory(snapshot);
         Ok(version)
@@ -241,8 +252,12 @@ impl PolicyEngine {
                 tool: tool.to_string(),
             });
         }
-        let permission_decision =
-            self.authorize(principal, requirement.action.required_permission(), project_id, now);
+        let permission_decision = self.authorize(
+            principal,
+            requirement.action.required_permission(),
+            project_id,
+            now,
+        );
         if permission_decision.is_denied() {
             return permission_decision;
         }
@@ -323,14 +338,7 @@ impl PolicyEngine {
         }
 
         let version = self.version();
-        let mut mandate = Mandate::new(
-            case_id,
-            grantor.clone(),
-            origin,
-            scopes,
-            version,
-            now,
-        );
+        let mut mandate = Mandate::new(case_id, grantor.clone(), origin, scopes, version, now);
         if let Some(expires_at) = expires_at {
             mandate = mandate.with_expiry(expires_at);
         }
@@ -433,10 +441,13 @@ impl PolicyEngine {
         ];
         let mut snapshot = PolicySnapshot::empty(PolicyVersion::initial());
         // `with_grant` cannot fail for a User principal.
-        if let Ok(next) = snapshot.clone().with_grant(uc_types::governance::Grant::new(
-            principal.clone(),
-            permissions,
-        )) {
+        if let Ok(next) = snapshot
+            .clone()
+            .with_grant(uc_types::governance::Grant::new(
+                principal.clone(),
+                permissions,
+            ))
+        {
             snapshot = next;
         }
         // The dashboard surface acts as two principals depending on the endpoint
@@ -459,10 +470,13 @@ impl PolicyEngine {
             Principal::service("dashboard"),
             Principal::user("dashboard"),
         ] {
-            if let Ok(next) = snapshot.clone().with_grant(uc_types::governance::Grant::new(
-                principal,
-                dashboard_permissions.clone(),
-            )) {
+            if let Ok(next) = snapshot
+                .clone()
+                .with_grant(uc_types::governance::Grant::new(
+                    principal,
+                    dashboard_permissions.clone(),
+                ))
+            {
                 snapshot = next;
             }
         }
@@ -580,16 +594,18 @@ mod tests {
             .expect("issue");
         assert_eq!(mandate.grantor, Principal::user("alice"));
         let revoked = engine
-            .revoke_mandate(mandate.id.as_str(), &Principal::user("alice"), "done", now())
+            .revoke_mandate(
+                mandate.id.as_str(),
+                &Principal::user("alice"),
+                "done",
+                now(),
+            )
             .await
             .expect("revoke");
         assert!(revoked.is_revoked());
         // A revoked mandate no longer authorizes anything.
-        let decision = engine.authorize_mandate(
-            &revoked,
-            &MandateRequest::action(ActionClass::Write),
-            now(),
-        );
+        let decision =
+            engine.authorize_mandate(&revoked, &MandateRequest::action(ActionClass::Write), now());
         assert_eq!(decision.deny_code(), Some("mandate_revoked"));
     }
 
@@ -650,7 +666,12 @@ mod tests {
         ));
         // Revoking then issuing works.
         engine
-            .revoke_mandate(first.id.as_str(), &Principal::user("alice"), "narrow", now())
+            .revoke_mandate(
+                first.id.as_str(),
+                &Principal::user("alice"),
+                "narrow",
+                now(),
+            )
             .await
             .unwrap();
         assert!(engine
@@ -724,7 +745,13 @@ mod tests {
         // Unknown tool fails closed regardless of grants.
         assert_eq!(
             engine
-                .authorize_tool(&Principal::user("alice"), "rm_rf", Some("proj"), None, now())
+                .authorize_tool(
+                    &Principal::user("alice"),
+                    "rm_rf",
+                    Some("proj"),
+                    None,
+                    now()
+                )
                 .await
                 .deny_code(),
             Some("tool_not_permitted")
@@ -842,6 +869,3 @@ mod tests {
             .is_allowed());
     }
 }
-
-
-

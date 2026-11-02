@@ -244,7 +244,11 @@ impl CaseOrigin {
         }
     }
 
-    pub fn from_trigger(source: &str, thread_key: Option<String>, trigger_id: Option<String>) -> Self {
+    pub fn from_trigger(
+        source: &str,
+        thread_key: Option<String>,
+        trigger_id: Option<String>,
+    ) -> Self {
         Self {
             source: source.to_string(),
             external_ref: thread_key.clone(),
@@ -538,12 +542,8 @@ impl std::fmt::Display for CaseTransitionError {
             CaseTransitionError::Quiescent(status) => {
                 write!(f, "case is quiescent ({status}) and may not start a run")
             }
-            CaseTransitionError::RunAlreadyOpen => {
-                f.write_str("case already has an open run")
-            }
-            CaseTransitionError::RunAlreadyFinished => {
-                f.write_str("run is already finished")
-            }
+            CaseTransitionError::RunAlreadyOpen => f.write_str("case already has an open run"),
+            CaseTransitionError::RunAlreadyFinished => f.write_str("run is already finished"),
             CaseTransitionError::UnknownRun => f.write_str("unknown run id"),
             CaseTransitionError::NoMandate => {
                 f.write_str("case has no mandate and may not execute")
@@ -581,7 +581,8 @@ mod tests {
             .expect("finish ok");
         assert_eq!(case.status, CaseStatus::Verifying);
         assert!(!CaseStatus::Active.can_transition_to(CaseStatus::Completed));
-        case.transition(CaseStatus::Completed, now()).expect("verify completes");
+        case.transition(CaseStatus::Completed, now())
+            .expect("verify completes");
         assert!(case.status.is_terminal());
         assert!(!case.status.can_transition_to(CaseStatus::Active));
     }
@@ -658,7 +659,10 @@ mod tests {
         }
         assert_eq!(case.runs.len(), MAX_RUN_HISTORY);
         assert!(case.compacted_runs >= 5);
-        assert_eq!(case.next_attempt(), MAX_RUN_HISTORY as u32 + case.compacted_runs + 1);
+        assert_eq!(
+            case.next_attempt(),
+            MAX_RUN_HISTORY as u32 + case.compacted_runs + 1
+        );
     }
 
     #[test]
@@ -681,4 +685,3 @@ mod tests {
         }
     }
 }
-

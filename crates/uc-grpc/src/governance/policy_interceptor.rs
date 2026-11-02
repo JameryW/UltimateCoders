@@ -135,10 +135,7 @@ pub fn resolve_declared_principal(
     let declared_kind = kind.map(str::trim).filter(|value| !value.is_empty());
     let declared_id = id.map(str::trim).filter(|value| !value.is_empty());
     match (declared_kind, declared_id) {
-        (None, None) => Ok(Principal::new(
-            DEFAULT_PRINCIPAL_KIND,
-            DEFAULT_PRINCIPAL_ID,
-        )),
+        (None, None) => Ok(Principal::new(DEFAULT_PRINCIPAL_KIND, DEFAULT_PRINCIPAL_ID)),
         (Some(_), None) => Err(Status::invalid_argument(format!(
             "{INVALID_PRINCIPAL}: principal_kind was set without principal_id"
         ))),
@@ -209,7 +206,9 @@ pub fn require(
     project: Option<&str>,
     now: DateTime<Utc>,
 ) -> Result<(), Status> {
-    let decision = governance.policy.authorize(principal, permission, project, now);
+    let decision = governance
+        .policy
+        .authorize(principal, permission, project, now);
     require_decision(
         &decision,
         &format!(
@@ -245,7 +244,9 @@ mod tests {
         let governance = Governance::in_memory();
         let mut snapshot = PolicySnapshot::empty(PolicyVersion::initial());
         for grant in grants {
-            snapshot = snapshot.with_grant(grant).expect("grant is structurally valid");
+            snapshot = snapshot
+                .with_grant(grant)
+                .expect("grant is structurally valid");
         }
         // `install` is the only way to swap a snapshot on the aggregate, and it
         // persists it, so the test exercises the same path the gateway uses.
@@ -297,11 +298,15 @@ mod tests {
     #[test]
     fn half_an_identity_is_rejected() {
         assert_eq!(
-            resolve_declared_principal(Some("user"), None).unwrap_err().code(),
+            resolve_declared_principal(Some("user"), None)
+                .unwrap_err()
+                .code(),
             tonic::Code::InvalidArgument
         );
         assert_eq!(
-            resolve_declared_principal(None, Some("alice")).unwrap_err().code(),
+            resolve_declared_principal(None, Some("alice"))
+                .unwrap_err()
+                .code(),
             tonic::Code::InvalidArgument
         );
     }
@@ -395,6 +400,8 @@ mod tests {
     fn deny_status_renders_the_reason_without_the_code_prefix() {
         let decision = PolicyDecision::deny(DenyReason::Unauthenticated);
         assert_eq!(denial_code(&decision), "unauthenticated");
-        assert!(deny_status(&decision).message().starts_with("unauthenticated"));
+        assert!(deny_status(&decision)
+            .message()
+            .starts_with("unauthenticated"));
     }
 }

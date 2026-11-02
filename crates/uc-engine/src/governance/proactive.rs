@@ -50,7 +50,10 @@ impl std::fmt::Display for ProactiveGateError {
             ProactiveGateError::NotActionable {
                 proposal_id,
                 status,
-            } => write!(f, "proposal {proposal_id} is {status} and cannot be changed"),
+            } => write!(
+                f,
+                "proposal {proposal_id} is {status} and cannot be changed"
+            ),
             ProactiveGateError::Contended => f.write_str("proactive gate contention"),
         }
     }
@@ -176,18 +179,17 @@ impl ProactiveGate {
     ) -> Result<(Admission, ProactiveProposal), ProactiveGateError> {
         let state = self.state();
         let decision = state.admit_proposal(&proposal, open_proposals);
-        let audit = ProactiveAuditEntry::from_decision(
-            now,
-            state.mode,
-            "admit_proposal",
-            &decision,
-        )
-        .for_proposal(proposal.id.clone());
+        let audit =
+            ProactiveAuditEntry::from_decision(now, state.mode, "admit_proposal", &decision)
+                .for_proposal(proposal.id.clone());
         let audit = match &proposal.case_id {
             Some(case_id) => audit.for_case(case_id.clone()),
             None => audit,
         };
-        let _ = self.audit.put(&audit_key(now, &proposal.id), &audit, None).await;
+        let _ = self
+            .audit
+            .put(&audit_key(now, &proposal.id), &audit, None)
+            .await;
 
         if decision.is_denied() {
             // In Observe mode the proposal is stored as `Observed` so a later audit
@@ -221,23 +223,20 @@ impl ProactiveGate {
         proposal_id: &str,
         now: DateTime<Utc>,
     ) -> Result<(Admission, Option<ProactiveProposal>), ProactiveGateError> {
-        let Some((proposal, _version)) = self.proposals.get::<ProactiveProposal>(proposal_id).await?
+        let Some((proposal, _version)) =
+            self.proposals.get::<ProactiveProposal>(proposal_id).await?
         else {
-            return Ok((
-                Admission::denied("proposal_not_found", proposal_id),
-                None,
-            ));
+            return Ok((Admission::denied("proposal_not_found", proposal_id), None));
         };
         let state = self.state();
         let decision = state.admit_execution(&proposal);
-        let audit = ProactiveAuditEntry::from_decision(
-            now,
-            state.mode,
-            "admit_execution",
-            &decision,
-        )
-        .for_proposal(proposal.id.clone());
-        let _ = self.audit.put(&audit_key(now, &proposal.id), &audit, None).await;
+        let audit =
+            ProactiveAuditEntry::from_decision(now, state.mode, "admit_execution", &decision)
+                .for_proposal(proposal.id.clone());
+        let _ = self
+            .audit
+            .put(&audit_key(now, &proposal.id), &audit, None)
+            .await;
         if decision.is_denied() {
             return Ok((
                 Admission::denied(
@@ -275,13 +274,15 @@ impl ProactiveGate {
             .into_iter()
             .map(|(proposal, _version)| proposal)
             .filter(|proposal| {
-                status.map(|status| proposal.status == status).unwrap_or(true)
+                status
+                    .map(|status| proposal.status == status)
+                    .unwrap_or(true)
                     && case_id
                         .map(|case_id| proposal.case_id.as_deref() == Some(case_id))
                         .unwrap_or(true)
             })
             .collect();
-        proposals.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        proposals.sort_by_key(|p| std::cmp::Reverse(p.created_at));
         Ok(proposals)
     }
 
@@ -302,7 +303,8 @@ impl ProactiveGate {
         now: DateTime<Utc>,
     ) -> Result<ProactiveProposal, ProactiveGateError> {
         for _ in 0..8 {
-            let Some((mut proposal, version)) = self.proposals.get::<ProactiveProposal>(proposal_id).await?
+            let Some((mut proposal, version)) =
+                self.proposals.get::<ProactiveProposal>(proposal_id).await?
             else {
                 return Err(ProactiveGateError::NotFound {
                     proposal_id: proposal_id.to_string(),
@@ -317,7 +319,11 @@ impl ProactiveGate {
                     });
                 }
             }
-            match self.proposals.put(proposal_id, &proposal, Some(version)).await {
+            match self
+                .proposals
+                .put(proposal_id, &proposal, Some(version))
+                .await
+            {
                 Ok(_) => {
                     let entry = ProactiveAuditEntry::new(
                         now,
@@ -326,7 +332,10 @@ impl ProactiveGate {
                         matches!(decision, ProposalDecision::Approve { .. }),
                     )
                     .for_proposal(proposal_id.to_string());
-                    let _ = self.audit.put(&audit_key(now, proposal_id), &entry, None).await;
+                    let _ = self
+                        .audit
+                        .put(&audit_key(now, proposal_id), &entry, None)
+                        .await;
                     return Ok(proposal);
                 }
                 Err(RecordError::Conflict { .. }) => continue,
@@ -344,7 +353,8 @@ impl ProactiveGate {
         now: DateTime<Utc>,
     ) -> Result<ProactiveProposal, ProactiveGateError> {
         for _ in 0..8 {
-            let Some((mut proposal, version)) = self.proposals.get::<ProactiveProposal>(proposal_id).await?
+            let Some((mut proposal, version)) =
+                self.proposals.get::<ProactiveProposal>(proposal_id).await?
             else {
                 return Err(ProactiveGateError::NotFound {
                     proposal_id: proposal_id.to_string(),
@@ -359,7 +369,11 @@ impl ProactiveGate {
                     });
                 }
             }
-            match self.proposals.put(proposal_id, &proposal, Some(version)).await {
+            match self
+                .proposals
+                .put(proposal_id, &proposal, Some(version))
+                .await
+            {
                 Ok(_) => return Ok(proposal),
                 Err(RecordError::Conflict { .. }) => continue,
                 Err(other) => return Err(ProactiveGateError::Store(other)),
@@ -375,7 +389,10 @@ impl ProactiveGate {
         case_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ProactiveAuditEntry>, ProactiveGateError> {
-        let entries = self.audit.list::<ProactiveAuditEntry>(limit.saturating_mul(4).max(50)).await?;
+        let entries = self
+            .audit
+            .list::<ProactiveAuditEntry>(limit.saturating_mul(4).max(50))
+            .await?;
         let mut entries: Vec<ProactiveAuditEntry> = entries
             .into_iter()
             .map(|(entry, _version)| entry)
@@ -388,7 +405,7 @@ impl ProactiveGate {
                         .unwrap_or(true)
             })
             .collect();
-        entries.sort_by(|a, b| b.at.cmp(&a.at));
+        entries.sort_by_key(|e| std::cmp::Reverse(e.at));
         entries.truncate(limit);
         Ok(entries)
     }
@@ -438,7 +455,10 @@ mod tests {
             .await
             .unwrap();
         assert!(!admission.allowed);
-        assert_eq!(admission.deny_code.as_deref(), Some("proactive_mode_disallows"));
+        assert_eq!(
+            admission.deny_code.as_deref(),
+            Some("proactive_mode_disallows")
+        );
         let audit = gate.audit(None, None, 10).await.unwrap();
         assert_eq!(audit.len(), 1);
         assert!(!audit[0].allowed);
@@ -582,4 +602,3 @@ mod tests {
         assert!(state.always_require_approval);
     }
 }
-

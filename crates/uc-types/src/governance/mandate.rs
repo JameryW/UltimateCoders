@@ -165,7 +165,10 @@ impl MandateOrigin {
     /// `Permission::MandateIssue` is rejected upstream by
     /// [`super::policy::PolicySnapshot::evaluate`].
     pub fn is_root(&self) -> bool {
-        matches!(self, MandateOrigin::HumanIssued | MandateOrigin::SystemDefault)
+        matches!(
+            self,
+            MandateOrigin::HumanIssued | MandateOrigin::SystemDefault
+        )
     }
 }
 
@@ -822,7 +825,10 @@ mod tests {
 
     #[test]
     fn glob_matches_segments_and_spans() {
-        assert!(pattern_covers("crates/uc-engine/**", "crates/uc-engine/src/lib.rs"));
+        assert!(pattern_covers(
+            "crates/uc-engine/**",
+            "crates/uc-engine/src/lib.rs"
+        ));
         assert!(pattern_covers("crates/*/src", "crates/uc-engine/src"));
         assert!(!pattern_covers("crates/*", "crates/uc-engine/src"));
         assert!(pattern_covers("uc/case-*", "uc/case-123"));
@@ -834,7 +840,10 @@ mod tests {
     fn mandate_allows_only_covered_requests() {
         let mandate = code_edit_mandate();
         assert!(mandate
-            .permits(&MandateRequest::write_path("crates/uc-engine/src/lib.rs"), now())
+            .permits(
+                &MandateRequest::write_path("crates/uc-engine/src/lib.rs"),
+                now()
+            )
             .is_allowed());
         assert!(mandate
             .permits(&MandateRequest::tool("Edit"), now())
@@ -845,7 +854,10 @@ mod tests {
     fn mandate_denies_unlisted_tool_and_action() {
         let mandate = code_edit_mandate();
         let denied = mandate.permits(&MandateRequest::tool("Bash"), now());
-        assert_eq!(denied.denial().map(|d| d.code()), Some("mandate_out_of_scope"));
+        assert_eq!(
+            denied.denial().map(|d| d.code()),
+            Some("mandate_out_of_scope")
+        );
         let denied = mandate.permits(&MandateRequest::action(ActionClass::Merge), now());
         assert!(denied.denial().is_some());
     }
@@ -895,7 +907,8 @@ mod tests {
         assert!(
             matches!(
                 decision.denial(),
-                Some(MandateDenial::WideningDenied { .. }) | Some(MandateDenial::OriginForbidden { .. })
+                Some(MandateDenial::WideningDenied { .. })
+                    | Some(MandateDenial::OriginForbidden { .. })
             ),
             "unexpected decision: {decision:?}"
         );
@@ -964,7 +977,10 @@ mod tests {
         )
         .delegate_from(&parent)
         .with_expiry(now() + chrono::Duration::hours(2));
-        assert!(parent.validate_child(&longer, now(), None).denial().is_some());
+        assert!(parent
+            .validate_child(&longer, now(), None)
+            .denial()
+            .is_some());
 
         let stale = Mandate::new(
             "case-1",
@@ -1018,13 +1034,31 @@ mod tests {
             max_wall_secs: None,
         }]);
         assert!(mandate
-            .permits(&MandateRequest { tokens: Some(500), ..Default::default() }, now())
+            .permits(
+                &MandateRequest {
+                    tokens: Some(500),
+                    ..Default::default()
+                },
+                now()
+            )
             .is_allowed());
         assert!(mandate
-            .permits(&MandateRequest { tokens: Some(5000), ..Default::default() }, now())
+            .permits(
+                &MandateRequest {
+                    tokens: Some(5000),
+                    ..Default::default()
+                },
+                now()
+            )
             .is_denied());
         assert!(mandate
-            .permits(&MandateRequest { cost_usd: Some(1.0), ..Default::default() }, now())
+            .permits(
+                &MandateRequest {
+                    cost_usd: Some(1.0),
+                    ..Default::default()
+                },
+                now()
+            )
             .is_denied());
     }
 }

@@ -298,9 +298,9 @@ pub async fn submit_submission(
         ));
     }
     let dedup_replayed = outcome.is_replayed();
-    let record = outcome
-        .record()
-        .ok_or_else(|| OpError::internal("submission_record_missing", "outcome carried no record"))?;
+    let record = outcome.record().ok_or_else(|| {
+        OpError::internal("submission_record_missing", "outcome carried no record")
+    })?;
     tracing::info!(
         submission_id = %record.submission_id.0,
         task_id = %record.task_id,
@@ -428,8 +428,7 @@ pub fn spawn_outbox_dispatcher(client: async_nats::Client, governance: Arc<Gover
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticker.tick().await;
-            let drained =
-                drain_outbox(&governance, &client, Utc::now(), OUTBOX_DRAIN_LIMIT).await;
+            let drained = drain_outbox(&governance, &client, Utc::now(), OUTBOX_DRAIN_LIMIT).await;
             if drained.delivered > 0 || drained.retried > 0 {
                 tracing::info!(
                     delivered = drained.delivered,
@@ -1004,7 +1003,9 @@ bridge_request!(UpsertSubscriptionRequest {
     auto_resume: bool,
 });
 
-bridge_request!(DeleteSubscriptionRequest { subscription_id: String });
+bridge_request!(DeleteSubscriptionRequest {
+    subscription_id: String
+});
 
 bridge_request!(ListAttentionRequest {
     include_resolved: bool,
@@ -1096,15 +1097,11 @@ bridge_request!(ListAuditRequest {
     case_id: Option<String>,
 });
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-    use uc_types::governance::{
-        Grant, Permission, PolicySnapshot, PolicyVersion, Principal,
-    };
+    use uc_types::governance::{Grant, Permission, PolicySnapshot, PolicyVersion, Principal};
 
     async fn plane() -> Governance {
         let governance = Governance::in_memory();
@@ -1279,7 +1276,10 @@ mod tests {
         )
         .await;
         assert!(!reply.ok);
-        assert_eq!(reply.error.expect("error present").code, "submission_conflict");
+        assert_eq!(
+            reply.error.expect("error present").code,
+            "submission_conflict"
+        );
     }
 
     #[tokio::test]

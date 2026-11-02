@@ -148,13 +148,7 @@ pub async fn ingest_with_dispatch(
         optional_text(Some(request.principal_id.as_str())).as_deref(),
     )?;
     // Ingesting an event *is* the authenticated service's act, not the event's.
-    require(
-        governance,
-        &principal,
-        Permission::TriggerIngest,
-        None,
-        now,
-    )?;
+    require(governance, &principal, Permission::TriggerIngest, None, now)?;
 
     let source_token = required_text(&request.source, "source")?;
     let source = SourceKind::from_str_lossy(&source_token).ok_or_else(|| {
@@ -197,12 +191,13 @@ pub async fn ingest_with_dispatch(
 
     // The payload is stored verbatim and never inspected for authorization; it
     // only has to be valid JSON so the Python evaluator can read it.
-    let payload: serde_json::Value = serde_json::from_str(&request.payload_json).map_err(|error| {
-        OpError::invalid(
-            "invalid_payload_json",
-            format!("payload_json must be valid JSON: {error}"),
-        )
-    })?;
+    let payload: serde_json::Value =
+        serde_json::from_str(&request.payload_json).map_err(|error| {
+            OpError::invalid(
+                "invalid_payload_json",
+                format!("payload_json must be valid JSON: {error}"),
+            )
+        })?;
 
     let mut event = TriggerEvent::new(source, kind, external_id, payload, now);
     event.thread_key = optional_text(request.thread_key.as_deref());
@@ -225,9 +220,13 @@ pub async fn ingest_with_dispatch(
     // nothing. Failures here are logged, never returned: the event is already
     // durable, and turning a wake failure into an ingestion error would make the
     // caller retry a delivery the inbox would then drop as a duplicate.
-    let woken_cases =
-        uc_engine::governance::wake_matched_cases(governance, &outcome.matched_cases, &outcome.event_id, now)
-            .await;
+    let woken_cases = uc_engine::governance::wake_matched_cases(
+        governance,
+        &outcome.matched_cases,
+        &outcome.event_id,
+        now,
+    )
+    .await;
 
     // Resume runs *after* the wake: a case becomes runnable by being woken, so the
     // resume plan sees `active` with no open run. The plan itself re-checks every
@@ -244,10 +243,7 @@ pub async fn ingest_with_dispatch(
     .await;
 
     let mut opened_case_id = None;
-    if !outcome.duplicate
-        && outcome.matched_cases.is_empty()
-        && request.open_case_if_unmatched
-    {
+    if !outcome.duplicate && outcome.matched_cases.is_empty() && request.open_case_if_unmatched {
         opened_case_id = Some(
             open_case_for_event(
                 governance,
@@ -363,10 +359,7 @@ async fn open_case_for_event(
         ),
         now,
     )
-    .with_id(CaseId::from_parts(
-        event.source.as_str(),
-        identity.as_str(),
-    ));
+    .with_id(CaseId::from_parts(event.source.as_str(), identity.as_str()));
     let (case, replayed) = governance
         .cases
         .create_unique(case)
@@ -551,9 +544,7 @@ fn trigger_error(error: TriggerInboxError) -> OpError {
             "trigger_inbox_contended",
             "the trigger inbox is contended; retry the operation",
         ),
-        TriggerInboxError::Store(_) => {
-            OpError::internal("trigger_inbox_failed", error.to_string())
-        }
+        TriggerInboxError::Store(_) => OpError::internal("trigger_inbox_failed", error.to_string()),
     }
 }
 
@@ -715,7 +706,10 @@ mod tests {
         let first = ingest(&governance, event("delivery-1")).await.unwrap();
         assert!(first.accepted);
         assert!(!first.duplicate);
-        assert_eq!(first.unmatched_reason.as_deref(), Some("thread_has_no_subscription"));
+        assert_eq!(
+            first.unmatched_reason.as_deref(),
+            Some("thread_has_no_subscription")
+        );
 
         let second = ingest(&governance, event("delivery-1")).await.unwrap();
         assert!(second.duplicate);
@@ -743,7 +737,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(subscriptions.len(), 1);
-        assert_eq!(subscriptions[0].thread_key.as_deref(), Some("acme/widgets#7"));
+        assert_eq!(
+            subscriptions[0].thread_key.as_deref(),
+            Some("acme/widgets#7")
+        );
 
         // A second event on the same thread now matches the subscription.
         let mut follow_up = event("delivery-3");

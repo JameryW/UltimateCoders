@@ -176,8 +176,7 @@ mod tests {
     }
 
     async fn governance_with_case(status: CaseStatus) -> (Governance, String) {
-        let records: Arc<dyn crate::governance::RecordStore> =
-            Arc::new(InMemoryRecordStore::new());
+        let records: Arc<dyn crate::governance::RecordStore> = Arc::new(InMemoryRecordStore::new());
         let governance = Governance::new(records);
         let mut case = WorkCase::new(
             "fix the flaky build",
@@ -259,7 +258,11 @@ mod tests {
         subscribe(&governance, &case_id).await;
         raise_waiting(&governance, &case_id).await;
 
-        let outcome = governance.triggers.ingest(&event("check-1"), now()).await.unwrap();
+        let outcome = governance
+            .triggers
+            .ingest(&event("check-1"), now())
+            .await
+            .unwrap();
         assert_eq!(outcome.matched_cases, vec![case_id.clone()]);
 
         let woken = wake_matched_cases(&governance, &outcome.matched_cases, "evt-1", now()).await;
@@ -269,7 +272,12 @@ mod tests {
 
         let (case, _) = governance.cases.get(&case_id).await.unwrap().unwrap();
         assert_eq!(case.status, CaseStatus::Active);
-        let item = governance.attention.get("att-waiting").await.unwrap().unwrap();
+        let item = governance
+            .attention
+            .get("att-waiting")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!item.is_open());
         assert!(matches!(
             item.resolution,
@@ -296,13 +304,25 @@ mod tests {
             .await
             .unwrap();
 
-        let outcome = governance.triggers.ingest(&event("check-2"), now()).await.unwrap();
+        let outcome = governance
+            .triggers
+            .ingest(&event("check-2"), now())
+            .await
+            .unwrap();
         let woken = wake_matched_cases(&governance, &outcome.matched_cases, "evt-2", now()).await;
-        assert!(woken.is_empty(), "a pending human decision must not be answered by a webhook");
+        assert!(
+            woken.is_empty(),
+            "a pending human decision must not be answered by a webhook"
+        );
 
         let (case, _) = governance.cases.get(&case_id).await.unwrap().unwrap();
         assert_eq!(case.status, CaseStatus::NeedsHuman);
-        let item = governance.attention.get("att-human").await.unwrap().unwrap();
+        let item = governance
+            .attention
+            .get("att-human")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(item.is_open());
     }
 
@@ -310,7 +330,11 @@ mod tests {
     async fn terminal_cases_are_left_alone() {
         let (governance, case_id) = governance_with_case(CaseStatus::Completed).await;
         subscribe(&governance, &case_id).await;
-        let outcome = governance.triggers.ingest(&event("check-3"), now()).await.unwrap();
+        let outcome = governance
+            .triggers
+            .ingest(&event("check-3"), now())
+            .await
+            .unwrap();
         let woken = wake_matched_cases(&governance, &outcome.matched_cases, "evt-3", now()).await;
         assert!(woken.is_empty());
         let (case, _) = governance.cases.get(&case_id).await.unwrap().unwrap();
@@ -323,7 +347,11 @@ mod tests {
         subscribe(&governance, &case_id).await;
         raise_waiting(&governance, &case_id).await;
 
-        let first = governance.triggers.ingest(&event("check-4"), now()).await.unwrap();
+        let first = governance
+            .triggers
+            .ingest(&event("check-4"), now())
+            .await
+            .unwrap();
         assert!(!first.duplicate);
         let woken = wake_matched_cases(&governance, &first.matched_cases, "evt-4a", now()).await;
         assert_eq!(woken.len(), 1);
@@ -336,10 +364,17 @@ mod tests {
             .await
             .unwrap();
         raise_waiting(&governance, &case_id).await;
-        let second = governance.triggers.ingest(&event("check-4"), now()).await.unwrap();
+        let second = governance
+            .triggers
+            .ingest(&event("check-4"), now())
+            .await
+            .unwrap();
         assert!(second.duplicate);
         let woken = wake_matched_cases(&governance, &second.matched_cases, "evt-4b", now()).await;
-        assert!(woken.is_empty(), "a redelivery must not wake the case twice");
+        assert!(
+            woken.is_empty(),
+            "a redelivery must not wake the case twice"
+        );
         let (case, _) = governance.cases.get(&case_id).await.unwrap().unwrap();
         assert_eq!(case.status, CaseStatus::WaitingEvent);
     }
@@ -350,7 +385,11 @@ mod tests {
         // clear) must not strand the case in `WaitingEvent`.
         let (governance, case_id) = governance_with_case(CaseStatus::WaitingEvent).await;
         subscribe(&governance, &case_id).await;
-        let outcome = governance.triggers.ingest(&event("check-5"), now()).await.unwrap();
+        let outcome = governance
+            .triggers
+            .ingest(&event("check-5"), now())
+            .await
+            .unwrap();
         let woken = wake_matched_cases(&governance, &outcome.matched_cases, "evt-5", now()).await;
         assert_eq!(woken.len(), 1);
         assert!(woken[0].resolved_attention.is_none());

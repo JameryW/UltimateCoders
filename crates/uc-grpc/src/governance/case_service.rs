@@ -41,7 +41,9 @@ use super::{
     clamp_limit, decode_optional_timestamp, encode_optional_timestamp, encode_timestamp,
     optional_text, required_text, OpError, OpResult, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT,
 };
-use crate::governance::policy_interceptor::{require, resolve_declared_principal, resolve_principal};
+use crate::governance::policy_interceptor::{
+    require, resolve_declared_principal, resolve_principal,
+};
 use crate::ultimate_coders::case_service_server::CaseService;
 
 // ── Wire projections ───────────────────────────────────────────────
@@ -335,13 +337,21 @@ impl AuthorizeOutcome {
         };
         Self {
             allowed: permission_allowed
-                && mandate.map(|decision| decision.is_allowed()).unwrap_or(true)
-                && sandbox.map(|decision| decision.is_allowed()).unwrap_or(true),
+                && mandate
+                    .map(|decision| decision.is_allowed())
+                    .unwrap_or(true)
+                && sandbox
+                    .map(|decision| decision.is_allowed())
+                    .unwrap_or(true),
             deny_code,
             deny_detail,
             permission_allowed,
-            mandate_allowed: mandate.map(|decision| decision.is_allowed()).unwrap_or(true),
-            sandbox_allowed: sandbox.map(|decision| decision.is_allowed()).unwrap_or(true),
+            mandate_allowed: mandate
+                .map(|decision| decision.is_allowed())
+                .unwrap_or(true),
+            sandbox_allowed: sandbox
+                .map(|decision| decision.is_allowed())
+                .unwrap_or(true),
         }
     }
 
@@ -373,7 +383,8 @@ pub async fn create_case(
 ) -> OpResult<CreateCaseOutcome> {
     let now = super::now();
     let principal = resolve_declared_principal(
-        Some(request.principal_kind.as_str()), Some(request.principal_id.as_str()),
+        Some(request.principal_kind.as_str()),
+        Some(request.principal_id.as_str()),
     )?;
     let project_id = required_text(&request.project_id, "project_id")?;
     let title = required_text(&request.title, "title")?;
@@ -413,9 +424,21 @@ pub async fn create_case(
     };
 
     let mut case = match external_ref.clone().or_else(|| thread_key.clone()) {
-        Some(identity) => WorkCase::new(title, request.description.clone(), project_id.clone(), origin, now)
-            .with_id(CaseId::from_parts(&source, &identity)),
-        None => WorkCase::new(title, request.description.clone(), project_id.clone(), origin, now),
+        Some(identity) => WorkCase::new(
+            title,
+            request.description.clone(),
+            project_id.clone(),
+            origin,
+            now,
+        )
+        .with_id(CaseId::from_parts(&source, &identity)),
+        None => WorkCase::new(
+            title,
+            request.description.clone(),
+            project_id.clone(),
+            origin,
+            now,
+        ),
     };
     if let Some(digest) = optional_text(request.contract_digest.as_deref()) {
         case = case.with_contract_digest(digest);
@@ -559,10 +582,7 @@ pub async fn list_cases(
     });
     let status = match optional_text(request.status.as_deref()) {
         Some(token) => Some(CaseStatus::from_str_lossy(&token).ok_or_else(|| {
-            OpError::invalid(
-                "unknown_status",
-                format!("unknown case status '{token}'"),
-            )
+            OpError::invalid("unknown_status", format!("unknown case status '{token}'"))
         })?),
         None => None,
     };
@@ -634,12 +654,14 @@ pub async fn transition_case(
 ) -> OpResult<CaseView> {
     let now = super::now();
     let principal = resolve_declared_principal(
-        Some(request.principal_kind.as_str()), Some(request.principal_id.as_str()),
+        Some(request.principal_kind.as_str()),
+        Some(request.principal_id.as_str()),
     )?;
     let case_id = required_text(&request.case_id, "case_id")?;
     let token = required_text(&request.status, "status")?;
-    let status = CaseStatus::from_str_lossy(&token)
-        .ok_or_else(|| OpError::invalid("unknown_status", format!("unknown case status '{token}'")))?;
+    let status = CaseStatus::from_str_lossy(&token).ok_or_else(|| {
+        OpError::invalid("unknown_status", format!("unknown case status '{token}'"))
+    })?;
 
     let Some((case, _version)) = governance
         .cases
@@ -745,7 +767,8 @@ pub async fn issue_mandate(
 ) -> OpResult<MandateView> {
     let now = super::now();
     let grantor = resolve_declared_principal(
-        Some(request.principal_kind.as_str()), Some(request.principal_id.as_str()),
+        Some(request.principal_kind.as_str()),
+        Some(request.principal_id.as_str()),
     )?;
     let case_id = required_text(&request.case_id, "case_id")?;
     let scopes = parse_scopes(Some(request.scopes_json.as_str()))?;
@@ -845,10 +868,12 @@ pub async fn revoke_mandate(
 ) -> OpResult<MandateView> {
     let now = super::now();
     let revoker = resolve_declared_principal(
-        Some(request.principal_kind.as_str()), Some(request.principal_id.as_str()),
+        Some(request.principal_kind.as_str()),
+        Some(request.principal_id.as_str()),
     )?;
     let mandate_id = required_text(&request.mandate_id, "mandate_id")?;
-    let reason = optional_text(Some(request.reason.as_str())).unwrap_or_else(|| "revoked".to_string());
+    let reason =
+        optional_text(Some(request.reason.as_str())).unwrap_or_else(|| "revoked".to_string());
     let mandate = governance
         .policy
         .revoke_mandate(&mandate_id, &revoker, &reason, now)
@@ -997,11 +1022,11 @@ pub async fn authorize(
                     wall_secs: None,
                     runs: None,
                 };
-                Some(governance.policy.authorize_mandate(
-                    &mandate,
-                    &mandate_request,
-                    now,
-                ))
+                Some(
+                    governance
+                        .policy
+                        .authorize_mandate(&mandate, &mandate_request, now),
+                )
             }
             Ok(None) => Some(PolicyDecision::deny(DenyReason::MandateMissing)),
             Err(error) => return Err(policy_store_error(error)),
@@ -1011,13 +1036,12 @@ pub async fn authorize(
 
     let sandbox_decision = match optional_text(request.sandbox_profile_json.as_deref()) {
         Some(raw) => {
-            let profile: SandboxSecurityProfile =
-                serde_json::from_str(&raw).map_err(|error| {
-                    OpError::invalid(
-                        "invalid_sandbox_profile",
-                        format!("sandbox_profile_json must be a JSON object: {error}"),
-                    )
-                })?;
+            let profile: SandboxSecurityProfile = serde_json::from_str(&raw).map_err(|error| {
+                OpError::invalid(
+                    "invalid_sandbox_profile",
+                    format!("sandbox_profile_json must be a JSON object: {error}"),
+                )
+            })?;
             Some(governance.policy.validate_sandbox(&profile))
         }
         None => None,
@@ -1029,8 +1053,11 @@ pub async fn authorize(
             .map(PolicyDecision::is_allowed)
             .unwrap_or(true);
 
-    let mut outcome =
-        AuthorizeOutcome::from_dimensions(permission_allowed, mandate_decision.as_ref(), sandbox_decision.as_ref());
+    let mut outcome = AuthorizeOutcome::from_dimensions(
+        permission_allowed,
+        mandate_decision.as_ref(),
+        sandbox_decision.as_ref(),
+    );
     if !outcome.allowed && outcome.deny_code.is_none() {
         // The refusal came from the permission/tool dimension. The tool's own
         // decision is reported first: "unknown tool" is more actionable than
@@ -1179,12 +1206,10 @@ impl CaseService for CaseServiceImpl {
         request: Request<crate::ultimate_coders::GetMandateRequest>,
     ) -> Result<Response<crate::ultimate_coders::GetMandateResponse>, Status> {
         let mandate = get_mandate(&self.governance, request.into_inner()).await?;
-        Ok(Response::new(
-            crate::ultimate_coders::GetMandateResponse {
-                available: mandate.is_some(),
-                mandate: mandate.as_ref().map(MandateView::to_proto),
-            },
-        ))
+        Ok(Response::new(crate::ultimate_coders::GetMandateResponse {
+            available: mandate.is_some(),
+            mandate: mandate.as_ref().map(MandateView::to_proto),
+        }))
     }
 
     async fn authorize(
@@ -1192,16 +1217,14 @@ impl CaseService for CaseServiceImpl {
         request: Request<crate::ultimate_coders::AuthorizeRequest>,
     ) -> Result<Response<crate::ultimate_coders::AuthorizeResponse>, Status> {
         let outcome = authorize(&self.governance, request.into_inner()).await?;
-        Ok(Response::new(
-            crate::ultimate_coders::AuthorizeResponse {
-                allowed: outcome.allowed,
-                deny_code: outcome.deny_code.clone(),
-                deny_detail: outcome.deny_detail.clone(),
-                permission_allowed: outcome.permission_allowed,
-                mandate_allowed: outcome.mandate_allowed,
-                sandbox_allowed: outcome.sandbox_allowed,
-            },
-        ))
+        Ok(Response::new(crate::ultimate_coders::AuthorizeResponse {
+            allowed: outcome.allowed,
+            deny_code: outcome.deny_code.clone(),
+            deny_detail: outcome.deny_detail.clone(),
+            permission_allowed: outcome.permission_allowed,
+            mandate_allowed: outcome.mandate_allowed,
+            sandbox_allowed: outcome.sandbox_allowed,
+        }))
     }
 }
 
@@ -1266,10 +1289,9 @@ pub(super) fn parse_action_class(token: &str) -> Option<ActionClass> {
 /// Map a case-store failure onto the operation vocabulary.
 pub(super) fn case_store_error(error: CaseStoreError) -> OpError {
     match error {
-        CaseStoreError::NotFound { case_id } => OpError::not_found(
-            "case_not_found",
-            format!("case '{case_id}' does not exist"),
-        ),
+        CaseStoreError::NotFound { case_id } => {
+            OpError::not_found("case_not_found", format!("case '{case_id}' does not exist"))
+        }
         // A refused state-machine edge is a precondition of the current state,
         // not a malformed request — the caller asked for something real, just not
         // something possible right now.
@@ -1308,7 +1330,9 @@ pub(super) fn policy_store_error(error: PolicyEngineError) -> OpError {
         }
         PolicyEngineError::MandateConflict { case_id, existing } => OpError::conflict(
             "mandate_conflict",
-            format!("case '{case_id}' already holds the live mandate '{existing}'; revoke it first"),
+            format!(
+                "case '{case_id}' already holds the live mandate '{existing}'; revoke it first"
+            ),
         ),
     }
 }
@@ -1336,12 +1360,12 @@ pub(super) fn policy_issue_error(error: PolicyEngineError) -> OpError {
 pub(super) fn policy_revoke_error(error: PolicyEngineError) -> OpError {
     match &error {
         PolicyEngineError::Denied(decision) => OpError::denied(decision),
-        PolicyEngineError::Mandate(MandateStoreError::NotFound {
-            mandate_id,
-        }) => OpError::not_found(
-            "mandate_not_found",
-            format!("mandate '{mandate_id}' does not exist"),
-        ),
+        PolicyEngineError::Mandate(MandateStoreError::NotFound { mandate_id }) => {
+            OpError::not_found(
+                "mandate_not_found",
+                format!("mandate '{mandate_id}' does not exist"),
+            )
+        }
         other => OpError::internal("policy_failed", other.to_string()),
     }
 }
@@ -1369,7 +1393,10 @@ mod tests {
             Permission::MandateRevoke,
         ] {
             snapshot = snapshot
-                .with_grant(Grant::new(uc_types::governance::Principal::user("alice"), vec![permission]))
+                .with_grant(Grant::new(
+                    uc_types::governance::Principal::user("alice"),
+                    vec![permission],
+                ))
                 .expect("user grants are structurally valid");
         }
         governance.policy.install(snapshot).await.unwrap();
@@ -1400,13 +1427,19 @@ mod tests {
     #[tokio::test]
     async fn case_identity_is_deterministic_for_a_thread() {
         let governance = operator_plane().await;
-        let first = create_case(&governance, create_request("github", Some("acme/widgets#7")))
-            .await
-            .unwrap();
+        let first = create_case(
+            &governance,
+            create_request("github", Some("acme/widgets#7")),
+        )
+        .await
+        .unwrap();
         assert!(!first.dedup_replayed);
-        let second = create_case(&governance, create_request("github", Some("acme/widgets#7")))
-            .await
-            .unwrap();
+        let second = create_case(
+            &governance,
+            create_request("github", Some("acme/widgets#7")),
+        )
+        .await
+        .unwrap();
         assert!(second.dedup_replayed);
         assert_eq!(first.case.id, second.case.id);
         assert_eq!(first.case.priority, 3);
@@ -1432,7 +1465,10 @@ mod tests {
         request.mandate_scopes_json = Some(r#"[{"kind":"action","class":"read"}]"#.to_string());
         let outcome = create_case(&governance, request).await.unwrap();
         let mandate = outcome.mandate.expect("mandate issued");
-        assert_eq!(outcome.case.mandate_id.as_deref(), Some(mandate.id.as_str()));
+        assert_eq!(
+            outcome.case.mandate_id.as_deref(),
+            Some(mandate.id.as_str())
+        );
         assert_eq!(mandate.origin, "human_issued");
     }
 
@@ -1638,7 +1674,10 @@ mod tests {
         assert!(outcome.allowed);
         assert!(outcome.permission_allowed);
         assert!(outcome.mandate_allowed, "no case named means not checked");
-        assert!(outcome.sandbox_allowed, "no profile supplied means not checked");
+        assert!(
+            outcome.sandbox_allowed,
+            "no profile supplied means not checked"
+        );
         assert_eq!(outcome.deny_code, None);
     }
 
@@ -1684,8 +1723,7 @@ mod tests {
         let governance = operator_plane().await;
         let mut request = create_request("manual", None);
         request.issue_mandate = true;
-        request.mandate_scopes_json =
-            Some(r#"[{"kind":"tool","name":"Read"}]"#.to_string());
+        request.mandate_scopes_json = Some(r#"[{"kind":"tool","name":"Read"}]"#.to_string());
         let outcome = create_case(&governance, request).await.unwrap();
 
         let allowed = authorize(

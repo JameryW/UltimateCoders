@@ -307,7 +307,11 @@ impl SubscriptionFilter {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            if !self.labels.iter().any(|wanted| labels.contains(&wanted.as_str())) {
+            if !self
+                .labels
+                .iter()
+                .any(|wanted| labels.contains(&wanted.as_str()))
+            {
                 return false;
             }
         }
@@ -447,7 +451,13 @@ mod tests {
     #[test]
     fn redelivery_of_the_same_webhook_dedupes() {
         let payload = serde_json::json!({"action": "created", "number": 7});
-        let a = TriggerEvent::new(SourceKind::GitHub, TriggerKind::PullRequestComment, "delivery-1", payload.clone(), now());
+        let a = TriggerEvent::new(
+            SourceKind::GitHub,
+            TriggerKind::PullRequestComment,
+            "delivery-1",
+            payload.clone(),
+            now(),
+        );
         let b = TriggerEvent::new(
             SourceKind::GitHub,
             TriggerKind::PullRequestComment,

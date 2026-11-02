@@ -133,7 +133,7 @@ impl Watchdog {
             .map(|(record, _version)| record)
             .filter(|record| record.task_id == task_id)
             .collect();
-        records.sort_by(|a, b| b.at.cmp(&a.at));
+        records.sort_by_key(|r| std::cmp::Reverse(r.at));
         records.truncate(limit);
         Ok(records)
     }
@@ -228,7 +228,10 @@ mod tests {
             WatchdogVerdict::RetrySameContract { .. }
         ));
         let second = watchdog.decide(&signal, true, now()).await.unwrap();
-        assert!(matches!(second.verdict, WatchdogVerdict::Replan { attempt: 1, .. }));
+        assert!(matches!(
+            second.verdict,
+            WatchdogVerdict::Replan { attempt: 1, .. }
+        ));
         signal.replans_used = 1;
         let third = watchdog.decide(&signal, true, now()).await.unwrap();
         assert!(matches!(
@@ -244,13 +247,13 @@ mod tests {
         signal.no_progress_count = 3;
         signal.confirmed_effect_ids = vec!["effect:merge-main".to_string()];
         let decision = watchdog.decide(&signal, true, now()).await.unwrap();
-        assert!(matches!(
-            decision.verdict,
-            WatchdogVerdict::Replan { .. }
-        ));
+        assert!(matches!(decision.verdict, WatchdogVerdict::Replan { .. }));
         let history = watchdog.history("task-1", 10).await.unwrap();
         assert_eq!(history.len(), 1);
-        assert_eq!(history[0].preserve_effects, vec!["effect:merge-main".to_string()]);
+        assert_eq!(
+            history[0].preserve_effects,
+            vec!["effect:merge-main".to_string()]
+        );
         assert_eq!(history[0].verdict, "replan");
     }
 

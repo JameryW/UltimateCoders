@@ -101,7 +101,8 @@ impl SubmissionStore {
         let record = SubmissionRecord::new(request, now);
         match self.view.put(key, &record, Some(0)).await {
             Ok(_) => {
-                self.queue_publication(&record, request, outbox, now).await?;
+                self.queue_publication(&record, request, outbox, now)
+                    .await?;
                 Ok(SubmitOnceOutcome::Created { record })
             }
             Err(RecordError::Conflict { .. }) => {
@@ -125,7 +126,8 @@ impl SubmissionStore {
                 // Same submission, same content: make sure the publication is
                 // queued (covers the crash-after-record window) and report a
                 // replay.
-                self.queue_publication(&existing, request, outbox, now).await?;
+                self.queue_publication(&existing, request, outbox, now)
+                    .await?;
                 Ok(SubmitOnceOutcome::Replayed { record: existing })
             }
             Err(other) => Err(SubmissionError::Store(other)),
@@ -168,7 +170,10 @@ impl SubmissionStore {
         Ok(self.view.get(submission_id.as_str()).await?)
     }
 
-    pub async fn list(&self, limit: usize) -> Result<Vec<(SubmissionRecord, u64)>, SubmissionError> {
+    pub async fn list(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(SubmissionRecord, u64)>, SubmissionError> {
         Ok(self.view.list(limit).await?)
     }
 
@@ -318,7 +323,7 @@ pub fn submission_outbox_prefix() -> &'static str {
 
 /// Transport subject for submission publications. Kept here so the store, the
 /// outbox dispatcher and the recovery sweep cannot disagree about the string.
-pub const OUTBOX_SUBJECT_TASK_SUBMIT: &'static str = "uc.task.submit";
+pub const OUTBOX_SUBJECT_TASK_SUBMIT: &str = "uc.task.submit";
 
 #[cfg(test)]
 mod tests {
@@ -385,8 +390,10 @@ mod tests {
             .submit_once(&request("key-1", "fix it"), &fixture.outbox, now())
             .await
             .unwrap();
-        let (SubmitOnceOutcome::Created { record: first }, SubmitOnceOutcome::Replayed { record: second }) =
-            (first, second)
+        let (
+            SubmitOnceOutcome::Created { record: first },
+            SubmitOnceOutcome::Replayed { record: second },
+        ) = (first, second)
         else {
             panic!("expected Created then Replayed");
         };
@@ -404,7 +411,11 @@ mod tests {
             .unwrap();
         let outcome = fixture
             .submissions
-            .submit_once(&request("key-1", "do something else"), &fixture.outbox, now())
+            .submit_once(
+                &request("key-1", "do something else"),
+                &fixture.outbox,
+                now(),
+            )
             .await
             .unwrap();
         assert!(outcome.is_conflict());
@@ -511,13 +522,7 @@ mod tests {
     #[tokio::test]
     async fn derived_task_id_is_the_single_source_of_identity() {
         let id = SubmissionId::caller_supplied("key-1");
-        assert_eq!(
-            SubmissionStore::task_id_for(&id),
-            derive_task_id(&id).0
-        );
+        assert_eq!(SubmissionStore::task_id_for(&id), derive_task_id(&id).0);
         assert_eq!(outbox_key(&id), "task-submit:key-1");
     }
 }
-
-
-

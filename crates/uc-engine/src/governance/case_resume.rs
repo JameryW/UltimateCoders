@@ -28,8 +28,7 @@
 use chrono::{DateTime, Utc};
 
 use uc_types::governance::{
-    ActionClass, CaseStatus, MandateRequest, SubmissionId, SubmissionRequest,
-    TriggerEvent,
+    ActionClass, CaseStatus, MandateRequest, SubmissionId, SubmissionRequest, TriggerEvent,
 };
 
 use super::Governance;
@@ -52,14 +51,22 @@ pub enum ResumeSkip {
     NotOptedIn,
     UnknownCase,
     /// Terminal cases have no next run.
-    Terminal { status: CaseStatus },
+    Terminal {
+        status: CaseStatus,
+    },
     /// Only an `active` case can start a run. In particular `needs_human` and
     /// `blocked` must not be resumed by an inbound event.
-    NotRunnable { status: CaseStatus },
+    NotRunnable {
+        status: CaseStatus,
+    },
     /// A run is already open; starting another would be duplicate work.
-    RunAlreadyOpen { run_id: String },
+    RunAlreadyOpen {
+        run_id: String,
+    },
     /// No mandate, revoked, expired, or missing the `dispatch` action class.
-    NoLiveMandate { detail: String },
+    NoLiveMandate {
+        detail: String,
+    },
 }
 
 impl ResumeSkip {
@@ -166,11 +173,8 @@ pub async fn plan_resume(
         });
     }
 
-    let submission_id = SubmissionId::caller_supplied(format!(
-        "case-resume:{}:{}",
-        case_id,
-        event.dedup_key()
-    ));
+    let submission_id =
+        SubmissionId::caller_supplied(format!("case-resume:{}:{}", case_id, event.dedup_key()));
     // The description is deterministic for the same event, so the submission
     // digest is stable and a replay is recognised as a replay instead of a
     // conflicting request.
@@ -297,7 +301,10 @@ mod tests {
             .expect("resume planned");
         assert_eq!(plan.case_id, fixture.case_id);
         assert_eq!(plan.submission.project_id, "proj");
-        assert_eq!(plan.submission.case_id.as_deref(), Some(fixture.case_id.as_str()));
+        assert_eq!(
+            plan.submission.case_id.as_deref(),
+            Some(fixture.case_id.as_str())
+        );
         // The authorizing principal is the mandate's grantor, not the event.
         assert_eq!(plan.submission.principal, Principal::user("alice"));
         assert!(plan
@@ -317,8 +324,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            first.submission.submission_id,
-            second.submission.submission_id,
+            first.submission.submission_id, second.submission.submission_id,
             "a redelivered event must map to the same submission (submit-once replay)"
         );
         assert_eq!(first.submission.digest(), second.submission.digest());
@@ -343,9 +349,15 @@ mod tests {
     #[tokio::test]
     async fn a_subscription_that_did_not_opt_in_never_starts_work() {
         let fixture = fixture(CaseStatus::Active, dispatch_mandate()).await;
-        let skip = plan_resume(&fixture.governance, &fixture.case_id, &event(), false, now())
-            .await
-            .expect_err("must not resume");
+        let skip = plan_resume(
+            &fixture.governance,
+            &fixture.case_id,
+            &event(),
+            false,
+            now(),
+        )
+        .await
+        .expect_err("must not resume");
         assert_eq!(skip.code(), "not_opted_in");
     }
 
@@ -382,9 +394,15 @@ mod tests {
             }],
         )
         .await;
-        let skip = plan_resume(&read_only.governance, &read_only.case_id, &event(), true, now())
-            .await
-            .expect_err("read-only mandate cannot start work");
+        let skip = plan_resume(
+            &read_only.governance,
+            &read_only.case_id,
+            &event(),
+            true,
+            now(),
+        )
+        .await
+        .expect_err("read-only mandate cannot start work");
         assert_eq!(skip.code(), "no_live_mandate");
 
         let revoked = fixture(CaseStatus::Active, dispatch_mandate()).await;
@@ -402,12 +420,7 @@ mod tests {
         revoked
             .governance
             .mandates
-            .revoke(
-                &mandate_id,
-                Principal::user("alice"),
-                "changed mind",
-                now(),
-            )
+            .revoke(&mandate_id, Principal::user("alice"), "changed mind", now())
             .await
             .unwrap();
         let skip = plan_resume(&revoked.governance, &revoked.case_id, &event(), true, now())

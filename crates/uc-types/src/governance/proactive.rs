@@ -26,10 +26,11 @@ pub const PROACTIVE_NAMESPACE: &str = "proactive_proposal";
 pub const PROACTIVE_AUDIT_NAMESPACE: &str = "proactive_audit";
 
 /// How much autonomy the system has.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProactiveMode {
     /// Nothing is evaluated. Default.
+    #[default]
     Off,
     /// Suggestions are evaluated and recorded, never shown prominently and never
     /// executed. This is the measurement mode.
@@ -40,12 +41,6 @@ pub enum ProactiveMode {
     /// Approved suggestions execute without a further human step. Requires an
     /// explicit operator decision to enable.
     Execute,
-}
-
-impl Default for ProactiveMode {
-    fn default() -> Self {
-        ProactiveMode::Off
-    }
 }
 
 impl ProactiveMode {
@@ -255,7 +250,11 @@ impl ProactiveProposal {
         self
     }
 
-    pub fn with_request(mut self, project_id: impl Into<String>, request: impl Into<String>) -> Self {
+    pub fn with_request(
+        mut self,
+        project_id: impl Into<String>,
+        request: impl Into<String>,
+    ) -> Self {
         self.project_id = Some(project_id.into());
         self.proposed_request = Some(request.into());
         self
@@ -290,7 +289,11 @@ impl ProactiveProposal {
         Ok(())
     }
 
-    pub fn mark_executed(&mut self, case_id: impl Into<String>, now: DateTime<Utc>) -> Result<(), ProposalError> {
+    pub fn mark_executed(
+        &mut self,
+        case_id: impl Into<String>,
+        now: DateTime<Utc>,
+    ) -> Result<(), ProposalError> {
         if self.status != ProposalStatus::Approved {
             return Err(ProposalError::NotActionable {
                 status: self.status,
@@ -313,7 +316,11 @@ impl std::fmt::Display for ProposalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ProposalError::NotActionable { status } => {
-                write!(f, "proposal in status {} is not actionable", status.as_str())
+                write!(
+                    f,
+                    "proposal in status {} is not actionable",
+                    status.as_str()
+                )
             }
         }
     }
@@ -403,7 +410,8 @@ impl ProactiveGateState {
                 action: format!("status_{}", proposal.status.as_str()),
             });
         }
-        if let (Some(limit), Some(estimate)) = (self.max_tokens_per_action, proposal.estimated_tokens)
+        if let (Some(limit), Some(estimate)) =
+            (self.max_tokens_per_action, proposal.estimated_tokens)
         {
             if estimate > limit {
                 return PolicyDecision::deny(DenyReason::BudgetExhausted {
@@ -435,7 +443,12 @@ pub struct ProactiveAuditEntry {
 }
 
 impl ProactiveAuditEntry {
-    pub fn new(at: DateTime<Utc>, mode: ProactiveMode, action: impl Into<String>, allowed: bool) -> Self {
+    pub fn new(
+        at: DateTime<Utc>,
+        mode: ProactiveMode,
+        action: impl Into<String>,
+        allowed: bool,
+    ) -> Self {
         Self {
             at,
             mode,
@@ -455,7 +468,9 @@ impl ProactiveAuditEntry {
         decision: &PolicyDecision,
     ) -> Self {
         let mut entry = Self::new(at, mode, action, decision.is_allowed());
-        entry.reason = decision.deny_reason().map(|reason| reason.code().to_string());
+        entry.reason = decision
+            .deny_reason()
+            .map(|reason| reason.code().to_string());
         entry.detail = decision.deny_reason().map(|reason| format!("{reason:?}"));
         entry
     }
@@ -653,7 +668,11 @@ impl WatchdogConfig {
     /// with no file changes) should be retried once under the same contract
     /// before replanning, because replanning costs model calls while a
     /// transient failure costs one retry.
-    pub fn decide_with_retry(&self, signal: &WatchdogSignal, already_retried: bool) -> WatchdogDecision {
+    pub fn decide_with_retry(
+        &self,
+        signal: &WatchdogSignal,
+        already_retried: bool,
+    ) -> WatchdogDecision {
         if signal.no_progress_count >= self.stall_limit
             && !already_retried
             && signal.attempts_used < self.max_attempts
@@ -844,7 +863,12 @@ mod tests {
             mode: "off".to_string(),
             action: "evaluate".to_string(),
         });
-        let entry = ProactiveAuditEntry::from_decision(now(), ProactiveMode::Off, "admit_proposal", &decision);
+        let entry = ProactiveAuditEntry::from_decision(
+            now(),
+            ProactiveMode::Off,
+            "admit_proposal",
+            &decision,
+        );
         assert!(!entry.allowed);
         assert_eq!(entry.reason.as_deref(), Some("proactive_mode_disallows"));
     }
@@ -854,10 +878,7 @@ mod tests {
         let config = WatchdogConfig::default();
         let mut signal = WatchdogSignal::new("task-1");
         signal.no_progress_count = 1;
-        assert_eq!(
-            config.decide(&signal).verdict,
-            WatchdogVerdict::Continue
-        );
+        assert_eq!(config.decide(&signal).verdict, WatchdogVerdict::Continue);
     }
 
     #[test]
@@ -889,13 +910,19 @@ mod tests {
         let config = WatchdogConfig::default();
         let mut signal = WatchdogSignal::new("task-1");
         signal.no_progress_count = 2;
-        signal.confirmed_effect_ids = vec!["effect:push-main".to_string(), "effect:comment-7".to_string()];
+        signal.confirmed_effect_ids = vec![
+            "effect:push-main".to_string(),
+            "effect:comment-7".to_string(),
+        ];
         match config.decide(&signal).verdict {
             WatchdogVerdict::Replan {
                 preserve_effects, ..
             } => assert_eq!(
                 preserve_effects,
-                vec!["effect:push-main".to_string(), "effect:comment-7".to_string()]
+                vec![
+                    "effect:push-main".to_string(),
+                    "effect:comment-7".to_string()
+                ]
             ),
             other => panic!("expected replan, got {other:?}"),
         }

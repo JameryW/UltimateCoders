@@ -97,7 +97,10 @@ impl OutboxQueue {
         limit: usize,
     ) -> Result<Vec<OutboxEntry>, OutboxError> {
         let now_ms = now.timestamp_millis();
-        let candidates = self.view.list::<OutboxEntry>(limit.saturating_mul(4).max(limit)).await?;
+        let candidates = self
+            .view
+            .list::<OutboxEntry>(limit.saturating_mul(4).max(limit))
+            .await?;
         let mut claimed = Vec::new();
         for (mut entry, version) in candidates {
             if claimed.len() >= limit {
@@ -186,11 +189,7 @@ impl OutboxQueue {
         OUTBOX_MAX_ATTEMPTS
     }
 
-    async fn mutate<F>(
-        &self,
-        key: &str,
-        mutate: F,
-    ) -> Result<Option<OutboxEntry>, OutboxError>
+    async fn mutate<F>(&self, key: &str, mutate: F) -> Result<Option<OutboxEntry>, OutboxError>
     where
         F: Fn(&mut OutboxEntry),
     {
@@ -265,7 +264,11 @@ mod tests {
         let recovered = queue.recover(now()).await.unwrap();
         assert_eq!(recovered, 1);
         let claimed_again = queue.claim_due(now(), 10).await.unwrap();
-        assert_eq!(claimed_again.len(), 1, "recovered entry must be re-deliverable");
+        assert_eq!(
+            claimed_again.len(),
+            1,
+            "recovered entry must be re-deliverable"
+        );
     }
 
     #[tokio::test]

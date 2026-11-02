@@ -265,7 +265,8 @@ impl CapacitySnapshot {
     /// is the `少打扰` metric made observable: it should equal
     /// `waiting_event_cases + verifying_cases`.
     pub fn slots_saved_by_quiet_waiting(&self) -> u32 {
-        self.waiting_event_cases.saturating_add(self.verifying_cases)
+        self.waiting_event_cases
+            .saturating_add(self.verifying_cases)
     }
 }
 
@@ -300,7 +301,13 @@ mod tests {
 
     #[test]
     fn resolution_is_idempotent() {
-        let mut item = AttentionItem::new("a", "case-1", AttentionKind::NeedsHuman, "pick a branch", now());
+        let mut item = AttentionItem::new(
+            "a",
+            "case-1",
+            AttentionKind::NeedsHuman,
+            "pick a branch",
+            now(),
+        );
         item.resolve(
             AttentionResolution::HumanDecision {
                 by: "alice".to_string(),
@@ -326,7 +333,7 @@ mod tests {
             AttentionItem::new("b", "case-b", AttentionKind::Blocked, "y", now()).with_priority(9);
         let blocked_low =
             AttentionItem::new("c", "case-c", AttentionKind::Blocked, "z", now()).with_priority(1);
-        let mut items = vec![blocked_low.clone(), human.clone(), blocked_high.clone()];
+        let mut items = [blocked_low.clone(), human.clone(), blocked_high.clone()];
         items.sort_by_key(|item| item.worklist_order_key());
         assert_eq!(items[0].id, human.id);
         assert_eq!(items[1].id, blocked_high.id);

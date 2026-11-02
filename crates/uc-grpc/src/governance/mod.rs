@@ -31,8 +31,8 @@ pub mod attention_service;
 pub mod bridge;
 pub mod case_service;
 pub mod policy_interceptor;
-pub mod resume_flow;
 pub mod proactive_service;
+pub mod resume_flow;
 pub mod trigger_service;
 
 use chrono::{DateTime, Utc};
@@ -40,7 +40,7 @@ use tonic::{Code, Status};
 use uc_engine::governance::Governance;
 use uc_types::governance::PolicyDecision;
 
-pub use attention_service::{AttentionServiceImpl, AttentionItemView, CapacityView};
+pub use attention_service::{AttentionItemView, AttentionServiceImpl, CapacityView};
 pub use bridge::OUTBOX_DRAIN_LIMIT;
 pub use case_service::{CaseRunView, CaseServiceImpl, CaseView, MandateView};
 pub use policy_interceptor::{
@@ -168,11 +168,7 @@ impl OpError {
     /// The caller is not allowed to perform the operation.
     pub fn denied(decision: &PolicyDecision) -> Self {
         match decision.deny_reason() {
-            Some(reason) => Self::new(
-                Code::PermissionDenied,
-                reason.code(),
-                format!("{reason:?}"),
-            ),
+            Some(reason) => Self::new(Code::PermissionDenied, reason.code(), format!("{reason:?}")),
             None => Self::new(
                 Code::PermissionDenied,
                 "policy_denied",
@@ -256,7 +252,11 @@ pub fn now() -> DateTime<Utc> {
 
 /// Clamp a page size, treating `0` as "use the default" (the proto default).
 pub fn clamp_limit(limit: u32) -> usize {
-    let limit = if limit == 0 { DEFAULT_LIST_LIMIT } else { limit };
+    let limit = if limit == 0 {
+        DEFAULT_LIST_LIMIT
+    } else {
+        limit
+    };
     limit.min(MAX_LIST_LIMIT) as usize
 }
 
@@ -330,7 +330,10 @@ mod tests {
         let instant = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        assert_eq!(decode_timestamp(encode_timestamp(instant)).unwrap(), instant);
+        assert_eq!(
+            decode_timestamp(encode_timestamp(instant)).unwrap(),
+            instant
+        );
         assert_eq!(encode_optional_timestamp(None), None);
     }
 
@@ -349,7 +352,10 @@ mod tests {
         let error = OpError::denied(&decision);
         assert_eq!(error.code, "missing_permission");
         assert_eq!(error.status, Code::PermissionDenied);
-        assert!(error.to_status().message().starts_with("missing_permission: "));
+        assert!(error
+            .to_status()
+            .message()
+            .starts_with("missing_permission: "));
     }
 
     #[test]

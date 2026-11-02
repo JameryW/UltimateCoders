@@ -2913,11 +2913,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 interceptor.clone(),
             ),
             TriggerServiceServer::with_interceptor(
-                TriggerServiceImpl::with_dispatch(
-                    governance.clone(),
-                    task_store,
-                    event_tx,
-                ),
+                TriggerServiceImpl::with_dispatch(governance.clone(), task_store, event_tx),
                 interceptor.clone(),
             ),
             AttentionServiceServer::with_interceptor(

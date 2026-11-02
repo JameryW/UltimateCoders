@@ -36,17 +36,17 @@ pub mod watchdog;
 use std::sync::Arc;
 
 pub use attention::{AttentionBoard, AttentionBoardError};
-pub use case_store::{CaseStore, CaseStoreError, MandateStore};
 pub use case_resume::{plan_resume, ResumePlan, ResumeSkip};
+pub use case_store::{CaseStore, CaseStoreError, MandateStore};
 pub use case_wake::{wake_matched_cases, CaseWake};
 pub use outbox::{OutboxError, OutboxQueue};
 pub use policy::{PolicyEngine, PolicyEngineError};
 pub use proactive::{ProactiveGate, ProactiveGateError};
+#[cfg(feature = "storage")]
+pub use record_store::PostgresRecordStore;
 pub use record_store::{
     InMemoryRecordStore, Record, RecordError, RecordStore, GOVERNANCE_RECORDS_TABLE,
 };
-#[cfg(feature = "storage")]
-pub use record_store::PostgresRecordStore;
 pub use submission::{SubmissionError, SubmissionStore};
 pub use trigger_inbox::{TriggerInbox, TriggerInboxError};
 pub use watchdog::{Watchdog, WatchdogError};

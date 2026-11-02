@@ -347,13 +347,8 @@ pub async fn submit_proposal(
     let title = required_text(&request.title, "title")?;
     let rationale = required_text(&request.rationale, "rationale")?;
 
-    let mut proposal = ProactiveProposal::new(
-        kind,
-        title,
-        rationale,
-        governance.proactive.mode(),
-        now,
-    );
+    let mut proposal =
+        ProactiveProposal::new(kind, title, rationale, governance.proactive.mode(), now);
     proposal.case_id = optional_text(request.case_id.as_deref());
     // Confidence is advisory; clamp instead of refusing so an over-confident
     // evaluator (1.01 from float noise) still records its suggestion.
@@ -455,7 +450,10 @@ pub async fn decide_proposal(
 
     let decision = match decision_token.to_ascii_lowercase().as_str() {
         "approve" => ProposalDecision::Approve { by: by.clone() },
-        "reject" => ProposalDecision::Reject { by: by.clone(), reason },
+        "reject" => ProposalDecision::Reject {
+            by: by.clone(),
+            reason,
+        },
         other => {
             return Err(OpError::invalid(
                 "invalid_decision",
@@ -856,7 +854,10 @@ mod tests {
             .await
             .unwrap();
         assert!(!outcome.accepted);
-        assert_eq!(outcome.deny_code.as_deref(), Some("proactive_mode_disallows"));
+        assert_eq!(
+            outcome.deny_code.as_deref(),
+            Some("proactive_mode_disallows")
+        );
         // The refusal was audited, which is the point of recording it.
         let audit = list_audit(
             &governance,
@@ -874,7 +875,9 @@ mod tests {
     #[tokio::test]
     async fn propose_mode_records_without_granting_execution() {
         let governance = plane().await;
-        set_mode(&governance, mode_request("propose")).await.unwrap();
+        set_mode(&governance, mode_request("propose"))
+            .await
+            .unwrap();
         let outcome = submit_proposal(&governance, proposal(&["ci:run-42"]))
             .await
             .unwrap();
@@ -887,7 +890,9 @@ mod tests {
     #[tokio::test]
     async fn a_proposal_without_evidence_is_refused_even_in_propose_mode() {
         let governance = plane().await;
-        set_mode(&governance, mode_request("propose")).await.unwrap();
+        set_mode(&governance, mode_request("propose"))
+            .await
+            .unwrap();
         let outcome = submit_proposal(&governance, proposal(&[])).await.unwrap();
         assert!(!outcome.accepted);
         assert_eq!(
@@ -918,7 +923,9 @@ mod tests {
     #[tokio::test]
     async fn approve_then_decide_records_the_operator() {
         let governance = plane().await;
-        set_mode(&governance, mode_request("propose")).await.unwrap();
+        set_mode(&governance, mode_request("propose"))
+            .await
+            .unwrap();
         let outcome = submit_proposal(&governance, proposal(&["ci:run-42"]))
             .await
             .unwrap();
@@ -999,13 +1006,22 @@ mod tests {
         let second = report_stall(&governance, report(true)).await.unwrap();
         assert_eq!(second.verdict, "replan");
         assert_eq!(second.attempt, Some(1));
-        assert_eq!(second.preserve_effects, vec!["effect:push-main".to_string()]);
+        assert_eq!(
+            second.preserve_effects,
+            vec!["effect:push-main".to_string()]
+        );
     }
 
     #[tokio::test]
     async fn an_escalation_is_projected_onto_the_attention_board() {
         let governance = plane().await;
-        let case = WorkCase::new("case", "desc", "proj", CaseOrigin::manual(), super::super::now());
+        let case = WorkCase::new(
+            "case",
+            "desc",
+            "proj",
+            CaseOrigin::manual(),
+            super::super::now(),
+        );
         let case = governance.cases.create_unique(case).await.unwrap().0;
         let mut report = crate::ultimate_coders::ReportStallRequest {
             task_id: "task-1".to_string(),

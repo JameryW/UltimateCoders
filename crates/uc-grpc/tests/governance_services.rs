@@ -30,7 +30,7 @@ use uc_grpc::ultimate_coders::trigger_service_server::TriggerService;
 use uc_grpc::ultimate_coders::worker_service_server::WorkerService;
 use uc_grpc::ultimate_coders::*;
 use uc_types::governance::{
-    Grant, Permission, PolicySnapshot, PolicyVersion, Principal, WorkCase, CaseOrigin,
+    CaseOrigin, Grant, Permission, PolicySnapshot, PolicyVersion, Principal, WorkCase,
 };
 
 /// The operator surface identity used by the dashboard, per `policy_interceptor`.
@@ -95,7 +95,10 @@ async fn submit_task_replays_the_same_task_and_rejects_a_conflicting_reuse() {
     let replay = submit_once(&server, "Fix the build", "sub-key-1").await;
     assert!(replay.success, "{:?}", replay.error);
     assert!(replay.dedup_replayed, "a replay must be reported as such");
-    assert_eq!(replay.task_id, task_id, "replay must not create a second task");
+    assert_eq!(
+        replay.task_id, task_id,
+        "replay must not create a second task"
+    );
     let tasks = server.task_store().lock().await.list_tasks();
     assert_eq!(tasks.len(), 1, "exactly one task exists after a replay");
 
@@ -361,7 +364,13 @@ async fn attention_items_are_raised_resolved_and_counted() {
     let now = chrono::Utc::now();
     let case = governance
         .cases
-        .create_unique(WorkCase::new("case", "desc", "proj-1", CaseOrigin::manual(), now))
+        .create_unique(WorkCase::new(
+            "case",
+            "desc",
+            "proj-1",
+            CaseOrigin::manual(),
+            now,
+        ))
         .await
         .expect("case created")
         .0;
@@ -398,7 +407,9 @@ async fn attention_items_are_raised_resolved_and_counted() {
         .expect("list answers")
         .into_inner();
     assert_eq!(listed.items.len(), 1);
-    let capacity = listed.capacity.expect("capacity always accompanies the list");
+    let capacity = listed
+        .capacity
+        .expect("capacity always accompanies the list");
     assert_eq!(capacity.needs_human_items, 1);
 
     let resolved = service
@@ -494,10 +505,7 @@ async fn proactive_mode_off_refuses_to_record_a_proposal() {
 
 #[tokio::test]
 async fn the_governance_services_answer_over_a_real_grpc_connection() {
-    let (permissions, principal) = dashboard(vec![
-        Permission::CaseCreate,
-        Permission::CaseRead,
-    ]);
+    let (permissions, principal) = dashboard(vec![Permission::CaseCreate, Permission::CaseRead]);
     let governance = planned_governance(permissions, principal).await;
 
     let server = GrpcServer::new(LocalEngine::new_fallback()).with_governance(governance);
@@ -749,7 +757,11 @@ async fn an_opted_in_event_resumes_the_case_with_a_governed_task() {
         PolicyVersion(1),
         now,
     );
-    governance.mandates.put_new(&mandate).await.expect("mandate");
+    governance
+        .mandates
+        .put_new(&mandate)
+        .await
+        .expect("mandate");
     governance
         .cases
         .update(case_id.as_str(), |stored| {
@@ -992,17 +1004,18 @@ async fn capacity_reflects_the_live_worker_registry() {
         .into_inner()
         .capacity
         .expect("capacity present");
-    assert_eq!(capacity.worker_slots_total, 4, "legacy slots must not count");
+    assert_eq!(
+        capacity.worker_slots_total, 4,
+        "legacy slots must not count"
+    );
     assert_eq!(capacity.worker_slots_busy, 1);
     assert_eq!(capacity.worker_slots_available, 3);
 
     // With no workers registered the env-configured fallback still answers, so the
     // dashboard never loses its capacity strip.
     let empty = Arc::new(tokio::sync::RwLock::new(WorkerRegistry::new()));
-    let service = uc_grpc::governance::AttentionServiceImpl::with_registry(
-        governance.clone(),
-        empty,
-    );
+    let service =
+        uc_grpc::governance::AttentionServiceImpl::with_registry(governance.clone(), empty);
     let fallback = service
         .get_capacity(Request::new(GetCapacityRequest {}))
         .await

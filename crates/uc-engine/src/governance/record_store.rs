@@ -75,13 +75,18 @@ impl std::fmt::Display for RecordError {
                     f,
                     "record version conflict: expected v{expected}, found v{actual}"
                 ),
-                None => write!(f, "record version conflict: expected v{expected}, found nothing"),
+                None => write!(
+                    f,
+                    "record version conflict: expected v{expected}, found nothing"
+                ),
             },
             RecordError::Backend(detail) => write!(f, "record store backend error: {detail}"),
             RecordError::Decode { key, detail } => {
                 write!(f, "cannot decode record {key}: {detail}")
             }
-            RecordError::Encode { key, detail } => write!(f, "cannot encode record {key}: {detail}"),
+            RecordError::Encode { key, detail } => {
+                write!(f, "cannot encode record {key}: {detail}")
+            }
         }
     }
 }
@@ -365,7 +370,15 @@ impl RecordStore for PostgresRecordStore {
 
     async fn list(&self, namespace: &str, limit: usize) -> Result<Vec<Record>, RecordError> {
         self.ensure_schema().await?;
-        let rows = sqlx::query_as::<_, (String, i64, sqlx::types::Json<serde_json::Value>, DateTime<Utc>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                i64,
+                sqlx::types::Json<serde_json::Value>,
+                DateTime<Utc>,
+            ),
+        >(
             "SELECT key, version, payload, updated_at FROM governance_records \
              WHERE namespace = $1 ORDER BY key ASC LIMIT $2",
         )
@@ -388,12 +401,13 @@ impl RecordStore for PostgresRecordStore {
 
     async fn delete(&self, namespace: &str, key: &str) -> Result<bool, RecordError> {
         self.ensure_schema().await?;
-        let result = sqlx::query("DELETE FROM governance_records WHERE namespace = $1 AND key = $2")
-            .bind(namespace)
-            .bind(key)
-            .execute(self.pool.as_ref())
-            .await
-            .map_err(|error| RecordError::Backend(format!("postgres delete: {error}")))?;
+        let result =
+            sqlx::query("DELETE FROM governance_records WHERE namespace = $1 AND key = $2")
+                .bind(namespace)
+                .bind(key)
+                .execute(self.pool.as_ref())
+                .await
+                .map_err(|error| RecordError::Backend(format!("postgres delete: {error}")))?;
         Ok(result.rows_affected() > 0)
     }
 }
@@ -550,15 +564,23 @@ mod tests {
     #[tokio::test]
     async fn unconditional_put_upserts() {
         let store = InMemoryRecordStore::new();
-        store.put("ns", "k", serde_json::json!({"a": 1}), None).await.unwrap();
-        let second = store.put("ns", "k", serde_json::json!({"a": 2}), None).await.unwrap();
+        store
+            .put("ns", "k", serde_json::json!({"a": 1}), None)
+            .await
+            .unwrap();
+        let second = store
+            .put("ns", "k", serde_json::json!({"a": 2}), None)
+            .await
+            .unwrap();
         assert_eq!(second.version, 2);
     }
 
     #[tokio::test]
     async fn update_of_a_missing_key_with_nonzero_expectation_conflicts() {
         let store = InMemoryRecordStore::new();
-        let result = store.put("ns", "missing", serde_json::json!({}), Some(3)).await;
+        let result = store
+            .put("ns", "missing", serde_json::json!({}), Some(3))
+            .await;
         assert_eq!(
             result,
             Err(RecordError::Conflict {
@@ -570,13 +592,26 @@ mod tests {
 
     #[tokio::test]
     async fn namespaces_are_isolated_and_listing_is_key_ordered() {
-        let store: std::sync::Arc<dyn RecordStore> = std::sync::Arc::new(InMemoryRecordStore::new());
-        store.put("a", "z", serde_json::json!(1), None).await.unwrap();
-        store.put("a", "m", serde_json::json!(2), None).await.unwrap();
-        store.put("b", "m", serde_json::json!(3), None).await.unwrap();
+        let store: std::sync::Arc<dyn RecordStore> =
+            std::sync::Arc::new(InMemoryRecordStore::new());
+        store
+            .put("a", "z", serde_json::json!(1), None)
+            .await
+            .unwrap();
+        store
+            .put("a", "m", serde_json::json!(2), None)
+            .await
+            .unwrap();
+        store
+            .put("b", "m", serde_json::json!(3), None)
+            .await
+            .unwrap();
         let listed = store.list("a", 10).await.unwrap();
         assert_eq!(
-            listed.iter().map(|record| record.key.as_str()).collect::<Vec<_>>(),
+            listed
+                .iter()
+                .map(|record| record.key.as_str())
+                .collect::<Vec<_>>(),
             vec!["m", "z"]
         );
         let bound = store.list("a", 1).await.unwrap();
@@ -590,7 +625,8 @@ mod tests {
             name: String,
             count: u32,
         }
-        let store: std::sync::Arc<dyn RecordStore> = std::sync::Arc::new(InMemoryRecordStore::new());
+        let store: std::sync::Arc<dyn RecordStore> =
+            std::sync::Arc::new(InMemoryRecordStore::new());
         let view = NamespacedStore::new(store, "docs");
         let doc = Doc {
             name: "alpha".to_string(),
@@ -606,9 +642,15 @@ mod tests {
 
     #[tokio::test]
     async fn decode_failure_names_the_key() {
-        let store: std::sync::Arc<dyn RecordStore> = std::sync::Arc::new(InMemoryRecordStore::new());
+        let store: std::sync::Arc<dyn RecordStore> =
+            std::sync::Arc::new(InMemoryRecordStore::new());
         store
-            .put("docs", "bad", serde_json::json!({"unexpected": true}), Some(0))
+            .put(
+                "docs",
+                "bad",
+                serde_json::json!({"unexpected": true}),
+                Some(0),
+            )
             .await
             .unwrap();
         let view = NamespacedStore::new(store, "docs");
@@ -630,4 +672,3 @@ mod tests {
         assert!(!all.is_durable());
     }
 }
-

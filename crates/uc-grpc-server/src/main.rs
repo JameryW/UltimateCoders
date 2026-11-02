@@ -858,7 +858,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }),
         )
         .await;
-        tracing::info!("Governance NATS bridge started (uc.governance.request + outbox dispatcher)");
+        tracing::info!(
+            "Governance NATS bridge started (uc.governance.request + outbox dispatcher)"
+        );
     }
 
     grpc_server
@@ -1096,10 +1098,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("gRPC auth enabled (UC_DASHBOARD_TOKEN set)");
 
         let interceptor = AuthInterceptor::new(Arc::from(dashboard_token.as_str()));
-        let (case_service, trigger_service, attention_service, proactive_service) =
-            grpc_server
-                .clone()
-                .into_intercepted_governance_services(interceptor.clone());
+        let (case_service, trigger_service, attention_service, proactive_service) = grpc_server
+            .clone()
+            .into_intercepted_governance_services(interceptor.clone());
         let (engine_service, task_service, dashboard_service, worker_service) =
             grpc_server.into_intercepted_services(interceptor);
 

@@ -80,11 +80,7 @@ impl TriggerInbox {
         now: DateTime<Utc>,
     ) -> Result<IngestOutcome, TriggerInboxError> {
         let dedup_key = event.dedup_key();
-        match self
-            .events
-            .put(&dedup_key, event, Some(0))
-            .await
-        {
+        match self.events.put(&dedup_key, event, Some(0)).await {
             Ok(_) => {}
             Err(RecordError::Conflict { .. }) => {
                 return Ok(IngestOutcome::duplicate(
@@ -244,9 +240,7 @@ impl TriggerInbox {
 mod tests {
     use super::*;
     use crate::governance::record_store::InMemoryRecordStore;
-    use uc_types::governance::{
-        SubscriptionFilter, TriggerId, TriggerKind,
-    };
+    use uc_types::governance::{SubscriptionFilter, TriggerId, TriggerKind};
 
     fn now() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
@@ -283,12 +277,18 @@ mod tests {
             ))
             .await
             .unwrap();
-        let first = inbox.ingest(&comment("d1", "acme/widgets#1"), now()).await.unwrap();
+        let first = inbox
+            .ingest(&comment("d1", "acme/widgets#1"), now())
+            .await
+            .unwrap();
         assert!(first.accepted);
         assert!(!first.duplicate);
         assert_eq!(first.matched_cases, vec!["case-1".to_string()]);
 
-        let second = inbox.ingest(&comment("d1", "acme/widgets#1"), now()).await.unwrap();
+        let second = inbox
+            .ingest(&comment("d1", "acme/widgets#1"), now())
+            .await
+            .unwrap();
         assert!(!second.accepted);
         assert!(second.duplicate);
         assert!(second.matched_cases.is_empty());
@@ -331,14 +331,20 @@ mod tests {
             let outcome = inbox.ingest(event, now()).await.unwrap();
             assert_eq!(outcome.matched_cases, vec!["case-1".to_string()]);
         }
-        let subscriptions = inbox.list_subscriptions(Some("case-1"), None, 10).await.unwrap();
+        let subscriptions = inbox
+            .list_subscriptions(Some("case-1"), None, 10)
+            .await
+            .unwrap();
         assert_eq!(subscriptions[0].event_count, 3);
     }
 
     #[tokio::test]
     async fn unmatched_event_reports_a_reason() {
         let inbox = inbox();
-        let outcome = inbox.ingest(&comment("d1", "acme/widgets#9"), now()).await.unwrap();
+        let outcome = inbox
+            .ingest(&comment("d1", "acme/widgets#9"), now())
+            .await
+            .unwrap();
         assert!(outcome.accepted);
         assert_eq!(
             outcome.unmatched_reason.as_deref(),
@@ -357,7 +363,10 @@ mod tests {
         );
         subscription.active = false;
         inbox.upsert_subscription(subscription).await.unwrap();
-        let outcome = inbox.ingest(&comment("d1", "acme/widgets#1"), now()).await.unwrap();
+        let outcome = inbox
+            .ingest(&comment("d1", "acme/widgets#1"), now())
+            .await
+            .unwrap();
         assert!(outcome.matched_cases.is_empty());
     }
 
@@ -370,8 +379,14 @@ mod tests {
             SubscriptionFilter::thread("acme/widgets#1"),
             now(),
         );
-        let stored = inbox.upsert_subscription(subscription.clone()).await.unwrap();
-        inbox.ingest(&comment("d1", "acme/widgets#1"), now()).await.unwrap();
+        let stored = inbox
+            .upsert_subscription(subscription.clone())
+            .await
+            .unwrap();
+        inbox
+            .ingest(&comment("d1", "acme/widgets#1"), now())
+            .await
+            .unwrap();
         let mut update = stored.clone();
         update.filter.labels = vec!["uc".to_string()];
         let updated = inbox.upsert_subscription(update).await.unwrap();
@@ -385,7 +400,11 @@ mod tests {
         let event = comment("d1", "acme/widgets#1");
         inbox.ingest(&event, now()).await.unwrap();
         let key = event.dedup_key();
-        let stored = inbox.get_event(&key).await.unwrap().expect("event retained");
+        let stored = inbox
+            .get_event(&key)
+            .await
+            .unwrap()
+            .expect("event retained");
         assert_eq!(stored.id, TriggerId(event.id.0.clone()));
         assert_eq!(inbox.list_events(10).await.unwrap().len(), 1);
     }

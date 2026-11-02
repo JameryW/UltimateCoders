@@ -359,43 +359,73 @@ pub enum DenyReason {
     /// No credentials presented.
     Unauthenticated,
     /// The principal has no grant covering the permission.
-    MissingPermission { required: Permission },
+    MissingPermission {
+        required: Permission,
+    },
     /// A matching grant exists but is marked revoked.
-    GrantRevoked { permission: Permission },
+    GrantRevoked {
+        permission: Permission,
+    },
     /// A matching grant exists but has expired.
-    GrantExpired { permission: Permission },
+    GrantExpired {
+        permission: Permission,
+    },
     /// The principal kind may never hold this permission.
     ForbiddenPrincipalKind {
         kind: PrincipalKind,
         permission: Permission,
     },
     /// The request carries a policy version older than the accepted minimum.
-    StalePolicyVersion { provided: u64, minimum: u64 },
+    StalePolicyVersion {
+        provided: u64,
+        minimum: u64,
+    },
     /// Case has no mandate.
     MandateMissing,
-    MandateRevoked { mandate_id: String },
+    MandateRevoked {
+        mandate_id: String,
+    },
     MandateExpired {
         mandate_id: String,
         expired_at: DateTime<Utc>,
     },
     /// Mandate does not cover the requested scope.
-    MandateOutOfScope { scope: String, value: String },
+    MandateOutOfScope {
+        scope: String,
+        value: String,
+    },
     /// An attempt to widen a mandate. Always denied for non-human origins.
-    MandateWideningDenied { detail: String },
+    MandateWideningDenied {
+        detail: String,
+    },
     /// Tool is not in the allow table (fail-closed).
-    ToolNotPermitted { tool: String },
+    ToolNotPermitted {
+        tool: String,
+    },
     /// Tool is known but needs a mandate scope the case does not hold.
-    ToolRequiresMandateScope { tool: String, scope: String },
+    ToolRequiresMandateScope {
+        tool: String,
+        scope: String,
+    },
     /// Tool is known and permitted, but it is a human-tier action
     /// (`ToolPolicy::human_approval`) and the principal does not hold the
     /// operator permission `proactive_execute`.
-    ToolRequiresHumanApproval { tool: String },
+    ToolRequiresHumanApproval {
+        tool: String,
+    },
     /// Sandbox configuration violates the hardened profile.
-    SandboxViolation { violation: String },
+    SandboxViolation {
+        violation: String,
+    },
     /// Task/case budget exhausted.
-    BudgetExhausted { detail: String },
+    BudgetExhausted {
+        detail: String,
+    },
     /// The proactive mode does not allow this action.
-    ProactiveModeDisallows { mode: String, action: String },
+    ProactiveModeDisallows {
+        mode: String,
+        action: String,
+    },
 }
 
 impl DenyReason {
@@ -530,7 +560,8 @@ impl PolicySnapshot {
     }
 
     pub fn revoke_mandate(&mut self, mandate_id: impl Into<String>, reason: impl Into<String>) {
-        self.revoked_mandates.insert(mandate_id.into(), reason.into());
+        self.revoked_mandates
+            .insert(mandate_id.into(), reason.into());
     }
 
     pub fn is_mandate_revoked(&self, mandate_id: &str) -> Option<&String> {
@@ -583,7 +614,9 @@ impl PolicySnapshot {
         if saw_expired {
             return PolicyDecision::deny(DenyReason::GrantExpired { permission });
         }
-        PolicyDecision::deny(DenyReason::MissingPermission { required: permission })
+        PolicyDecision::deny(DenyReason::MissingPermission {
+            required: permission,
+        })
     }
 
     /// Reject a request that carries an old policy version after a tightening
@@ -683,12 +716,16 @@ impl ToolPolicyTable {
         }
         insert(ToolPolicy::allow("git_push", ActionClass::Push));
         insert(ToolPolicy::allow("merge", ActionClass::Merge));
-        insert(ToolPolicy::allow("github_comment", ActionClass::ExternalNotify));
-        insert(ToolPolicy::allow("github_issue_update", ActionClass::ExternalNotify));
+        insert(ToolPolicy::allow(
+            "github_comment",
+            ActionClass::ExternalNotify,
+        ));
+        insert(ToolPolicy::allow(
+            "github_issue_update",
+            ActionClass::ExternalNotify,
+        ));
         insert(ToolPolicy::allow("memory_write", ActionClass::Write));
-        insert(
-            ToolPolicy::allow("scale_workers", ActionClass::Scale).with_human_approval(),
-        );
+        insert(ToolPolicy::allow("scale_workers", ActionClass::Scale).with_human_approval());
         insert(ToolPolicy::allow("docker_run", ActionClass::Execute).with_human_approval());
         Self { rules }
     }
@@ -857,8 +894,7 @@ impl SandboxSecurityProfile {
         match self.validate() {
             Ok(()) => PolicyDecision::allow(),
             Err(violations) => {
-                let mut rendered: Vec<String> =
-                    violations.iter().map(|v| v.to_string()).collect();
+                let mut rendered: Vec<String> = violations.iter().map(|v| v.to_string()).collect();
                 rendered.sort();
                 PolicyDecision::deny(DenyReason::SandboxViolation {
                     violation: rendered.join(","),
@@ -899,7 +935,9 @@ mod tests {
     fn snapshot_with(grants: Vec<Grant>) -> PolicySnapshot {
         let mut snapshot = PolicySnapshot::empty(PolicyVersion::initial());
         for grant in grants {
-            snapshot = snapshot.with_grant(grant).expect("grant is structurally valid");
+            snapshot = snapshot
+                .with_grant(grant)
+                .expect("grant is structurally valid");
         }
         snapshot
     }
@@ -907,12 +945,8 @@ mod tests {
     #[test]
     fn unauthenticated_is_denied() {
         let snapshot = PolicySnapshot::default();
-        let decision = snapshot.evaluate(
-            &Principal::anonymous(),
-            Permission::TaskSubmit,
-            None,
-            now(),
-        );
+        let decision =
+            snapshot.evaluate(&Principal::anonymous(), Permission::TaskSubmit, None, now());
         assert_eq!(decision.deny_reason(), Some(&DenyReason::Unauthenticated));
     }
 
@@ -1008,7 +1042,12 @@ mod tests {
         let snapshot = snapshot_with(vec![revoked]);
         assert_eq!(
             snapshot
-                .evaluate(&Principal::user("alice"), Permission::TaskSubmit, None, now())
+                .evaluate(
+                    &Principal::user("alice"),
+                    Permission::TaskSubmit,
+                    None,
+                    now()
+                )
                 .deny_code(),
             Some("grant_revoked")
         );
@@ -1048,7 +1087,12 @@ mod tests {
             )
             .is_denied());
         assert!(snapshot
-            .evaluate(&Principal::user("alice"), Permission::TaskSubmit, None, now())
+            .evaluate(
+                &Principal::user("alice"),
+                Permission::TaskSubmit,
+                None,
+                now()
+            )
             .is_denied());
     }
 
@@ -1113,10 +1157,7 @@ mod tests {
         let violations = profile.validate().expect_err("hardening violations");
         assert!(violations.contains(&SandboxViolation::DockerSocketMounted));
         assert!(violations.contains(&SandboxViolation::PrivilegedContainer));
-        assert_eq!(
-            profile.decision().deny_code(),
-            Some("sandbox_violation")
-        );
+        assert_eq!(profile.decision().deny_code(), Some("sandbox_violation"));
     }
 
     #[test]
