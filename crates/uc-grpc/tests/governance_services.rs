@@ -944,3 +944,71 @@ async fn an_observe_only_subscription_wakes_without_starting_work() {
     );
     assert!(case.runs.is_empty(), "observing must not start work");
 }
+
+// ── Capacity comes from the live pool, not from the environment ──────
+
+/// `GET /api/capacity` must describe the workers that exist. A gateway with two
+/// capacity-2 workers, one of them loaded by one task, reports 4 total / 1 busy —
+/// not whatever an operator typed into `UC_WORKER_SLOTS_*`.
+#[tokio::test]
+async fn capacity_reflects_the_live_worker_registry() {
+    use uc_grpc::worker_service::WorkerRegistry;
+
+    let (permissions, principal) = dashboard(vec![Permission::CaseRead]);
+    let governance = planned_governance(permissions, principal).await;
+    let registry = Arc::new(tokio::sync::RwLock::new(WorkerRegistry::new()));
+    {
+        let mut reg = registry.write().await;
+        for (id, capacity) in [("w1", 2u32), ("w2", 2u32)] {
+            reg.register(
+                id.to_string(),
+                vec!["code".to_string()],
+                capacity,
+                String::new(),
+                uc_types::CONTRACT_VERSION.to_string(),
+            )
+            .expect("register");
+        }
+        // A legacy worker (no contract version) is observable but never dispatched.
+        reg.register(
+            "legacy".to_string(),
+            vec!["code".to_string()],
+            8,
+            String::new(),
+            String::new(),
+        )
+        .expect("register legacy");
+        reg.heartbeat("w2", 1).expect("heartbeat");
+    }
+
+    let service = uc_grpc::governance::AttentionServiceImpl::with_registry(
+        governance.clone(),
+        registry.clone(),
+    );
+    let capacity = service
+        .get_capacity(Request::new(GetCapacityRequest {}))
+        .await
+        .expect("capacity answers")
+        .into_inner()
+        .capacity
+        .expect("capacity present");
+    assert_eq!(capacity.worker_slots_total, 4, "legacy slots must not count");
+    assert_eq!(capacity.worker_slots_busy, 1);
+    assert_eq!(capacity.worker_slots_available, 3);
+
+    // With no workers registered the env-configured fallback still answers, so the
+    // dashboard never loses its capacity strip.
+    let empty = Arc::new(tokio::sync::RwLock::new(WorkerRegistry::new()));
+    let service = uc_grpc::governance::AttentionServiceImpl::with_registry(
+        governance.clone(),
+        empty,
+    );
+    let fallback = service
+        .get_capacity(Request::new(GetCapacityRequest {}))
+        .await
+        .expect("capacity answers")
+        .into_inner()
+        .capacity
+        .expect("capacity present");
+    assert_eq!(fallback.worker_slots_total, 0);
+}

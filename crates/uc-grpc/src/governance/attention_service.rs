@@ -163,8 +163,21 @@ pub struct ListAttentionOutcome {
 
 /// The operator worklist, plus the capacity snapshot the dashboard renders beside
 /// it.
+/// Slot totals source: the gateway's live worker registry.
+pub type CapacitySource = Arc<tokio::sync::RwLock<crate::worker_service::WorkerRegistry>>;
+
 pub async fn list_attention(
     governance: &Governance,
+    request: crate::ultimate_coders::ListAttentionRequest,
+) -> OpResult<ListAttentionOutcome> {
+    list_attention_with(governance, None, request).await
+}
+
+/// [`list_attention`] with the live registry attached, so the capacity strip shows
+/// the pool as it is now instead of the numbers an operator typed into the env.
+pub async fn list_attention_with(
+    governance: &Governance,
+    registry: Option<&CapacitySource>,
     request: crate::ultimate_coders::ListAttentionRequest,
 ) -> OpResult<ListAttentionOutcome> {
     let limit = clamp_limit(request.limit);
@@ -191,7 +204,7 @@ pub async fn list_attention(
         .collect();
     items.truncate(limit);
 
-    let capacity = capacity_snapshot(governance).await?;
+    let capacity = capacity_snapshot(governance, registry).await?;
     Ok(ListAttentionOutcome { items, capacity })
 }
 
@@ -365,13 +378,35 @@ pub async fn resolve_attention(
 
 /// The capacity snapshot on its own.
 pub async fn get_capacity(governance: &Governance) -> OpResult<CapacityView> {
-    capacity_snapshot(governance).await
+    capacity_snapshot(governance, None).await
+}
+
+/// [`get_capacity`] with the live registry attached.
+pub async fn get_capacity_with(
+    governance: &Governance,
+    registry: Option<&CapacitySource>,
+) -> OpResult<CapacityView> {
+    capacity_snapshot(governance, registry).await
 }
 
 /// Build the capacity snapshot: governance counts from the board, slot counts from
 /// configuration (see [`capacity_config`]).
-async fn capacity_snapshot(governance: &Governance) -> OpResult<CapacityView> {
-    let (total, busy) = capacity_config();
+async fn capacity_snapshot(
+    governance: &Governance,
+    registry: Option<&CapacitySource>,
+) -> OpResult<CapacityView> {
+    // Live registry first: if it knows about at least one usable slot, those are the
+    // real numbers. The env fallback exists for a gateway that has no workers yet
+    // (and for the dashboard's unit tests) — an operator-supplied total must never
+    // mask an actual pool, or the "saved slots" metric would be fiction.
+    let registry_totals = match registry {
+        Some(registry) => Some(registry.read().await.capacity_totals()),
+        None => None,
+    };
+    let (total, busy) = match registry_totals {
+        Some((total, busy)) if total > 0 => (total, busy),
+        _ => capacity_config(),
+    };
     let counts = governance
         .attention
         .open_counts()
@@ -414,11 +449,23 @@ fn attention_error(error: AttentionBoardError) -> OpError {
 #[derive(Clone)]
 pub struct AttentionServiceImpl {
     governance: Arc<Governance>,
+    worker_registry: Option<CapacitySource>,
 }
 
 impl AttentionServiceImpl {
     pub fn new(governance: Arc<Governance>) -> Self {
-        Self { governance }
+        Self {
+            governance,
+            worker_registry: None,
+        }
+    }
+
+    /// Attach the live worker registry so capacity reflects the real pool.
+    pub fn with_registry(governance: Arc<Governance>, worker_registry: CapacitySource) -> Self {
+        Self {
+            governance,
+            worker_registry: Some(worker_registry),
+        }
     }
 
     pub fn governance(&self) -> &Arc<Governance> {
@@ -432,7 +479,12 @@ impl AttentionService for AttentionServiceImpl {
         &self,
         request: Request<crate::ultimate_coders::ListAttentionRequest>,
     ) -> Result<Response<crate::ultimate_coders::ListAttentionResponse>, Status> {
-        let outcome = list_attention(&self.governance, request.into_inner()).await?;
+        let outcome = list_attention_with(
+            &self.governance,
+            self.worker_registry.as_ref(),
+            request.into_inner(),
+        )
+        .await?;
         Ok(Response::new(
             crate::ultimate_coders::ListAttentionResponse {
                 items: outcome.items.iter().map(AttentionItemView::to_proto).collect(),
@@ -473,7 +525,8 @@ impl AttentionService for AttentionServiceImpl {
         &self,
         _request: Request<crate::ultimate_coders::GetCapacityRequest>,
     ) -> Result<Response<crate::ultimate_coders::GetCapacityResponse>, Status> {
-        let capacity = get_capacity(&self.governance).await?;
+        let capacity =
+            get_capacity_with(&self.governance, self.worker_registry.as_ref()).await?;
         Ok(Response::new(
             crate::ultimate_coders::GetCapacityResponse {
                 capacity: Some(capacity.to_proto()),

@@ -565,6 +565,9 @@ async fn handle_request(
 pub struct DispatchContext {
     pub task_store: std::sync::Arc<tokio::sync::Mutex<crate::server::TaskStore>>,
     pub event_tx: tokio::sync::broadcast::Sender<crate::ultimate_coders::TaskEvent>,
+    /// Live worker pool: capacity must report the slots that exist, not ones typed
+    /// into the environment.
+    pub worker_registry: Option<super::attention_service::CapacitySource>,
 }
 
 #[cfg(feature = "messaging")]
@@ -740,7 +743,12 @@ async fn dispatch_result(
 
         // ── Attention + capacity (PR05) ──────────────────────────────
         "attention.list" => {
-            let outcome = attention_service::list_attention(governance, decode(op, payload)?).await?;
+            let outcome = attention_service::list_attention_with(
+                governance,
+                dispatch.and_then(|context| context.worker_registry.as_ref()),
+                decode(op, payload)?,
+            )
+            .await?;
             to_value(&outcome)
         }
         "attention.raise" => {
@@ -756,7 +764,11 @@ async fn dispatch_result(
             // Decoded only to reject a payload that is not an object; the op has
             // no fields.
             let _: GetCapacityRequest = decode(op, payload)?;
-            let capacity = attention_service::get_capacity(governance).await?;
+            let capacity = attention_service::get_capacity_with(
+                governance,
+                dispatch.and_then(|context| context.worker_registry.as_ref()),
+            )
+            .await?;
             Ok(serde_json::json!({ "capacity": to_value(&capacity)? }))
         }
 

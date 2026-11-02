@@ -253,6 +253,35 @@ impl WorkerRegistry {
     }
 
     /// Get all registered workers.
+    /// Slot totals over the workers that can actually take work.
+    ///
+    /// `(total, busy)` where `total` sums `max_capacity` and `busy` sums
+    /// `current_load`, counting only workers that are (a) fresh — heartbeat inside
+    /// the stale window — and (b) contract-versioned, because a legacy worker is
+    /// accepted for observability but never dispatched to, so counting its slots
+    /// would inflate capacity that no task can use.
+    ///
+    /// This is the read-only numbers source for the attention plane: the governance
+    /// layer reports capacity but must not own the worker pool, so the gateway
+    /// hands it these totals instead of it reading the registry.
+    pub fn capacity_totals(&self) -> (u32, u32) {
+        let stale = Self::STALE_TIMEOUT_SECS;
+        let mut total = 0u32;
+        let mut busy = 0u32;
+        for worker in self.workers.values() {
+            if worker.contract_version.trim().is_empty() {
+                continue;
+            }
+            let fresh = (chrono::Utc::now() - worker.last_heartbeat).num_seconds() as f64 <= stale;
+            if !fresh {
+                continue;
+            }
+            total = total.saturating_add(worker.max_capacity);
+            busy = busy.saturating_add(worker.current_load.min(worker.max_capacity));
+        }
+        (total, busy)
+    }
+
     pub fn workers(&self) -> &HashMap<String, RegisteredWorker> {
         &self.workers
     }
@@ -2814,5 +2843,44 @@ mod tests {
                 workers: vec!["w-scoped".to_string()]
             }
         );
+    }
+
+    #[test]
+    fn capacity_totals_counts_only_usable_workers() {
+        let mut registry = WorkerRegistry::new();
+        registry
+            .register(
+                "w1".to_string(),
+                vec!["code".to_string()],
+                2,
+                String::new(),
+                uc_types::CONTRACT_VERSION.to_string(),
+            )
+            .expect("register w1");
+        registry
+            .register(
+                "w2".to_string(),
+                vec!["code".to_string()],
+                3,
+                String::new(),
+                uc_types::CONTRACT_VERSION.to_string(),
+            )
+            .expect("register w2");
+        // Legacy worker: observable, never dispatched to, so its slots do not exist.
+        registry
+            .register(
+                "legacy".to_string(),
+                vec!["code".to_string()],
+                4,
+                String::new(),
+                String::new(),
+            )
+            .expect("register legacy");
+        assert_eq!(registry.capacity_totals(), (5, 0), "legacy slots are not capacity");
+
+        // Load is counted but capped at each worker's own capacity.
+        registry.heartbeat("w1", 1).expect("heartbeat w1");
+        registry.heartbeat("w2", 9).expect("heartbeat w2");
+        assert_eq!(registry.capacity_totals(), (5, 4), "busy is min(load, capacity)");
     }
 }

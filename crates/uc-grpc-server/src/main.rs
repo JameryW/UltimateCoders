@@ -854,6 +854,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(uc_grpc::governance::bridge::DispatchContext {
                 task_store: grpc_server.task_store().clone(),
                 event_tx: grpc_server.event_tx(),
+                worker_registry: Some(grpc_server.worker_registry().clone()),
             }),
         )
         .await;

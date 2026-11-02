@@ -2880,10 +2880,13 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         // The trigger service gets the execution-plane handles: an event from a
         // subscription that opted into `auto_resume` is allowed to start a run, and
         // that needs the same task store the `SubmitTask` RPC writes to.
-        crate::governance::services_with_dispatch(
+        crate::governance::services_with_context(
             self.governance.clone(),
-            self.inner.task_store.clone(),
-            self.inner.event_tx.clone(),
+            crate::governance::ServiceContext {
+                task_store: Some(self.inner.task_store.clone()),
+                event_tx: Some(self.inner.event_tx.clone()),
+                worker_registry: Some(self.inner.worker_registry.clone()),
+            },
         )
     }
 
@@ -2903,6 +2906,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         let governance = self.governance.clone();
         let task_store = self.inner.task_store.clone();
         let event_tx = self.inner.event_tx.clone();
+        let worker_registry = self.inner.worker_registry.clone();
         (
             CaseServiceServer::with_interceptor(
                 CaseServiceImpl::new(governance.clone()),
@@ -2911,13 +2915,13 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             TriggerServiceServer::with_interceptor(
                 TriggerServiceImpl::with_dispatch(
                     governance.clone(),
-                    task_store.clone(),
-                    event_tx.clone(),
+                    task_store,
+                    event_tx,
                 ),
                 interceptor.clone(),
             ),
             AttentionServiceServer::with_interceptor(
-                AttentionServiceImpl::new(governance.clone()),
+                AttentionServiceImpl::with_registry(governance.clone(), worker_registry),
                 interceptor.clone(),
             ),
             ProactiveServiceServer::with_interceptor(

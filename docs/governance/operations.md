@@ -34,7 +34,7 @@ NATS + PostgreSQL（见 §4 手工验收）。
 | `UC_PROGRESS_STALL_LIMIT` | 整数 ≥ 1 | `2` | 连续多少次「无证据增量」判定为停滞（同一失败签名 + 文件集不变） | 检测侧 `python/ultimate_coders/agent/progress.py`（`UC_PROGRESS_STALL_LIMIT`）；两侧都用 `2` | 设 `1`：一次无增量就判停滞，抖动明显（正常的两步修复会被打断）；设太大：停滞发现迟钝，浪费尝试预算 |
 | `UC_OPERATOR_ID` | 任意字符串 | `operator` | `UC_POLICY_BOOTSTRAP=dev` 时装进快照的人类操作者 principal id（Dashboard 用 `user/dashboard`，二者不同） | `crates/uc-grpc-server/src/governance_boot.rs::bootstrap_policy` | 与 Dashboard 实际发送的身份不一致时，`dev` 快照里的人形操作被拒（`missing_permission`）——只会影响 `dev` 引导，不影响持久化策略 |
 | `UC_POLICY_GRANTS_JSON` | JSON 数组 | 未设置 | 显式授权表（持久化策略之外的第二条配置路径）：`[{"kind","id","permissions":[...],"project_id"?}]`；未知权限 token / 不可授权的 kind 一律报错，不静默丢弃 | `crates/uc-grpc-server/src/governance_boot.rs::parse_grants` | 拼错权限名：该条授权不生效并打 error（不会降级成「全允许」）；把 `worker_scale` 授给 `agent`/`worker`：被结构性天花板拒绝 |
-| `UC_WORKER_SLOTS_TOTAL` / `UC_WORKER_SLOTS_BUSY` | 整数 ≥ 0 | `0` | Feed `attention` 容量投影的池规模/占用（治理层不拥有 worker 池，只做投影） | `crates/uc-grpc/src/governance/attention_service.rs`（`capacity` op） | 保持 `0` 时 `worker_slots_available` 恒为 0、Dashboard 的容量条无意义；不代表「没有 worker」，只代表「没上报」 |
+| `UC_WORKER_SLOTS_TOTAL` / `UC_WORKER_SLOTS_BUSY` | 整数 ≥ 0 | `0` | **仅后备**：容量投影优先取网关实时 `WorkerRegistry`（`capacity_totals()`：只算心跳新鲜且声明了 contract version 的 worker，`busy = Σ min(load, capacity)`）；只有在注册表里一个可用槽都没有时才用这两个值 | `crates/uc-grpc/src/worker_service.rs`（`capacity_totals`）、`crates/uc-grpc/src/governance/attention_service.rs`（`get_capacity_with`） | 有 worker 时这两个变量被忽略——手工数字不允许掩盖真实池，否则「省下来的槽位」指标就是虚构的 |
 
 > 强制约定：`UC_WATCHDOG_*` 与 `UC_PROGRESS_STALL_LIMIT` 的 Rust 默认值
 > （`WatchdogConfig`）与 Python 默认值必须一致，否则「有界」在两侧含义不同。改一处必须同时改另一处，

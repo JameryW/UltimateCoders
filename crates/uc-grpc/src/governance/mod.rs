@@ -85,14 +85,27 @@ pub fn services(
     )
 }
 
-/// Same as [`services`], but the trigger service may start work: ingestion of an
-/// opted-in event can resume a case, which needs the task store and the task-event
-/// channel the `SubmitTask` RPC writes to.
+/// Execution-plane handles the governance services may need.
+///
+/// All optional: `services()` builds the governance-only plane (that is what the
+/// unit tests use), the gateway fills the context so an event can start work and
+/// capacity can report the real pool.
+#[derive(Clone, Default)]
+pub struct ServiceContext {
+    /// Lets an opted-in trigger event resume a case (needs the task store the
+    /// `SubmitTask` RPC writes to).
+    pub task_store: Option<std::sync::Arc<tokio::sync::Mutex<crate::server::TaskStore>>>,
+    /// TaskCreated broadcast, so a resumed task reaches WatchTask streams.
+    pub event_tx: Option<tokio::sync::broadcast::Sender<crate::ultimate_coders::TaskEvent>>,
+    /// Live worker pool, so the capacity strip reports slots that exist.
+    pub worker_registry: Option<attention_service::CapacitySource>,
+}
+
+/// Build the four governance services with the execution-plane handles attached.
 #[allow(clippy::type_complexity)]
-pub fn services_with_dispatch(
+pub fn services_with_context(
     governance: std::sync::Arc<Governance>,
-    task_store: std::sync::Arc<tokio::sync::Mutex<crate::server::TaskStore>>,
-    event_tx: tokio::sync::broadcast::Sender<crate::ultimate_coders::TaskEvent>,
+    context: ServiceContext,
 ) -> (
     crate::ultimate_coders::case_service_server::CaseServiceServer<CaseServiceImpl>,
     crate::ultimate_coders::trigger_service_server::TriggerServiceServer<TriggerServiceImpl>,
@@ -104,14 +117,20 @@ pub fn services_with_dispatch(
     use crate::ultimate_coders::proactive_service_server::ProactiveServiceServer;
     use crate::ultimate_coders::trigger_service_server::TriggerServiceServer;
 
+    let trigger = match (context.task_store, context.event_tx) {
+        (Some(task_store), Some(event_tx)) => {
+            TriggerServiceImpl::with_dispatch(governance.clone(), task_store, event_tx)
+        }
+        _ => TriggerServiceImpl::new(governance.clone()),
+    };
+    let attention = match context.worker_registry {
+        Some(registry) => AttentionServiceImpl::with_registry(governance.clone(), registry),
+        None => AttentionServiceImpl::new(governance.clone()),
+    };
     (
         CaseServiceServer::new(CaseServiceImpl::new(governance.clone())),
-        TriggerServiceServer::new(TriggerServiceImpl::with_dispatch(
-            governance.clone(),
-            task_store,
-            event_tx,
-        )),
-        AttentionServiceServer::new(AttentionServiceImpl::new(governance.clone())),
+        TriggerServiceServer::new(trigger),
+        AttentionServiceServer::new(attention),
         ProactiveServiceServer::new(ProactiveServiceImpl::new(governance)),
     )
 }

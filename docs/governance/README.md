@@ -55,7 +55,7 @@
 | 不越权 | 外部事件/匿名调用永远不能持有授权类权限；mandate 只能收窄 | `crates/uc-types/src/governance/policy.rs`（`PrincipalKind::may_hold`）、`mandate.rs`（`validate_child`） | `external_trigger_cannot_hold_authority_granting_permission`、`agent_cannot_scale_workers`、`delegation_cannot_add_authority`、`delegated_child_claiming_human_origin_is_refused` |
 | 可持续 | case 跨多次 run/重启存活，run 历史只追加且有界 | `crates/uc-types/src/governance/workcase.rs`、`crates/uc-engine/src/governance/case_store.rs` | `run_history_is_bounded_but_counted`、`open_and_finish_run_drives_the_state_machine`、`a_matched_event_wakes_the_case_and_resolves_its_attention`、`an_opted_in_event_resumes_the_case_with_a_governed_task` |
 | 可恢复 | 崩溃点之后不丢提交、不产生第二个 task；注意力项不是锁 | `crates/uc-engine/src/governance/outbox.rs`、`crates/uc-engine/src/governance/submission.rs` | `in_flight_entry_is_recovered_after_crash`、`crash_between_record_and_outbox_is_recovered_with_the_same_task_id`、`recover_requeues_entries_orphaned_in_flight` |
-| 少打扰 | 等待外部事件不占 Worker 槽位、不打扰人；只有人工决策有优先容量 | `crates/uc-types/src/governance/attention.rs`（`holds_worker_slot`/`reserves_human_slot`）、`python/ultimate_coders/attention/capacity.py` | `waiting_for_ci_never_holds_a_worker_slot`、`only_needs_human_interrupts_a_human`、`worklist_puts_human_decisions_first_then_priority`、`capacity_reserves_human_headroom_and_reports_savings` |
+| 少打扰 | 等待外部事件不占 Worker 槽位、不打扰人；只有人工决策有优先容量 | `crates/uc-types/src/governance/attention.rs`（`holds_worker_slot`/`reserves_human_slot`）、`python/ultimate_coders/attention/capacity.py` | `waiting_for_ci_never_holds_a_worker_slot`、`only_needs_human_interrupts_a_human`、`worklist_puts_human_decisions_first_then_priority`、`capacity_reserves_human_headroom_and_reports_savings`、`capacity_reflects_the_live_worker_registry` |
 | 可验证 | 每个放行/拒绝都留可审计记录，提案必须带证据 | `crates/uc-types/src/governance/proactive.rs`（`ProactiveAuditEntry`）、`crates/uc-engine/src/governance/watchdog.rs` | `audit_entry_always_records_deny_reason`、`proposal_without_evidence_is_refused`、`replan_preserves_confirmed_effects_for_audit` |
 
 ### 2.1 不重复
@@ -67,7 +67,7 @@
    task；`submit_once` 用 create-only CAS（`Some(0)`）抢占记录，冲突时比对内容摘要，一致返回
    `Replayed`、不一致返回 `Conflict`（`crates/uc-engine/src/governance/submission.rs:94-133`）。
 2. **同一事件重复投递** — 去重键只取 `(source, kind, external_id, payload_digest)`，不含接收时间
-   （`trigger.rs:236-245`）；收件箱以 create-only CAS 落库，第二份直接报 `duplicate` 且不再扇出
+   （`trigger.rs:236-245` 的 `dedup_key`）；收件箱以 create-only CAS 落库，第二份直接报 `duplicate` 且不再扇出
    （`crates/uc-engine/src/governance/trigger_inbox.rs:77-96`）。
 3. **同一线程重复建 case** — `CaseId::from_parts(source, external_ref)` 是确定性 id
    （`workcase.rs:41-47`）。

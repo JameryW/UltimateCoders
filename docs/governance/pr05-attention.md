@@ -159,6 +159,23 @@ Python 侧 `tests/python/test_attention_capacity.py`）。
 - `*_cases` 数的是**不同的 case**（一个 case 两个开放项仍算一个停在等待的 case），
   `needs_human_items` 数的是**项**（人实际看到的工作清单深度）。
 
+### 6.1 槽位数字来自实时注册表
+
+`CapacitySnapshot` 的 `worker_slots_total` / `worker_slots_busy` 优先取自网关实时的
+`WorkerRegistry`（`crates/uc-grpc/src/worker_service.rs::capacity_totals`）：
+
+- `total = Σ max_capacity`，`busy = Σ min(current_load, max_capacity)`；
+- 只统计**心跳新鲜**且**声明了 contract version** 的 worker —— 过期（超过 60s 无心跳）说明它已经不在了，
+  旧版 worker 虽然登记但永远不会被派发，把它的槽位算进容量等于虚报；
+- 注册表里一个可用槽都没有时（空集群、全部过期、`UC_WORKER_SLOTS_*` 显式配置），才回退到那两个环境变量。
+
+这条顺序是有意的：手工配置不能掩盖真实池。否则「`slots_saved_by_quiet_waiting` 省下了多少槽位」就变成
+一个人填出来的数字，而它恰恰是本方案用来证明「等待不占资源」的指标。
+
+测试：`capacity_totals_counts_only_usable_workers`（旧版 worker 不计入、busy 按 min 截断）、
+`capacity_reflects_the_live_worker_registry`（两个容量 2 的 worker + 一个旧版 worker → total 4，
+空注册表回退到配置值）。
+
 ## 7. HTTP 面（`python/ultimate_coders/dashboard/attention_api.py`）
 
 | 端点 | 对应 op | 说明 |
