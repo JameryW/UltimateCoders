@@ -224,3 +224,23 @@ Python 侧 `tests/python/test_attention_capacity.py`）。
 | 项的老化/超时自动升级 | 未实现 | 「等多久算太久」按团队而异；硬编码会把策略藏进代码 |
 | Dashboard 侧的鉴权细化 | 读端点不校验 token（见 §7） | 它们只暴露治理元数据；写端点沿用既有 token 约定 |
 | `verifying` 项的可见性 | 不进工作清单 | 验证是执行侧进展，人不需要读；需要排障时应查 case/run，而不是查注意力项 |
+
+## 8.1 状态栏计数器：可见，但不打扰
+
+「少打扰」不等于「藏起来」。两个只有人才能推进的数字出现在终端仪表盘的**页脚状态行**：
+
+```
+待办 2 · 审批 1 · 后端在线 · engine 0.5.0 · 12:03:11
+```
+
+- 数据来自 `useGovernanceCounts`（`dashboard/src/hooks/useGovernanceCounts.ts`）：每 20 秒各读一次
+  `attention.list` 与 `approval.list?state=pending`，不弹窗、不抢焦点、不改路由。
+- **只计「需要人动手」的项**：未解决的注意力项 + 仍然 `pending` 的审批。已批准的许可**不计入**——那是
+  agent 可以去花的授权，算进来等于让人去处理已经解开的事。
+- **未知宁可不显示**：桥不可达或载荷畸形时返回 `null`，页脚什么都不加。在后端离线时显示 `0`，恰好是在人
+  唯一会看的地方撒谎。
+- 数字为 0 时整段消失，状态行不会长出一条 `待办 0 · 审批 0` 的噪声；打开清单仍按既有键位（`8` 待办、
+  `9` 审批），键位提示本来就在键栏里。
+- 计数逻辑是纯函数（`dashboard/src/lib/governanceCounts.ts`），由
+  `dashboard/tests/governance-counts.test.mjs` 覆盖：未解决计数、只数 pending、已批准不计、未知为 `null`、
+  空队列不渲染。

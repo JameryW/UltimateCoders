@@ -12,6 +12,8 @@ import { MemoryPanel } from "@/components/panels/MemoryPanel";
 import type { GrpcConnectionState, GrpcSubmitResult, GrpcTaskActionResult } from "@/hooks/useGrpcWeb";
 import type { DashboardConnectionState } from "@/hooks/useDashboardGrpc";
 import type { Theme } from "@/hooks/useTheme";
+import { useGovernanceCounts } from "@/hooks/useGovernanceCounts";
+import { formatGovernanceCounts } from "@/lib/governanceCounts";
 import { executeUcCommand } from "@/lib/ucCommands";
 import { hashForView, viewFromHash, type TerminalView } from "@/lib/terminalView";
 import { CommandPalette, type PaletteCommand } from "@/components/terminal/CommandPalette";
@@ -1195,6 +1197,11 @@ export function TerminalDashboard({
   initialView = "overview",
 }: TerminalDashboardProps) {
   const [view, setView] = useState<TerminalView>(initialView);
+  // The only two governance facts that require a person: unanswered work and
+  // permits waiting for a decision. Rendered in the footer so nobody has to open
+  // a tab to discover them; unknown (offline) renders as nothing, never as zero.
+  const governanceCounts = useGovernanceCounts({ connected });
+  const governanceCountsText = formatGovernanceCounts(governanceCounts);
   const [command, setCommand] = useState("");
   const [lastCommand, setLastCommand] = useState("—");
   const [notice, setNotice] = useState({ text: "Dashboard 就绪 — 正在读取真实 Docker Gateway", tone: "info" });
@@ -1561,7 +1568,7 @@ export function TerminalDashboard({
       </div>
 
       <StatusPillBar connected={connected} grpcState={grpcState} dashGrpcState={dashGrpcState} workers={workers} tasks={tasks} eventLog={eventLog} />
-      <footer className="terminal-command-bar"><span>uc ❯</span><input ref={commandRef} value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runCommand(); } }} placeholder='submit "fix flaky heartbeat test"' aria-label="uc 命令行" /><button className={busy ? "is-busy" : undefined} onClick={() => void runCommand()} disabled={!command.trim() || busy}>{busy ? "运行中" : "运行"}</button><kbd>↵</kbd><small>运行 · / 聚焦</small><span className="terminal-footer-status">{connected ? "后端在线" : "后端离线"} · engine {health.version ?? "—"} · {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : "waiting"}</span></footer>
+      <footer className="terminal-command-bar"><span>uc ❯</span><input ref={commandRef} value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runCommand(); } }} placeholder='submit "fix flaky heartbeat test"' aria-label="uc 命令行" /><button className={busy ? "is-busy" : undefined} onClick={() => void runCommand()} disabled={!command.trim() || busy}>{busy ? "运行中" : "运行"}</button><kbd>↵</kbd><small>运行 · / 聚焦</small><span className="terminal-footer-status">{governanceCountsText ? `${governanceCountsText} · ` : ""}{connected ? "后端在线" : "后端离线"} · engine {health.version ?? "—"} · {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : "waiting"}</span></footer>
       <div className="terminal-keybar" role="region" aria-label="Keyboard shortcuts"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>9</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
       <nav className="terminal-mobile-nav" aria-label="移动端视图导航">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav>
       {fileBrowserOpen && (

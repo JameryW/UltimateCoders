@@ -272,9 +272,9 @@ def test_real_repo_is_reconciled() -> None:
         # Governance plane (PR01–PR06): uc-types/uc-engine/uc-grpc governance
         # modules, gRPC services + integration test, gateway boot helper, Python
         # trigger/attention/proactive packages, dashboard routers + panel, docs.
-        # The doc-consistency guard test adds one text file (rebased onto #849,
-        # whose runtime-limits change added another).
-        (2357, 2348),
+        # The footer counters add three text files: governanceCounts.ts,
+        # useGovernanceCounts.ts and governance-counts.test.mjs.
+        (2360, 2351),
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
