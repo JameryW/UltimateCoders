@@ -52,6 +52,7 @@ router = APIRouter(tags=["approvals"])
 
 #: Governance op names this surface speaks.
 OP_APPROVAL_LIST = "approval.list"
+OP_APPROVAL_REQUEST = "approval.request"
 OP_APPROVAL_DECIDE = "approval.decide"
 
 #: Environment variable carrying the gateway's shared bearer token.
@@ -176,6 +177,83 @@ async def list_approvals(
     if not isinstance(approvals, list):
         return JSONResponse({"error": "invalid_gateway_reply"}, status_code=502)
     return {"approvals": approvals}
+
+
+@router.post("/api/approvals")
+async def request_approval(request: Request) -> Any:
+    """Ask a human to permit one call to a human-tier tool.
+
+    The requester must be an `agent` (or a `service` acting for one): asking as
+    `user` would be a human requesting permission from themselves, and the gateway
+    refuses a decision from the principal that asked. The TTL is the gateway's to
+    bound (``ttl_minutes`` is checked against its own maximum).
+    """
+    denied = _check_token(request)
+    if denied is not None:
+        return denied
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid_body"}, status_code=400)
+    if not isinstance(body, Mapping):
+        return JSONResponse({"error": "invalid_body"}, status_code=400)
+    tool = body.get("tool")
+    if not isinstance(tool, str) or not tool.strip():
+        return JSONResponse(
+            {"error": "invalid_body", "detail": "tool must be a non-empty string"},
+            status_code=400,
+        )
+    requested_by_kind = str(body.get("requested_by_kind") or "agent").strip().lower()
+    if requested_by_kind not in {"agent", "service"}:
+        return JSONResponse(
+            {
+                "error": "invalid_body",
+                "detail": "requested_by_kind must be 'agent' or 'service'; a human does not "
+                "request a permit for their own action",
+            },
+            status_code=400,
+        )
+    requested_by_id = body.get("requested_by_id", "uc-worker")
+    if not isinstance(requested_by_id, str) or not requested_by_id.strip():
+        return JSONResponse(
+            {
+                "error": "invalid_body",
+                "detail": "requested_by_id must be a non-empty string",
+            },
+            status_code=400,
+        )
+    payload: dict[str, Any] = {
+        "tool": tool.strip(),
+        "principal_kind": requested_by_kind,
+        "principal_id": requested_by_id.strip(),
+    }
+    for name in ("case_id", "project_id", "action_digest", "reason"):
+        value = body.get(name)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            return JSONResponse(
+                {"error": "invalid_body", "detail": f"{name} must be a string"},
+                status_code=400,
+            )
+        if value.strip():
+            payload[name] = value.strip()
+    ttl = body.get("ttl_minutes")
+    if ttl is not None:
+        if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl <= 0:
+            return JSONResponse(
+                {"error": "invalid_body", "detail": "ttl_minutes must be a positive integer"},
+                status_code=400,
+            )
+        payload["ttl_minutes"] = ttl
+    try:
+        reply = await _call_governance(request, OP_APPROVAL_REQUEST, payload)
+    except _GatewayUnavailableError:
+        return _unavailable(OP_APPROVAL_REQUEST)
+    approval = reply.get("approval")
+    if not isinstance(approval, Mapping):
+        return JSONResponse({"error": "invalid_gateway_reply"}, status_code=502)
+    return {"approval": approval}
 
 
 @router.post("/api/approvals/{approval_id}/decide")
@@ -311,6 +389,7 @@ async def export_approvals(
 __all__ = [
     "router",
     "OP_APPROVAL_LIST",
+    "OP_APPROVAL_REQUEST",
     "OP_APPROVAL_DECIDE",
     "EXPORT_COLUMNS",
     "EXPORT_MAX_PAGES",

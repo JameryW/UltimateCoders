@@ -182,6 +182,13 @@ call   authorize_tool(...)                                    ->  消费许可 -
 由近到远（一次两分钟后过期的决定比今晚过期的更急），再按 id 稳定排序。离线（503）只显示一条静默提示并清空
 列表——不在陈旧队列上让人做决定；`401` 说明部署要求 `UC_DASHBOARD_TOKEN`，就地提示而不是显示成「没有待办」。
 
+申请面：`POST /api/approvals`（body：`tool` 必填，`case_id`/`project_id`/`action_digest`/`reason`/`ttl_minutes` 可选，
+`requested_by_kind` 只能是 `agent` 或 `service`，`requested_by_id` 默认 `uc-worker`）。这条端点推翻了早期「仪表盘不提供
+create 端点」的决定，原因是**回路不可达**：桥上有 `approval.request`、Rust 服务也有，但 Python 侧没有任何调用方，于是
+「申请→批准→消费」只有批准一半能走通。安全性由三条约束保住而不是靠「没有端点」：请求方**不能是 `user`**（人不需要向
+自己申请）、请求方 id 被记录、且存储层坚持「发起者不能决定自己的请求」。所以人可以替某个 agent 申请，但人的同意仍然
+只由人给出，而且不能用自己刚提交的申请来自批。
+
 审计导出：`GET /api/approvals/export.csv`（可加 `?state=`）。`approval.list` 受传输上限限制（每页最多 500，导出
 取 200），一次调用不是一份审计，所以导出按 `offset` 翻页直到拿到不满一页；上界 `50 × 200 = 10000` 条，达到上界时
 响应头 `X-UC-Approvals-Truncated: true` 明说被截断，而不是悄悄给一份更短的文件。导出保留网关自己的 RFC 3339
