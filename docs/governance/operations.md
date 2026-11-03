@@ -3,6 +3,7 @@
 本文件只写**可执行**的部分：变量怎么配、默认值为什么安全、配错会坏在哪、上线按什么顺序。
 设计动机见各 PR 文档（[README.md](README.md) 有索引）。
 需要**真实集群**（Docker + NATS）的端到端验收步骤见 [e2e-runbook.md](e2e-runbook.md)；本文件里的验收都用单测/集成测试即可复现。
+本地开发用 `docker/docker-compose.dev.yml`（`--profile engine --profile storage`）：它把 `UC_GOVERNANCE_BACKEND=postgres` / `UC_DATABASE_URL` / `UC_POLICY_BOOTSTRAP=dev` / `UC_OPERATOR_ID` / `UC_PROACTIVE_MODE=off` 一并注入网关容器；该 dev 快照**绝不能**用于共享环境。
 
 ## 0. 现状与文档边界
 

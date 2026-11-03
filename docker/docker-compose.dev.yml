@@ -46,6 +46,18 @@ services:
       UC_QDRANT_URL: "http://qdrant:6334"
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
       UC_NATS_URL: "nats://nats:4222"
+      # ── Governance plane (PR01–PR06) ─────────────────────────────
+      # Dev-only defaults. `postgres` makes submissions/cases/mandates/approvals
+      # survive a restart; `UC_POLICY_BOOTSTRAP=dev` installs the development
+      # snapshot so the dashboard's governance endpoints are usable immediately.
+      # NEVER use `UC_POLICY_BOOTSTRAP=dev` in a shared deployment: it grants the
+      # operator every permission. Production uses `UC_POLICY_GRANTS_JSON` or a
+      # persisted snapshot — see docs/governance/operations.md.
+      UC_GOVERNANCE_BACKEND: "postgres"
+      UC_DATABASE_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
+      UC_POLICY_BOOTSTRAP: "dev"
+      UC_OPERATOR_ID: "operator"
+      UC_PROACTIVE_MODE: "off"
       RUST_LOG: "info"
     depends_on:
       pd:
