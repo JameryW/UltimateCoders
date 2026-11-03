@@ -667,6 +667,7 @@ class TestSandboxSubprocessCancellation:
     (OMP session interruption). The fix kills the proc in a finally block."""
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-only")
     async def test_cancellation_kills_subprocess(self):
         import asyncio
         import sys

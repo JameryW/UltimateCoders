@@ -10,6 +10,7 @@ Unit tests use the injectable applicator and never require root.
 
 from __future__ import annotations
 
+import os
 import socket
 import sys
 import tempfile
@@ -257,6 +258,7 @@ async def test_subprocess_restricted_fail_closed_no_spawn(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="network-namespace wrappers are POSIX-only")
 async def test_subprocess_injected_none_wraps_argv(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

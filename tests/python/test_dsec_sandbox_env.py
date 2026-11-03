@@ -93,6 +93,18 @@ def _fake_dsh(
     """
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
+    if os.name == "nt":
+        # npm installs dsh as a .CMD shim on Windows; emulate that shape so the
+        # probe runs through the same COMSPEC route the product uses.
+        script = bindir / "dsh.cmd"
+        version_lines = (
+            'if "%~1"=="--version" (echo 0.2.0-rc.2& exit /b 0)\n' if prints_version else ""
+        )
+        stderr_line = f"echo {stderr} 1>&2\n" if stderr else ""
+        script.write_text(
+            f"@echo off\n{version_lines}{stderr_line}exit /b {exit_code}\n", encoding="ascii"
+        )
+        return bindir
     script = bindir / "dsh"
     version_lines = (
         'if [ "$1" = "--version" ]; then echo "0.2.0-rc.2"; exit 0; fi\n' if prints_version else ""
@@ -241,7 +253,7 @@ class TestPreflightDsec:
         assert "npm install -g @deepseek-ai/dsh" in message
 
     def test_booting_dsh_with_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("PATH", f"{_fake_dsh(tmp_path)}:{os.environ['PATH']}")
+        monkeypatch.setenv("PATH", f"{_fake_dsh(tmp_path)}{os.pathsep}{os.environ['PATH']}")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DSH_HOME", str(tmp_path / "dsh-home"))
         (tmp_path / "dsh-home").mkdir()
@@ -254,7 +266,10 @@ class TestPreflightDsec:
     ) -> None:
         monkeypatch.setenv(
             "PATH",
-            f"{_fake_dsh(tmp_path, exit_code=1, stderr='profile not found')}:{os.environ['PATH']}",
+            (
+                f"{_fake_dsh(tmp_path, exit_code=1, stderr='profile not found')}"
+                f"{os.pathsep}{os.environ['PATH']}"
+            ),
         )
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DSH_HOME", str(tmp_path / "dsh-home"))
@@ -266,7 +281,7 @@ class TestPreflightDsec:
     def test_structured_credentials_file_surfaces_hint(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("PATH", f"{_fake_dsh(tmp_path)}:{os.environ['PATH']}")
+        monkeypatch.setenv("PATH", f"{_fake_dsh(tmp_path)}{os.pathsep}{os.environ['PATH']}")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         dsh_home = tmp_path / "dsh-home"
         dsh_home.mkdir()
@@ -281,25 +296,57 @@ class TestPreflightDsec:
 # ── doctor report & CLI entry ────────────────────────────────────
 
 
+class TestDshCommandRouting:
+    """One rule, both platforms: a .CMD shim needs the command interpreter.
+
+    This is the branch that was missing from ``_dsh_version``: on Windows every
+    npm-installed dsh is a ``.CMD``, so the version probe used to fail with
+    ``OSError`` and the doctor report claimed the Node floor problem for a
+    perfectly healthy install.
+    """
+
+    def test_a_posix_binary_is_spawned_directly(self) -> None:
+        assert harness_deepseek.dsh_command("/usr/bin/dsh", "--version") == [
+            "/usr/bin/dsh",
+            "--version",
+        ]
+
+    def test_a_windows_cmd_shim_goes_through_the_interpreter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("COMSPEC", r"C:\Windows\system32\cmd.exe")
+        argv = harness_deepseek.dsh_command(
+            r"C:\npm\dsh.cmd", "--version", platform_name="nt"
+        )
+        assert argv == [
+            r"C:\Windows\system32\cmd.exe",
+            "/d",
+            "/c",
+            r"C:\npm\dsh.cmd",
+            "--version",
+        ]
+
+    def test_a_windows_exe_is_spawned_directly(self) -> None:
+        assert harness_deepseek.dsh_command(
+            r"C:\npm\dsh.exe", "--version", platform_name="nt"
+        ) == [r"C:\npm\dsh.exe", "--version"]
+
+
 class TestDshVersionProbe:
     def test_silent_dsh_is_detected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # dsh on a Node runtime older than 22.19.0: import.meta.main is
         # undefined, runCli() never runs, the process exits 0 with no output.
         monkeypatch.setenv(
             "PATH",
-            f"{_fake_dsh(tmp_path, prints_version=False)}:{os.environ['PATH']}",
+            f"{_fake_dsh(tmp_path, prints_version=False)}{os.pathsep}{os.environ['PATH']}",
         )
         assert sandbox_dsec._dsh_version() is None
 
     def test_printing_dsh_returns_version(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        bindir = tmp_path / "bin"
-        bindir.mkdir()
-        script = bindir / "dsh"
-        script.write_text("#!/bin/sh\necho 0.2.0-rc.2\n")
-        script.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+        bindir = _fake_dsh(tmp_path, prints_version=True)
+        monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
         assert sandbox_dsec._dsh_version() == "0.2.0-rc.2"
 
     def test_preflight_flags_silent_no_op(
@@ -307,7 +354,7 @@ class TestDshVersionProbe:
     ) -> None:
         monkeypatch.setenv(
             "PATH",
-            f"{_fake_dsh(tmp_path, prints_version=False)}:{os.environ['PATH']}",
+            f"{_fake_dsh(tmp_path, prints_version=False)}{os.pathsep}{os.environ['PATH']}",
         )
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DSH_HOME", str(tmp_path / "dsh-home"))
@@ -319,7 +366,12 @@ class TestDshVersionProbe:
 
 
 class TestDoctorReportAndCli:
-    def test_report_contents_and_key_masking(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_report_contents_and_key_masking(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Isolate the machine's real dsh home: a credentials file there would make
+        # the report "not ready" for a reason this test never set up.
+        monkeypatch.setenv("DSH_HOME", str(tmp_path))
         monkeypatch.setattr(
             sandbox_dsec.harness_deepseek,
             "preflight_check",
@@ -336,7 +388,10 @@ class TestDoctorReportAndCli:
         assert "sk-abcdef1234567890" not in report  # never the raw key
         assert "preflight              : OK" in report
 
-    def test_main_check_gates_on_preflight(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_main_check_gates_on_preflight(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DSH_HOME", str(tmp_path))
         monkeypatch.setattr(
             sandbox_dsec.harness_deepseek,
             "preflight_check",
@@ -354,7 +409,10 @@ class TestDoctorReportAndCli:
         assert sandbox_dsec.main(["--check"]) == 1
         assert sandbox_dsec.main([]) == 0  # report-only default still exits 0
 
-    def test_main_json_output(self, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    def test_main_json_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        monkeypatch.setenv("DSH_HOME", str(tmp_path))
         monkeypatch.setattr(
             sandbox_dsec.harness_deepseek,
             "preflight_check",

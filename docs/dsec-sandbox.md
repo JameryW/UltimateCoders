@@ -146,6 +146,7 @@ Notes:
 | boot failure: `... must be a string` + `.credentials.yaml` | structured credentials file with an outdated `dsh` build | upgrade dsh to the pinned version, or flatten the file to a `KEY: value` map (the full repair hint is printed by preflight) |
 | tasks fail with `401` | key invalid/expired, or `DEEPSEEK_BASE_URL` points at a gateway that rejects it | check the key; unset `DEEPSEEK_BASE_URL` to use the public API |
 | capability `dsec` not advertised | `dsh` not on the worker's `PATH` | capability advertising probes the CLI; fix the image/PATH |
+| doctor on Windows: `dsh version : SILENT NO-OP` although `dsh --version` works in a terminal | npm installs dsh as a `.CMD` shim and `CreateProcess` cannot spawn it directly; the version probe used to call it directly, so it always failed there | fixed: `harness_deepseek.dsh_command()` is the single place that knows the rule, and both the version probe and the boot check go through it (see the routing tests in the test map) |
 
 ## 6. Test map
 
@@ -164,9 +165,16 @@ Notes:
 - **Adapter request** — the `dsh --profile headless "<task>"` contract and
   credential forwarding via the dsec config.
 - **Preflight** — missing / booting / failing `dsh` and the
-  structured-credentials hint, with a fake `dsh` on `PATH`.
+  structured-credentials hint, with a fake `dsh` on `PATH`. The fake is a
+  `.cmd` shim on Windows and a `/bin/sh` script elsewhere, so the same
+  assertions run on both platforms (PATH entries join with `os.pathsep`).
+- **Command routing** — `dsh_command()` spawns a POSIX binary directly, routes a
+  Windows `.CMD`/`.BAT` shim through `%COMSPEC% /d /c`, and leaves a `.exe`
+  alone. The platform is an explicit parameter, so a Linux CI run covers the
+  Windows branch that used to be missing.
 - **Doctor & CLI** — report contents, key masking, `--check` exit gating,
-  `--json` payload.
+  `--json` payload; each test isolates `DSH_HOME` so a developer's real
+  credentials file cannot flip the verdict.
 - **Deployment files** — the compose override pins `UC_CODING_AGENT=dsec` on
   every agent-spawning service; the env template and launcher exist.
 
