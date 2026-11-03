@@ -65,6 +65,46 @@ from ultimate_coders.agent.workspace import WorkspaceHandle, WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SUBTASK_TIMEOUT_SECONDS = 600
+SUBTASK_TIMEOUT_ENV_VAR = "UC_SUBTASK_TIMEOUT_SECONDS"
+DESCRIPTION_PROFILES_ENV_VAR = "UC_DISABLE_DESCRIPTION_PROFILES"
+
+
+def _default_subtask_timeout_seconds() -> int:
+    """Return the default per-subtask timeout, overridable by env.
+
+    Long content phases routinely exceed ten minutes; deployments can raise
+    the default without changing every plan.
+    """
+    raw = os.environ.get(SUBTASK_TIMEOUT_ENV_VAR, "").strip()
+    if not raw:
+        return DEFAULT_SUBTASK_TIMEOUT_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "Ignoring invalid %s=%r; using %d",
+            SUBTASK_TIMEOUT_ENV_VAR,
+            raw,
+            DEFAULT_SUBTASK_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_SUBTASK_TIMEOUT_SECONDS
+    if value <= 0:
+        logger.warning(
+            "Ignoring non-positive %s=%r; using %d",
+            SUBTASK_TIMEOUT_ENV_VAR,
+            raw,
+            DEFAULT_SUBTASK_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_SUBTASK_TIMEOUT_SECONDS
+    return value
+
+
+def _description_profiles_enabled() -> bool:
+    """Whether subtask-description keyword profiles are enabled."""
+    raw = os.environ.get(DESCRIPTION_PROFILES_ENV_VAR, "").strip().lower()
+    return raw not in {"1", "true", "yes", "on"}
+
 
 async def _engine_call(
     engine: Any,
@@ -709,7 +749,13 @@ class Worker:
         """Match a subtask to a template by description heuristics.
 
         ponytail: keyword matching — upgrade path is LLM classification.
+        Deployments can disable the heuristic entirely with
+        ``UC_DISABLE_DESCRIPTION_PROFILES=1``; this matters for multi-step
+        plans where a keyword in the subtask description would otherwise
+        force the read-only review profile onto write-capable steps.
         """
+        if not _description_profiles_enabled():
+            return None
         desc_lower = subtask.description.lower()
         if any(kw in desc_lower for kw in ("review", "audit", "analyze", "inspect")):
             return Worker.SUBTASK_TEMPLATES.get("review")
@@ -1099,7 +1145,7 @@ class Worker:
                             attempt + 1,
                         )
                 try:
-                    timeout_secs = subtask.timeout_seconds or 600
+                    timeout_secs = subtask.timeout_seconds or _default_subtask_timeout_seconds()
                     try:
                         await _progress("executing", 50)
                         if checkpoint and checkpoint.get("delivery") == "pending":

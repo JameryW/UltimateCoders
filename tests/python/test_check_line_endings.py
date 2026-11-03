@@ -279,6 +279,7 @@ def test_real_repo_is_reconciled() -> None:
         (1907, 1898),
         (1934, 1925),
         (1950, 1941),
+        (2356, 2347),  # docs/agent-runtime-limits.md adds one text file.
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 
