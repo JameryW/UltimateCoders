@@ -46,6 +46,39 @@ DEFAULT_CODING_AGENT = "grok-build"
 GROK_AGENT_ALIASES = ("grok-build", "grok")
 INFERENCE_CANCEL_GRACE_SECONDS = 8
 
+# asyncio's StreamReader default is 64 KiB. A single Claude Code
+# `--output-format stream-json` line can exceed that (large tool results),
+# which aborts the step with "Separator is found, but chunk is longer than
+# limit". Keep a generous default and let operators tune it.
+DEFAULT_STREAM_LIMIT_BYTES = 64 * 1024 * 1024
+STREAM_LIMIT_ENV_VAR = "UC_STREAM_LIMIT_BYTES"
+
+
+def _stream_limit_bytes() -> int:
+    """Return the stdout StreamReader limit for agent subprocesses."""
+    raw = os.environ.get(STREAM_LIMIT_ENV_VAR, "").strip()
+    if not raw:
+        return DEFAULT_STREAM_LIMIT_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "Ignoring invalid %s=%r; using %d",
+            STREAM_LIMIT_ENV_VAR,
+            raw,
+            DEFAULT_STREAM_LIMIT_BYTES,
+        )
+        return DEFAULT_STREAM_LIMIT_BYTES
+    if value <= 0:
+        logger.warning(
+            "Ignoring non-positive %s=%r; using %d",
+            STREAM_LIMIT_ENV_VAR,
+            raw,
+            DEFAULT_STREAM_LIMIT_BYTES,
+        )
+        return DEFAULT_STREAM_LIMIT_BYTES
+    return value
+
 # ── T11 #653 (D11 #648) — deny-by-default environment allowlist ──────
 #
 # Every agent subprocess used to inherit the FULL host environment
@@ -945,6 +978,7 @@ class SandboxManager:
         proc = None
         tree = None
         stderr_task = None
+        stream_limit = _stream_limit_bytes()
         try:
             start = time.monotonic()
             if cancel_file:
@@ -956,6 +990,7 @@ class SandboxManager:
                     stderr=asyncio.subprocess.PIPE,
                     cwd=working_dir,
                     env=env,
+                    limit=stream_limit,
                 )
                 self._process_trees[proc.pid] = tree
             else:
@@ -966,6 +1001,7 @@ class SandboxManager:
                     stderr=asyncio.subprocess.PIPE,
                     cwd=working_dir,
                     env=env,
+                    limit=stream_limit,
                     # T7 #643 — own process group on POSIX so a cooperative
                     # cancel can kill the agent AND its children (the coding
                     # CLI spawns tool subprocesses) with one killpg. Windows
@@ -1791,6 +1827,14 @@ class ClaudeCodeAdapter(AgentAdapter):
         config: SandboxConfig,
         subtask_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Merge config-level and subtask-level agent overrides
+        cfg = _merge_agent_config(config, subtask_config)
+
+        max_turns = cfg.get("max_turns", 20)
+        if isinstance(max_turns, bool) or not isinstance(max_turns, int) or max_turns < 1:
+            logger.warning("Ignoring invalid max_turns=%r; using 20", max_turns)
+            max_turns = 20
+
         args = [
             "-p",
             prompt,
@@ -1801,12 +1845,9 @@ class ClaudeCodeAdapter(AgentAdapter):
             # an API call.
             "--verbose",
             "--max-turns",
-            "20",
+            str(max_turns),
             "--dangerously-skip-permissions",
         ]
-
-        # Merge config-level and subtask-level agent overrides
-        cfg = _merge_agent_config(config, subtask_config)
 
         temp_files: list[str] = []
 

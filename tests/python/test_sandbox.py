@@ -22,6 +22,7 @@ from ultimate_coders.agent.sandbox import (
     _codex_mcp_server_toml,
     _merge_agent_config,
     _resolve_mcp_configs,
+    _stream_limit_bytes,
     available_agents,
     create_adapter,
     parse_decomposition_output,
@@ -31,6 +32,43 @@ from ultimate_coders.agent.sandbox import (
 from ultimate_coders.agent.types import ChangeType, FileChange, Subtask, SubtaskUsage, Task
 
 # ── SandboxConfig tests ─────────────────────────────────────────
+
+
+class TestAgentRuntimeLimits:
+    """Tests for the stream-reader limit and Claude turn budget."""
+
+    def test_stream_limit_default(self, monkeypatch):
+        monkeypatch.delenv("UC_STREAM_LIMIT_BYTES", raising=False)
+        assert _stream_limit_bytes() == 64 * 1024 * 1024
+
+    def test_stream_limit_can_be_overridden(self, monkeypatch):
+        monkeypatch.setenv("UC_STREAM_LIMIT_BYTES", "1048576")
+        assert _stream_limit_bytes() == 1048576
+
+    def test_stream_limit_ignores_invalid_values(self, monkeypatch):
+        monkeypatch.setenv("UC_STREAM_LIMIT_BYTES", "not-a-number")
+        assert _stream_limit_bytes() == 64 * 1024 * 1024
+
+    def test_claude_max_turns_default(self):
+        request = ClaudeCodeAdapter().build_request(
+            "hi", ".", SandboxConfig(agent="claude-code")
+        )
+        index = request["args"].index("--max-turns")
+        assert request["args"][index + 1] == "20"
+
+    def test_claude_max_turns_override(self):
+        request = ClaudeCodeAdapter().build_request(
+            "hi", ".", SandboxConfig(agent="claude-code"), {"max_turns": 200}
+        )
+        index = request["args"].index("--max-turns")
+        assert request["args"][index + 1] == "200"
+
+    def test_claude_max_turns_ignores_invalid_values(self):
+        request = ClaudeCodeAdapter().build_request(
+            "hi", ".", SandboxConfig(agent="claude-code"), {"max_turns": "many"}
+        )
+        index = request["args"].index("--max-turns")
+        assert request["args"][index + 1] == "20"
 
 
 class TestSandboxConfig:

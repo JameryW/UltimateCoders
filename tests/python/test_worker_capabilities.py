@@ -17,7 +17,32 @@ from ultimate_coders.agent.fs_mcp import (
     _write_file,
 )
 from ultimate_coders.agent.sandbox import SandboxConfig
-from ultimate_coders.agent.worker import Worker
+from ultimate_coders.agent.types import Subtask
+from ultimate_coders.agent.worker import Worker, _default_subtask_timeout_seconds
+
+# ── runtime defaults ───────────────────────────────────────────
+
+
+class TestRuntimeDefaults:
+    def test_subtask_timeout_default(self, monkeypatch) -> None:
+        monkeypatch.delenv("UC_SUBTASK_TIMEOUT_SECONDS", raising=False)
+        assert _default_subtask_timeout_seconds() == 600
+
+    def test_subtask_timeout_can_be_overridden(self, monkeypatch) -> None:
+        monkeypatch.setenv("UC_SUBTASK_TIMEOUT_SECONDS", "3600")
+        assert _default_subtask_timeout_seconds() == 3600
+
+    def test_subtask_timeout_ignores_invalid_values(self, monkeypatch) -> None:
+        monkeypatch.setenv("UC_SUBTASK_TIMEOUT_SECONDS", "soon")
+        assert _default_subtask_timeout_seconds() == 600
+
+    def test_description_profiles_can_be_disabled(self, monkeypatch) -> None:
+        subtask = Subtask(id="s", description="review the report")
+        monkeypatch.delenv("UC_DISABLE_DESCRIPTION_PROFILES", raising=False)
+        assert Worker._match_subtask_template(subtask) is not None
+        monkeypatch.setenv("UC_DISABLE_DESCRIPTION_PROFILES", "1")
+        assert Worker._match_subtask_template(subtask) is None
+
 
 # ── uc-fs path safety ──────────────────────────────────────────
 
