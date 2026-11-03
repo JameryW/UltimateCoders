@@ -261,3 +261,37 @@ ProgressTracker（既有）→ stall_signal（既有）→ Orchestrator._apply_r
 测试：`tests/python/test_watchdog_bridge.py`（15 个）——payload 形状与可选字段省略、transport 失败降级、
 未知 verdict 抛契约错误、`replan` 丢已确认副作用被拒、`escalate`/`replan`/预算耗尽各自停止、桥不可达时
 原行为不变、畸形 verdict 不落到重试。
+
+## evaluator 的调用点：停滞证据 → 受治理的提案
+
+`ProactiveEvaluator` 之前同样只有测试调用它。现在它在**同一个停滞接缝**上被调用（watchdog 决定
+停止之后），也只有在那里：
+
+```
+verdict 停止（escalate/stop/replan 或预算耗尽）
+      └─> agent/proactive_bridge.propose_on_stall
+              ├─ 构造上下文：仅用 worker 已有事实（task/case/project、stalled_streak、subtask）
+              ├─ ProactiveEvaluator.evaluate(context, mode=UC_PROACTIVE_MODE)
+              └─ propose/execute 模式 → proactive.proposal.submit（每个提案一次）
+```
+
+| 规则 | 为什么 |
+| --- | --- |
+| `off`（默认）**连上下文都不构造** | 默认部署不该为主动评估付任何代价 |
+| `observe` 只记录 `observed`，**不提交** | 观察不能制造待办项 |
+| `propose` / `execute` 才提交，每个提案一次 `proactive.proposal.submit` | 网关的 `ProactiveGate` 仍是权威：会再检查模式、证据、预算、开放提案上限 |
+| 被拒（`missing_permission`、空证据、模式太低、提案过多）**记录而不抛** | 停滞路径已经是失败路径，治理拒绝是预期答复 |
+| 提案**不是执行** | 批准与执行是 `DecideProposal` / `admit_execution` 的决定，worker 只负责「提出带证据的下一步」 |
+| 只在阶梯**停止**后调用 | 还在重试时没有「需要人打破的僵局」可提 |
+
+上下文里没有任何推测字段：`progress.stalled_streak` 来自 progress detector，`task`/`case`/`project`
+来自编排器已有对象；证据 id 形如 `stall:<task>:<streak>`，所以一条误报可以追溯到触发它的那个事实。
+
+worker 侧开关：`UC_PROACTIVE_MODE`（off/observe/propose/execute，默认 off）。提案归属
+`agent:uc-worker`——kind 是诚实的（建议来自这个 worker），能否提案仍由网关的策略快照决定；
+dev 快照只把 `proactive_propose` 给了 operator，所以在本地开发环境里 worker 的提案会被拒并记一条日志，
+生产上由 `UC_POLICY_GRANTS_JSON` 显式授权。
+
+测试：`tests/python/test_proactive_bridge.py`（12 个）——上下文只含既有事实、`off` 不与网关通信、
+`observe` 不提交、`propose` 提交带证据的载荷、低于停滞阈值不提案、治理拒绝与桥不可达都只记录、
+以及「只有阶梯停止后才提案」的编排器接线。

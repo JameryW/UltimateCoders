@@ -31,6 +31,7 @@ from typing import Any
 from ultimate_coders.agent.aggregator import ResultAggregator
 from ultimate_coders.agent.conflict import ConflictDetector
 from ultimate_coders.agent.event_emitter import TaskEventEmitter
+from ultimate_coders.agent.proactive_bridge import propose_on_stall
 from ultimate_coders.agent.routing import ModelRouter, Stage, derive_risk
 from ultimate_coders.agent.stall_redispatch import (
     STALL_EPISODE_KEY,
@@ -188,6 +189,7 @@ class Orchestrator:
         merge_gate: Any = None,
         model_router: Any = None,
         governance_client: Any = None,
+        proactive_principal: tuple[str, str] | None = None,
     ) -> None:
         self.engine = engine
         self.nats_publisher = nats_publisher
@@ -210,6 +212,12 @@ class Orchestrator:
         # instead of deciding alone. When None (no bridge, older gateway), the
         # pre-existing local redispatch policy runs unchanged.
         self.governance_client = governance_client
+        # Who a proactive proposal is attributed to. `agent` is the honest kind:
+        # the suggestion came from this worker, and the gateway still decides
+        # whether that principal may propose at all.
+        self.proactive_principal = proactive_principal or ("agent", "uc-worker")
+        # Last evaluation outcome, for observability and tests.
+        self.last_proactive_outcome: Any = None
         # Advisory in-memory result aggregator. Runs at task completion
         # (before MergeArbiter) to surface same-file conflicts between
         # concurrent subtasks early. Advisory only — does NOT write merged
@@ -769,6 +777,7 @@ class Orchestrator:
                 subtask.id[:8],
                 action.reason or "none given",
             )
+            await self._propose_on_stall(task, subtask, result, stall)
             return False
 
         if action.attempts_remaining == 0:
@@ -777,9 +786,50 @@ class Orchestrator:
                 "Watchdog has no attempts left for subtask %s; not retrying",
                 subtask.id[:8],
             )
+            await self._propose_on_stall(task, subtask, result, stall)
             return False
 
         return self._maybe_stall_agent_redispatch(subtask, result)
+
+    async def _propose_on_stall(
+        self, task: Task, subtask: Subtask, result: SubtaskResult, stall: Any
+    ) -> None:
+        """Offer the stopped stall to the proactive evaluator (PR06).
+
+        Runs only where the staircase has already stopped this worker, and only
+        when a bridge exists. The mode gate is inside the bridge (`off` does not
+        even evaluate), so a default deployment does no work here. A refusal is
+        recorded, never raised: the failure path is already the wrong place for a
+        second exception.
+        """
+        if self.governance_client is None:
+            return
+        try:
+            outcome = await propose_on_stall(
+                self.governance_client,
+                task_id=getattr(task, "id", ""),
+                task_status=getattr(getattr(task, "status", None), "value", None),
+                project_id=None,
+                case_id=getattr(task, "case_id", None),
+                stalled_streak=getattr(stall, "stalled_streak", 0),
+                action="stop",
+                subtask_id=subtask.id,
+                principal_kind=self.proactive_principal[0],
+                principal_id=self.proactive_principal[1],
+            )
+        except Exception:  # noqa: BLE001 - never fail the failure path
+            logger.warning(
+                "proactive proposal attempt failed for subtask %s", subtask.id[:8], exc_info=True
+            )
+            return
+        self.last_proactive_outcome = outcome
+        if outcome.submitted:
+            logger.info(
+                "Stalled subtask %s produced %d governed proposal(s) in %s mode",
+                subtask.id[:8],
+                len(outcome.submitted),
+                outcome.mode.value,
+            )
 
     def _maybe_stall_agent_redispatch(self, subtask: Subtask, result: SubtaskResult) -> bool:
         """Apply same-contract one-shot agent swap when policy says swap_once.
