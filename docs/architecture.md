@@ -62,7 +62,15 @@ A governance layer modelled on the DeepSeek Engineering Agent OS design sits **b
 
 | Layer | Entities | Durability | Status | Documentation |
 | --- | --- | --- | --- | --- |
-| Governance | submission/outbox, WorkCase/CaseRun, mandate/policy, trigger inbox, attention items, proactive proposals + watchdog decisions | namespaced JSON documents with a CAS version in one `governance_records` table (in-memory or PostgreSQL) | landed end to end: types + stores + four gRPC services + NATS JSON bridge + gateway boot (`crates/uc-grpc-server/src/governance_boot.rs`) + Python dashboard projections; the proto is the authoritative contract | [docs/governance](governance/README.md) |
+| Governance | submission/outbox, WorkCase/CaseRun, mandate/policy, approval permits, trigger inbox, attention items, proactive proposals + watchdog decisions | namespaced JSON documents with a CAS version in one `governance_records` table (in-memory or PostgreSQL) | landed end to end: types + stores + five gRPC services (`Case` / `Trigger` / `Attention` / `Proactive` / `Approval`) + NATS JSON bridge (30 ops) + gateway boot (`crates/uc-grpc-server/src/governance_boot.rs`) + Python dashboard projections; the proto is the authoritative contract | [docs/governance](governance/README.md) |
+
+The plane closes three loops that used to be open, each **inside** the existing execution path (no second scheduler, no rewritten DAG):
+
+- **Event → work.** An ingested trigger deduplicates on its source identity, wakes the `waiting_event` case it belongs to, and — when the case's subscription opted into `auto_resume` and a live mandate permits `dispatch` — submits exactly one new governed run through the same submit-once path the `SubmitTask` RPC uses.
+- **Stall → recovery.** The worker's progress detector raises a stall signal; the orchestrator asks the gateway watchdog (`watchdog.stall.report`) instead of deciding alone and obeys the verdict (`continue`/`retry_same_contract` keep the local ladder within the gateway's remaining budget, `replan` stops and leaves the plan to the gateway, `escalate`/`stop` stop). After a stop the proactive evaluator may propose an evidence-backed unblock, which the gateway still gates on mode, evidence and budget.
+- **Human → authority.** Attention items project what needs a person; a human-tier tool (scaling workers, running containers) can be unlocked either by the operator tier or by a recorded, single-use approval (`request → decide → consume`), with the approval queue exposed at `/api/approvals` and in the dashboard's approvals view.
+
+Capacity is read from the live worker registry (`total = Σ max_capacity`, `busy = Σ min(current_load, max_capacity)` over fresh, contract-versioned workers), so the "slots saved by quiet waiting" metric is measured rather than configured.
 
 The dashboard projects this state over NATS request/reply (`uc.governance.request`, envelope `{"op","payload"}` → `{"ok","result"|"error"}`). When the bridge is unreachable the governance endpoints answer `503 governance_unavailable` instead of fabricating an empty state. Environment variables with their safe defaults, per-PR manual acceptance, and the upgrade order (gateway before workers, contract version lockstep) are documented in [the governance operations guide](governance/operations.md).
 

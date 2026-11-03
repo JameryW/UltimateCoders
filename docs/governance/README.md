@@ -141,6 +141,7 @@
 | [pr05-attention.md](pr05-attention.md) | 注意力种类、为什么等待不占槽位、人类优先预留、工作清单排序、容量指标 |
 | [pr06-proactive.md](pr06-proactive.md) | Off/Observe/Propose/Execute、证据要求、审计留痕、watchdog 边界、「模型可建议、控制面决定」 |
 | [operations.md](operations.md) | 环境变量与安全默认值、带治理面启动、逐 PR 手工验收、升级顺序 |
+| [e2e-runbook.md](e2e-runbook.md) | **需要 Docker/NATS** 的端到端验收：起集群、桥自检、逐 PR 判定标准、持久化重启验证、失败对照表（作者机器无 Docker，未在本机执行——手册标注了每条的预期输出） |
 
 ## 4. 未实现 / 有意留空
 

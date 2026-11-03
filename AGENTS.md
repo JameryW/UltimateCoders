@@ -12,6 +12,8 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
   - **Web Dashboard** (React) + **Dashboard API** (FastAPI): 任务提交、监控和事件流
   - **Rust gRPC Server** (5 crates): uc-types, uc-engine, uc-grpc, uc-grpc-server, uc-python
     - EngineService / TaskService / DashboardService / **WorkerService**
+    - Governance plane (PR01–PR06): CaseService / TriggerService / AttentionService / ProactiveService / ApprovalService
+      + a NATS JSON bridge; docs in `docs/governance/`
     - WorkerRegistry — 能力感知调度（capabilities + load matching）
 - **Distributed Worker** (独立部署, 可多实例扩缩容):
   - **Python Worker/Sandbox**: gRPC WorkerService 注册 + NATS subtask 执行

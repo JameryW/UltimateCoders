@@ -106,13 +106,14 @@ The architecture separates task planning, execution authority, coding execution,
 
 The three columns summarize entry points, planning/control, and distributed execution. Arrows summarize the task flow; dashed outlines mark optional integrations. The architecture reference shows the individual protocol routes and UC's inference acceptance workflow.
 
-The default task path is **submit → plan the DAG → dispatch ready nodes → execute → report → release dependent nodes**. Python plans and routes domains; the Rust Gateway owns task controls and dispatch (`UC_GATEWAY_OWNS_DISPATCH=true` in Compose). Completing a node can release its dependents immediately, without waiting for an entire wave.
+The default task path is **submit → plan the DAG → dispatch ready nodes → execute → report → release dependent nodes**. A governance plane records *why* the work exists and *under what authority* (submission identity, case, mandate, trigger source, human approvals); it adds no second scheduler — see [the governance guide](docs/governance/README.md). Python plans and routes domains; the Rust Gateway owns task controls and dispatch (`UC_GATEWAY_OWNS_DISPATCH=true` in Compose). Completing a node can release its dependents immediately, without waiting for an entire wave.
 
 | Layer | Components | Responsibility |
 | --- | --- | --- |
 | Interaction | Web Dashboard, Dashboard API; optional native OMP | Browser gRPC-Web, REST/SSE, and terminal `/uc` entry points |
 | Planning | Python coordinator; optional OMP planner | Decompose tasks, validate dependencies, route inference tasks, and preserve execution configuration |
 | Control plane | Rust Gateway, TaskStore, WorkerRegistry | Task state, ready-node dispatch, capability/project/version gates, placement, controls and recovery |
+| Governance | Policy/mandate, WorkCase, triggers, attention, approvals | Why work exists and under what authority: submit-once, case lifecycle, source dedup + resume, human-tier tool approvals, watchdog verdicts and gated proposals — beside the execution path, never replacing it |
 | Execution | NATS JetStream, Python Workers, Sandbox/worktrees | Deliver execution envelopes and run coding adapters or inference workflows |
 | Knowledge | Search + Memory | Combine Text, Semantic, and AST retrieval with TiKV, Qdrant, and PostgreSQL memory |
 | Acceptance | BenchmarkRunner, Oracle, optimization workflow | Measure fixed workloads, reject/roll back candidates, and retain accepted evidence |
