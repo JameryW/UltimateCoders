@@ -5,7 +5,9 @@ test is the op name + payload on the way out and the JSON shape on the way back.
 
 Pinned here:
 
-* there is **no** create endpoint (the UI cannot claim to be the requester);
+* the dashboard **can** request a permit, but only as an `agent`/`service` — never
+  as a `user`, because a human does not request permission from themselves and the
+  gateway refuses a decision from the principal that asked;
 * the decision is forwarded as a ``user`` principal, never as a service or an
   agent — that would defeat the approval;
 * a configured ``UC_DASHBOARD_TOKEN`` gates the decision, and an unconfigured one
@@ -26,6 +28,7 @@ from ultimate_coders.dashboard import approval_api
 from ultimate_coders.dashboard.approval_api import (
     OP_APPROVAL_DECIDE,
     OP_APPROVAL_LIST,
+    OP_APPROVAL_REQUEST,
     TOKEN_ENV,
     router,
 )
@@ -102,11 +105,86 @@ def test_listing_can_filter_by_state_and_rejects_an_unknown_one() -> None:
     assert app.get("/api/approvals", params={"state": "maybe"}).status_code == 400
 
 
-def test_there_is_no_create_endpoint() -> None:
-    """The dashboard must not pretend to be the principal that wants the action."""
-    client = FakeGovernanceClient({OP_APPROVAL_LIST: {"approvals": []}})
-    client_app = TestClient(_app(client))
-    assert client_app.post("/api/approvals", json={"tool": "scale_workers"}).status_code == 405
+def test_requesting_forwards_the_agents_identity() -> None:
+    client = FakeGovernanceClient({OP_APPROVAL_REQUEST: {"approval": PENDING}})
+    response = TestClient(_app(client)).post(
+        "/api/approvals",
+        json={
+            "tool": "scale_workers",
+            "case_id": "case-1",
+            "action_digest": "scale:worker=3",
+            "reason": "queue is backing up",
+            "requested_by_kind": "agent",
+            "requested_by_id": "executor",
+            "ttl_minutes": 5,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {"approval": PENDING}
+    op, payload = client.calls[0]
+    assert op == OP_APPROVAL_REQUEST
+    assert payload == {
+        "tool": "scale_workers",
+        "case_id": "case-1",
+        "action_digest": "scale:worker=3",
+        "reason": "queue is backing up",
+        "principal_kind": "agent",
+        "principal_id": "executor",
+        "ttl_minutes": 5,
+    }
+
+
+def test_a_human_cannot_request_as_themselves() -> None:
+    """`user` is refused here: the gateway records who asked, and a human asking
+    themselves is not an approval loop — it is a button."""
+    client = FakeGovernanceClient({OP_APPROVAL_REQUEST: {"approval": PENDING}})
+    response = TestClient(_app(client)).post(
+        "/api/approvals",
+        json={"tool": "scale_workers", "requested_by_kind": "user"},
+    )
+    assert response.status_code == 400
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"tool": ""},
+        {"tool": 7},
+        {"tool": "scale_workers", "ttl_minutes": 0},
+        {"tool": "scale_workers", "ttl_minutes": "5"},
+        {"tool": "scale_workers", "reason": 3},
+        {"tool": "scale_workers", "requested_by_id": ""},
+    ],
+)
+def test_malformed_requests_are_refused_without_calling_the_gateway(
+    body: dict[str, Any],
+) -> None:
+    client = FakeGovernanceClient({OP_APPROVAL_REQUEST: {"approval": PENDING}})
+    assert TestClient(_app(client)).post("/api/approvals", json=body).status_code == 400
+    assert client.calls == []
+
+
+def test_requesting_is_gated_by_the_token_and_the_token_is_optional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeGovernanceClient({OP_APPROVAL_REQUEST: {"approval": PENDING}})
+    app = TestClient(_app(client))
+    body = {"tool": "scale_workers"}
+
+    assert app.post("/api/approvals", json=body).status_code == 200
+
+    monkeypatch.setenv(TOKEN_ENV, "secret")
+    assert app.post("/api/approvals", json=body).status_code == 401
+    ok = app.post("/api/approvals", json=body, headers={"Authorization": "Bearer secret"})
+    assert ok.status_code == 200
+
+
+def test_requesting_is_503_when_the_bridge_is_down() -> None:
+    broken = TestClient(_app(FakeGovernanceClient({}, error=RuntimeError("down"))))
+    assert broken.post("/api/approvals", json={"tool": "scale_workers"}).status_code == 503
+    assert TestClient(_app()).post("/api/approvals", json={"tool": "x"}).status_code == 503
 
 
 def test_deciding_forwards_a_user_principal() -> None:

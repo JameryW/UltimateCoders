@@ -382,6 +382,59 @@ class GovernanceClient:
             payload["case_id"] = case_id
         return await self.call("proactive.audit.list", payload)
 
+    # ── approvals (PR03) ──────────────────────────────────────────────
+
+    async def request_approval(
+        self,
+        *,
+        tool: str,
+        case_id: str | None = None,
+        project_id: str | None = None,
+        action_digest: str | None = None,
+        reason: str | None = None,
+        ttl_minutes: int | None = None,
+        principal_kind: str = "agent",
+        principal_id: str = "uc-worker",
+    ) -> dict[str, Any]:
+        """Ask a human to permit one call to a human-tier tool.
+
+        The requester is an agent (or a service acting for one): a human does not
+        request a permit to do their own work, and the gateway refuses a decision
+        from the principal that asked. TTL defaults to the gateway's own
+        ``APPROVAL_TTL_MINUTES``.
+        """
+        payload: dict[str, Any] = {
+            "tool": tool,
+            "principal_kind": principal_kind,
+            "principal_id": principal_id,
+        }
+        for name, value in (
+            ("case_id", case_id),
+            ("project_id", project_id),
+            ("action_digest", action_digest),
+            ("reason", reason),
+        ):
+            if value:
+                payload[name] = value
+        if ttl_minutes is not None:
+            payload["ttl_minutes"] = int(ttl_minutes)
+        return await self.call("approval.request", payload)
+
+    async def list_approvals(
+        self,
+        *,
+        state: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"limit": limit, "offset": offset}
+        if state:
+            payload["state"] = state
+        return await self.call("approval.list", payload)
+
+    async def decide_approval(self, **payload: Any) -> dict[str, Any]:
+        return await self.call("approval.decide", payload)
+
     async def report_stall(self, **payload: Any) -> dict[str, Any]:
         return await self.call("watchdog.stall.report", payload)
 
