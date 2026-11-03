@@ -15,11 +15,14 @@ Pinned here:
 
 from __future__ import annotations
 
+import csv
+import io
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from ultimate_coders.dashboard import approval_api
 from ultimate_coders.dashboard.approval_api import (
     OP_APPROVAL_DECIDE,
     OP_APPROVAL_LIST,
@@ -162,3 +165,110 @@ def test_a_dead_bridge_is_503_not_500() -> None:
     response = broken.get("/api/approvals")
     assert response.status_code == 503
     assert response.json()["error"] == "governance_unavailable"
+
+# ── CSV export ───────────────────────────────────────────────
+
+
+def _approval(index: int, **overrides: Any) -> dict[str, Any]:
+    return dict(PENDING, id=f"apr-{index:04d}", **overrides)
+
+
+def _full_page(start: int, size: int) -> list[dict[str, Any]]:
+    return [_approval(start + index) for index in range(size)]
+
+
+def _csv_rows(response: Any) -> list[list[str]]:
+    return list(csv.reader(io.StringIO(response.text)))
+
+
+def test_export_walks_the_gateway_pages_until_a_short_one() -> None:
+    pages = {
+        0: _full_page(0, approval_api.EXPORT_PAGE_SIZE),
+        approval_api.EXPORT_PAGE_SIZE: _full_page(
+            approval_api.EXPORT_PAGE_SIZE, 5
+        ),
+    }
+    client = FakeGovernanceClient(
+        {OP_APPROVAL_LIST: lambda payload: {"approvals": pages[payload["offset"]]}}
+    )
+    response = TestClient(_app(client)).get("/api/approvals/export.csv")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert 'attachment; filename="approvals.csv"' == response.headers["content-disposition"]
+    rows = _csv_rows(response)
+    assert rows[0] == list(approval_api.EXPORT_COLUMNS)
+    assert len(rows) == 1 + approval_api.EXPORT_PAGE_SIZE + 5
+    assert response.headers["x-uc-approvals-returned"] == str(
+        approval_api.EXPORT_PAGE_SIZE + 5
+    )
+    assert "x-uc-approvals-truncated" not in response.headers
+    assert [payload["offset"] for _, payload in client.calls] == [
+        0,
+        approval_api.EXPORT_PAGE_SIZE,
+    ]
+    assert all(payload["limit"] == approval_api.EXPORT_PAGE_SIZE for _, payload in client.calls)
+
+
+def test_export_says_so_when_it_hits_its_bound(monkeypatch: Any) -> None:
+    monkeypatch.setattr(approval_api, "EXPORT_MAX_PAGES", 2)
+    client = FakeGovernanceClient(
+        {OP_APPROVAL_LIST: lambda payload: {"approvals": _full_page(payload["offset"], 200)}}
+    )
+    response = TestClient(_app(client)).get("/api/approvals/export.csv")
+
+    assert response.status_code == 200
+    assert response.headers["x-uc-approvals-truncated"] == "true"
+    assert response.headers["x-uc-approvals-returned"] == "400"
+    # Bounded: two calls, not an unbounded walk.
+    assert len(client.calls) == 2
+
+
+def test_export_filters_by_state_and_rejects_an_unknown_one() -> None:
+    client = FakeGovernanceClient({OP_APPROVAL_LIST: {"approvals": [PENDING]}})
+    app = TestClient(_app(client))
+    assert app.get("/api/approvals/export.csv", params={"state": "Used"}).status_code == 200
+    assert client.calls[0][1]["state"] == "used"
+    assert app.get("/api/approvals/export.csv", params={"state": "nope"}).status_code == 400
+
+
+def test_export_is_503_when_the_bridge_is_down() -> None:
+    assert TestClient(_app()).get("/api/approvals/export.csv").status_code == 503
+    broken = TestClient(_app(FakeGovernanceClient({}, error=RuntimeError("bridge down"))))
+    assert broken.get("/api/approvals/export.csv").status_code == 503
+
+
+def test_export_neutralises_spreadsheet_formulas() -> None:
+    client = FakeGovernanceClient(
+        {
+            OP_APPROVAL_LIST: {
+                "approvals": [
+                    _approval(
+                        0,
+                        reason='=HYPERLINK("http://evil","click")',
+                        note="+1 555 0100",
+                        action_digest="-2+3",
+                    )
+                ]
+            }
+        }
+    )
+    rows = _csv_rows(TestClient(_app(client)).get("/api/approvals/export.csv"))
+    header, row = rows[0], rows[1]
+    cells = {header[index]: row[index] for index in range(len(header))}
+    for column in ("reason", "note", "action_digest"):
+        assert cells[column].startswith("'"), column
+        assert cells[column][1:] in {
+            '=HYPERLINK("http://evil","click")',
+            "+1 555 0100",
+            "-2+3",
+        }
+
+
+def test_export_keeps_raw_wire_timestamps() -> None:
+    client = FakeGovernanceClient({OP_APPROVAL_LIST: {"approvals": [PENDING]}})
+    rows = _csv_rows(TestClient(_app(client)).get("/api/approvals/export.csv"))
+    cells = {rows[0][index]: rows[1][index] for index in range(len(rows[0]))}
+    assert cells["requested_at"] == "2026-01-01T00:00:00Z"
+    assert cells["expires_at"] == "2026-01-01T00:15:00Z"
+    assert cells["decided_at"] == ""

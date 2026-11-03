@@ -1603,6 +1603,8 @@ message RequestApprovalResponse {
 message ListApprovalsRequest {
     optional string state = 1;
     uint32 limit = 2;
+    // Page offset, for walking the whole history (an audit is not one page).
+    uint32 offset = 3;
 }
 
 message ListApprovalsResponse {
