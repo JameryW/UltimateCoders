@@ -25,8 +25,20 @@
 ### 1.1 路径 A：Compose（推荐）
 
 ```bash
-# 1) 本地存储 + NATS + 网关（容器形态；内存后备也可用）
-./run-gateway.sh up --docker
+# 1) 本地存储 + NATS + 网关（容器形态）
+#
+#    治理面默认**不**从 compose 打开：主 compose 只跑执行面。开发用 dev override，
+#    它已经带上 UC_GOVERNANCE_BACKEND=postgres / UC_DATABASE_URL /
+#    UC_POLICY_BOOTSTRAP=dev / UC_OPERATOR_ID=operator / UC_PROACTIVE_MODE=off：
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml \
+  --profile engine --profile storage up -d
+
+#    若不用 dev override，就自己把同样的变量注入网关容器（否则策略快照为空 →
+#    所有治理 op 都是 missing_permission，这是 fail-closed 的预期行为）：
+#    docker compose -f docker/docker-compose.yml --profile engine \
+#      run -e UC_GOVERNANCE_BACKEND=postgres \
+#          -e UC_DATABASE_URL=postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders \
+#          -e UC_POLICY_BOOTSTRAP=dev -e UC_OPERATOR_ID=operator grpc-server
 
 # 2) 至少一个 worker（同宿主；跨宿主见 AGENTS.md 的 UC_SCALE_HOSTS）
 docker compose -f docker/docker-compose.yml --profile worker up -d --scale worker=2 worker
@@ -47,6 +59,7 @@ INFO uc_grpc_server: UltimateCoders gRPC server listening on 0.0.0.0:50051
 
 > `durable=true` 才是持久化。若显示 `durable=false`，说明 `UC_GOVERNANCE_BACKEND` 不是 `postgres`
 > （或 `UC_DATABASE_URL` 为空导致回退）——**重启后提交/case/mandate/审批全部消失**，这是本手册里最该先确认的一条。
+> 用 dev override 时它已经设好；**不要**把这个 `UC_POLICY_BOOTSTRAP=dev` 带进共享环境。
 
 ### 1.2 路径 B：不用 Docker（nats-server + 二进制）
 
