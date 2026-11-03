@@ -255,7 +255,7 @@ def test_export_neutralises_spreadsheet_formulas() -> None:
     )
     rows = _csv_rows(TestClient(_app(client)).get("/api/approvals/export.csv"))
     header, row = rows[0], rows[1]
-    cells = dict(zip(header, row, strict=True))
+    cells = {header[index]: row[index] for index in range(len(header))}
     for column in ("reason", "note", "action_digest"):
         assert cells[column].startswith("'"), column
         assert cells[column][1:] in {
@@ -268,7 +268,7 @@ def test_export_neutralises_spreadsheet_formulas() -> None:
 def test_export_keeps_raw_wire_timestamps() -> None:
     client = FakeGovernanceClient({OP_APPROVAL_LIST: {"approvals": [PENDING]}})
     rows = _csv_rows(TestClient(_app(client)).get("/api/approvals/export.csv"))
-    cells = dict(zip(rows[0], rows[1], strict=True))
+    cells = {rows[0][index]: rows[1][index] for index in range(len(rows[0]))}
     assert cells["requested_at"] == "2026-01-01T00:00:00Z"
     assert cells["expires_at"] == "2026-01-01T00:15:00Z"
     assert cells["decided_at"] == ""
