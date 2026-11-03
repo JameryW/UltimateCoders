@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 
 import pytest
 from ultimate_coders.inference import (
@@ -245,6 +246,9 @@ def test_filter_ranked_library_prunes_when_armed(monkeypatch):
     assert [e["id"] for e in kept] == ["b", "d"]
 
 
+@pytest.mark.skipif(
+    os.name != "posix", reason="contained metadata reads require local Linux"
+)
 def test_publish_kernel_uses_approx_prefilter_when_armed(tmp_path, monkeypatch):
     _arm(monkeypatch)
     from ultimate_coders.metainfer_service.execution import publish_kernel
@@ -273,6 +277,9 @@ def test_publish_kernel_uses_approx_prefilter_when_armed(tmp_path, monkeypatch):
     assert receipt["candidate_id"] == "fast"
 
 
+@pytest.mark.skipif(
+    os.name != "posix", reason="contained metadata reads require local Linux"
+)
 def test_publish_kernel_unchanged_when_unarmed(tmp_path, monkeypatch):
     monkeypatch.delenv(APPROX_EVAL_ENFORCE_ENV, raising=False)
     monkeypatch.delenv(APPROX_EVAL_ARMED_ENV, raising=False)

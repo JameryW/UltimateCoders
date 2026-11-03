@@ -91,6 +91,27 @@ def credentials_format_hint(dsh_home: Path | None = None) -> str | None:
     return None
 
 
+def dsh_command(
+    which_dsh: str, *args: str, platform_name: str | None = None
+) -> list[str]:
+    """Build an argv that can actually spawn ``dsh`` on this platform.
+
+    npm installs ``dsh`` as a ``.CMD`` shim on Windows, and ``CreateProcess``
+    cannot spawn a batch file directly — so every caller (this module and
+    ``sandbox_dsec._dsh_version``) must route through the command interpreter.
+    Keeping the rule in one function is what stops "the version probe works but
+    the boot check does not" from happening again.
+
+    ``platform_name`` exists for the tests: the Windows branch is the one that
+    used to be missing, and a POSIX machine cannot otherwise exercise it.
+    """
+    argv = [which_dsh, *args]
+    name = platform_name if platform_name is not None else os.name
+    if name == "nt" and which_dsh.lower().endswith((".cmd", ".bat", ".ps1")):
+        return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", *argv]
+    return argv
+
+
 def preflight_check(
     profile: str = DEFAULT_PROFILE,
     timeout_secs: int = 20,
@@ -104,19 +125,7 @@ def preflight_check(
     which_dsh = shutil.which("dsh")
     if which_dsh is None:
         return False, ("dsh not found on PATH; install it with: npm install -g @deepseek-ai/dsh")
-    argv = [which_dsh, "--profile", profile, "--dump-config"]
-    if os.name == "nt" and which_dsh.lower().endswith((".cmd", ".bat", ".ps1")):
-        # Windows: npm installs a .CMD shim, which CreateProcess cannot spawn
-        # directly — route through the command interpreter.
-        argv = [
-            os.environ.get("COMSPEC", "cmd.exe"),
-            "/d",
-            "/c",
-            which_dsh,
-            "--profile",
-            profile,
-            "--dump-config",
-        ]
+    argv = dsh_command(which_dsh, "--profile", profile, "--dump-config")
     try:
         proc = subprocess.run(
             argv,

@@ -161,9 +161,12 @@ def _dsh_version(timeout_secs: int = 15) -> str | None:
     which_dsh = shutil.which("dsh")
     if which_dsh is None:
         return None
+    # Windows ships a .CMD shim that CreateProcess cannot spawn directly; the
+    # shared helper applies the same rule the boot check uses, so the two probes
+    # can never disagree about whether dsh exists.
     try:
         proc = subprocess.run(
-            [which_dsh, "--version"],
+            harness_deepseek.dsh_command(which_dsh, "--version"),
             capture_output=True,
             text=True,
             encoding="utf-8",

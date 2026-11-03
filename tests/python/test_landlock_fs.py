@@ -12,6 +12,7 @@ Dual-flag regression: when both NetworkMode and Landlock enforce are on with
 
 from __future__ import annotations
 
+import os
 import socket
 import sys
 import tempfile
@@ -279,6 +280,7 @@ async def test_subprocess_fail_closed_when_unavailable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="landlock wrappers are POSIX-only")
 async def test_subprocess_injected_wraps_after_network(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
