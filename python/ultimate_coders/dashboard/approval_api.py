@@ -34,13 +34,16 @@ Honest limitations:
 
 from __future__ import annotations
 
+import csv
 import hmac
+import io
+import json
 import logging
 import os
 from collections.abc import Mapping
 from typing import Any, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
@@ -61,6 +64,40 @@ DEFAULT_OPERATOR = "operator"
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
+
+#: Page size the export asks for. It is the transport's cap (`MAX_LIST_LIMIT` in
+#: Rust, 500) rounded down to a round number: bigger pages mean fewer round trips,
+#: and an audit should not be one page.
+EXPORT_PAGE_SIZE = 200
+
+#: Hard bound on an export. 50 x 200 = 10 000 approvals is already far more than a
+#: human queue; past it the response says it was truncated instead of pretending.
+EXPORT_MAX_PAGES = 50
+
+#: CSV column order. Raw wire fields, not the normalised view: an export is an
+#: audit artifact, so it keeps the gateway's own strings (RFC 3339 timestamps)
+#: instead of the epoch millis the panel renders.
+EXPORT_COLUMNS = (
+    "id",
+    "tool",
+    "case_id",
+    "project_id",
+    "action_digest",
+    "requested_by_kind",
+    "requested_by_id",
+    "reason",
+    "state",
+    "requested_at",
+    "expires_at",
+    "decided_at",
+    "decided_by_id",
+    "note",
+    "used_at",
+)
+
+#: Cells a spreadsheet would execute as a formula. A reason/note is operator-
+#: supplied text, so an export must not become a vector (CSV injection).
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
 class _GatewayUnavailableError(RuntimeError):
@@ -190,4 +227,92 @@ async def decide_approval(approval_id: str, request: Request) -> Any:
     return {"approval": approval}
 
 
-__all__ = ["router", "OP_APPROVAL_LIST", "OP_APPROVAL_DECIDE"]
+def _csv_cell(value: Any) -> str:
+    """Render one wire value for a spreadsheet without ever becoming a formula."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        text = "true" if value else "false"
+    elif isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    if text.startswith(_FORMULA_PREFIXES):
+        # Prefix with a quote so a spreadsheet shows the text instead of running it.
+        return "'" + text
+    return text
+
+
+@router.get("/api/approvals/export.csv")
+async def export_approvals(
+    request: Request,
+    state: Optional[str] = None,  # noqa: UP045 - FastAPI evaluates the annotation
+) -> Any:
+    """Export the approval history as CSV, walking the gateway's pages.
+
+    The list op is capped by the transport (500 per call), and an audit is not one
+    page. This endpoint therefore pages by `offset` until a short page arrives,
+    bounded by :data:`EXPORT_MAX_PAGES`; when the bound is hit the response says so
+    in ``X-UC-Approvals-Truncated`` instead of silently returning a shorter file.
+
+    Read-only and not token-gated, like the rest of the approval reads: it exposes
+    governance metadata, not authority. Cells that a spreadsheet would execute as a
+    formula are prefixed with a quote.
+    """
+    payload: dict[str, Any] = {}
+    if state:
+        normalized = state.strip().lower()
+        if normalized not in {"pending", "approved", "rejected", "expired", "used"}:
+            return JSONResponse({"error": "invalid_state"}, status_code=400)
+        payload["state"] = normalized
+
+    rows: list[Mapping[str, Any]] = []
+    truncated = False
+    offset = 0
+    for _page in range(EXPORT_MAX_PAGES):
+        try:
+            reply = await _call_governance(
+                request,
+                OP_APPROVAL_LIST,
+                {**payload, "limit": EXPORT_PAGE_SIZE, "offset": offset},
+            )
+        except _GatewayUnavailableError:
+            return _unavailable(OP_APPROVAL_LIST)
+        page = reply.get("approvals")
+        if not isinstance(page, list):
+            return JSONResponse({"error": "invalid_gateway_reply"}, status_code=502)
+        rows.extend(entry for entry in page if isinstance(entry, Mapping))
+        if len(page) < EXPORT_PAGE_SIZE:
+            break
+        offset += EXPORT_PAGE_SIZE
+    else:
+        truncated = True
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(EXPORT_COLUMNS)
+    for row in rows:
+        writer.writerow([_csv_cell(row.get(column)) for column in EXPORT_COLUMNS])
+
+    headers = {
+        "Content-Disposition": 'attachment; filename="approvals.csv"',
+        "X-UC-Approvals-Returned": str(len(rows)),
+        "Cache-Control": "no-store",
+    }
+    if truncated:
+        headers["X-UC-Approvals-Truncated"] = "true"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers=headers,
+    )
+
+
+__all__ = [
+    "router",
+    "OP_APPROVAL_LIST",
+    "OP_APPROVAL_DECIDE",
+    "EXPORT_COLUMNS",
+    "EXPORT_MAX_PAGES",
+    "EXPORT_PAGE_SIZE",
+]

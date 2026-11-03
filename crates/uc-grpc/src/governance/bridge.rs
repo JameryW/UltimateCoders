@@ -1038,6 +1038,7 @@ bridge_request!(RequestApprovalRequest {
 bridge_request!(ListApprovalsRequest {
     state: Option<String>,
     limit: u32,
+    offset: u32,
 });
 
 bridge_request!(DecideApprovalRequest {

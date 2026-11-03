@@ -117,6 +117,22 @@ impl ApprovalStore {
         state: Option<ApprovalState>,
         limit: usize,
     ) -> Result<Vec<ToolApproval>, ApprovalStoreError> {
+        self.list_page(state, limit, 0).await
+    }
+
+    /// One page of the queue, newest first.
+    ///
+    /// `offset` exists so an operator can export the whole history: `limit` is
+    /// capped by the transport (500), and a single page is not an audit. The order
+    /// is the same for every page (`requested_at` descending, `id` as the final
+    /// tiebreak in `list`'s sort), so a caller that pages while the corpus grows
+    /// can still see every document that existed when it started.
+    pub async fn list_page(
+        &self,
+        state: Option<ApprovalState>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ToolApproval>, ApprovalStoreError> {
         let mut approvals: Vec<ToolApproval> = self
             .view
             .list::<ToolApproval>(APPROVAL_SCAN_LIMIT)
@@ -125,9 +141,12 @@ impl ApprovalStore {
             .map(|(approval, _version)| approval)
             .filter(|approval| state.is_none_or(|state| approval.state == state))
             .collect();
-        approvals.sort_by_key(|approval| std::cmp::Reverse(approval.requested_at));
-        approvals.truncate(limit);
-        Ok(approvals)
+        approvals.sort_by(|a, b| {
+            b.requested_at
+                .cmp(&a.requested_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(approvals.into_iter().skip(offset).take(limit).collect())
     }
 
     /// A human allows the request.
@@ -470,6 +489,52 @@ mod tests {
             .await
             .unwrap()
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn pages_walk_the_whole_queue_without_gaps_or_repeats() {
+        let store = store();
+        for index in 0..5 {
+            let approval = ToolApproval::request(
+                ApprovalRequest {
+                    tool: "scale_workers".to_string(),
+                    case_id: Some(format!("case-{index}")),
+                    project_id: None,
+                    action_digest: Some(format!("args-{index}")),
+                    requested_by: Principal::agent("executor"),
+                    reason: None,
+                },
+                now() + Duration::seconds(index as i64),
+                None,
+            );
+            store.request(approval).await.unwrap();
+        }
+        let first = store.list_page(None, 2, 0).await.unwrap();
+        let second = store.list_page(None, 2, 2).await.unwrap();
+        let third = store.list_page(None, 2, 4).await.unwrap();
+        assert_eq!(first.len(), 2);
+        assert_eq!(second.len(), 2);
+        assert_eq!(third.len(), 1);
+        let ids: Vec<&str> = first
+            .iter()
+            .chain(second.iter())
+            .chain(third.iter())
+            .map(|approval| approval.id.as_str())
+            .collect();
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 5, "every document exactly once");
+        // Newest first, across the page boundary.
+        let mut times: Vec<_> = first
+            .iter()
+            .chain(second.iter())
+            .chain(third.iter())
+            .map(|approval| approval.requested_at)
+            .collect();
+        let descending = times.clone();
+        times.sort_by(|a, b| b.cmp(a));
+        assert_eq!(times, descending);
     }
 
     #[tokio::test]

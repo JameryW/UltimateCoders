@@ -240,9 +240,10 @@ pub async fn list_approvals(
         None => None,
     };
     let limit = clamp_limit(request.limit);
+    let offset = request.offset as usize;
     let approvals = governance
         .approvals
-        .list(state, limit)
+        .list_page(state, limit, offset)
         .await
         .map_err(approval_error)?;
     Ok(approvals.iter().map(ApprovalView::from_approval).collect())
@@ -461,6 +462,7 @@ mod tests {
             crate::ultimate_coders::ListApprovalsRequest {
                 state: Some("pending".to_string()),
                 limit: 10,
+                offset: 0,
             },
         )
         .await
@@ -474,6 +476,57 @@ mod tests {
             .expect("retry is fine");
         assert!(!retry.created);
         assert_eq!(retry.approval.id, outcome.approval.id);
+    }
+
+    #[tokio::test]
+    async fn the_listing_can_be_paged_by_offset() {
+        let governance = governance();
+        for index in 0..3 {
+            let request = crate::ultimate_coders::RequestApprovalRequest {
+                tool: "scale_workers".to_string(),
+                case_id: Some(format!("case-{index}")),
+                project_id: None,
+                action_digest: Some(format!("args-{index}")),
+                reason: None,
+                principal_kind: "agent".to_string(),
+                principal_id: "executor".to_string(),
+                ttl_minutes: None,
+            };
+            request_approval(&governance, request)
+                .await
+                .expect("request");
+        }
+        let first = list_approvals(
+            &governance,
+            crate::ultimate_coders::ListApprovalsRequest {
+                state: None,
+                limit: 2,
+                offset: 0,
+            },
+        )
+        .await
+        .expect("page 1");
+        let second = list_approvals(
+            &governance,
+            crate::ultimate_coders::ListApprovalsRequest {
+                state: None,
+                limit: 2,
+                offset: 2,
+            },
+        )
+        .await
+        .expect("page 2");
+        assert_eq!(first.len(), 2);
+        assert_eq!(second.len(), 1);
+        let mut ids: Vec<&str> = first
+            .iter()
+            .chain(second.iter())
+            .map(|view| view.id.as_str())
+            .collect();
+        let total = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), total, "no document appears on two pages");
     }
 
     #[tokio::test]
