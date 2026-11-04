@@ -9,6 +9,8 @@
 
 启动契约（`UC_GOVERNANCE_BACKEND` / `UC_DATABASE_URL` / `UC_POLICY_BOOTSTRAP` / `UC_OPERATOR_ID` / `UC_POLICY_GRANTS_JSON` / `UC_PROACTIVE_MODE`）由 `crates/uc-grpc-server/src/governance_boot.rs` 的 13 个测试固定：空环境**拒绝一切**、dev 快照仍受 principal-kind 天花板约束、显式 grants 带项目作用域、非法 grants 与拼错的权限都不放宽、**已持久化的快照优先于环境**（重启不会把策略重置成 dev）、未知 `UC_PROACTIVE_MODE` 不改模式、未知后端/缺 `UC_DATABASE_URL` 都退回内存并诚实报告非持久。这些测试注入环境查找函数而不是改进程变量，所以可并行、可重复。
 
+崩溃恢复（`recover`）也有 5 个测试：发布中途崩溃的 outbox 条目会被重置为 `Pending` 并**只保留一条**（至少一次，绝不重复入队）；已 `delivered` 的条目不受影响；记录仍是 `received` 但发布丢失的 submission 会被重新排队，且恢复载荷带 `"recovered":true`；重复启动不会双入队；已 `applied` 的 submission 不会被当作丢失再发一次。
+
 | 层 | 状态 |
 | --- | --- |
 | 治理类型与判定（`crates/uc-types/src/governance/`） | 已落地，带内联测试 |

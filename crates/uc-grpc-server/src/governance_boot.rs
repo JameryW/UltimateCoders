@@ -319,6 +319,7 @@ pub fn parse_grants(raw: &str) -> Result<Vec<Grant>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::DateTime;
 
     #[test]
     fn grants_parse_into_a_valid_snapshot() {
@@ -582,6 +583,232 @@ mod tests {
             governance.proactive.mode(),
             ProactiveMode::Observe,
             "an unknown value must not change the mode, and never enables execution"
+        );
+    }
+
+    // ── crash recovery ───────────────────────────────────────────────
+
+    fn submission(id: &str) -> uc_types::governance::SubmissionRequest {
+        uc_types::governance::SubmissionRequest::new(
+            Principal::user("alice"),
+            "proj-a",
+            "crash recovery fixture",
+            Some(uc_types::governance::SubmissionId::caller_supplied(id)),
+        )
+    }
+
+    fn outbox_entry(key: &str, now: DateTime<Utc>) -> uc_types::governance::OutboxEntry {
+        uc_types::governance::OutboxEntry::new(
+            key,
+            uc_engine::governance::submission::OUTBOX_SUBJECT_TASK_SUBMIT,
+            "{}",
+            now,
+        )
+    }
+
+    #[tokio::test]
+    async fn an_entry_orphaned_mid_publish_is_requeued_exactly_once() {
+        let governance = governance();
+        let now = Utc::now();
+        governance
+            .outbox
+            .enqueue(&outbox_entry("outbox:crash-1", now))
+            .await
+            .expect("enqueue");
+        // A dispatcher claims the entry and then the process dies.
+        let claimed = governance.outbox.claim_due(now, 10).await.expect("claim");
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(
+            governance
+                .outbox
+                .get("outbox:crash-1")
+                .await
+                .expect("get")
+                .map(|entry| entry.state),
+            Some(uc_types::governance::OutboxState::InFlight)
+        );
+
+        recover(&governance).await;
+
+        let entry = governance
+            .outbox
+            .get("outbox:crash-1")
+            .await
+            .expect("get")
+            .expect("entry");
+        assert_eq!(entry.state, uc_types::governance::OutboxState::Pending);
+        assert_eq!(
+            entry.attempts, 0,
+            "recovery resets the claim, not the history"
+        );
+        assert_eq!(
+            governance.outbox.list(10).await.expect("list").len(),
+            1,
+            "recovery re-queues the entry, it does not add a second one"
+        );
+
+        // At-least-once: the recovered entry is claimable again. Recovery stamped
+        // `next_attempt_at_ms` with its own clock, so claim with a fresh "now".
+        let reclaim = governance
+            .outbox
+            .claim_due(Utc::now() + chrono::Duration::seconds(1), 10)
+            .await
+            .expect("reclaim");
+        assert_eq!(reclaim.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_delivered_entry_is_not_touched_by_recovery() {
+        let governance = governance();
+        let now = Utc::now();
+        governance
+            .outbox
+            .enqueue(&outbox_entry("outbox:done-1", now))
+            .await
+            .expect("enqueue");
+        governance.outbox.claim_due(now, 10).await.expect("claim");
+        governance
+            .outbox
+            .mark_delivered("outbox:done-1", now)
+            .await
+            .expect("delivered");
+
+        recover(&governance).await;
+
+        let entry = governance
+            .outbox
+            .get("outbox:done-1")
+            .await
+            .expect("get")
+            .expect("entry");
+        assert_eq!(entry.state, uc_types::governance::OutboxState::Delivered);
+    }
+
+    #[tokio::test]
+    async fn an_unfinished_submission_is_requeued_after_a_crash() {
+        let governance = governance();
+        let now = Utc::now();
+        let request = submission("crash-sub-1");
+        governance
+            .submissions
+            .submit_once(&request, &governance.outbox, now)
+            .await
+            .expect("submit");
+        let key = governance
+            .outbox
+            .list(10)
+            .await
+            .expect("list")
+            .into_iter()
+            .next()
+            .expect("queued publication")
+            .0
+            .key;
+        // The crash lost the publication (record still `received`).
+        governance
+            .records
+            .delete(uc_types::governance::OUTBOX_NAMESPACE, &key)
+            .await
+            .expect("delete");
+        assert_eq!(governance.outbox.pending_count().await.expect("count"), 0);
+
+        recover(&governance).await;
+
+        assert_eq!(
+            governance.outbox.pending_count().await.expect("count"),
+            1,
+            "the unfinished submission must be re-queued"
+        );
+        // Recovery queued the publication with its own clock: claim slightly later.
+        let claimed = governance
+            .outbox
+            .claim_due(Utc::now() + chrono::Duration::seconds(1), 10)
+            .await
+            .expect("claim");
+        assert_eq!(claimed.len(), 1);
+        assert!(
+            claimed[0].payload.contains("\"recovered\":true"),
+            "the re-queued payload says it is a recovery: {}",
+            claimed[0].payload
+        );
+        assert!(claimed[0].payload.contains("crash-sub-1"));
+    }
+
+    #[tokio::test]
+    async fn recovery_is_idempotent() {
+        let governance = governance();
+        let now = Utc::now();
+        let request = submission("crash-sub-2");
+        governance
+            .submissions
+            .submit_once(&request, &governance.outbox, now)
+            .await
+            .expect("submit");
+        let key = governance
+            .outbox
+            .list(10)
+            .await
+            .expect("list")
+            .into_iter()
+            .next()
+            .expect("queued publication")
+            .0
+            .key;
+        governance
+            .records
+            .delete(uc_types::governance::OUTBOX_NAMESPACE, &key)
+            .await
+            .expect("delete");
+
+        recover(&governance).await;
+        let after_first = governance.outbox.pending_count().await.expect("count");
+        recover(&governance).await;
+        let after_second = governance.outbox.pending_count().await.expect("count");
+
+        assert_eq!(after_first, 1);
+        assert_eq!(
+            after_second, after_first,
+            "a second boot must not double-queue the same publication"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_applied_submission_is_not_requeued() {
+        let governance = governance();
+        let now = Utc::now();
+        let request = submission("crash-sub-3");
+        governance
+            .submissions
+            .submit_once(&request, &governance.outbox, now)
+            .await
+            .expect("submit");
+        governance
+            .submissions
+            .mark_applied(&request.submission_id, now)
+            .await
+            .expect("applied");
+        let key = governance
+            .outbox
+            .list(10)
+            .await
+            .expect("list")
+            .into_iter()
+            .next()
+            .expect("queued publication")
+            .0
+            .key;
+        governance
+            .records
+            .delete(uc_types::governance::OUTBOX_NAMESPACE, &key)
+            .await
+            .expect("delete");
+
+        recover(&governance).await;
+
+        assert_eq!(
+            governance.outbox.pending_count().await.expect("count"),
+            0,
+            "an applied submission is finished work, not a lost publication"
         );
     }
 
