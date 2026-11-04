@@ -1,8 +1,10 @@
 # 治理面端到端验收手册（需要 Docker / NATS）
 
-> **状态说明（诚实）**：这份手册写于一台**没有 Docker、没有 NATS、没有 psql** 的机器上。
-> 下面每一条命令都给出了**预期输出**，但作者本人**没有在本机执行过**它们——能执行的是单元/集成测试
-> （`cargo test`、`pytest tests/python`，CI 全绿）。请把它当作「可执行步骤 + 判定标准」，而不是「已验证记录」。
+> **状态说明（诚实，2026-11-04 更新）**：这份手册最初写于一台没有 Docker / NATS / psql 的机器上。
+> 之后在本机（Windows + 仓库自带的本地 NATS）用**当次源码构建的网关**执行了不需要 Docker 的那部分，
+> 并据此修正了本节若干条错误（见文末 §10“本机执行记录”）。**仍未执行**的是需要 Docker / worker 进程 /
+> PostgreSQL 的步骤：worker 注册与实时容量、`scale_workers` 的动作路径（审批消费）、postgres 重启持久化、
+> Dashboard HTTP 面。请把状态说明当作“哪部分有证据、哪部分没有”的清单，而不是“都跑过了”。
  > 每条都标注了**失败时最可能的原因**，因为 E2E 的失败很少是「代码错了」。
 >
 > 执行时记录什么、证据怎么存、结论回填到哪：见 [e2e-checklist.md](e2e-checklist.md)（可直接转交给执行者）。
@@ -17,6 +19,8 @@
 | NATS 客户端（可选，用于手工 `request`） | `nats --version` | 任意版本；没有也能用 Python 客户端 |
 | Python 环境（跑验收脚本） | `.venv/Scripts/python.exe --version`（Windows）/ `python3 --version` | 3.9+ |
 | 仓库根目录 | `pwd` | 含 `crates/`、`python/`、`docker/` |
+| **当次源码构建的网关** | `cargo build -p uc-grpc-server` | 二进制时间戳晚于最新提交；**旧二进制是最常见的假失败**：它缺少新 op，会报 `unknown_op`（本次执行就踩到过：#850 的 `approval.request` 在 11-02 的旧二进制上不存在） |
+| NATS 可达（路线 B 需要） | 连接 `nats://127.0.0.1:4222` | JetStream 开启；没有可执行文件时从 nats-io releases 取 `nats-server` 二进制即可，不需要 Docker |
 
 所有命令都在**仓库根目录**执行。
 
@@ -93,20 +97,24 @@ from ultimate_coders.governance_client import GovernanceClient
 async def main():
     nc = await nats.connect(os.environ.get("UC_NATS_URL", "nats://127.0.0.1:4222"))
     client = GovernanceClient(nc)
-    print(json.dumps(await client.call("policy.current", {}), ensure_ascii=False))
+    print(json.dumps(await client.call("capacity.get", {}), ensure_ascii=False))
     await nc.close()
 
 asyncio.run(main())
 PY
 ```
 
-预期：返回一个 JSON（`version` / 授权条目数量），**不是** `GovernanceUnavailable`。
+预期：返回一个带 `capacity` 的 JSON，**不是** `GovernanceUnavailable`。
+
+> **为什么不是 `policy.current`**：桥上没有这个 op（它是 gRPC/文档层的读法）。桥自检必须用一个**真的存在**
+> 的 op；`capacity.get` 是最轻的一个。（2026-11-04 本机执行时，`policy.current` 真实返回 `unknown_op`。）
+
 失败时：
 
 | 现象 | 原因 |
 | --- | --- |
 | `GovernanceUnavailable` | 网关没起，或 `UC_NATS_URL` 与网关不一致，或 NATS 不可达 |
-| `{"ok": false, "error": {"code": "unknown_op"}}` | 网关是**旧版本**（没有治理桥）；先升级网关 |
+| `unknown_op` | 两种可能：**(a) 二进制是旧的**（先 `cargo build -p uc-grpc-server`）；(b) 真的用了不存在的 op 名 |
 | 超时 | NATS 通但网关的 `spawn_nats_bridge` 没跑起来（看网关日志是否有 `governance NATS bridge listening`） |
 
 ---
@@ -241,14 +249,24 @@ PY
 ### 5.3 人工审批回路
 
 ```bash
-# a) 申请（agent 身份；治理层会 raise 一条 needs_human）
-# b) 用 operator 身份批准（需要 user + proactive_execute）
-# c) 再 authorize 一次 tool=scale_workers → 这次 allowed，且许可被消费（状态 used）
+# a) 申请：requester 必须是 agent 或 service（带 case_id 才会投影一条 needs_human；不带只记 warn）
+# b) 用 operator 身份批准（user + proactive_execute）
+# c) 消费发生在「动作路径」（WorkerService.scale_workers 的前置鉴权），不是 NATS 的 `authorize` 预览
 ```
 
-判定：批准后第一次 `authorize` 放行；**第二次立即恢复拒绝**（单次许可）。
-用 `approval.list?state=used` 能看到 `used_at`。若批准返回 `missing_permission`，说明当前 principal 不是
-`user` 或没有 `proactive_execute`——审批**不接受** service/agent 代答。
+判定要点（2026-11-04 本机实测后修正）：
+
+- **申请 + 批准可以在本机验证**：`approval.request` → `approval.decide` → `approval.list?state=approved`；
+  带 `case_id` 时 `attention.list` 出现 `needs_human: approve scale_workers?`。
+- **`authorize` 是策略预览，不消费许可**：它返回的 `allowed` 只是当时策略的答案；许可的
+  `find_approved → consume` 发生在真正的动作路径里（`WorkerService.scale_workers`）。
+  所以「批准后 authorize 放行一次、第二次拒绝」**不能**用手工 `authorize` 验证——要触发一次
+  `scale_workers` 动作（需要 Docker）。
+- **谁能被审批解锁**：`agent` 永远不能持有 `worker_scale`（`forbidden_principal_kind`，结构性天花板），
+  审批解锁的是 tool 闸口，不是权限；因此要测消费，用**已被授予 `worker_scale` 的 service principal**
+  （`UC_POLICY_GRANTS_JSON` 给 `service:dashboard` 授 `worker_scale`），并对**同一个 case** 发起申请与动作。
+- 若批准返回 `missing_permission`，说明当前 principal 不是 `user` 或没有 `proactive_execute`——审批
+  **不接受** service/agent 代答。
 
 ---
 
@@ -264,7 +282,7 @@ export UC_PROACTIVE_MODE=propose      # 再打开提案
 | 检查 | 期望 |
 | --- | --- |
 | 网关日志 | `watchdog stall report decided` 带 `verdict=…` |
-| `attention.list` | verdict 为 `escalate_needs_human` 时出现一条 `needs_human`（网关服务端 raise） |
+| `attention.list` | verdict 为 `escalate_needs_human` 时出现一条 `needs_human`——**前提是本次 report 带了 `case_id`**；不带时服务端只记一条 warn（`nothing to raise`），不是 bug |
 | worker 事件 | 失败事件里 `stall_signal.verdict` 与 `verdict_source: gateway` |
 | `proactive.proposal.list` | `propose` 模式下出现一条 `unblock_stalled` 提案（`observe` 模式**不出现**） |
 
@@ -282,11 +300,15 @@ export UC_PROACTIVE_MODE=propose      # 再打开提案
 export UC_GOVERNANCE_BACKEND=postgres
 export UC_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/uc
 ./run-gateway.sh down && ./run-gateway.sh up --docker     # 重启网关
-# 再查：policy.current / submission.get / case.get / approval.list 都应保留
+# 再查：capacity.get / submission.get / case.get / approval.list 都应保留（桥上没有 policy.current）
 ```
 
 判定：重启前建的 case 与审批记录仍在，且 `durable=true`；`governance_records` 表存在且行数 > 0
 （`psql -c "select namespace, count(*) from governance_records group by 1"`）。
+
+**反向对照（本机可做）**：不配 postgres、用 `UC_GOVERNANCE_BACKEND=memory` 重启后，启动日志必须是
+`durable=false`，且提交/case/审批**全部消失**。这不是失败，而是「非持久化被诚实标记」的证据——把两边的
+`durable` 与数据是否保留一起记录，才说明持久化开关真的起作用。
 
 ---
 
@@ -304,10 +326,30 @@ docker compose -f docker/docker-compose.yml --profile worker down
 | 现象 | 最可能的原因 | 怎么确认 |
 | --- | --- | --- |
 | 所有治理 op 都 `GovernanceUnavailable` | 网关没起 / NATS 地址不一致 / 桥没跑 | 网关日志有无 `governance NATS bridge listening` |
-| `unknown_op` | 网关是旧版本 | `git log -1` 与 `policy.current` 是否能返回 |
-| 一切 `missing_permission` | 策略快照为空或未给当前 principal 授权 | `policy.current` 看 `version` 与条目；本地用 `UC_POLICY_BOOTSTRAP=dev` |
+| `unknown_op` | 二进制旧了（或 op 名写错） | 比对二进制时间戳与 `git log -1`；重建后仍报才是 op 名问题 |
+| 一切 `missing_permission` | 策略快照为空或未给当前 principal 授权 | 看网关启动日志的 `Installed governance policy snapshot version=…` 与 `Loaded policy grants … grants=N`；本地用 `UC_POLICY_BOOTSTRAP=dev` |
 | `tool_requires_human_approval` | human-tier 工具且没有 operator 权限/审批 | 走第 5.3 节；或给 principal `proactive_execute` |
 | `durable=false` | 治理后端不是 postgres / 连接串为空 | 网关启动日志第一行 `UC_GOVERNANCE_BACKEND=…` |
 | 提交没有产生 task | 引擎/调度后端不可用 | 看 `submission.get` 的 `state`，再看网关日志的 outbox 投递 |
-| worker 提案被拒 | `agent:uc-worker` 没有 `proactive_propose` | `policy.current`；或 `UC_POLICY_GRANTS_JSON` 授权 |
+| worker 提案被拒 | `agent:uc-worker` 没有 `proactive_propose` | `UC_POLICY_GRANTS_JSON` 给它授权，或接受拒绝日志（dev 快照只给 operator） |
 | `401` 来自仪表盘 | 部署要求 `UC_DASHBOARD_TOKEN` 且浏览器没有 token | 重新登录，或用 `Authorization: Bearer …` 调 API |
+
+---
+
+## 10. 本机执行记录（2026-11-04，Windows + 本地 NATS）
+
+执行条件：Windows 11、仓库自带 NATS（`.tools/nats-server`，JetStream 开）、网关由
+`cargo build -p uc-grpc-server` 当次构建、`UC_GOVERNANCE_BACKEND=memory`、`UC_POLICY_BOOTSTRAP=dev`。
+证据包在仓库外（`uc-e2e-<date>/` 结构见 [e2e-checklist.md](e2e-checklist.md)）。
+
+已真实通过：网关启动（`durable=false` + `policy snapshot version=2` + 桥监听）、桥自检（`capacity.get`）、
+提交幂等（同 id → 同 `task_id` + `dedup_replayed`；换内容 → `submission_conflict`）、触发去重
+（同 `dedup_key` + 第二次 `duplicate`）、唤醒 + 恢复（`resumed_task_ids` 恰 1 个、case 多一条 run）、
+权限拒绝（`service:dashboard` + `worker_scale` → `missing_permission`）、审批申请/批准 + 注意力投影
+（带 `case_id`）、watchdog 升级判定（`escalate_needs_human`）+ 注意力投影。
+
+未执行（需要外部条件）：worker 注册与实时容量（需要 worker 进程）、`scale_workers` 动作路径与审批消费
+（需要 Docker）、postgres 重启持久化（需要 PostgreSQL）、Dashboard HTTP 面（需要 uvicorn）。
+
+本次执行修正了本手册的 4 处错误：`policy.current` 不是桥 op、escalate 需要 `case_id` 才会投影注意力、
+`authorize` 不消费许可（消费在动作路径）、以及「旧二进制会被误判成 unknown_op」这个前置条件。

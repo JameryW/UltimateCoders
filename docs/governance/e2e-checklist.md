@@ -4,14 +4,15 @@
 > 怎么判定通过、证据放哪、结论回填到哪**。目标是把「端到端验收」从一次口头确认变成一份可以交给别人执行、
 > 结果可以被审计的工件。
 >
-> **状态（诚实）**：作者机器没有 Docker / NATS / psql，这份清单**尚未执行**。它列出的每条命令与预期输出
-> 都来自 runbook，但「是否真的通过」只有执行者能填。
+> **状态（诚实，2026-11-04 更新）**：其中**不需要 Docker 的部分已在本机执行**（真实网关 + 本地 NATS），
+> 结果与证据结构见 [e2e-runbook.md](e2e-runbook.md) §10；需要 Docker / worker / PostgreSQL 的步骤仍未执行。
+> 执行者请在 §3 里区分「本机已验证」与「尚未验证」，不要用一次部分执行去概括整张表。
 
 ## 0. 谁执行、执行多久
 
 | 角色 | 需要的环境 | 时间 |
 | --- | --- | --- |
-| 执行者 | 有 Docker + Docker Compose v2 的机器（或路线 B：`nats-server` + 本地二进制） | 首次约 60–90 分钟，含起停与填表 |
+| 执行者 | 有 Docker + Docker Compose v2 的机器（或路线 B：`nats-server` + 本地二进制）；**网关必须用当次源码 `cargo build -p uc-grpc-server` 构建**，旧二进制会以 `unknown_op` 伪装成桥故障 | 首次约 60–90 分钟，含起停与填表 |
 | 复核者 | 能读证据包 | 10 分钟 |
 
 最小可执行子集（时间不足时先跑这四步，覆盖最高的三个风险面）：**§2 桥自检、§3 可靠提交、
@@ -26,7 +27,7 @@ uc-e2e-2026-11-04/
 ├── 00-env.txt                 # docker compose version、git rev-parse HEAD、uname -a、日期
 ├── 01-boot/gateway.log         # ./run-gateway.sh logs 的完整输出（脱敏后）
 ├── 01-boot/compose-ps.txt      # docker compose ps 的完整输出
-├── 02-bridge/policy.current.json
+├── 02-bridge/capacity.get.json
 ├── 03-submit/first.json        # 两次提交的完整回复
 ├── 03-submit/second.json
 ├── 04-trigger/first.json       # 两次投递的完整回复（含 dedup_key / duplicate）
@@ -54,8 +55,9 @@ uc-e2e-2026-11-04/
 - [ ] **S1 集群起来**（runbook §1）— 网关日志同时出现 `Governance plane initialized durable=true`、
       `Installed governance policy snapshot`、`Governance plane attached to the gRPC server`；
       `docker compose ps` 里网关与至少 1 个 worker 是 `running/healthy`。证据：`01-boot/`。验收：可持续
-- [ ] **S2 桥活着**（§2）— `policy.current` 返回带 `version` 的 JSON，而不是 `GovernanceUnavailable`；
-      若是 `unknown_op`，说明网关是旧版本，**后续全部不用测**。证据：`02-bridge/`。验收：可验证
+- [ ] **S2 桥活着**（§2）— `capacity.get` 返回带 `capacity` 的 JSON，而不是 `GovernanceUnavailable`；
+      `policy.current` **不是**桥 op（用它测会得到 `unknown_op`）。若 `capacity.get` 仍报 `unknown_op`，
+      先确认网关是当次源码构建的二进制，**否则后续全部不用测**。证据：`02-bridge/`。验收：可验证
 - [ ] **S3 提交一次**（§3）— 同一 `submission_id` 两次提交返回**相同** `task_id`，第二次
       `dedup_replayed: true`；改用不同内容复用同一 id 时被拒。证据：`03-submit/`。验收：不重复
 - [ ] **S4 触发去重**（§4）— 同一事件投两次：`dedup_key` 相同、第二次 `duplicate: true`，且不产生第二个 case。
@@ -66,16 +68,24 @@ uc-e2e-2026-11-04/
 - [ ] **S6 未授权扩缩容被拒**（§5.1）— `policy.authorize` 对 `service:dashboard` + `worker_scale` 返回
       `allowed: false`，`deny_code` 为 `missing_permission` 或 `forbidden_principal_kind`。
       证据：`05-policy/authorize-denied.json`。验收：不越权
-- [ ] **S7 容量来自实时注册表**（§5.2）— `worker_slots_total` 等于已注册 worker 的 `max_capacity` 之和
-      （不是 env 值）；`slots_saved_by_quiet_waiting` 等于 `waiting_event + verifying` 计数。
+- [ ] **S7 容量来自实时注册表**（§5.2）— **必须先起至少一个 worker 并等它注册**；`worker_slots_total`
+      等于已注册 worker 的 `max_capacity` 之和（不是 env 值）；`slots_saved_by_quiet_waiting` 等于
+      `waiting_event + verifying` 计数。没有 worker 时它必然为 0：那只能证明「空集群读作 0」，不是本项通过。
       证据：`05-policy/capacity.json`。验收：少打扰
-- [ ] **S8 审批闭环**（§5.3）— 申请→批准→再授权放行一次→**立即再授权恢复拒绝**（单次许可）；
-      `approval.list?state=used` 能看到 `used_at`。证据：`05-approval/` 三个文件。验收：不越权 + 可验证
+- [ ] **S8 审批闭环**（§5.3）— 分两级记录：**(a) 申请 + 批准**（本机可验证：带 `case_id` 的申请会让
+      `attention.list` 出现 `needs_human: approve …`，`approval.decide` 返回 `approved`）；**(b) 单次消费**
+      （需要触发一次 `scale_workers` 动作，即 Docker；`authorize` 只是策略预览、不消费许可）。
+      (b) 未执行时请在 §3 写「未测」而不是「通过」——消费目前只有单元/集成测试证据。
+      证据：`05-approval/`。验收：不越权 + 可验证
 - [ ] **S9 watchdog 升级**（§6）— `UC_PROACTIVE_MODE=observe` 时只记录、不产生提案；
       切到 `propose` 后出现一条 `unblock_stalled` 提案；verdict 为 escalate 时 `attention.list` 出现
-      `needs_human`，且 worker 失败事件里带 `verdict_source: gateway`。证据：`06-proactive/`。验收：可验证 + 少打扰
-- [ ] **S10 持久化重启**（§7）— 重启网关后 `policy.current`、`case.get`、`approval.list` 仍返回重启前的数据，
-      日志 `durable=true`；`governance_records` 表非空。证据：`07-persistence/`。验收：可持续
+      `needs_human`——**报告中必须带 `case_id`**，否则服务端只记 warn、不投影（本机实测）。
+      worker 失败事件里的 `verdict_source: gateway` 需要 worker 进程，未起 worker 时记「未测」。
+      证据：`06-proactive/`。验收：可验证 + 少打扰
+- [ ] **S10 持久化重启**（§7）— 重启网关后 `capacity.get`、`case.get`、`approval.list` 仍返回重启前的数据，
+      日志 `durable=true`；`governance_records` 表非空。**反向对照**：不配 postgres（`memory` 后端）重启后
+      必须 `durable=false` 且数据全部消失——两条都记录，才说明持久化开关真的起作用。
+      证据：`07-persistence/`。验收：可持续
 - [ ] **S11 清理**（§8）— 容器与网络全部停止，无残留进程。证据：`01-boot/compose-ps.txt` 的收尾版本（可选）。
 
 ## 3. 结论回填（执行者填写）
