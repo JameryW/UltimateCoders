@@ -189,6 +189,12 @@ create 端点」的决定，原因是**回路不可达**：桥上有 `approval.r
 自己申请）、请求方 id 被记录、且存储层坚持「发起者不能决定自己的请求」。所以人可以替某个 agent 申请，但人的同意仍然
 只由人给出，而且不能用自己刚提交的申请来自批。
 
+仪表盘侧的申请表单：面板顶部一行即可发起申请（`tool` 带 `scale_workers` / `docker_run` 建议值、
+`requested_by_kind` 只能选 `agent` / `service`、`requested_by_id` 默认 `uc-worker`，可选 `case_id` / 原因 / TTL）。
+UI 不提供 `user` 选项——那等于人向自己申请，网关也会拒绝；客户端在发送前就把空工具、非正 TTL、`user` 类型挡掉，
+所以「界面上能做到的」与「协议允许的」不会分叉。`dashboard/tests/approval-request-form.test.mjs` 用 SSR 渲染
+固定了这一点（表单存在、工具建议值正确、没有 `user` 选项）。
+
 审计导出：`GET /api/approvals/export.csv`（可加 `?state=`）。`approval.list` 受传输上限限制（每页最多 500，导出
 取 200），一次调用不是一份审计，所以导出按 `offset` 翻页直到拿到不满一页；上界 `50 × 200 = 10000` 条，达到上界时
 响应头 `X-UC-Approvals-Truncated: true` 明说被截断，而不是悄悄给一份更短的文件。导出保留网关自己的 RFC 3339
