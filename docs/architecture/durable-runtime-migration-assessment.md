@@ -35,7 +35,7 @@ Rust 网关侧早就是 event-driven ready-node：每个 subtask 状态更新后
 ### 2.4 幂等只有一层，且在错误的层
 
 - Rust 发布侧：`message_id = "{task}:execute:{subtask}:{millis}"` + 内存 TTL 去重（`server.rs` L2117/L510/L533）。millis 参与键 → 重发即新键，**去重形同虚设**。
-- JetStream 配了 `duplicate_window=120`，但 worker 发布 **从不设置 `Nats-Msg-Id` 头**（`python/ultimate_coders/agent/nats_worker.py`），窗口没有输入。
+- JetStream 配了 `duplicate_window=120`，但 worker 发布 **从不设置 `Nats-Msg-Id` 头**（`python/ultimate_coders/nats_worker.py`），窗口没有输入。
 - Worker 侧：无 attempt 概念、无去重表；重试是进程内 `MAX_RETRIES=3` 循环，对 NATS 不可见；Core-NATS queue-group 回退路径是 at-most-once。
 - 无 worker epoch/fencing：晚到的旧 attempt 结果今天**可以**覆盖新 attempt 的结论（reaper `reassign_stale_assigned_subtasks` 300s 重派 + 迟到结果，正是要防的脑裂场景）。
 

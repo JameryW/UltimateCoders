@@ -41,6 +41,14 @@ finished (no `[TODO`) and still references the six named paths and skills, that 
 `docs/agents/*.md` files exist, and that this page exists.
 `.github/workflows/ci-codex-flow.yml` runs it whenever any of those paths changes.
 
+`tests/python/test_docs_links.py` is the wider pointer guard, and runs in the normal
+Python test job: every relative markdown link under `docs/` (plus `README.md`,
+`AGENTS.md`, `CLAUDE.md`) must resolve, every dollar-prefixed skill name must exist under
+`.agents/skills/`, every backticked `scripts/` / `docs/` / `tests/` / … path must
+exist, and the "14 `.agents/skills/*/SKILL.md` entries" count above must match the
+pinned list in the script. It skips absolute URLs, in-page anchors, template
+placeholders and globs; `docs/adr/` is the one declared before-it-exists path.
+
 ## Large initiatives
 
 Use `$wayfinder` when the work is too uncertain or broad for a single planning context. Resolve its decision tickets first. Once the route is clear, turn the approved result into a spec and implementation tickets; do not treat the decision map itself as a coding backlog.
