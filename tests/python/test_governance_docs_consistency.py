@@ -89,15 +89,22 @@ GOVERNANCE_SERVICES = (
 ACCEPTANCE_ROWS = ("不重复", "不越权", "可持续", "可恢复", "少打扰", "可验证")
 
 
-def _is_evidence_line(line: str) -> bool:
-    """True for a line that claims evidence: an acceptance row or a `测试：` line."""
+def _evidence_text(line: str) -> str | None:
+    """The part of a line that claims evidence, or ``None``.
+
+    An acceptance row has four columns (criterion, claim, where, **proof**); only
+    the proof column is checked here, so the prose columns may mention field names
+    freely. A `测试：` line is all evidence.
+    """
     stripped = line.strip()
     if stripped.startswith(("测试：", "测试:")):
-        return True
+        return stripped
     if not stripped.startswith("|"):
-        return False
+        return None
     cells = stripped.split("|")
-    return len(cells) >= 2 and cells[1].strip() in ACCEPTANCE_ROWS
+    if len(cells) >= 5 and cells[1].strip() in ACCEPTANCE_ROWS:
+        return cells[4]
+    return None
 
 
 def _read(path: Path) -> str:
@@ -134,24 +141,31 @@ def _evidence_identifiers() -> list[tuple[str, str]]:
     cited: set[tuple[str, str]] = set()
     for doc in _governance_docs():
         for line in _read(doc).splitlines():
-            if not _is_evidence_line(line):
+            evidence = _evidence_text(line)
+            if evidence is None:
                 continue
-            for name in IDENTIFIER.findall(line):
+            for name in IDENTIFIER.findall(evidence):
                 cited.add((doc.name, name))
     return sorted(cited)
 
 
-def test_every_cited_test_exists(source_corpus: str) -> None:
-    def known(name: str) -> bool:
-        """A cited name must be a callable test, a field, or a wire key in code."""
-        return bool(
-            re.search(rf"(?:async\s+)?fn\s+{name}\s*\(|def\s+{name}\s*\(", source_corpus)
-            or re.search(rf"\b{name}\s*:", source_corpus)
-            or f'"{name}"' in source_corpus
-        )
+def _is_test_function(name: str, corpus: str) -> bool:
+    """An evidence citation must be an actual test function, not a lookalike.
 
+    The proof column names tests, so a field name that happens to share a prefix
+    (`submission_id`) must not satisfy it: that is exactly the drift this guard
+    exists to catch.
+    """
+    return bool(
+        re.search(rf"(?:async\s+)?fn\s+{name}\s*\(|def\s+{name}\s*\(", corpus)
+    )
+
+
+def test_every_cited_test_exists(source_corpus: str) -> None:
     missing = [
-        (doc, name) for doc, name in _evidence_identifiers() if not known(name)
+        (doc, name)
+        for doc, name in _evidence_identifiers()
+        if not _is_test_function(name, source_corpus)
     ]
     assert not missing, (
         "governance docs cite test names that do not exist (update the doc, or the "
@@ -226,3 +240,20 @@ def test_every_governance_service_is_documented() -> None:
     docs = _read(GOVERNANCE_README) + _read(GOVERNANCE_DIR / "operations.md")
     missing = sorted(name for name in declared if name not in docs)
     assert not missing, f"governance services missing from the docs: {missing}"
+
+
+# ── the guard's own rules ─────────────────────────────────────
+
+
+def test_only_the_proof_column_counts_as_evidence() -> None:
+    row = "| 可恢复 | 崩溃点之后不丢提交 | `crates/x.rs` | `recovery_is_idempotent` |"
+    assert _evidence_text(row) == " `recovery_is_idempotent` "
+    assert _evidence_text("| 可恢复的东西 | 只是散文 | 没有证据列 |") is None
+    assert _evidence_text("| 别的行 | a | b | c |") is None
+    assert _evidence_text("测试：`recovery_is_idempotent`") == "测试：`recovery_is_idempotent`"
+
+
+def test_the_proof_column_rejects_a_field_name_lookalike(source_corpus: str) -> None:
+    """Otherwise `submission_id` would "prove" a claim by being mentioned in code."""
+    assert _is_test_function("recovery_is_idempotent", source_corpus)
+    assert not _is_test_function("submission_id", source_corpus)
