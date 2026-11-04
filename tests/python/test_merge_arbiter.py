@@ -11,6 +11,13 @@ pattern as ``test_workspace.py``. Covers:
 Result model (c) from ``research/external-git-sync-model.md``:
     workers push ``uc/subtask/<id>`` branches; the arbiter merges them
     into ``origin/main`` and pushes ``main`` back.
+
+Flake note (2026-11-04): the non-conflicting-merge test failed **once** inside a
+full-suite run and was green when run alone (48 concurrent standalone runs, plus
+two further full runs of 2759 tests, were all green). The cause was not
+reproduced, so the helpers below now carry the remote's state into their failure
+messages: a recurrence should say whether a git command failed and what the
+remote looked like, instead of reporting a bare empty string.
 """
 
 from __future__ import annotations
@@ -33,14 +40,29 @@ pytestmark = pytest.mark.asyncio
 
 
 def _git(args: list[str], cwd: str) -> str:
-    """Run a git command, asserting success, returning stdout."""
+    """Run a git command, asserting success, returning stdout.
+
+    The failure message carries the working tree's status too: the interesting
+    case is a command that failed on a dirty or half-initialised clone, and the
+    stderr alone does not show that.
+    """
     result = subprocess.run(
         ["git", *args],
         cwd=cwd,
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, f"git {args} failed in {cwd}: {result.stderr}"
+    if result.returncode != 0:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        raise AssertionError(
+            f"git {args} failed in {cwd} (exit {result.returncode}): {result.stderr!r}; "
+            f"status={status.stdout!r}"
+        )
     return result.stdout
 
 
@@ -96,14 +118,36 @@ def _make_subtask_branch(
     _remove_tree(work)
 
 
+def _remote_summary(remote: Path) -> str:
+    """The remote's recent history and tree, for assertion messages."""
+    log = subprocess.run(
+        ["git", "log", "--oneline", "-5", "main"],
+        cwd=str(remote),
+        capture_output=True,
+        text=True,
+    )
+    tree = subprocess.run(
+        ["git", "ls-tree", "--name-only", "main"],
+        cwd=str(remote),
+        capture_output=True,
+        text=True,
+    )
+    return f"log={log.stdout.strip()!r} tree={tree.stdout.split()!r} stderr={log.stderr.strip()!r}"
+
+
 def _remote_main_content(remote: Path, file_path: str) -> str:
     """Read a file's content from the remote's main branch."""
-    return subprocess.run(
+    result = subprocess.run(
         ["git", "show", f"refs/heads/main:{file_path}"],
         cwd=str(remote),
         capture_output=True,
         text=True,
-    ).stdout
+    )
+    assert result.returncode == 0, (
+        f"git show refs/heads/main:{file_path} failed in {remote}: {result.stderr!r}; "
+        f"{_remote_summary(remote)}"
+    )
+    return result.stdout
 
 
 # --------------------------------------------------------------------------- #
@@ -144,17 +188,17 @@ async def test_arbitrate_merges_non_conflicting_branches(tmp_path):
         ]
     )
 
-    assert result["status"] == "merged"
+    assert result["status"] == "merged", f"result={result}; {_remote_summary(remote)}"
     assert set(result["merged_branches"]) == {
         "uc/subtask/aaa111222333",
         "uc/subtask/bbb444555666",
-    }
-    assert result["conflict_branches"] == []
-    assert result["push_status"] == "pushed"
+    }, f"result={result}; {_remote_summary(remote)}"
+    assert result["conflict_branches"] == [], f"result={result}; {_remote_summary(remote)}"
+    assert result["push_status"] == "pushed", f"result={result}; {_remote_summary(remote)}"
 
     # Both files should now be on origin/main.
-    assert _remote_main_content(remote, "feature_a.txt") == "feature A\n"
-    assert _remote_main_content(remote, "feature_b.txt") == "feature B\n"
+    assert _remote_main_content(remote, "feature_a.txt") == "feature A\n", _remote_summary(remote)
+    assert _remote_main_content(remote, "feature_b.txt") == "feature B\n", _remote_summary(remote)
 
 
 # --------------------------------------------------------------------------- #
