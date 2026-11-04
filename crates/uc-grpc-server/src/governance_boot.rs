@@ -44,16 +44,30 @@ use uc_types::governance::{
 /// Recovery order matters: the outbox is recovered *before* submissions are
 /// re-queued, so an entry orphaned mid-publish is re-delivered rather than
 /// duplicating the queue entry a submission recovery would add.
+/// The process environment, as the boot sequence sees it.
+///
+/// The three bootstrap steps take this as an argument instead of reading
+/// `std::env` themselves: process env is global and tests run in parallel, so a
+/// boot test that mutated it would be racy. Injecting the lookup keeps the
+/// deployment contract (what each variable means) directly testable.
+type Env<'a> = &'a dyn Fn(&str) -> Option<String>;
+
+fn process_env(key: &str) -> Option<String> {
+    std::env::var(key).ok()
+}
+
 pub async fn create_governance() -> Arc<Governance> {
-    let governance = Arc::new(Governance::new(choose_record_store().await));
+    let governance = Arc::new(Governance::new(
+        choose_record_store_with(&process_env).await,
+    ));
     tracing::info!(
         durable = governance.is_durable(),
         "Governance plane initialized"
     );
 
     recover(&governance).await;
-    bootstrap_policy(&governance).await;
-    bootstrap_proactive(&governance).await;
+    bootstrap_policy_with(&governance, &process_env).await;
+    bootstrap_proactive_with(&governance, &process_env).await;
     governance
 }
 
@@ -61,9 +75,9 @@ pub async fn create_governance() -> Arc<Governance> {
 /// the in-memory store with a loud warning rather than refusing to start: a
 /// gateway that cannot serve is worse than a gateway that serves non-durably for
 /// the duration of the outage, and `is_durable()` keeps the degradation visible.
-async fn choose_record_store() -> Arc<dyn RecordStore> {
-    let backend = std::env::var("UC_GOVERNANCE_BACKEND")
-        .unwrap_or_else(|_| "memory".to_string())
+async fn choose_record_store_with(env: Env<'_>) -> Arc<dyn RecordStore> {
+    let backend = env("UC_GOVERNANCE_BACKEND")
+        .unwrap_or_else(|| "memory".to_string())
         .trim()
         .to_ascii_lowercase();
     if backend == "memory" || backend.is_empty() {
@@ -81,7 +95,7 @@ async fn choose_record_store() -> Arc<dyn RecordStore> {
         return Arc::new(InMemoryRecordStore::new());
     }
 
-    let Ok(url) = std::env::var("UC_DATABASE_URL") else {
+    let Some(url) = env("UC_DATABASE_URL") else {
         tracing::warn!(
             "UC_GOVERNANCE_BACKEND=postgres but UC_DATABASE_URL is unset — \
              falling back to in-memory governance records"
@@ -141,7 +155,7 @@ pub async fn recover(governance: &Governance) {
 /// Install policy. Persisted snapshot wins; otherwise `UC_POLICY_BOOTSTRAP=dev`
 /// installs the development snapshot or `UC_POLICY_GRANTS_JSON` installs explicit
 /// grants. With none of those, the plane stays empty — which denies everything.
-pub async fn bootstrap_policy(governance: &Governance) {
+pub async fn bootstrap_policy_with(governance: &Governance, env: Env<'_>) {
     match governance.policy.load_persisted().await {
         Ok(Some(version)) => {
             tracing::info!(
@@ -159,14 +173,14 @@ pub async fn bootstrap_policy(governance: &Governance) {
         }
     }
 
-    let bootstrap = std::env::var("UC_POLICY_BOOTSTRAP")
+    let bootstrap = env("UC_POLICY_BOOTSTRAP")
         .unwrap_or_default()
         .trim()
         .to_ascii_lowercase();
     let mut snapshot: Option<PolicySnapshot> = None;
 
     if bootstrap == "dev" {
-        let operator = std::env::var("UC_OPERATOR_ID").unwrap_or_else(|_| "operator".to_string());
+        let operator = env("UC_OPERATOR_ID").unwrap_or_else(|| "operator".to_string());
         tracing::warn!(
             operator = %operator,
             "UC_POLICY_BOOTSTRAP=dev — installing the development policy snapshot. \
@@ -175,7 +189,7 @@ pub async fn bootstrap_policy(governance: &Governance) {
         snapshot = Some(PolicyEngine::development_snapshot(&operator));
     }
 
-    if let Ok(raw) = std::env::var("UC_POLICY_GRANTS_JSON") {
+    if let Some(raw) = env("UC_POLICY_GRANTS_JSON") {
         match parse_grants(&raw) {
             Ok(grants) => {
                 let mut built =
@@ -231,11 +245,11 @@ pub async fn bootstrap_policy(governance: &Governance) {
 
 /// Restore the proactive mode (default off) and never enable execution from an
 /// unset variable.
-pub async fn bootstrap_proactive(governance: &Governance) {
+pub async fn bootstrap_proactive_with(governance: &Governance, env: Env<'_>) {
     if let Err(error) = governance.proactive.load_persisted().await {
         tracing::warn!(error = %error, "Could not read persisted proactive state");
     }
-    let Ok(raw) = std::env::var("UC_PROACTIVE_MODE") else {
+    let Some(raw) = env("UC_PROACTIVE_MODE") else {
         return;
     };
     let Some(mode) = ProactiveMode::from_str_lossy(&raw) else {
@@ -385,5 +399,206 @@ mod tests {
     #[test]
     fn invalid_json_is_an_error() {
         assert!(parse_grants("{not json").is_err());
+    }
+
+    // ── the boot contract itself ─────────────────────────────────────
+    //
+    // These drive the real bootstrap steps with an injected environment, so the
+    // deployment rules (deny-all default, dev snapshot warning, grant precedence,
+    // persisted-snapshot precedence, proactive fail-closed) are tested without
+    // mutating process-global state.
+
+    fn env_from(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |key| {
+            pairs
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| value.to_string())
+        }
+    }
+
+    fn governance() -> Governance {
+        Governance::new(Arc::new(InMemoryRecordStore::new()))
+    }
+
+    fn allowed(governance: &Governance, principal: &Principal, permission: Permission) -> bool {
+        governance
+            .policy
+            .snapshot()
+            .evaluate(principal, permission, None, Utc::now())
+            .is_allowed()
+    }
+
+    #[tokio::test]
+    async fn an_empty_environment_denies_everything() {
+        let governance = governance();
+        bootstrap_policy_with(&governance, &env_from(&[])).await;
+
+        assert_eq!(governance.policy.version(), PolicyVersion::initial());
+        assert!(
+            !allowed(
+                &governance,
+                &Principal::user("operator"),
+                Permission::TaskSubmit
+            ),
+            "no configuration must mean deny-all, never a quiet allow"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_dev_bootstrap_installs_the_operator_snapshot() {
+        let governance = governance();
+        let env = env_from(&[("UC_POLICY_BOOTSTRAP", "dev"), ("UC_OPERATOR_ID", "bob")]);
+        bootstrap_policy_with(&governance, &env).await;
+
+        assert!(allowed(
+            &governance,
+            &Principal::user("bob"),
+            Permission::TaskSubmit
+        ));
+        assert!(
+            !allowed(
+                &governance,
+                &Principal::agent("executor"),
+                Permission::WorkerScale
+            ),
+            "the principal-kind ceiling still applies inside the dev snapshot"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_grants_are_installed_with_their_project_scope() {
+        let governance = governance();
+        let env = env_from(&[(
+            "UC_POLICY_GRANTS_JSON",
+            r#"[{"kind":"service","id":"dashboard","permissions":["case_read"]},
+                {"kind":"user","id":"alice","permissions":["mandate_issue"],"project_id":"proj-a"}]"#,
+        )]);
+        bootstrap_policy_with(&governance, &env).await;
+
+        assert!(allowed(
+            &governance,
+            &Principal::service("dashboard"),
+            Permission::CaseRead
+        ));
+        let alice = Principal::user("alice");
+        assert!(governance
+            .policy
+            .snapshot()
+            .evaluate(&alice, Permission::MandateIssue, Some("proj-a"), Utc::now())
+            .is_allowed());
+        assert!(governance
+            .policy
+            .snapshot()
+            .evaluate(&alice, Permission::MandateIssue, Some("proj-b"), Utc::now())
+            .is_denied());
+    }
+
+    #[tokio::test]
+    async fn invalid_grant_json_leaves_the_plane_deny_all() {
+        let governance = governance();
+        let env = env_from(&[("UC_POLICY_GRANTS_JSON", "{not json")]);
+        bootstrap_policy_with(&governance, &env).await;
+
+        assert_eq!(governance.policy.version(), PolicyVersion::initial());
+        assert!(!allowed(
+            &governance,
+            &Principal::user("alice"),
+            Permission::CaseRead
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_typo_in_grants_does_not_widen_the_dev_snapshot() {
+        let governance = governance();
+        let env = env_from(&[
+            ("UC_POLICY_BOOTSTRAP", "dev"),
+            ("UC_OPERATOR_ID", "bob"),
+            (
+                "UC_POLICY_GRANTS_JSON",
+                r#"[{"kind":"user","id":"x","permissions":["task_submitt"]}]"#,
+            ),
+        ]);
+        bootstrap_policy_with(&governance, &env).await;
+
+        // The broken grants contribute nothing; the dev snapshot still stands.
+        assert!(allowed(
+            &governance,
+            &Principal::user("bob"),
+            Permission::TaskSubmit
+        ));
+        assert!(!allowed(
+            &governance,
+            &Principal::user("x"),
+            Permission::TaskSubmit
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_persisted_snapshot_beats_the_environment() {
+        let governance = governance();
+        governance
+            .policy
+            .install(PolicyEngine::development_snapshot("persisted"))
+            .await
+            .expect("install");
+        let persisted = governance.policy.version();
+
+        let env = env_from(&[
+            ("UC_POLICY_BOOTSTRAP", "dev"),
+            ("UC_OPERATOR_ID", "env-operator"),
+        ]);
+        bootstrap_policy_with(&governance, &env).await;
+
+        assert_eq!(
+            governance.policy.version(),
+            persisted,
+            "a restart must not reset policy to the dev snapshot"
+        );
+        assert!(allowed(
+            &governance,
+            &Principal::user("persisted"),
+            Permission::TaskSubmit
+        ));
+        assert!(!allowed(
+            &governance,
+            &Principal::user("env-operator"),
+            Permission::TaskSubmit
+        ));
+    }
+
+    #[tokio::test]
+    async fn proactive_mode_comes_from_the_environment_and_unknown_stays_closed() {
+        let governance = governance();
+
+        bootstrap_proactive_with(&governance, &env_from(&[])).await;
+        assert_eq!(governance.proactive.mode(), ProactiveMode::Off);
+
+        bootstrap_proactive_with(&governance, &env_from(&[("UC_PROACTIVE_MODE", "observe")])).await;
+        assert_eq!(governance.proactive.mode(), ProactiveMode::Observe);
+
+        bootstrap_proactive_with(&governance, &env_from(&[("UC_PROACTIVE_MODE", "bogus")])).await;
+        assert_eq!(
+            governance.proactive.mode(),
+            ProactiveMode::Observe,
+            "an unknown value must not change the mode, and never enables execution"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_record_store_defaults_to_memory_and_degrades_loudly() {
+        assert!(!choose_record_store_with(&env_from(&[])).await.is_durable());
+
+        let unknown = env_from(&[("UC_GOVERNANCE_BACKEND", "cassandra")]);
+        assert!(
+            !choose_record_store_with(&unknown).await.is_durable(),
+            "an unknown backend must fall back, not pretend to be durable"
+        );
+
+        let no_url = env_from(&[("UC_GOVERNANCE_BACKEND", "postgres")]);
+        assert!(
+            !choose_record_store_with(&no_url).await.is_durable(),
+            "postgres without UC_DATABASE_URL cannot be durable"
+        );
     }
 }
