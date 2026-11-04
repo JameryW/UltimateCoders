@@ -13,7 +13,7 @@
 | 治理存储（`crates/uc-engine/src/governance/`） | 已落地：`RecordStore`（内存 + PostgreSQL）、提交/外发箱、case/mandate、policy、trigger、attention、proactive、watchdog |
 | gRPC 服务与 NATS 桥（`crates/uc-grpc/src/governance/`） | **已落地**：身份/授权闸口 `policy_interceptor.rs`、五个服务（`case_service.rs` / `trigger_service.rs` / `attention_service.rs` / `proactive_service.rs` / `approval_service.rs`）、NATS 请求/回复分发（30 个 op，`bridge.rs`）、`spawn_nats_bridge`（含 2s outbox 分发器 + 启动时 `outbox.recover`）、`GrpcServer::with_governance` 与 `into_governance_services` / `into_intercepted_governance_services` 接线。网关 bootstrap 见 `crates/uc-grpc-server/src/governance_boot.rs`。**契约以 `crates/uc-grpc/proto/engine.proto` 为权威**，错误码映射见 `crates/uc-grpc/src/governance/mod.rs` |
 | Python 请求方（`python/ultimate_coders/governance_client.py`） | 已落地：NATS request/reply 客户端（submission / case / mandate / trigger / attention / capacity / proactive / watchdog / approval 各组 op） |
-| Python 投影与 HTTP 面（`trigger`/`attention`/`proactive` 包 + `dashboard/{trigger,attention,proactive,approval}_api.py`；worker 侧 `agent/{watchdog,proactive}_bridge.py`） | 已落地，且已挂进 `dashboard/app.py`；watchdog 与 proactive 已在既有停滞接缝上接线 |
+| Python 投影与 HTTP 面（`python/ultimate_coders/trigger`/`attention`/`proactive` 包 + `python/ultimate_coders/dashboard/trigger_api.py` / `attention_api.py` / `proactive_api.py` / `approval_api.py`；worker 侧 `python/ultimate_coders/agent/watchdog_bridge.py` / `proactive_bridge.py`） | 已落地，且已挂进 `python/ultimate_coders/dashboard/app.py`；watchdog 与 proactive 已在既有停滞接缝上接线 |
 | 审计导出（`GET /api/approvals/export.csv`） | 已落地：按 `offset` 翻页取全量审批历史，保留网关原始时间戳，中和表格公式，达到上界时用 `X-UC-Approvals-Truncated` 明示 |
 
 接线已完整：网关启动即建立治理平面（存储 → 策略 → 崩溃恢复 → NATS 桥，见
@@ -49,7 +49,7 @@ NATS + PostgreSQL（见 §4 手工验收）。
 
 | 变量 | 影响 | 出处 |
 | --- | --- | --- |
-| `UC_DASHBOARD_TOKEN` | 设置后 `POST /api/triggers/ingest` 与 `attention.resolve` 要求 Bearer；未设置则按既有约定不校验（由外层部署守门） | `dashboard/trigger_api.py`、`dashboard/attention_api.py` |
+| `UC_DASHBOARD_TOKEN` | 设置后 `POST /api/triggers/ingest` 与 `attention.resolve` 要求 Bearer；未设置则按既有约定不校验（由外层部署守门） | `python/ultimate_coders/dashboard/trigger_api.py`、`python/ultimate_coders/dashboard/attention_api.py` |
 | `UC_NATS_URL` / NATS 可达性 | 治理桥传输；不可达时 Dashboard 治理端点全部 503 `governance_unavailable`（**不是**空数据） | `governance_client.py` |
 | `UC_COMPLETION_CONDITIONS_ENFORCE` | 打开后完成条件才强制校验；默认关闭。与 PR02 的 `verifying` 状态配合使用 | `python/ultimate_coders/agent/completion_conditions.py` |
 | `UC_TASK_BACKEND` / `UC_EVENT_BACKEND` / `UC_GRAPH_SHADOW` | 执行面后端，不属治理层；但 `Governance` 与它们共用 `UC_DATABASE_URL` 时需保证同一个库 | `crates/uc-grpc-server/src/main.rs`、`docs/architecture.md` |
@@ -138,7 +138,7 @@ cargo run -p uc-grpc-server
 
 ### 3.3 Dashboard 侧
 
-`dashboard/app.py` 已经做了三件事：构造 `GovernanceClient(self._nats_client)`、挂到
+`python/ultimate_coders/dashboard/app.py` 已经做了三件事：构造 `GovernanceClient(self._nats_client)`、挂到
 `app.state.governance_client`、并把 `governance_routes.governance_routers()` 里的三个 router 都
 `include_router` 进去；NATS 连接建立后还会 `attach` 一次（重连场景）。
 

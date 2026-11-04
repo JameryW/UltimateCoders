@@ -272,8 +272,8 @@ def test_real_repo_is_reconciled() -> None:
         # Governance plane (PR01–PR06): uc-types/uc-engine/uc-grpc governance
         # modules, gRPC services + integration test, gateway boot helper, Python
         # trigger/attention/proactive packages, dashboard routers + panel, docs.
-        # The request-form render test adds one text file.
-        (2361, 2352),
+        # The docs link guard test adds one text file.
+        (2362, 2353),
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),
