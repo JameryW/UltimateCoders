@@ -20,9 +20,9 @@ Three properties of the guard shape this harness:
 
 Census note (governance PR01–PR06): the docs under `docs/governance/` are
 citation-dense by design (every claim names its file), so adding them moved the
-real-corpus census from 130 refs / 508 mentions to 321 refs / 676 mentions, and
+real-corpus census from 130 refs / 508 mentions to 321 refs / 679 mentions, and
 shifted the composite pins below (OK 224 / STALE 25 / AMBIGUOUS 72, 220 named /
-161 diverging, 190 line-unchecked / 125 unanchored / 59 symbol-anchored).  Those
+161 diverging, 190 line-unchecked / 124 unanchored / 59 symbol-anchored).  Those
 pins were re-measured in the same change that added the docs — the mechanism
 tests above are untouched.
 
@@ -722,7 +722,7 @@ def test_real_corpus_unanchored_census_is_reported():
     rows = guard.collect()
     refs = [r for r in rows if r["kind"] == "ref"]
     assert len(refs) == 321, len(refs)
-    assert sum(1 for r in refs if r["unanchored"]) == 125
+    assert sum(1 for r in refs if r["unanchored"]) == 124
     # 271 -> 275 across the P2-baseline window (re-measured 9be830df -> HEAD
     # on the red-main repair ticket, keyed on spec+line+ref then re-checked by
     # (ref, verdict) multiset to survive P2's +2 line shift in
@@ -887,7 +887,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # T21 docs numeric pin CI: map + ticket 21 landing names the manifest,
     # checker, test, and workflow (492 -> 500 on T21 alone). Merged:
     # 492 + 8 + 8 = 508, all resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 676
+    assert sum(1 for r in rows if r["kind"] == "mention") == 679
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1111,7 +1111,7 @@ def test_real_corpus_line_unchecked_census_is_reported():
     assert len(refs) == 321, len(refs)
     assert len(located) == 249, len(located)
     assert sum(1 for r in located if r["line_unchecked"]) == 190
-    assert sum(1 for r in located if r["unanchored"]) == 125
+    assert sum(1 for r in located if r["unanchored"]) == 124
     assert sum(1 for r in located if r["symbol"] is not None) == 59
 
 
@@ -1131,7 +1131,7 @@ def test_the_two_calibers_are_nested_and_their_difference_is_content_only():
     ]
     assert leaked == [], leaked
     diff = [r for r in located if r["line_unchecked"] and not r["unanchored"]]
-    assert len(diff) == 65, len(diff)
+    assert len(diff) == 66, len(diff)
     assert [(r["symbol"], r["content_candidate_count"] > 0, r["verdict"]) for r in diff] == [
         (None, True, "OK")
     ] * len(diff)
@@ -1178,7 +1178,7 @@ def test_the_default_advisory_reports_the_wider_number():
     ]
     assert len(advisory) == 1, advisory
     assert advisory[0].startswith("ADVISORY: 190 of 249"), advisory[0]
-    assert "(125 of them have no anchor at all" in advisory[0], advisory[0]
+    assert "(124 of them have no anchor at all" in advisory[0], advisory[0]
 
 
 def test_the_audit_list_marks_the_anchor_free_tier():
@@ -1194,7 +1194,7 @@ def test_the_audit_list_marks_the_anchor_free_tier():
     rest = out.split(head, 1)[1].split("\n", 1)[1]
     rows = [line for line in rest.split("ADVISORY", 1)[0].splitlines() if line.strip()]
     assert len(rows) == 190, len(rows)
-    assert sum(1 for line in rows if "<- no anchor at all" in line) == 125
+    assert sum(1 for line in rows if "<- no anchor at all" in line) == 124
 
 
 def test_an_ambiguous_row_is_never_anchored(guard):
@@ -1408,7 +1408,7 @@ def test_real_corpus_moves_only_where_predicted():
     assert sum(1 for r in rows if r["verdict"] == "STALE") == 25
     assert sum(1 for r in rows if r["verdict"] == "AMBIGUOUS") == 72
     assert sum(1 for r in rows if r["symbol"] is not None) == 59
-    assert sum(1 for r in rows if r["unanchored"]) == 125
+    assert sum(1 for r in rows if r["unanchored"]) == 124
     assert sum(1 for r in rows if r["line_unchecked"]) == 190
 
 

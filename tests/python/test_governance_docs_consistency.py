@@ -226,6 +226,41 @@ def test_every_dispatched_op_has_a_python_caller(bridge_ops: list[str]) -> None:
     )
 
 
+#: A row that says "landed" claims the code proves a behaviour.
+LANDED = ("已落地", "已实现", "已接线")
+#: Conditional wording is a caveat, not a claim ("若上述并行改动已落地").
+CONDITIONAL = re.compile(r"(若|如果|一旦)[^。]*已落地")
+#: Test artifacts a landed claim may cite.
+EVIDENCE_FILE = re.compile(
+    r"`(tests/python/test_[a-z0-9_]+\.py|dashboard/tests/[a-z0-9_-]+\.test\.mjs"
+    r"|crates/[a-z0-9_-]+/tests/[a-z0-9_]+\.rs)`"
+)
+
+
+def test_every_landed_claim_cites_a_test(source_corpus: str) -> None:
+    """A "landed" row must name the test that would fail if it were not."""
+    unproven: list[tuple[str, str]] = []
+    for doc in _governance_docs():
+        for line in _read(doc).splitlines():
+            stripped = line.strip()
+            if not any(word in stripped for word in LANDED):
+                continue
+            if CONDITIONAL.search(stripped):
+                continue
+            cited_tests = [
+                name
+                for name in IDENTIFIER.findall(stripped)
+                if _is_test_function(name, source_corpus)
+            ]
+            if cited_tests or EVIDENCE_FILE.search(stripped):
+                continue
+            unproven.append((doc.name, stripped[:96]))
+    assert not unproven, (
+        "these rows say 已落地 but name no test that proves it (cite one, or drop the "
+        f"claim): {unproven}"
+    )
+
+
 def test_every_governance_service_is_documented() -> None:
     proto = _read(PROTO)
     declared = {

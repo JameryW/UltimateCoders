@@ -295,8 +295,8 @@ UI 不提供 `user` 选项——那等于人向自己申请，网关也会拒绝
 
 | 项 | 现状 | 原因 |
 | --- | --- | --- |
-| 审计导出的调度化 | 导出与面板都已落地（`/api/approvals`、仪表盘「审批」视图 `#/dashboard/approvals`、`/api/approvals/export.csv` 分页 + 截断标记 + 公式中和）；没有的是「定期自动导出并归档」 | 归档节奏是部署策略（cron / 对象存储），治理层只保证数据能完整取出 |
-| `ScaleWorkers` 的授权接线 | **已落地**（见 §7）：`worker_service.rs:745-752` 前置鉴权，空快照默认拒绝 | — |
+| 审计导出的调度化 | 导出与面板都已落地（`/api/approvals`、仪表盘「审批」视图 `#/dashboard/approvals`、`/api/approvals/export.csv` 分页 + 截断标记 + 公式中和）；没有的是「定期自动导出并归档」 | 归档节奏是部署策略（cron / 对象存储），治理层只保证数据能完整取出 （测试：`test_export_walks_the_gateway_pages_until_a_short_one`） |
+| `ScaleWorkers` 的授权接线 | **已落地**（见 §7）：`worker_service.rs:745-752` 前置鉴权，空快照默认拒绝 | — （测试：`scale_workers_is_denied_for_a_service_principal_without_worker_scale`、`scale_workers_reaches_the_action_when_worker_scale_is_granted`） |
 | 工具**参数**级检查 | 未实现（只检查工具名与 action 类） | 参数语义因工具而异（例如 `Bash` 的命令串），假装能通用检查会给出虚假安全感 |
 | `read_only_rootfs` 强制 | 未实现（见 §6） | 现有 worker 镜像不以只读根文件系统运行 |
 | Graph-backed fencing 相关权限 | 未纳入治理层 | 执行面已有独立设计（`docs/agent-os-architecture.md` 的恢复不变量），重复会造第二权威 |
