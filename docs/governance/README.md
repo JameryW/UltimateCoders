@@ -142,6 +142,7 @@
 | [pr06-proactive.md](pr06-proactive.md) | Off/Observe/Propose/Execute、证据要求、审计留痕、watchdog 边界、「模型可建议、控制面决定」 |
 | [operations.md](operations.md) | 环境变量与安全默认值、带治理面启动、逐 PR 手工验收、升级顺序 |
 | [e2e-runbook.md](e2e-runbook.md) | **需要 Docker/NATS** 的端到端验收：起集群、桥自检、逐 PR 判定标准、持久化重启验证、失败对照表（作者机器无 Docker，未在本机执行——手册标注了每条的预期输出） |
+| [e2e-checklist.md](e2e-checklist.md) | 把 E2E 验收变成可转交的工件：证据包结构、11 个检查项（每项含判定标准、证据文件、支撑的验收条目）、结论回填表、失败处理与回填仓库的方式（同样标注作者机器无 Docker、未执行） |
 
 ## 4. 未实现 / 有意留空
 
