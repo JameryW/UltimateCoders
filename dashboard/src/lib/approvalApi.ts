@@ -5,6 +5,7 @@
  * `python/ultimate_coders/dashboard/approval_api.py`, mounted without a prefix:
  *
  *   GET  /api/approvals                    → `{ approvals: […] }`
+ *   POST /api/approvals                    → `{ approval: {…} }`  (ask for a permit)
  *   POST /api/approvals/{id}/decide        → `{ approval: {…} }`
  *
  * The gateway (Rust `ApprovalStore`) owns the permit; this module only reads the
@@ -27,7 +28,10 @@
  *
  * Honest limitation: the decision is always sent as a `user` principal. The
  * dashboard cannot act as a service or an agent, because authority must not be
- * borrowed from the UI — and the gateway would refuse it anyway.
+ * borrowed from the UI — and the gateway would refuse it anyway. *Requesting* is
+ * the mirror image: the requester must be an `agent` or a `service` (a human does
+ * not ask themselves for permission), and the gateway records who asked so the
+ * same principal can never decide it.
  */
 
 import {
@@ -220,6 +224,65 @@ export async function decideApproval(
     method: "POST",
     body,
   });
+  if (!result.ok) return result;
+  const payload = asRecord(result.data);
+  const approval = payload === null ? null : parseApproval(payload.approval);
+  if (approval === null) return { ok: false, status: 502, error: "invalid_payload" };
+  return { ok: true, data: approval };
+}
+
+/** Who may ask for a permit. `user` is deliberately impossible here. */
+export const REQUESTER_KINDS = ["agent", "service"] as const;
+export type RequesterKind = (typeof REQUESTER_KINDS)[number];
+
+/** The human-tier tools the gateway gates; free text stays allowed for others. */
+export const HUMAN_TIER_TOOLS = ["scale_workers", "docker_run"] as const;
+
+export interface ApprovalRequestInput {
+  tool: string;
+  caseId?: string;
+  projectId?: string;
+  actionDigest?: string;
+  reason?: string;
+  requestedByKind?: RequesterKind;
+  requestedById?: string;
+  /** Positive integer; the gateway bounds it by its own maximum. */
+  ttlMinutes?: number;
+}
+
+/**
+ * Ask a human to permit one call to a human-tier tool.
+ *
+ * Sent as `agent`/`service` only: the wire contract refuses a `user` requester,
+ * and the UI must not offer what the gateway would reject.
+ */
+export async function requestApproval(
+  input: ApprovalRequestInput,
+): Promise<ApiResult<Approval>> {
+  const tool = input.tool.trim();
+  if (!tool) return { ok: false, status: 400, error: "invalid_body" };
+  const body: Record<string, unknown> = { tool };
+  const kind = input.requestedByKind ?? "agent";
+  if (!REQUESTER_KINDS.includes(kind)) return { ok: false, status: 400, error: "invalid_body" };
+  body.requested_by_kind = kind;
+  const id = (input.requestedById ?? "uc-worker").trim() || "uc-worker";
+  body.requested_by_id = id;
+  for (const [key, value] of [
+    ["case_id", input.caseId],
+    ["project_id", input.projectId],
+    ["action_digest", input.actionDigest],
+    ["reason", input.reason],
+  ] as const) {
+    if (value !== undefined && value.trim()) body[key] = value.trim();
+  }
+  if (input.ttlMinutes !== undefined) {
+    const ttl = Math.trunc(input.ttlMinutes);
+    if (!Number.isFinite(ttl) || ttl <= 0) {
+      return { ok: false, status: 400, error: "invalid_body" };
+    }
+    body.ttl_minutes = ttl;
+  }
+  const result = await requestJson("/api/approvals", { method: "POST", body });
   if (!result.ok) return result;
   const payload = asRecord(result.data);
   const approval = payload === null ? null : parseApproval(payload.approval);

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  HUMAN_TIER_TOOLS,
+  REQUESTER_KINDS,
   approvalOrder,
   decideApproval,
   fetchApprovals,
@@ -9,6 +11,7 @@ import {
   isUsable,
   parseApproval,
   parseApprovals,
+  requestApproval,
 } from "../src/lib/approvalApi.ts";
 
 const NOW_MS = Date.parse("2026-01-01T00:00:00Z");
@@ -242,6 +245,124 @@ test("a malformed decide reply is 502, not a silent success", async () => {
     async () => jsonResponse(200, { approval: null }),
     async () => {
       const result = await decideApproval("apr-1", true);
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 502);
+    },
+  );
+});
+
+// ── requesting a permit ──────────────────────────────────────
+
+test("requesting sends the agent identity and the optional context", async () => {
+  const calls = await withFetch(
+    async () => jsonResponse(200, { approval: wire() }),
+    async () => {
+      const result = await requestApproval({
+        tool: "  scale_workers  ",
+        caseId: "case-1",
+        projectId: "proj-1",
+        actionDigest: "scale:worker=3",
+        reason: "queue is backing up",
+        requestedByKind: "agent",
+        requestedById: "executor",
+        ttlMinutes: 5,
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.data.tool, "scale_workers");
+    },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "/api/approvals");
+  assert.equal(calls[0].init.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    tool: "scale_workers",
+    requested_by_kind: "agent",
+    requested_by_id: "executor",
+    case_id: "case-1",
+    project_id: "proj-1",
+    action_digest: "scale:worker=3",
+    reason: "queue is backing up",
+    ttl_minutes: 5,
+  });
+});
+
+test("blank optional fields are omitted, not sent as empty strings", async () => {
+  const calls = await withFetch(
+    async () => jsonResponse(200, { approval: wire() }),
+    async () => {
+      const result = await requestApproval({ tool: "docker_run" });
+      assert.equal(result.ok, true);
+    },
+  );
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    tool: "docker_run",
+    requested_by_kind: "agent",
+    requested_by_id: "uc-worker",
+  });
+});
+
+test("a human cannot request as themselves", async () => {
+  // The gateway refuses a `user` requester; the client must not even send it.
+  const calls = await withFetch(
+    async () => jsonResponse(200, { approval: wire() }),
+    async () => {
+      const result = await requestApproval({
+        tool: "scale_workers",
+        requestedByKind: "user",
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 400);
+    },
+  );
+  assert.equal(calls.length, 0);
+  assert.deepEqual([...REQUESTER_KINDS], ["agent", "service"]);
+  assert.ok(!REQUESTER_KINDS.includes("user"));
+});
+
+test("an empty tool or a non-positive ttl is refused before the wire", async () => {
+  const calls = await withFetch(
+    async () => jsonResponse(200, { approval: wire() }),
+    async () => {
+      assert.equal((await requestApproval({ tool: "   " })).ok, false);
+      assert.equal((await requestApproval({ tool: "docker_run", ttlMinutes: 0 })).ok, false);
+      assert.equal((await requestApproval({ tool: "docker_run", ttlMinutes: -3 })).ok, false);
+    },
+  );
+  assert.equal(calls.length, 0);
+});
+
+test("the human-tier tool list is the two the gateway gates", async () => {
+  assert.deepEqual([...HUMAN_TIER_TOOLS], ["scale_workers", "docker_run"]);
+});
+
+test("a rejected request surfaces the gateway status instead of pretending", async () => {
+  await withFetch(
+    async () => jsonResponse(403, { error: "missing_permission" }),
+    async () => {
+      const result = await requestApproval({ tool: "scale_workers" });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 403);
+    },
+  );
+  await withFetch(
+    async () => jsonResponse(401, { error: "unauthorized" }),
+    async () => {
+      assert.equal((await requestApproval({ tool: "scale_workers" })).status, 401);
+    },
+  );
+  await withFetch(
+    async () => jsonResponse(503, { error: "governance_unavailable" }),
+    async () => {
+      assert.equal((await requestApproval({ tool: "scale_workers" })).status, 503);
+    },
+  );
+});
+
+test("a malformed request reply is 502", async () => {
+  await withFetch(
+    async () => jsonResponse(200, { approval: { id: 42 } }),
+    async () => {
+      const result = await requestApproval({ tool: "scale_workers" });
       assert.equal(result.ok, false);
       assert.equal(result.status, 502);
     },

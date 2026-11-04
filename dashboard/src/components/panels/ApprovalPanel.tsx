@@ -5,12 +5,16 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { shortId, truncate } from "@/lib/utils";
 import { isOffline } from "@/lib/attentionApi";
 import {
+  HUMAN_TIER_TOOLS,
+  REQUESTER_KINDS,
   approvalOrder,
   decideApproval,
   fetchApprovals,
   formatExpiry,
   isPending,
+  requestApproval,
   type Approval,
+  type RequesterKind,
 } from "@/lib/approvalApi";
 
 /** How often the queue is re-read while the panel is mounted. */
@@ -138,6 +142,12 @@ export function ApprovalPanel({ embedded = false, className }: ApprovalPanelProp
           description="Human-tier actions (scaling workers, running containers) show up here for a decision."
         />
       )}
+      <RequestForm
+        onRequested={(message) => {
+          setNotice(message);
+          setRefreshToken((token) => token + 1);
+        }}
+      />
       {rows.map((approval) => (
         <ApprovalRow
           key={approval.id}
@@ -197,6 +207,159 @@ export function ApprovalPanel({ embedded = false, className }: ApprovalPanelProp
       {header}
       {content}
     </Card>
+  );
+}
+
+/**
+ * Ask for a permit from the queue's own view.
+ *
+ * The requester is constrained on purpose: `agent` or `service`, never `user` —
+ * a human asking themselves for permission is not an approval loop, and the
+ * gateway refuses it. The form exists because the `approval.request` op used to
+ * have no caller at all, so the loop could only be entered from outside the UI.
+ */
+function RequestForm({ onRequested }: { onRequested: (message: string) => void }) {
+  const [tool, setTool] = useState<string>(HUMAN_TIER_TOOLS[0]);
+  const [kind, setKind] = useState<RequesterKind>("agent");
+  const [requester, setRequester] = useState("uc-worker");
+  const [caseId, setCaseId] = useState("");
+  const [reason, setReason] = useState("");
+  const [ttl, setTtl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const ttlMinutes = ttl.trim() === "" ? undefined : Number(ttl);
+    if (ttlMinutes !== undefined && (!Number.isFinite(ttlMinutes) || ttlMinutes <= 0)) {
+      setError("TTL must be a positive number of minutes (or empty for the default).");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const result = await requestApproval({
+      tool,
+      requestedByKind: kind,
+      requestedById: requester,
+      caseId: caseId.trim() === "" ? undefined : caseId,
+      reason: reason.trim() === "" ? undefined : reason,
+      ttlMinutes,
+    });
+    setBusy(false);
+    if (!result.ok) {
+      setError(
+        result.status === 401
+          ? "This deployment requires a dashboard token; sign in again before requesting."
+          : result.status === 0
+            ? "Governance plane offline — the request was not recorded."
+            : `Could not record the request: ${result.error} (HTTP ${result.status}).`,
+      );
+      return;
+    }
+    setCaseId("");
+    setReason("");
+    onRequested(
+      `Requested ${result.data.tool} as ${result.data.requested_by_kind}:${result.data.requested_by_id}.`,
+    );
+  };
+
+  return (
+    <form
+      className="mb-2 rounded border border-dashed border-[var(--border)] p-2"
+      data-testid="approval-request-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <div className="flex flex-wrap items-center gap-1">
+        <label htmlFor="approval-request-tool" className="sr-only">
+          Human-tier tool
+        </label>
+        <input
+          id="approval-request-tool"
+          value={tool}
+          onChange={(event) => setTool(event.target.value)}
+          list="approval-human-tier-tools"
+          placeholder="tool"
+          className="w-32 rounded border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 font-mono text-[11px] text-[var(--text-primary)]"
+        />
+        <datalist id="approval-human-tier-tools">
+          {HUMAN_TIER_TOOLS.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+        <label htmlFor="approval-request-kind" className="sr-only">
+          Requester kind
+        </label>
+        <select
+          id="approval-request-kind"
+          value={kind}
+          onChange={(event) => setKind(event.target.value as RequesterKind)}
+          className="rounded border border-[var(--border)] bg-[var(--surface-1)] px-1 py-1 text-[11px] text-[var(--text-primary)]"
+        >
+          {REQUESTER_KINDS.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <label htmlFor="approval-request-by" className="sr-only">
+          Requester id
+        </label>
+        <input
+          id="approval-request-by"
+          value={requester}
+          onChange={(event) => setRequester(event.target.value)}
+          placeholder="requester id"
+          className="w-28 rounded border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 font-mono text-[11px] text-[var(--text-primary)]"
+        />
+        <label htmlFor="approval-request-ttl" className="sr-only">
+          TTL in minutes
+        </label>
+        <input
+          id="approval-request-ttl"
+          value={ttl}
+          onChange={(event) => setTtl(event.target.value)}
+          placeholder="ttl"
+          inputMode="numeric"
+          className="w-16 rounded border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[11px] text-[var(--text-primary)]"
+        />
+        <button
+          type="submit"
+          disabled={busy || tool.trim() === ""}
+          className="rounded border border-[var(--border)] px-2 py-1 text-[11px] font-semibold text-[var(--text-primary)] disabled:opacity-50"
+        >
+          申请
+        </button>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-1">
+        <label htmlFor="approval-request-case" className="sr-only">
+          Case id
+        </label>
+        <input
+          id="approval-request-case"
+          value={caseId}
+          onChange={(event) => setCaseId(event.target.value)}
+          placeholder="case id (optional)"
+          className="w-40 rounded border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 font-mono text-[11px] text-[var(--text-primary)]"
+        />
+        <label htmlFor="approval-request-reason" className="sr-only">
+          Reason
+        </label>
+        <input
+          id="approval-request-reason"
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="why this action (recorded in the audit)"
+          className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[11px] text-[var(--text-primary)]"
+        />
+      </div>
+      {error && (
+        <p className="mt-1 text-[11px] text-[var(--terminal-red)]" data-testid="approval-request-error">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }
 
