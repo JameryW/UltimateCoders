@@ -342,14 +342,44 @@ docker compose -f docker/docker-compose.yml --profile worker down
 `cargo build -p uc-grpc-server` 当次构建、`UC_GOVERNANCE_BACKEND=memory`、`UC_POLICY_BOOTSTRAP=dev`。
 证据包在仓库外（`uc-e2e-<date>/` 结构见 [e2e-checklist.md](e2e-checklist.md)）。
 
-已真实通过：网关启动（`durable=false` + `policy snapshot version=2` + 桥监听）、桥自检（`capacity.get`）、
-提交幂等（同 id → 同 `task_id` + `dedup_replayed`；换内容 → `submission_conflict`）、触发去重
-（同 `dedup_key` + 第二次 `duplicate`）、唤醒 + 恢复（`resumed_task_ids` 恰 1 个、case 多一条 run）、
+已真实通过（第一轮，memory 后端）：网关启动（`durable=false` + `policy snapshot version=2` + 桥监听）、
+桥自检（`capacity.get`）、提交幂等（同 id → 同 `task_id` + `dedup_replayed`；换内容 → `submission_conflict`）、
+触发去重（同 `dedup_key` + 第二次 `duplicate`）、唤醒 + 恢复（`resumed_task_ids` 恰 1 个、case 多一条 run）、
 权限拒绝（`service:dashboard` + `worker_scale` → `missing_permission`）、审批申请/批准 + 注意力投影
 （带 `case_id`）、watchdog 升级判定（`escalate_needs_human`）+ 注意力投影。
 
-未执行（需要外部条件）：worker 注册与实时容量（需要 worker 进程）、`scale_workers` 动作路径与审批消费
-（需要 Docker）、postgres 重启持久化（需要 PostgreSQL）、Dashboard HTTP 面（需要 uvicorn）。
+已真实通过（第二轮，补齐 worker 与持久化）：
+
+- **S7 容量来自实时注册表**：先有 4 个已注册 worker 时 `worker_slots_total=12`；再用
+  `python -m ultimate_coders.nats_worker --mode worker` 起第 5 个（`UC_GRPC_ENDPOINT=http://127.0.0.1:50051`
+  ——**带 scheme**，否则 `PyEngine` 报 `Connection failed: transport error`），总数变 **15**（4×3+3）。
+  再对一个 case raise 一条 `waiting_event` 注意力项：`waiting_event_cases` 0→1、
+  `slots_saved_by_quiet_waiting` 0→1，而 `worker_slots_busy` **不变**（安静等待不占槽）。
+- **S10 postgres 重启持久化**：在 WSL 里跑 PostgreSQL 16（`initdb` + `pg_ctl -p 5433`，socket 目录必须可写），
+  `UC_GOVERNANCE_BACKEND=postgres` + `UC_DATABASE_URL=postgresql://postgres@127.0.0.1:5433/uc` 启动后日志
+  `Governance records backed by PostgreSQL` / `durable=true`，`governance_records` 出现 8 个 namespace；
+  建 submission/case/approval 后重启网关，日志出现 `Loaded persisted policy snapshot (environment bootstrap
+  skipped)`，三份数据**全部还在**（`submission.get` / `case.get` / `approval.list`）。
+- **S10 反向对照**：同一份数据在 `UC_GOVERNANCE_BACKEND=memory` 上重启后 `durable=false` 且
+  `submission.get` 返回 `available:false`——持久化开关确实起作用。
+
+未执行（需要 Docker）：`scale_workers` 动作路径的**审批消费**、Dashboard HTTP 面。
+
+### 10.1 执行时发现的一个治理面差异（待修，未在本手册中掩盖）
+
+`WorkerService.ScaleWorkers` 的鉴权只走**权限**这一层：
+
+```text
+worker_service.rs:777  require_scale_workers(...)
+  -> policy_interceptor::require_scale_workers
+    -> PolicyEngine::authorize_scale_workers   # 只查 Permission::WorkerScale
+```
+
+而带 human-tier 闸口（`proactive_execute` 或一次性审批）的是 `PolicyEngine::authorize_tool`
+（`policy.rs:252-344`），它只被 NATS 的 `authorize` 预览 op 调用。后果：**被授予 `worker_scale` 的 service
+principal 可以直接扩缩容，不需要人工审批**，与 `pr03-policy.md` §「human_approval 是强制的」的描述不一致；
+S8 的「单次消费」也因此没有真实动作路径可验证。修复方向二选一：给 `ScaleWorkersRequest` 加可选 `case_id`
+并改走 `authorize_tool`，或在 `require_scale_workers` 里同时要求 `proactive_execute`（即操作者层级）。
 
 本次执行修正了本手册的 4 处错误：`policy.current` 不是桥 op、escalate 需要 `case_id` 才会投影注意力、
 `authorize` 不消费许可（消费在动作路径）、以及「旧二进制会被误判成 unknown_op」这个前置条件。
