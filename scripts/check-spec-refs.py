@@ -348,6 +348,24 @@ MENTION_EXEMPT: tuple[tuple[str, str, int, str], ...] = (
      "and this spec's own sample writes it with `tempfile.mkstemp` under `$CODEX_HOME`, "
      "so no such path is ever repo-relative.  Same class as `uc.scheduler.yaml` above: "
      "present at runtime, absent from the repo by design"),
+    # The E2E checklist names files the *executor* must write into an evidence
+    # bundle outside the repo (docs/governance/e2e-checklist.md §1).  They are
+    # deliberately not checked-in paths: the document is an instruction about what
+    # to save, so "this file does not exist" is the expected state, not a defect.
+    ("governance/e2e-checklist.md", "99-verdict.md", 2,
+     "evidence-bundle artifact written outside the repo during E2E execution; the "
+     "checklist names the file the executor must save (its filled-in verdict table), "
+     "not a checked-in path"),
+    ("governance/e2e-checklist.md", "04-trigger/first.json", 1,
+     "evidence-bundle artifact: the first trigger delivery response the executor saves"),
+    ("governance/e2e-checklist.md", "second.json", 1,
+     "evidence-bundle artifact: the duplicate-delivery response the executor saves"),
+    ("governance/e2e-checklist.md", "04-trigger/case.after.json", 1,
+     "evidence-bundle artifact: the wake/resume case snapshot the executor saves"),
+    ("governance/e2e-checklist.md", "05-policy/authorize-denied.json", 1,
+     "evidence-bundle artifact: the denial response the executor saves"),
+    ("governance/e2e-checklist.md", "05-policy/capacity.json", 1,
+     "evidence-bundle artifact: the capacity snapshot the executor saves"),
     ("backend/taskservice-grpc-spec.md", "tui/src/**", 2,
      "deliberately historical section: the Ink/React TUI client was deleted in d7f4631 "
      "(2026-06-25, #157).  This spec's live subject is the TaskService gRPC surface, so the "
