@@ -82,7 +82,7 @@ client ──(submission_id 或派生)──► SubmissionStore::submit_once
 `a_delivered_publication_advances_the_submission_record`（gRPC 边界）、
 `a_crash_between_publish_and_the_record_update_is_confirmed_not_republished`（引擎层）。
 
-`applied` 仍需消费端确认；桥这条路径目前没有回写通道，所以它在桥上是**已知缺口**，不要读成「已应用」。
+`applied` 由消费端**显式回执**：桥上是 `submission.apply`（见 §6），由 orchestrator 在任务创建成功后调用。
 
 ### 4.2 外发箱条目（`OutboxState`，`submission.rs:332-356`）
 
@@ -137,14 +137,20 @@ consumer dedupes」）。执行面目前能提供的最强保证是：`task_id` 
 `TaskStore::submit_task` 是纯 `INSERT`（无 `ON CONFLICT`，`crates/uc-engine/src/task_store.rs:308-325`），
 因此重复投递**不会**产生第二行，但会以存储错误的形式返回。
 
-> **未实现**：把「主键冲突」翻译成「已应用（applied）」的那段消费端逻辑不在本 PR 范围内。
-> 当前 `python/` 里只有请求方引用 `submission_id`（`python/ultimate_coders/governance_client.py`
-> 的 `submit_task`/`get_submission`），`uc.task.submit` 的消费路径尚未按该身份去重。
-> 在此之前，正确性由「派生 id + 主键」保证（不会多一份工作），而 `applied` 状态需要显式回执才会推进。
+**消费端回执已经落地（2026-11-05）**：桥上的 `submission.apply` 接受 `submission_id`（必填）与
+`task_id`（可选，但必须等于派生 id，否则 `task_id_mismatch`），调用者需要 `task_submit`，重复确认幂等；
+Python 侧由 orchestrator 在 `submit_task` 成功后回写（`NatsWorker._confirm_submission_applied`，
+best-effort：任务已经存在，回执失败只丢审计状态，不抛错）。dev 快照给 `agent:uc-worker` 授
+`task_submit`，生产应把同一权限授给真正的消费方身份。测试：
+`the_consumer_can_confirm_a_submission_as_applied`（桥）、
+`test_the_consumer_confirms_applied_through_the_bridge`（Python 线形状）。
+
+仍未实现的是原始注释里的另一半：**把「主键冲突」翻译成 applied**。重复投递时 orchestrator 在本地
+去重处直接返回，不会走到回执；因为 `task_id` 是派生值且 `tasks` 以主键唯一，这在正确性上无害
+（不会多一份工作），只是 `applied` 需要一次成功提交才会被记录。
 
 `mark_applied` 的存在意味着状态推进是**显式**的（`crates/uc-engine/src/governance/submission.rs:191-202`）；
-没有回执时记录停在 `published`，这比假装 `applied` 更诚实——`recover_unfinished` 会继续把它当
-「未完成」处理。
+没有回执时记录停在 `published`，这比假装 `applied` 更诚实。
 
 ## 7. 验收：怎么手工验
 
@@ -163,6 +169,9 @@ consumer dedupes」）。执行面目前能提供的最强保证是：`task_id` 
    `description` 再用同一 id，必须失败而不是新建。
 4. **崩溃演练**（进程级）：在 outbox 条目处于 `in_flight` 时杀掉网关，重启后确认该条目回到
    `pending` 并被重投一次——对应 `outbox.rs:141-160`；重复投递是**预期**结果，不是 bug。
+5. **消费端回执**：以带 `task_submit` 的 principal 向桥发 `submission.apply`（`submission_id` +
+   可选 `task_id`），记录应从 `published` 变成 `applied`；把 `task_id` 换成别的值必须返回
+   `task_id_mismatch`；重复调用保持 `applied`。
 
 ## 8. 未实现 / 有意留空
 

@@ -890,7 +890,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-05: the PR01 state-machine note added two prose path mentions
     # (`server.rs`, the documented `task-submit:` key prefix) that are not
     # references -- mentions are advisory and neither is a `path:line`.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 690
+    assert sum(1 for r in rows if r["kind"] == "mention") == 689
 
 
 def test_real_corpus_has_no_false_content_mismatch():

@@ -41,7 +41,9 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uc_engine::governance::Governance;
-use uc_types::governance::{SubmissionId, SubmissionRecord, SubmissionRequest, SubmitOnceOutcome};
+use uc_types::governance::{
+    Permission, SubmissionId, SubmissionRecord, SubmissionRequest, SubmitOnceOutcome,
+};
 
 use super::{
     approval_service, attention_service, case_service, optional_text, policy_interceptor,
@@ -154,6 +156,23 @@ pub struct SubmissionSubmitInput {
 pub struct SubmissionGetInput {
     #[serde(default)]
     pub submission_id: String,
+}
+
+/// Payload of `submission.apply`.
+///
+/// The consumer's confirmation that the orchestration exists (PR01's `applied`
+/// edge). `task_id` is optional but, when present, must agree with the record's
+/// derived id — a consumer cannot stamp a submission with a task it did not get.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SubmissionApplyInput {
+    #[serde(default)]
+    pub submission_id: String,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub principal_kind: Option<String>,
+    #[serde(default)]
+    pub principal_id: Option<String>,
 }
 
 /// Wire form of a [`SubmissionRecord`].
@@ -348,6 +367,63 @@ async fn confirm_published_submission(governance: &Governance, key: &str, now: D
             "publication delivered but the submission record could not be advanced"
         );
     }
+}
+
+/// Record that the consumer created the orchestration (PR01's `applied` edge).
+///
+/// `submission.submit` publishes at-least-once, so the consumer confirms once its
+/// task exists. Confirming twice is idempotent; nothing is published here. The
+/// caller needs `task_submit`, the same permission that allows creating work —
+/// being on the cluster's NATS bus is not authority to stamp an audit record.
+pub async fn apply_submission(
+    governance: &Governance,
+    input: SubmissionApplyInput,
+) -> OpResult<Option<SubmissionView>> {
+    let now = super::now();
+    let principal = policy_interceptor::resolve_declared_principal(
+        input.principal_kind.as_deref(),
+        input.principal_id.as_deref(),
+    )?;
+    let decision = governance
+        .policy
+        .authorize(&principal, Permission::TaskSubmit, None, now);
+    if decision.is_denied() {
+        return Err(OpError::denied(&decision));
+    }
+    let submission_id = SubmissionId::caller_supplied(&super::required_text(
+        &input.submission_id,
+        "submission_id",
+    )?);
+    let record = governance
+        .submissions
+        .get(&submission_id)
+        .await
+        .map_err(|error| OpError::internal("submission_store_failed", error.to_string()))?;
+    let Some((record, _version)) = record else {
+        return Ok(None);
+    };
+    if let Some(task_id) = optional_text(input.task_id.as_deref()) {
+        if record.task_id != task_id {
+            return Err(OpError::invalid(
+                "task_id_mismatch",
+                format!(
+                    "submission '{}' derives task '{}', not '{}'",
+                    record.submission_id.as_str(),
+                    record.task_id,
+                    task_id
+                ),
+            ));
+        }
+    }
+    if record.state == uc_types::governance::SubmissionState::Applied {
+        return Ok(Some(SubmissionView::from_record(&record)));
+    }
+    let updated = governance
+        .submissions
+        .mark_applied(&submission_id, now)
+        .await
+        .map_err(|error| OpError::internal("submission_store_failed", error.to_string()))?;
+    Ok(updated.as_ref().map(SubmissionView::from_record))
 }
 
 /// Drain due outbox entries onto their subjects.
@@ -678,6 +754,14 @@ async fn dispatch_result(
         "submission.get" => {
             let input: SubmissionGetInput = decode(op, payload)?;
             let submission = get_submission(governance, input).await?;
+            Ok(serde_json::json!({
+                "available": submission.is_some(),
+                "submission": submission.as_ref().map(to_value).transpose()?,
+            }))
+        }
+        "submission.apply" => {
+            let input: SubmissionApplyInput = decode(op, payload)?;
+            let submission = apply_submission(governance, input).await?;
             Ok(serde_json::json!({
                 "available": submission.is_some(),
                 "submission": submission.as_ref().map(to_value).transpose()?,
@@ -1264,6 +1348,105 @@ mod tests {
 
         let _ = OUTBOX_SUBJECT_TASK_SUBMIT;
         let _ = SubmissionStore::task_id_for(&SubmissionId::caller_supplied("key-1"));
+    }
+
+    #[tokio::test]
+    async fn the_consumer_can_confirm_a_submission_as_applied() {
+        use uc_engine::governance::submission::SubmissionStore;
+        use uc_types::governance::{SubmissionId, SubmissionRequest, SubmissionState};
+
+        let governance = plane().await;
+        // The consumer identity needs `task_submit`; the dev snapshot grants it
+        // to `agent:uc-worker`, and a shared deployment grants a real consumer.
+        let snapshot = PolicySnapshot::empty(PolicyVersion::initial())
+            .with_grant(Grant::new(
+                Principal::agent("uc-worker"),
+                vec![Permission::TaskSubmit],
+            ))
+            .expect("an agent may hold task_submit");
+        governance.policy.install(snapshot).await.expect("install");
+
+        let request = SubmissionRequest::new(
+            Principal::user("alice"),
+            "proj",
+            "fix it",
+            Some(SubmissionId::caller_supplied("key-1")),
+        );
+        governance
+            .submissions
+            .submit_once(&request, &governance.outbox, Utc::now())
+            .await
+            .expect("submit");
+        let task_id = SubmissionStore::task_id_for(&SubmissionId::caller_supplied("key-1"));
+
+        let reply = dispatch_op(
+            &governance,
+            "submission.apply",
+            json!({
+                "submission_id": "key-1",
+                "task_id": task_id,
+                "principal_kind": "agent",
+                "principal_id": "uc-worker",
+            }),
+        )
+        .await;
+        assert!(reply.ok, "{reply:?}");
+        let result = reply.result.expect("result present");
+        assert_eq!(result["available"], json!(true));
+        assert_eq!(result["submission"]["state"], json!("applied"));
+
+        let (record, _version) = governance
+            .submissions
+            .get(&SubmissionId::caller_supplied("key-1"))
+            .await
+            .expect("get")
+            .expect("record present");
+        assert_eq!(record.state, SubmissionState::Applied);
+
+        // Re-applying is idempotent: the same consumer may confirm twice.
+        let again = dispatch_op(
+            &governance,
+            "submission.apply",
+            json!({
+                "submission_id": "key-1",
+                "task_id": task_id,
+                "principal_kind": "agent",
+                "principal_id": "uc-worker",
+            }),
+        )
+        .await;
+        assert!(again.ok, "{again:?}");
+
+        // A consumer cannot stamp a submission with a task it did not get.
+        let mismatch = dispatch_op(
+            &governance,
+            "submission.apply",
+            json!({
+                "submission_id": "key-1",
+                "task_id": "sub-deadbeef",
+                "principal_kind": "agent",
+                "principal_id": "uc-worker",
+            }),
+        )
+        .await;
+        assert!(!mismatch.ok);
+        assert_eq!(
+            mismatch.error.expect("error present").code,
+            "task_id_mismatch"
+        );
+
+        // Being on the bus is not authority: without `task_submit` it is refused.
+        let denied = dispatch_op(
+            &governance,
+            "submission.apply",
+            json!({"submission_id": "key-1", "principal_kind": "service", "principal_id": "dashboard"}),
+        )
+        .await;
+        assert!(!denied.ok);
+        assert_eq!(
+            denied.error.expect("error present").code,
+            "missing_permission"
+        );
     }
 
     #[tokio::test]

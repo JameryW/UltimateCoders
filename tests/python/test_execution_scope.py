@@ -54,6 +54,9 @@ def _make_handle_submit_worker() -> MagicMock:
     worker._state_store = AsyncMock(return_value=RuntimeState(database_url=""))
     worker._orchestrator = _make_orchestrator()
     worker._cancelled_task_ids = set()
+    # PR01 `applied`: the handler awaits this collaborator, so a bare MagicMock
+    # would return a non-awaitable and abort the submit path.
+    worker._confirm_submission_applied = AsyncMock(return_value=None)
 
     def _consume_bg(coro):
         coro.close()
