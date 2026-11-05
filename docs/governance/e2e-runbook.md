@@ -316,6 +316,9 @@ export UC_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/uc
 `durable=false`，且提交/case/审批**全部消失**。这不是失败，而是「非持久化被诚实标记」的证据——把两边的
 `durable` 与数据是否保留一起记录，才说明持久化开关真的起作用。
 
+**崩溃窗口也要测**：重启只是「有序停机」；真正决定恢复语义的是进程被 SIGKILL 的时刻。两个窗口各测一次
+（publish 后 / claim 后），预期分别是「不重复」与「带同一 task_id 的一次补投」。步骤与实测结果见 §10。
+
 ---
 
 ## 8. 清理
@@ -382,6 +385,17 @@ docker compose -f docker/docker-compose.yml --profile worker down
   （含 `?state=approved`）返回 200 + `text/csv`；`POST /api/triggers/ingest` 返回 202；
   `/dashboard/api/workers` 返回 200（gRPC 侧的实时 worker 列表）。所有 `/api/*` 治理调用都走
   `uc.governance.request` 这条 NATS 桥，没有另开直连 gRPC 客户端的旁路。
+
+- **崩溃恢复（2026-11-05，postgres + 真 NATS + SIGKILL，无消费者）**：验证「不丢 + 不重复创建 task」。
+  用了两个窗口，各自的结果都记录在案：
+  1. **SIGKILL 落在 publish 之后、状态落库之前**（真实撞到）：重启日志
+     `Recovered unfinished submissions (same derived task ids) requeued=1 already_applied=0 failed=0`，
+     `uc.task.submit` 上该提交**只出现 1 次**（同一个 task_id）——不重复；
+  2. **SIGKILL 落在 claim→publish 之间**（把 outbox 记录置为 `in_flight` 后重启，使这个窗口可复现）：
+     重启日志出现 `Re-queued in-flight outbox entries after restart` 与 `outbox drain pass delivered=1`，
+     `uc.task.submit` 上出现**第 2 次**投递，但**task_id 相同**（at-least-once 补投，消费端按 task_id 去重），
+     outbox 回到 `delivered`——不丢。
+  两条合起来就是 PR01 的恢复语义：崩溃只会造成一次带稳定去重键的重投，不会产生第二个 task。
 
 未执行：§8 的容器清理（需要 Docker）。
 
