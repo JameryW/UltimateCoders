@@ -3,9 +3,9 @@
 > **状态说明（诚实，2026-11-04 更新）**：这份手册最初写于一台没有 Docker / NATS / psql 的机器上。
 > 之后在本机（Windows + 仓库自带的本地 NATS）用**当次源码构建的网关**执行了不需要 Docker 的那部分，
 > 并据此修正了本节若干条错误（见文末 §10“本机执行记录”）。2026-11-05 又补齐了 worker 注册、postgres 重启
-> 持久化，以及 `scale_workers` 动作路径上的审批消费（后者同时修掉了 §10.1 记录的闸口缺口）。
-> **仍未执行**的只剩 Dashboard HTTP 面（需要 uvicorn）。请把状态说明当作“哪部分有证据、哪部分没有”的清单，
-> 而不是“都跑过了”。
+> 持久化，以及 `scale_workers` 动作路径上的审批消费（后者同时修掉了 §10.1 记录的闸口缺口）；同日还实测了
+> Dashboard HTTP 面（uvicorn + 真实 NATS 桥）。**仍未执行**的只剩 §8 的容器清理（需要 Docker）。请把状态说明
+> 当作“哪部分有证据、哪部分没有”的清单，而不是“都跑过了”。
  > 每条都标注了**失败时最可能的原因**，因为 E2E 的失败很少是「代码错了」。
 >
 > 执行时记录什么、证据怎么存、结论回填到哪：见 [e2e-checklist.md](e2e-checklist.md)（可直接转交给执行者）。
@@ -374,7 +374,16 @@ docker compose -f docker/docker-compose.yml --profile worker down
   found`），`approval.list?state=used` 出现 `used_at`；第二次立即 `PermissionDenied:
   tool_requires_human_approval: …`。全程不依赖 Docker。
 
-未执行：Dashboard HTTP 面（需要 uvicorn）。
+- **Dashboard HTTP 面（2026-11-05）**：`python -m ultimate_coders.dashboard --host 127.0.0.1 --port 8099`
+  （NATS 已连、网关用 memory 后端）后逐一实测：`/dashboard/api/health` 200（`status=degraded` 是内存回退，
+  符合预期）、`/api/capacity` 200（`worker_slots_total=12`，来自实时注册表）、`/api/attention`、`/api/cases`、
+  `/api/approvals` 均 200；`POST /api/approvals`（agent 身份）→ pending，随后
+  `POST /api/approvals/{id}/decide` → approved（`decided_by_id=operator`）；`/api/approvals/export.csv`
+  （含 `?state=approved`）返回 200 + `text/csv`；`POST /api/triggers/ingest` 返回 202；
+  `/dashboard/api/workers` 返回 200（gRPC 侧的实时 worker 列表）。所有 `/api/*` 治理调用都走
+  `uc.governance.request` 这条 NATS 桥，没有另开直连 gRPC 客户端的旁路。
+
+未执行：§8 的容器清理（需要 Docker）。
 
 ### 10.1 执行时发现的一个治理面差异（2026-11-05 已修复）
 
