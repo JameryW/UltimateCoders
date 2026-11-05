@@ -54,6 +54,9 @@ jobs:
           PATH="$PWD/../../dashboard/node_modules/.bin:$PATH" buf generate
       - name: Generated stubs are current
         run: |
+          # This job's working directory is `dashboard`; git pathspecs are
+          # relative to it, so step out before naming repo-root paths.
+          cd ..
           changed=$(git status --porcelain -- dashboard/src/grpc packages/uc-orchestrator/src/grpc)
           if [ -n "$changed" ]; then
             echo "$changed"
