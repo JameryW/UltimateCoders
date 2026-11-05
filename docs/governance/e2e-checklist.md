@@ -61,9 +61,11 @@ uc-e2e-2026-11-04/
       `policy.current` **不是**桥 op（用它测会得到 `unknown_op`）。若 `capacity.get` 仍报 `unknown_op`，
       先确认网关是当次源码构建的二进制，**否则后续全部不用测**。证据：`02-bridge/`。验收：可验证
 - [ ] **S3 提交一次**（§3）— 同一 `submission_id` 两次提交返回**相同** `task_id`，第二次
-      `dedup_replayed: true`；改用不同内容复用同一 id 时被拒。**另做一次 SIGKILL 崩溃测试**（publish 后
-      与 claim 后各一次，预期分别是「不重复」和「同一 task_id 的一次补投」，见 runbook §10）。
-      证据：`03-submit/`、`10-crash/`。验收：不重复 + 可恢复
+      `dedup_replayed: true`；改用不同内容复用同一 id 时被拒；drain 之后 `submission.get` 应显示
+      `state=published` 且 `publish_attempts≥1`（桥接提交路径曾经永远停在 `received`）。**另做一次
+      SIGKILL 崩溃测试**（publish 后与 claim 后各一次，预期分别是「不重复/不重投」和「同一 task_id 的
+      一次补投」，见 runbook §10）。证据：`03-submit/`、`10-crash/`、`11-state/`。
+      验收：不重复 + 可恢复
 - [ ] **S4 触发去重**（§4）— 同一事件投两次：`dedup_key` 相同、第二次 `duplicate: true`，且不产生第二个 case。
       证据：`04-trigger/first.json`、`second.json`。验收：不重复
 - [ ] **S5 唤醒 + 恢复**（§4 后半）— 停在 `waiting_event` 且订阅 `auto_resume: true` 的 case，在投递新事件后

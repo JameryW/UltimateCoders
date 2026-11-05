@@ -327,6 +327,29 @@ pub async fn get_submission(
         .map(|(record, _version)| SubmissionView::from_record(&record)))
 }
 
+/// Advance the submission record for a delivered publication key.
+///
+/// A delivery that already succeeded must not be republished, and the record has
+/// to say so: `published` is the audit answer to "did the transport take it?".
+/// Non-submission keys (the outbox is shared with other planes) are ignored.
+async fn confirm_published_submission(governance: &Governance, key: &str, now: DateTime<Utc>) {
+    let Some(submission_id) = uc_engine::governance::submission::submission_id_from_outbox_key(key)
+    else {
+        return;
+    };
+    if let Err(error) = governance
+        .submissions
+        .mark_published(&submission_id, now)
+        .await
+    {
+        tracing::warn!(
+            error = %error,
+            submission_id = %submission_id.as_str(),
+            "publication delivered but the submission record could not be advanced"
+        );
+    }
+}
+
 /// Drain due outbox entries onto their subjects.
 ///
 /// This is the single publication path for the submit plane: `submit_once` writes
@@ -366,6 +389,12 @@ pub async fn drain_outbox(
                     );
                 } else {
                     summary.delivered += 1;
+                    // The publication left the gateway, so the submission record
+                    // can claim `published` (the state machine's "transport 接手"
+                    // edge). Without this the bridge path -- the only submit path --
+                    // stayed `received` forever, and a SIGKILL between the publish
+                    // and the record write left it that way even after recovery.
+                    confirm_published_submission(governance, &entry.key, now).await;
                 }
             }
             Err(error) => {
@@ -1173,6 +1202,68 @@ mod tests {
             "principal_kind": "service",
             "principal_id": "dashboard",
         })
+    }
+
+    #[tokio::test]
+    async fn a_delivered_publication_advances_the_submission_record() {
+        use uc_engine::governance::submission::{
+            outbox_key, SubmissionStore, OUTBOX_SUBJECT_TASK_SUBMIT,
+        };
+        use uc_types::governance::{SubmissionId, SubmissionRequest, SubmissionState};
+
+        let governance = plane().await;
+        let request = SubmissionRequest::new(
+            Principal::user("alice"),
+            "proj",
+            "fix it",
+            Some(SubmissionId::caller_supplied("key-1")),
+        );
+        governance
+            .submissions
+            .submit_once(&request, &governance.outbox, Utc::now())
+            .await
+            .expect("submit");
+        let key = outbox_key(&SubmissionId::caller_supplied("key-1"));
+        assert_eq!(
+            governance
+                .outbox
+                .claim_due(Utc::now(), 10)
+                .await
+                .expect("claim")
+                .len(),
+            1
+        );
+        governance
+            .outbox
+            .mark_delivered(&key, Utc::now())
+            .await
+            .expect("delivered");
+
+        confirm_published_submission(&governance, &key, Utc::now()).await;
+
+        let (record, _version) = governance
+            .submissions
+            .get(&SubmissionId::caller_supplied("key-1"))
+            .await
+            .expect("get")
+            .expect("record present");
+        assert_eq!(record.state, SubmissionState::Published);
+        assert_eq!(record.publish_attempts, 1);
+
+        // Keys from other planes are ignored, and confirming twice is harmless.
+        confirm_published_submission(&governance, "attention:expiry:1", Utc::now()).await;
+        confirm_published_submission(&governance, &key, Utc::now()).await;
+        let (again, _version) = governance
+            .submissions
+            .get(&SubmissionId::caller_supplied("key-1"))
+            .await
+            .expect("get")
+            .expect("record present");
+        assert_eq!(again.state, SubmissionState::Published);
+        assert_eq!(again.publish_attempts, 2);
+
+        let _ = OUTBOX_SUBJECT_TASK_SUBMIT;
+        let _ = SubmissionStore::task_id_for(&SubmissionId::caller_supplied("key-1"));
     }
 
     #[tokio::test]
