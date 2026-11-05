@@ -246,6 +246,9 @@ class TestHandleSubmitScheduledFlag:
 
         worker._state_store = AsyncMock(return_value=RuntimeState(database_url=""))
         worker._orchestrator = _make_orchestrator()
+        # PR01 `applied`: the handler awaits this collaborator; a bare MagicMock
+        # would return a non-awaitable and abort the submit path.
+        worker._confirm_submission_applied = AsyncMock(return_value=None)
 
         # _spawn_bg receives a coroutine; close it to avoid "never awaited"
         # warnings while still tracking call counts via the mock.
