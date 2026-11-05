@@ -145,6 +145,28 @@ class GovernanceClient:
     async def get_submission(self, submission_id: str) -> dict[str, Any]:
         return await self.call("submission.get", {"submission_id": submission_id})
 
+    async def apply_submission(
+        self,
+        submission_id: str,
+        task_id: str | None = None,
+        *,
+        principal: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Record that the orchestration exists (PR01's ``applied`` edge).
+
+        Called by the consumer (the orchestrator) once its task was created. The
+        gateway refuses the call without ``task_submit``, so ``principal`` names
+        the consumer identity (``{"principal_kind": "agent", "principal_id":
+        "uc-worker"}``); omit it only in tests that run against a permissive
+        snapshot.
+        """
+        payload: dict[str, Any] = {"submission_id": submission_id}
+        if task_id:
+            payload["task_id"] = task_id
+        if principal:
+            payload.update(principal)
+        return await self.call("submission.apply", payload)
+
     # ── cases + mandates (PR02) ───────────────────────────────────────
 
     async def create_case(self, **payload: Any) -> dict[str, Any]:

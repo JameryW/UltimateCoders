@@ -150,7 +150,7 @@
 
 | 空白 | 现状 | 原因 |
 | --- | --- | --- |
-| gRPC 服务与 NATS 桥的 Rust 侧实现 | **已落地**：`crates/uc-grpc/proto/engine.proto` 的 `CaseService`/`TriggerService`/`AttentionService`/`ProactiveService`/`ApprovalService`，对应实现 `crates/uc-grpc/src/governance/*.rs`，NATS 请求/回复桥（30 个 op）+ outbox 分发器 `bridge.rs`，网关接线 `GrpcServer::with_governance` / `into_governance_services` 与启动引导 `crates/uc-grpc-server/src/governance_boot.rs`。Python 端请求方为 `python/ultimate_coders/governance_client.py` | **以 proto 为权威**；桥接只镜像同一批 op（一份实现，两种传输） |
+| gRPC 服务与 NATS 桥的 Rust 侧实现 | **已落地**：`crates/uc-grpc/proto/engine.proto` 的 `CaseService`/`TriggerService`/`AttentionService`/`ProactiveService`/`ApprovalService`，对应实现 `crates/uc-grpc/src/governance/*.rs`，NATS 请求/回复桥（31 个 op）+ outbox 分发器 `bridge.rs`，网关接线 `GrpcServer::with_governance` / `into_governance_services` 与启动引导 `crates/uc-grpc-server/src/governance_boot.rs`。Python 端请求方为 `python/ultimate_coders/governance_client.py` | **以 proto 为权威**；桥接只镜像同一批 op（一份实现，两种传输） |
 | Graph-backed fencing 纳入治理 | 未纳入。`WorkCase` 明确不存 DAG | 执行面租约/fencing 已有独立设计（见 `docs/architecture.md` 的 Durable Runtime 一节），治理层重复实现会产生第二权威 |
 | 消费端去重（`uc.task.submit` 订阅方） | **已落地**：`python/ultimate_coders/submission_dedup.py`（`(submission_id, task_id)` 持久记录 + `observe`/`mark_applied`）接入 `nats_worker._handle_submit`；重复投递被丢弃并回 `duplicate:true`，崩溃在 `observe` 与 `mark_applied` 之间时**重放而不是丢弃**。执行面 `TaskStore` 仍是主键兜底 | 归执行面改造；治理层只保证**身份稳定**并把 `submission_id`/`task_id` 放进 payload |
 | 审计导出的调度化 | 导出与面板都已落地（`approval.request/list/decide`、`POST /api/approvals`、`/api/approvals`、仪表盘「审批」视图 `#/dashboard/approvals`、`/api/approvals/export.csv` 分页 + 截断标记 + 公式中和）；没有的是「定期自动导出并归档」 | 归档节奏是部署策略（cron / 对象存储），治理层只保证数据能完整取出 （测试：`test_export_walks_the_gateway_pages_until_a_short_one`） |

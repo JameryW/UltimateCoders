@@ -272,8 +272,8 @@ def test_real_repo_is_reconciled() -> None:
         # Governance plane (PR01–PR06): uc-types/uc-engine/uc-grpc governance
         # modules, gRPC services + integration test, gateway boot helper, Python
         # trigger/attention/proactive packages, dashboard routers + panel, docs.
-        # The E2E acceptance checklist adds one text file.
-        (2363, 2354),
+        # The PR01 consumer-confirmation test adds one text file.
+        (2364, 2355),
         (1892, 1883),
         (1900, 1891),
         (1907, 1898),

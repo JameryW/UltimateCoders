@@ -399,6 +399,10 @@ docker compose -f docker/docker-compose.yml --profile worker down
      outbox 回到 `delivered`——不丢。
   两条合起来就是 PR01 的恢复语义：崩溃只会造成一次带稳定去重键的重投，不会产生第二个 task。
 
+- **PR01 消费端回执（2026-11-05）**：提交并等 drain 后记录是 `published` / `publish_attempts=1`；以
+  `agent:uc-worker` 调用 `submission.apply`（带 `task_id`）→ `applied`；同一调用再发一次仍 `applied`；
+  把 `task_id` 换成别的值 → `task_id_mismatch`；换个没有 `task_submit` 的 agent → `missing_permission`。
+
 未执行：§8 的容器清理（需要 Docker）。
 
 ### 10.1 执行时发现的一个治理面差异（2026-11-05 已修复）

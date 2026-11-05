@@ -1881,6 +1881,48 @@ class NatsWorker:
         if node_keys:
             self._cancel_node_executions(task_id, [k[1] for k in node_keys])
 
+    def _governance_client(self) -> object | None:
+        """A bridge client over this worker's NATS connection, or None.
+
+        Created lazily so a worker without a NATS connection (unit tests, the
+        legacy local mode) never constructs one.
+        """
+        nc = getattr(self, "_nc", None)
+        if nc is None:
+            return None
+        from ultimate_coders.governance_client import GovernanceClient
+
+        return GovernanceClient(nc)
+
+    async def _confirm_submission_applied(
+        self, submission_id: str, task_id: str
+    ) -> None:
+        """Best-effort PR01 ``applied`` confirmation to the gateway.
+
+        The task already exists, so a failure here costs audit state only — it is
+        logged, never raised, for the same reason the dedup record is.
+        """
+        if not submission_id or not task_id:
+            return
+        client = self._governance_client()
+        if client is None:
+            return
+        principal = {
+            "principal_kind": os.environ.get("UC_WORKER_PRINCIPAL_KIND", "agent"),
+            "principal_id": os.environ.get("UC_WORKER_PRINCIPAL_ID", "uc-worker"),
+        }
+        try:
+            await client.apply_submission(  # type: ignore[attr-defined]
+                submission_id, task_id, principal=principal
+            )
+        except Exception:
+            logger.warning(
+                "Could not confirm submission %s as applied (task_id=%s)",
+                submission_id,
+                task_id,
+                exc_info=True,
+            )
+
     async def _handle_submit(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
         """Handle a ``uc.task.submit`` message.
 
@@ -1998,6 +2040,11 @@ class NatsWorker:
                         task_id,
                         exc_info=True,
                     )
+
+            # PR01 `applied`: the governance plane cannot see the local dedup
+            # store, so the consumer is the only one who can say "the
+            # orchestration exists". Without this the record stays `published`.
+            await self._confirm_submission_applied(submission_id, task.id)
 
             # A cancel event can arrive while LLM decomposition is in flight,
             # before submit_task has inserted the task in the Orchestrator.

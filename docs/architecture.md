@@ -62,7 +62,7 @@ A governance layer modelled on the DeepSeek Engineering Agent OS design sits **b
 
 | Layer | Entities | Durability | Status | Documentation |
 | --- | --- | --- | --- | --- |
-| Governance | submission/outbox, WorkCase/CaseRun, mandate/policy, approval permits, trigger inbox, attention items, proactive proposals + watchdog decisions | namespaced JSON documents with a CAS version in one `governance_records` table (in-memory or PostgreSQL) | landed end to end: types + stores + five gRPC services (`Case` / `Trigger` / `Attention` / `Proactive` / `Approval`) + NATS JSON bridge (30 ops) + gateway boot (`crates/uc-grpc-server/src/governance_boot.rs`) + Python dashboard projections; the proto is the authoritative contract | [docs/governance](governance/README.md) |
+| Governance | submission/outbox, WorkCase/CaseRun, mandate/policy, approval permits, trigger inbox, attention items, proactive proposals + watchdog decisions | namespaced JSON documents with a CAS version in one `governance_records` table (in-memory or PostgreSQL) | landed end to end: types + stores + five gRPC services (`Case` / `Trigger` / `Attention` / `Proactive` / `Approval`) + NATS JSON bridge (31 ops) + gateway boot (`crates/uc-grpc-server/src/governance_boot.rs`) + Python dashboard projections; the proto is the authoritative contract | [docs/governance](governance/README.md) |
 
 The plane closes three loops that used to be open, each **inside** the existing execution path (no second scheduler, no rewritten DAG):
 

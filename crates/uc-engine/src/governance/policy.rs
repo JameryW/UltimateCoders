@@ -628,6 +628,18 @@ impl PolicyEngine {
             uc_types::governance::Permission::ProactivePropose,
             uc_types::governance::Permission::ProactiveExecute,
         ];
+        // PR01's consumer confirmation: the orchestrator (docs: `agent:uc-worker`)
+        // must be able to report "the orchestration exists". Development only —
+        // a shared deployment grants this to a real consumer identity instead.
+        if let Ok(next) = snapshot
+            .clone()
+            .with_grant(uc_types::governance::Grant::new(
+                Principal::agent("uc-worker"),
+                vec![uc_types::governance::Permission::TaskSubmit],
+            ))
+        {
+            snapshot = next;
+        }
         for principal in [
             Principal::service("dashboard"),
             Principal::user("dashboard"),
@@ -719,6 +731,29 @@ mod tests {
             mandates,
             PolicyEngine::development_snapshot("alice"),
         )
+    }
+
+    #[test]
+    fn the_dev_snapshot_grants_the_consumer_task_submit_but_not_worker_scale() {
+        // PR01's consumer confirmation needs `task_submit`; giving it to the
+        // orchestrator identity must not widen the structural ceiling.
+        let snapshot = PolicyEngine::development_snapshot("operator");
+        let consumer = Principal::agent("uc-worker");
+        assert!(snapshot
+            .evaluate(&consumer, Permission::TaskSubmit, None, now())
+            .is_allowed());
+        assert!(snapshot
+            .evaluate(&consumer, Permission::WorkerScale, None, now())
+            .is_denied());
+        // The operator still holds everything the dev bootstrap promises.
+        assert!(snapshot
+            .evaluate(
+                &Principal::user("operator"),
+                Permission::WorkerScale,
+                None,
+                now()
+            )
+            .is_allowed());
     }
 
     #[tokio::test]
