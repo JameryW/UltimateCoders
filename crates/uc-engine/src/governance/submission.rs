@@ -17,7 +17,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
 use uc_types::governance::{
-    derive_task_id, OutboxEntry, SubmissionId, SubmissionRecord, SubmissionRequest,
+    derive_task_id, OutboxEntry, OutboxState, SubmissionId, SubmissionRecord, SubmissionRequest,
     SubmissionState, SubmitOnceOutcome, SUBMISSION_NAMESPACE,
 };
 
@@ -56,8 +56,13 @@ impl std::error::Error for SubmissionError {}
 pub struct SubmissionRecovery {
     /// Records that were re-queued in the outbox (transport never confirmed).
     pub requeued: usize,
+    /// Records whose publication the outbox already confirms but whose state
+    /// write the crash lost — reconciled to `published` without republishing.
+    pub confirmed: usize,
     /// Records found already applied — nothing to do.
     pub already_applied: usize,
+    /// Records already `published` with a delivered entry — settled.
+    pub already_published: usize,
     /// Records parked as failed; recovery cannot help them.
     pub failed: usize,
     /// Task ids touched, for logging.
@@ -272,6 +277,35 @@ impl SubmissionStore {
                     summary.failed += 1;
                 }
                 SubmissionState::Received | SubmissionState::Published => {
+                    let key = outbox_key(&record.submission_id);
+                    let delivered = match outbox.get(&key).await {
+                        Ok(Some(entry)) => matches!(entry.state, OutboxState::Delivered),
+                        Ok(None) => false,
+                        Err(error) => {
+                            tracing::warn!(
+                                submission_id = %record.submission_id,
+                                error = %error,
+                                "outbox lookup failed during recovery; assuming not delivered"
+                            );
+                            false
+                        }
+                    };
+                    if delivered {
+                        // The publication left the gateway and only the record write
+                        // was lost to the crash. Confirming is the honest repair:
+                        // re-queueing a delivered entry is a no-op, so it would
+                        // report the crash as "requeued" while leaving the state
+                        // machine behind reality (the shell of a bug the local
+                        // SIGKILL run surfaced).
+                        if record.state == SubmissionState::Published {
+                            summary.already_published += 1;
+                        } else {
+                            self.mark_published(&record.submission_id, now).await?;
+                            summary.confirmed += 1;
+                        }
+                        summary.task_ids.push(record.task_id.clone());
+                        continue;
+                    }
                     let payload = serde_json::json!({
                         "task_id": record.task_id,
                         "project_id": record.project_id,
@@ -279,12 +313,8 @@ impl SubmissionStore {
                         "case_id": record.case_id,
                         "recovered": true,
                     });
-                    let entry = OutboxEntry::new(
-                        outbox_key(&record.submission_id),
-                        OUTBOX_SUBJECT_TASK_SUBMIT,
-                        payload.to_string(),
-                        now,
-                    );
+                    let entry =
+                        OutboxEntry::new(key, OUTBOX_SUBJECT_TASK_SUBMIT, payload.to_string(), now);
                     match outbox.enqueue(&entry).await {
                         Ok(_) => {
                             summary.requeued += 1;
@@ -319,6 +349,17 @@ pub fn outbox_key(submission_id: &SubmissionId) -> String {
 /// recovery/observability code list just the submission publications.
 pub fn submission_outbox_prefix() -> &'static str {
     "task-submit:"
+}
+
+/// The submission a publication key names, or `None` for any other key.
+///
+/// The dispatcher uses this to advance the submission record to `published` after
+/// a successful publish, so the inverse of [`outbox_key`] lives next to it rather
+/// than being re-derived by string slicing.
+pub fn submission_id_from_outbox_key(key: &str) -> Option<SubmissionId> {
+    key.strip_prefix(submission_outbox_prefix())
+        .filter(|rest| !rest.is_empty())
+        .map(SubmissionId::caller_supplied)
 }
 
 /// Transport subject for submission publications. Kept here so the store, the
@@ -456,6 +497,95 @@ mod tests {
             replay.record().map(|record| record.task_id.clone()),
             Some(record.task_id)
         );
+    }
+
+    #[tokio::test]
+    async fn a_crash_between_publish_and_the_record_update_is_confirmed_not_republished() {
+        // The SIGKILL run that motivated this: the outbox says delivered, the
+        // submission record still says received. Re-queueing a delivered entry is
+        // a no-op, so recovery used to report "requeued" while leaving the state
+        // machine behind reality. It must confirm the publication instead.
+        let fixture = fixture();
+        let request = request("key-1", "fix it");
+        let record = SubmissionRecord::new(&request, now());
+        fixture
+            .submissions
+            .view
+            .put("key-1", &record, Some(0))
+            .await
+            .expect("record");
+        let key = outbox_key(&record.submission_id);
+        let entry = OutboxEntry::new(key.clone(), OUTBOX_SUBJECT_TASK_SUBMIT, "{}", now());
+        fixture.outbox.enqueue(&entry).await.expect("entry");
+        assert_eq!(fixture.outbox.claim_due(now(), 10).await.unwrap().len(), 1);
+        fixture
+            .outbox
+            .mark_delivered(&key, now())
+            .await
+            .expect("delivered");
+
+        let summary = fixture
+            .submissions
+            .recover_unfinished(&fixture.outbox, now(), 100)
+            .await
+            .expect("recover");
+        assert_eq!(summary.confirmed, 1, "{summary:?}");
+        assert_eq!(summary.requeued, 0, "{summary:?}");
+
+        let (stored, _version) = fixture
+            .submissions
+            .get(&record.submission_id)
+            .await
+            .expect("get")
+            .expect("record present");
+        assert_eq!(stored.state, SubmissionState::Published);
+        assert_eq!(stored.publish_attempts, 1);
+
+        // The delivered entry was neither resurrected nor duplicated.
+        let entries = fixture.outbox.list(10).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0.state, OutboxState::Delivered);
+    }
+
+    #[tokio::test]
+    async fn a_published_record_with_a_delivered_entry_is_settled() {
+        let fixture = fixture();
+        fixture
+            .submissions
+            .submit_once(&request("key-1", "fix it"), &fixture.outbox, now())
+            .await
+            .unwrap();
+        let id = SubmissionId::caller_supplied("key-1");
+        fixture
+            .submissions
+            .mark_published(&id, now())
+            .await
+            .expect("published");
+        let key = outbox_key(&id);
+        assert_eq!(fixture.outbox.claim_due(now(), 10).await.unwrap().len(), 1);
+        fixture
+            .outbox
+            .mark_delivered(&key, now())
+            .await
+            .expect("delivered");
+
+        let summary = fixture
+            .submissions
+            .recover_unfinished(&fixture.outbox, now(), 100)
+            .await
+            .expect("recover");
+        assert_eq!(summary.already_published, 1, "{summary:?}");
+        assert_eq!(summary.requeued, 0, "{summary:?}");
+        assert_eq!(summary.confirmed, 0, "{summary:?}");
+    }
+
+    #[test]
+    fn the_outbox_key_parser_inverts_the_builder() {
+        let id = SubmissionId::caller_supplied("key-1");
+        assert_eq!(submission_id_from_outbox_key(&outbox_key(&id)), Some(id));
+        // Other planes share the outbox namespace, and an empty tail is not a key.
+        assert_eq!(submission_id_from_outbox_key("approval:expiry:1"), None);
+        assert_eq!(submission_id_from_outbox_key("task-submit:"), None);
     }
 
     #[tokio::test]

@@ -389,8 +389,10 @@ docker compose -f docker/docker-compose.yml --profile worker down
 - **崩溃恢复（2026-11-05，postgres + 真 NATS + SIGKILL，无消费者）**：验证「不丢 + 不重复创建 task」。
   用了两个窗口，各自的结果都记录在案：
   1. **SIGKILL 落在 publish 之后、状态落库之前**（真实撞到）：重启日志
-     `Recovered unfinished submissions (same derived task ids) requeued=1 already_applied=0 failed=0`，
-     `uc.task.submit` 上该提交**只出现 1 次**（同一个 task_id）——不重复；
+     `Recovered unfinished submissions (same derived task ids) requeued=0 confirmed=1 already_applied=0
+     already_published=1 failed=0`，记录从 `received` 被**确认**成 `published`，`uc.task.submit` 上该提交
+     **只出现 1 次**（同一个 task_id）——不重复，也不重投（此前这条只会被算作 `requeued` 且记录停在
+     `received`，修复见 `pr01-submit-once.md` §4.1）；
   2. **SIGKILL 落在 claim→publish 之间**（把 outbox 记录置为 `in_flight` 后重启，使这个窗口可复现）：
      重启日志出现 `Re-queued in-flight outbox entries after restart` 与 `outbox drain pass delivered=1`，
      `uc.task.submit` 上出现**第 2 次**投递，但**task_id 相同**（at-least-once 补投，消费端按 task_id 去重），

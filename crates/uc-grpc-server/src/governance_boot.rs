@@ -141,9 +141,11 @@ pub async fn recover(governance: &Governance) {
         .recover_unfinished(&governance.outbox, now, 500)
         .await
     {
-        Ok(summary) if summary.requeued > 0 => tracing::info!(
+        Ok(summary) if summary.requeued > 0 || summary.confirmed > 0 => tracing::info!(
             requeued = summary.requeued,
+            confirmed = summary.confirmed,
             already_applied = summary.already_applied,
+            already_published = summary.already_published,
             failed = summary.failed,
             "Recovered unfinished submissions (same derived task ids)"
         ),

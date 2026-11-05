@@ -73,6 +73,17 @@ client ──(submission_id 或派生)──► SubmissionStore::submit_once
 `is_terminal()` = `applied | failed | abandoned`（`submission.rs:172-177`）。
 `failed` 明确「永不静默重试」——重试耗尽必须被人看见。
 
+**谁把 `received` 推到 `published`**（2026-11-05 修正）：外发箱派发路径（`drain_outbox`）在
+`mark_delivered` 成功后就地确认提交记录（`confirm_published_submission` → `mark_published`），
+用 `outbox_key` 的反解 `submission_id_from_outbox_key` 只认 `task-submit:` 前缀，别的平面共用外发箱
+命名空间也不会被误改。此前只有 gRPC 提交路径（`server.rs`）会声明 `published`，而 NATS 桥的
+`submission.submit` 是唯一真实入口，于是 `submission.get` 永远停在 `received`、`publish_attempts` 恒为 0，
+本地实测（提交后 4 秒查）坐实了这一点。测试：
+`a_delivered_publication_advances_the_submission_record`（gRPC 边界）、
+`a_crash_between_publish_and_the_record_update_is_confirmed_not_republished`（引擎层）。
+
+`applied` 仍需消费端确认；桥这条路径目前没有回写通道，所以它在桥上是**已知缺口**，不要读成「已应用」。
+
 ### 4.2 外发箱条目（`OutboxState`，`submission.rs:332-356`）
 
 ```
@@ -98,6 +109,7 @@ pending ──────────► in_flight ─────────�
 | 写完记录、未写 outbox | `received`，无 outbox 条目 | 启动时 `recover_unfinished` 读到 `received`，用**同一个** task id 补排队 | 不丢，不重复 | `submission.rs:248-300`；测试 `crash_between_record_and_outbox_is_recovered_with_the_same_task_id` |
 | 已写 outbox、投递中被杀 | 条目 `in_flight` | `OutboxQueue::recover()` 把 `in_flight` 置回 `pending` 并立即到期 | 可能重复投递（设计上接受） | `outbox.rs:141-160`；测试 `in_flight_entry_is_recovered_after_crash`、`recover_requeues_entries_orphaned_in_flight` |
 | 已投递、未 mark_delivered | 记录 `received`/`published`；条目 `delivered` | 记录被重投一次；消费端幂等吸收 | 至多一次重复投递 | 上两行合并；`recover_unfinished` 只处理 `received`/`published` |
+| 已 mark_delivered、记录仍 `received` | 条目 `delivered`，记录 `received` | 恢复扫描发现已投递就**确认**成 `published`（`confirmed`），不再重投 | 不丢、不重投；记录追上事实 | `recover_unfinished` 的 `delivered` 分支；测试 `a_crash_between_publish_and_the_record_update_is_confirmed_not_republished`；本机实测日志 `requeued=0 confirmed=1` |
 | 重复投递（同 key 两条） | outbox key 相同 → 第二次 enqueue no-op | 无 | 不产生第二个 task | `outbox_key()` = `task-submit:<submission_id>`（`submission.rs:308-311`） |
 | 复用 `submission_id` 但内容不同 | 既有记录摘要 ≠ 请求摘要 | 返回 `Conflict{submission_id, existing_digest, requested_digest}`，**不创建任何东西** | 显式冲突，不静默重放 | `crates/uc-engine/src/governance/submission.rs:117-124`；测试 `same_key_different_content_is_rejected_as_conflict`、`same_id_different_content_is_a_conflict_shape` |
 | 投递连续失败 12 次 | 条目 `dead` | `dead_letters(limit)` 供运维取出 | 停在 `dead`，不无限转 | `outbox.rs:162-170`；测试 `failing_publishes_back_off_then_dead_letter` |
