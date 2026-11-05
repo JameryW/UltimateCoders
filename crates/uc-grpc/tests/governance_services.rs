@@ -22,6 +22,7 @@ use tonic::Request;
 use uc_engine::governance::Governance;
 use uc_engine::LocalEngine;
 use uc_grpc::server::GrpcServer;
+use uc_grpc::ultimate_coders::approval_service_server::ApprovalService;
 use uc_grpc::ultimate_coders::attention_service_server::AttentionService;
 use uc_grpc::ultimate_coders::case_service_server::CaseService;
 use uc_grpc::ultimate_coders::proactive_service_server::ProactiveService;
@@ -149,6 +150,7 @@ async fn scale_workers_is_denied_for_a_service_principal_without_worker_scale() 
             action: "deregister".to_string(),
             target_count: 0,
             worker_id: "worker-1".to_string(),
+            case_id: None,
         }))
         .await
         .expect_err("a principal without worker_scale must be refused");
@@ -166,6 +168,7 @@ async fn scale_workers_is_denied_for_a_service_principal_without_worker_scale() 
             action: "scale".to_string(),
             target_count: 3,
             worker_id: String::new(),
+            case_id: None,
         }))
         .await
         .expect_err("scale must be refused as well");
@@ -173,19 +176,61 @@ async fn scale_workers_is_denied_for_a_service_principal_without_worker_scale() 
 }
 
 #[tokio::test]
-async fn scale_workers_reaches_the_action_when_worker_scale_is_granted() {
-    let (permissions, principal) = dashboard(vec![Permission::WorkerScale]);
-    let governance = planned_governance(permissions, principal).await;
+async fn scale_workers_needs_a_human_approval_even_with_the_permission() {
+    // The local E2E run found the action checking only the coarse permission.
+    // A service below the operator tier must still refuse until a human approves
+    // one permit for a named case — holding `worker_scale` is not consent.
+    let governance = planned_governance(
+        vec![Permission::WorkerScale],
+        Principal::service(DASHBOARD_ID),
+    )
+    .await;
+    let server = GrpcServer::new(LocalEngine::new_fallback()).with_governance(governance);
+
+    let error = server
+        .scale_workers(Request::new(ScaleWorkersRequest {
+            action: "scale".to_string(),
+            target_count: 3,
+            worker_id: String::new(),
+            case_id: None,
+        }))
+        .await
+        .expect_err("the permission alone must not resize the pool");
+    assert_eq!(error.code(), tonic::Code::PermissionDenied);
+    assert!(
+        error.message().starts_with("tool_requires_human_approval"),
+        "the status must name the human-tier denial, got: {}",
+        error.message()
+    );
+}
+
+#[tokio::test]
+async fn scale_workers_reaches_the_action_for_the_operator_tier() {
+    let governance = planned_governance(
+        vec![Permission::WorkerScale, Permission::ProactiveExecute],
+        Principal::user("alice"),
+    )
+    .await;
     let server = GrpcServer::new(LocalEngine::new_fallback()).with_governance(governance);
 
     // `deregister` with no worker id is refused by the action's own validation,
     // which only runs once the policy gate has passed — proof the gate opened.
+    // The action carries no identity field, so the operator declares itself the
+    // way a real operator client does: metadata.
+    let mut request = Request::new(ScaleWorkersRequest {
+        action: "deregister".to_string(),
+        target_count: 0,
+        worker_id: String::new(),
+        case_id: None,
+    });
+    request
+        .metadata_mut()
+        .insert("x-uc-principal-kind", "user".parse().unwrap());
+    request
+        .metadata_mut()
+        .insert("x-uc-principal-id", "alice".parse().unwrap());
     let response = server
-        .scale_workers(Request::new(ScaleWorkersRequest {
-            action: "deregister".to_string(),
-            target_count: 0,
-            worker_id: String::new(),
-        }))
+        .scale_workers(request)
         .await
         .expect("an authorized caller reaches the action")
         .into_inner();
@@ -196,6 +241,100 @@ async fn scale_workers_reaches_the_action_when_worker_scale_is_granted() {
             .unwrap_or_default()
             .contains("worker_id is required"),
         "the action's own validation must answer, not the policy gate"
+    );
+}
+
+#[tokio::test]
+async fn one_approved_permit_unlocks_exactly_one_pool_resize() {
+    // S8(b) at the gRPC boundary, without docker: `deregister` runs the same
+    // authorization chain and then the action's own validation, so the permit is
+    // spent on a call that never shells out.
+    let governance = Governance::in_memory();
+    let snapshot = PolicySnapshot::empty(PolicyVersion::initial())
+        .with_grant(Grant::new(
+            Principal::service(DASHBOARD_ID),
+            vec![Permission::WorkerScale],
+        ))
+        .expect("a service may hold worker_scale")
+        .with_grant(Grant::new(
+            Principal::user("alice"),
+            vec![Permission::ProactiveExecute],
+        ))
+        .expect("a user may hold proactive_execute");
+    governance
+        .policy
+        .install(snapshot)
+        .await
+        .expect("snapshot installs");
+    let governance = Arc::new(governance);
+    let server = GrpcServer::new(LocalEngine::new_fallback()).with_governance(governance.clone());
+    let approvals = uc_grpc::governance::ApprovalServiceImpl::new(governance);
+
+    let case_id = "case-resize";
+    let requested = approvals
+        .request_approval(Request::new(RequestApprovalRequest {
+            tool: "scale_workers".to_string(),
+            case_id: Some(case_id.to_string()),
+            project_id: None,
+            action_digest: Some("scale:worker=3".to_string()),
+            reason: Some("queue is backing up".to_string()),
+            principal_kind: "service".to_string(),
+            principal_id: DASHBOARD_ID.to_string(),
+            ttl_minutes: None,
+        }))
+        .await
+        .expect("the service may ask for a human decision")
+        .into_inner();
+    assert!(requested.success);
+    let approval_id = requested.approval.expect("approval recorded").id;
+
+    let decided = approvals
+        .decide_approval(Request::new(DecideApprovalRequest {
+            approval_id,
+            approve: true,
+            note: Some("ok".to_string()),
+            principal_kind: "user".to_string(),
+            principal_id: "alice".to_string(),
+        }))
+        .await
+        .expect("the operator may decide")
+        .into_inner();
+    assert!(decided.success);
+
+    // First call: the gate opens and the permit is spent.
+    let response = server
+        .scale_workers(Request::new(ScaleWorkersRequest {
+            action: "deregister".to_string(),
+            target_count: 0,
+            worker_id: String::new(),
+            case_id: Some(case_id.to_string()),
+        }))
+        .await
+        .expect("an approved permit reaches the action")
+        .into_inner();
+    assert!(
+        response
+            .error
+            .unwrap_or_default()
+            .contains("worker_id is required"),
+        "the action's own validation must answer"
+    );
+
+    // Second call: consent is single-use.
+    let error = server
+        .scale_workers(Request::new(ScaleWorkersRequest {
+            action: "deregister".to_string(),
+            target_count: 0,
+            worker_id: String::new(),
+            case_id: Some(case_id.to_string()),
+        }))
+        .await
+        .expect_err("a spent permit must not authorize another resize");
+    assert_eq!(error.code(), tonic::Code::PermissionDenied);
+    assert!(
+        error.message().starts_with("tool_requires_human_approval"),
+        "the status must name the human-tier denial, got: {}",
+        error.message()
     );
 }
 

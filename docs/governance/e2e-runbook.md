@@ -2,9 +2,10 @@
 
 > **状态说明（诚实，2026-11-04 更新）**：这份手册最初写于一台没有 Docker / NATS / psql 的机器上。
 > 之后在本机（Windows + 仓库自带的本地 NATS）用**当次源码构建的网关**执行了不需要 Docker 的那部分，
-> 并据此修正了本节若干条错误（见文末 §10“本机执行记录”）。**仍未执行**的是需要 Docker / worker 进程 /
-> PostgreSQL 的步骤：worker 注册与实时容量、`scale_workers` 的动作路径（审批消费）、postgres 重启持久化、
-> Dashboard HTTP 面。请把状态说明当作“哪部分有证据、哪部分没有”的清单，而不是“都跑过了”。
+> 并据此修正了本节若干条错误（见文末 §10“本机执行记录”）。2026-11-05 又补齐了 worker 注册、postgres 重启
+> 持久化，以及 `scale_workers` 动作路径上的审批消费（后者同时修掉了 §10.1 记录的闸口缺口）。
+> **仍未执行**的只剩 Dashboard HTTP 面（需要 uvicorn）。请把状态说明当作“哪部分有证据、哪部分没有”的清单，
+> 而不是“都跑过了”。
  > 每条都标注了**失败时最可能的原因**，因为 E2E 的失败很少是「代码错了」。
 >
 > 执行时记录什么、证据怎么存、结论回填到哪：见 [e2e-checklist.md](e2e-checklist.md)（可直接转交给执行者）。
@@ -251,20 +252,25 @@ PY
 ```bash
 # a) 申请：requester 必须是 agent 或 service（带 case_id 才会投影一条 needs_human；不带只记 warn）
 # b) 用 operator 身份批准（user + proactive_execute）
-# c) 消费发生在「动作路径」（WorkerService.scale_workers 的前置鉴权），不是 NATS 的 `authorize` 预览
+# c) 消费：真的调一次动作——下面用不依赖 Docker 的 deregister 分支
+grpcurl -plaintext -import-path crates/uc-grpc/proto -proto engine.proto \
+  -H 'x-uc-principal-kind: service' -H 'x-uc-principal-id: resizer' \
+  -d '{"action":"deregister","worker_id":"ghost","case_id":"<case_id>"}' \
+  127.0.0.1:50051 ultimate_coders.WorkerService/ScaleWorkers
 ```
 
-判定要点（2026-11-04 本机实测后修正）：
+判定要点（2026-11-05 本机实测）：
 
-- **申请 + 批准可以在本机验证**：`approval.request` → `approval.decide` → `approval.list?state=approved`；
-  带 `case_id` 时 `attention.list` 出现 `needs_human: approve scale_workers?`。
-- **`authorize` 是策略预览，不消费许可**：它返回的 `allowed` 只是当时策略的答案；许可的
-  `find_approved → consume` 发生在真正的动作路径里（`WorkerService.scale_workers`）。
-  所以「批准后 authorize 放行一次、第二次拒绝」**不能**用手工 `authorize` 验证——要触发一次
-  `scale_workers` 动作（需要 Docker）。
-- **谁能被审批解锁**：`agent` 永远不能持有 `worker_scale`（`forbidden_principal_kind`，结构性天花板），
-  审批解锁的是 tool 闸口，不是权限；因此要测消费，用**已被授予 `worker_scale` 的 service principal**
-  （`UC_POLICY_GRANTS_JSON` 给 `service:dashboard` 授 `worker_scale`），并对**同一个 case** 发起申请与动作。
+- **申请 + 批准**：`approval.request` → `approval.decide` → `approval.list?state=approved`；带 `case_id` 时
+  `attention.list` 出现 `needs_human: approve scale_workers?`。
+- **`authorize` 是策略预览，不消费许可**：许可的 `find_approved → consume` 发生在动作路径
+  （`WorkerService.ScaleWorkers` 的 `authorize_human_tier_tool` 闸口）。
+- **操作者层级不需要审批**：dev 快照把 `service:dashboard` 也算作操作者层级（它持有 `proactive_execute`），
+  所以测审批路径要用**另一个 service**，例如用 `UC_POLICY_GRANTS_JSON` 只给 `service:resizer` 授
+  `worker_scale`。
+- **单次消费的判定**：第一次 `ScaleWorkers` 到达动作路径（返回动作自己的错误或 `deregister` 成功），
+  `approval.list?state=used` 出现 `used_at`；第二次立即 `PermissionDenied: tool_requires_human_approval`。
+- `agent` 永远不能持有 `worker_scale`（`forbidden_principal_kind`）：审批解锁的是 tool 闸口，不是权限。
 - 若批准返回 `missing_permission`，说明当前 principal 不是 `user` 或没有 `proactive_execute`——审批
   **不接受** service/agent 代答。
 
@@ -362,24 +368,36 @@ docker compose -f docker/docker-compose.yml --profile worker down
   skipped)`，三份数据**全部还在**（`submission.get` / `case.get` / `approval.list`）。
 - **S10 反向对照**：同一份数据在 `UC_GOVERNANCE_BACKEND=memory` 上重启后 `durable=false` 且
   `submission.get` 返回 `available:false`——持久化开关确实起作用。
+- **S8(b) 动作路径的审批消费（2026-11-05，修复后）**：`service:resizer` 只有 `worker_scale`（没有
+  `proactive_execute`）；批准一次后，第一次 `ScaleWorkers(action="deregister", case_id="case-s8b")`
+  （grpcurl + `x-uc-principal-kind/id` 元数据）到达动作路径（返回动作自己的 `Worker 'ghost-worker' not
+  found`），`approval.list?state=used` 出现 `used_at`；第二次立即 `PermissionDenied:
+  tool_requires_human_approval: …`。全程不依赖 Docker。
 
-未执行（需要 Docker）：`scale_workers` 动作路径的**审批消费**、Dashboard HTTP 面。
+未执行：Dashboard HTTP 面（需要 uvicorn）。
 
-### 10.1 执行时发现的一个治理面差异（待修，未在本手册中掩盖）
+### 10.1 执行时发现的一个治理面差异（2026-11-05 已修复）
 
-`WorkerService.ScaleWorkers` 的鉴权只走**权限**这一层：
+**发现（2026-11-04）**：`WorkerService.ScaleWorkers` 的鉴权只走**权限**这一层：
 
 ```text
-worker_service.rs:777  require_scale_workers(...)
+worker_service.rs  require_scale_workers(...)
   -> policy_interceptor::require_scale_workers
     -> PolicyEngine::authorize_scale_workers   # 只查 Permission::WorkerScale
 ```
 
 而带 human-tier 闸口（`proactive_execute` 或一次性审批）的是 `PolicyEngine::authorize_tool`
-（`policy.rs:252-344`），它只被 NATS 的 `authorize` 预览 op 调用。后果：**被授予 `worker_scale` 的 service
-principal 可以直接扩缩容，不需要人工审批**，与 `pr03-policy.md` §「human_approval 是强制的」的描述不一致；
-S8 的「单次消费」也因此没有真实动作路径可验证。修复方向二选一：给 `ScaleWorkersRequest` 加可选 `case_id`
-并改走 `authorize_tool`，或在 `require_scale_workers` 里同时要求 `proactive_execute`（即操作者层级）。
+（`policy.rs`），它当时只被 NATS 的 `authorize` 预览 op 调用。后果：被授予 `worker_scale` 的 service
+principal 可以直接扩缩容、不需要人工审批，与 `pr03-policy.md` §「human_approval 是强制的」不一致。
+
+**修复（2026-11-05）**：动作路径改走 `PolicyEngine::authorize_human_tier_tool` —— 同样的表/天花板/权限检查
+与人工审批闸口，但不要求 mandate（扩缩容不是 case 工作）。`ScaleWorkersRequest` 新增可选 `case_id`：低于
+操作者层级的调用者用它指明「哪个 case 上已批准的一次性许可」，许可在调用成功时被消费；不带 `case_id` 且
+不在操作者层级则直接 `tool_requires_human_approval`。测试：引擎层
+`the_operator_tier_resizes_without_an_approval`、`a_granted_service_still_needs_a_human_approval_for_the_pool_resize`、
+`one_approved_permit_authorizes_exactly_one_pool_resize`；gRPC 边界
+`scale_workers_needs_a_human_approval_even_with_the_permission`、
+`one_approved_permit_unlocks_exactly_one_pool_resize`。
 
 本次执行修正了本手册的 4 处错误：`policy.current` 不是桥 op、escalate 需要 `case_id` 才会投影注意力、
 `authorize` 不消费许可（消费在动作路径）、以及「旧二进制会被误判成 unknown_op」这个前置条件。

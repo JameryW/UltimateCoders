@@ -773,12 +773,22 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
         // (see `policy_interceptor`).
         let principal =
             crate::governance::policy_interceptor::resolve_principal_from_metadata(&request)?;
+        let case_id = request
+            .get_ref()
+            .case_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
         let now = chrono::Utc::now();
         if let Err(status) = crate::governance::policy_interceptor::require_scale_workers(
             self.governance().as_ref(),
             &principal,
+            case_id.as_deref(),
             now,
-        ) {
+        )
+        .await
+        {
             tracing::warn!(
                 principal = %principal,
                 action = %request.get_ref().action,
@@ -793,6 +803,7 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
             action = %req.action,
             target_count = req.target_count,
             worker_id = %req.worker_id,
+            case_id = case_id.as_deref().unwrap_or(""),
             principal = %principal,
             "ScaleWorkers request received"
         );
@@ -1586,10 +1597,17 @@ mod tests {
     /// A server whose governance plane authorizes the dashboard principal for
     /// `ScaleWorkers`.
     ///
-    /// The handler is policy-gated (PR03), so these tests install the operator
-    /// grant up front and then exercise the *action* paths. The denial path has its
-    /// own test in `tests/governance_services.rs`
-    /// (`scale_workers_is_denied_for_a_service_principal_without_worker_scale`).
+    /// The handler is policy-gated (PR03) **and** human-tier gated: the coarse
+    /// `worker_scale` permission alone is not consent. This fixture therefore
+    /// installs the operator tier on the default principal so these tests can
+    /// exercise the *action* paths; the three gate outcomes have their own tests:
+    ///
+    /// - `tests/governance_services.rs::scale_workers_is_denied_for_a_service_principal_without_worker_scale`
+    ///   (no permission at all);
+    /// - `tests/governance_services.rs::scale_workers_needs_a_human_approval_even_with_the_permission`
+    ///   (permission but no operator tier);
+    /// - `tests/governance_services.rs::one_approved_permit_unlocks_exactly_one_pool_resize`
+    ///   (a single-use approval).
     async fn make_server() -> GrpcServer<LocalEngine> {
         use uc_types::governance::{Grant, Permission, PolicySnapshot, PolicyVersion, Principal};
 
@@ -1597,9 +1615,9 @@ mod tests {
         let snapshot = PolicySnapshot::empty(PolicyVersion::initial())
             .with_grant(Grant::new(
                 Principal::service(crate::governance::policy_interceptor::DEFAULT_PRINCIPAL_ID),
-                vec![Permission::WorkerScale],
+                vec![Permission::WorkerScale, Permission::ProactiveExecute],
             ))
-            .expect("the operator grant is structurally valid");
+            .expect("the operator-tier grant is structurally valid");
         governance
             .policy
             .install(snapshot)
@@ -1637,6 +1655,7 @@ mod tests {
                 action: "deregister".to_string(),
                 target_count: 0,
                 worker_id: "w-scale-1".to_string(),
+                case_id: None,
             }))
             .await
             .unwrap()
@@ -1659,6 +1678,7 @@ mod tests {
                 action: "deregister".to_string(),
                 target_count: 0,
                 worker_id: "ghost-worker".to_string(),
+                case_id: None,
             }))
             .await
             .unwrap()
@@ -1676,6 +1696,7 @@ mod tests {
                 action: "deregister".to_string(),
                 target_count: 0,
                 worker_id: String::new(),
+                case_id: None,
             }))
             .await
             .unwrap()
@@ -1700,6 +1721,7 @@ mod tests {
                 action: "scale".to_string(),
                 target_count: 3,
                 worker_id: String::new(),
+                case_id: None,
             }))
             .await
             .unwrap()
@@ -1731,6 +1753,7 @@ mod tests {
                 action: "scale".to_string(),
                 target_count: 1,
                 worker_id: String::new(),
+                case_id: None,
             }))
             .await
             .unwrap()
@@ -1759,6 +1782,7 @@ mod tests {
                 action: "scale".to_string(),
                 target_count: 3,
                 worker_id: String::new(),
+                case_id: None,
             }))
             .await
             .unwrap()
@@ -1794,6 +1818,7 @@ mod tests {
                 action: "bogus".to_string(),
                 target_count: 0,
                 worker_id: String::new(),
+                case_id: None,
             }))
             .await
             .unwrap()

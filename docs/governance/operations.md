@@ -157,7 +157,7 @@ cargo run -p uc-grpc-server
 | --- | --- | --- |
 | PR01 不重复 | 同一 `submission_id` 连发两次只产生一个 task | `cargo test -p uc-engine governance::submission`；协议层看 `SubmitTaskResponse.dedup_replayed`（`engine.proto:288-300`） |
 | PR02 可持续 | `active → completed` 被拒，`active → verifying → completed` 通过 | `cargo test -p uc-engine governance::case_store`；`TransitionCase` 跳级必须失败 |
-| PR03 不越权 | `external_trigger` 请求 `worker_scale` 被拒；未知工具被拒；带 docker socket 的沙箱档被拒 | `cargo test -p uc-engine governance::policy`；`Authorize` 看 `deny_code` |
+| PR03 不越权 | `external_trigger` 请求 `worker_scale` 被拒；未知工具被拒；带 docker socket 的沙箱档被拒；`ScaleWorkers` 在只有权限、没有操作者层级或一次性审批时被拒 | `cargo test -p uc-engine governance::policy`；`Authorize` 看 `deny_code` |
 | PR04 可收敛 | 重放同一 delivery 第二次报 `duplicate` 且不扇出；缺 secret 时 webhook 端点 503 | `cargo test -p uc-engine governance::trigger_inbox`；`python -m pytest tests/python/test_github_trigger_webhook.py tests/python/test_github_reconciler.py tests/python/test_dashboard_trigger_api.py` |
 | PR05 少打扰 | `waiting_event` 不改变 `worker_slots_available`，`slots_saved_by_quiet_waiting` +1 | `cargo test -p uc-engine governance::attention`；`GET /api/capacity` 前后对比 |
 | PR06 可验证 | 默认 `off`；空证据提案被拒且进审计；停滞到预算上限改升人工 | `cargo test -p uc-engine governance::proactive`、`governance::watchdog`；`python -m pytest tests/python/test_proactive_*.py` |

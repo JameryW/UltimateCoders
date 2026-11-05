@@ -226,12 +226,20 @@ pub fn require(
 /// on the policy engine ([`uc_engine::governance::PolicyEngine::authorize_scale_workers`])
 /// which applies both the permission and the structural ceiling. Routing through
 /// here keeps `worker_service` from open-coding the check.
-pub fn require_scale_workers(
+pub async fn require_scale_workers(
     governance: &Governance,
     principal: &Principal,
+    case_id: Option<&str>,
     now: DateTime<Utc>,
 ) -> Result<(), Status> {
-    let decision = governance.policy.authorize_scale_workers(principal, now);
+    // The action-level human-tier gate: the coarse permission alone is not
+    // consent. A caller below the operator tier must name the case whose
+    // approved single-use permit authorizes this resize (the permit is spent
+    // here, on success); the operator tier passes on `proactive_execute`.
+    let decision = governance
+        .policy
+        .authorize_human_tier_tool(principal, "scale_workers", None, case_id, now)
+        .await;
     require_decision(&decision, "worker_scale")
 }
 
@@ -389,9 +397,14 @@ mod tests {
             vec![Permission::TaskSubmit],
         )])
         .await;
-        let error =
-            require_scale_workers(&governance, &Principal::service("dashboard"), Utc::now())
-                .unwrap_err();
+        let error = require_scale_workers(
+            &governance,
+            &Principal::service("dashboard"),
+            None,
+            Utc::now(),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.code(), tonic::Code::PermissionDenied);
         assert!(error.message().starts_with("missing_permission"));
     }

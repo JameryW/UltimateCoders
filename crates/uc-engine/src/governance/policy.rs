@@ -237,6 +237,55 @@ impl PolicyEngine {
         }
     }
 
+    /// Peek (but do not spend) the human-tier permission for `tool`.
+    ///
+    /// `Ok(None)` means the caller holds the operator permission
+    /// (`proactive_execute`) and needs no approval; `Ok(Some(id))` means a
+    /// single-use permit covers this `(tool, case)` and will be spent by
+    /// [`Self::settle_tool_decision`] once every later check passed;
+    /// `Err(decision)` is the denial to surface — the first failing step, which is
+    /// what keeps an audit readable.
+    async fn peek_human_tier_permit(
+        &self,
+        principal: &Principal,
+        project_id: Option<&str>,
+        tool: &str,
+        case_id: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<Option<String>, PolicyDecision> {
+        let operator = self.authorize(
+            principal,
+            uc_types::governance::Permission::ProactiveExecute,
+            project_id,
+            now,
+        );
+        if operator.is_allowed() {
+            return Ok(None);
+        }
+        let approved = match &self.approvals {
+            Some(approvals) => match approvals.find_approved(tool, case_id, now).await {
+                Ok(approved) => approved.map(|approval| approval.id),
+                Err(error) => {
+                    tracing::warn!(
+                        tool = %tool,
+                        error = %error,
+                        "approval lookup failed; denying the human-tier tool"
+                    );
+                    None
+                }
+            },
+            None => None,
+        };
+        match approved {
+            Some(id) => Ok(Some(id)),
+            None => Err(PolicyDecision::deny(
+                DenyReason::ToolRequiresHumanApproval {
+                    tool: tool.to_string(),
+                },
+            )),
+        }
+    }
+
     /// Full tool-level check: tool table → structural ceiling → permission →
     /// human-tier approval → mandate scope.
     ///
@@ -275,39 +324,17 @@ impl PolicyEngine {
         // Human-tier gate. The permit is *peeked* here and only spent once every
         // later check passed, so a call denied for a different reason (missing
         // mandate, out-of-scope project) never burns a human's consent.
-        let mut permit_id: Option<String> = None;
-        if requirement.human_approval {
-            let operator = self.authorize(
-                principal,
-                uc_types::governance::Permission::ProactiveExecute,
-                project_id,
-                now,
-            );
-            if operator.is_denied() {
-                let approved = match &self.approvals {
-                    Some(approvals) => match approvals.find_approved(tool, case_id, now).await {
-                        Ok(approved) => approved.map(|approval| approval.id),
-                        Err(error) => {
-                            tracing::warn!(
-                                tool = %tool,
-                                error = %error,
-                                "approval lookup failed; denying the human-tier tool"
-                            );
-                            None
-                        }
-                    },
-                    None => None,
-                };
-                match approved {
-                    Some(id) => permit_id = Some(id),
-                    None => {
-                        return PolicyDecision::deny(DenyReason::ToolRequiresHumanApproval {
-                            tool: tool.to_string(),
-                        })
-                    }
-                }
+        let permit_id = if requirement.human_approval {
+            match self
+                .peek_human_tier_permit(principal, project_id, tool, case_id, now)
+                .await
+            {
+                Ok(permit_id) => permit_id,
+                Err(decision) => return decision,
             }
-        }
+        } else {
+            None
+        };
         if !requirement.requires_mandate_scope {
             return self
                 .settle_tool_decision(permit_id, tool, principal, now)
@@ -341,6 +368,55 @@ impl PolicyEngine {
                 .await;
         }
         decision
+    }
+
+    /// The human-tier gate for a tool that is **not** case work.
+    ///
+    /// [`Self::authorize_tool`] ends with the mandate-scope check, which only a
+    /// case can satisfy. Resizing the worker pool is an operator action that
+    /// carries no case by default, so the action path needs the same
+    /// table/ceiling/permission checks and the same single-use human approval,
+    /// but no mandate dimension.
+    ///
+    /// This is what makes the approval loop reachable from a real action instead
+    /// of only from the NATS `authorize` preview: a principal below the operator
+    /// tier names the case whose approved permit authorizes exactly this one call.
+    pub async fn authorize_human_tier_tool(
+        &self,
+        principal: &Principal,
+        tool: &str,
+        project_id: Option<&str>,
+        case_id: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> PolicyDecision {
+        let requirement = self.tools.requirement(tool);
+        if !requirement.known {
+            return PolicyDecision::deny(DenyReason::ToolNotPermitted {
+                tool: tool.to_string(),
+            });
+        }
+        let permission_decision = self.authorize(
+            principal,
+            requirement.action.required_permission(),
+            project_id,
+            now,
+        );
+        if permission_decision.is_denied() {
+            return permission_decision;
+        }
+        let permit_id = if requirement.human_approval {
+            match self
+                .peek_human_tier_permit(principal, project_id, tool, case_id, now)
+                .await
+            {
+                Ok(permit_id) => permit_id,
+                Err(decision) => return decision,
+            }
+        } else {
+            None
+        };
+        self.settle_tool_decision(permit_id, tool, principal, now)
+            .await
     }
 
     /// Spend the peeked permit (if any) and answer.
@@ -1004,6 +1080,145 @@ mod tests {
                 .await
                 .deny_code(),
             Some("tool_requires_human_approval")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_operator_tier_resizes_without_an_approval() {
+        // The pool-resize action carries no case by default, so it must not go
+        // through the mandate dimension: the operator permission is enough.
+        let records: Arc<dyn RecordStore> = Arc::new(InMemoryRecordStore::new());
+        let mandates = Arc::new(MandateStore::new(records.clone()));
+        let snapshot = PolicySnapshot::empty(PolicyVersion::initial())
+            .with_grant(uc_types::governance::Grant::new(
+                Principal::user("alice"),
+                vec![Permission::WorkerScale, Permission::ProactiveExecute],
+            ))
+            .expect("a user may hold these");
+        let engine = PolicyEngine::with_snapshot(records, mandates, snapshot);
+
+        let decision = engine
+            .authorize_human_tier_tool(
+                &Principal::user("alice"),
+                "scale_workers",
+                None,
+                None,
+                now(),
+            )
+            .await;
+        assert!(
+            decision.is_allowed(),
+            "the operator tier needs no approval, got {:?}",
+            decision.deny_code()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_granted_service_still_needs_a_human_approval_for_the_pool_resize() {
+        // The local E2E run found `ScaleWorkers` checking only the coarse
+        // permission. The action-level gate must keep the human-tier check that
+        // `authorize_tool` has: holding `worker_scale` is not consent.
+        let records: Arc<dyn RecordStore> = Arc::new(InMemoryRecordStore::new());
+        let mandates = Arc::new(MandateStore::new(records.clone()));
+        let snapshot = PolicySnapshot::empty(PolicyVersion::initial())
+            .with_grant(uc_types::governance::Grant::new(
+                Principal::service("dashboard"),
+                vec![Permission::WorkerScale],
+            ))
+            .expect("a service may hold worker_scale");
+        let engine = PolicyEngine::with_snapshot(records, mandates, snapshot);
+
+        assert_eq!(
+            engine
+                .authorize_human_tier_tool(
+                    &Principal::service("dashboard"),
+                    "scale_workers",
+                    None,
+                    None,
+                    now(),
+                )
+                .await
+                .deny_code(),
+            Some("tool_requires_human_approval")
+        );
+    }
+
+    #[tokio::test]
+    async fn one_approved_permit_authorizes_exactly_one_pool_resize() {
+        use uc_types::governance::{ApprovalRequest, ApprovalState, ToolApproval};
+
+        let records: Arc<dyn RecordStore> = Arc::new(InMemoryRecordStore::new());
+        let mandates = Arc::new(MandateStore::new(records.clone()));
+        let approvals = Arc::new(super::super::ApprovalStore::new(records.clone()));
+        let snapshot = PolicySnapshot::empty(PolicyVersion::initial())
+            .with_grant(uc_types::governance::Grant::new(
+                Principal::service("dashboard"),
+                vec![Permission::WorkerScale],
+            ))
+            .expect("a service may hold worker_scale");
+        let engine = PolicyEngine::with_snapshot(records, mandates, snapshot)
+            .with_approvals(approvals.clone());
+        let case_id = "case-resize";
+
+        let (approval, created) = approvals
+            .request(ToolApproval::request(
+                ApprovalRequest {
+                    tool: "scale_workers".to_string(),
+                    case_id: Some(case_id.to_string()),
+                    project_id: None,
+                    action_digest: Some("scale:worker=3".to_string()),
+                    requested_by: Principal::service("dashboard"),
+                    reason: Some("queue is backing up".to_string()),
+                },
+                now(),
+                None,
+            ))
+            .await
+            .expect("request recorded");
+        assert!(created);
+        approvals
+            .approve(
+                &approval.id,
+                &Principal::user("alice"),
+                Some("ok".into()),
+                now(),
+            )
+            .await
+            .expect("human approves");
+
+        let first = engine
+            .authorize_human_tier_tool(
+                &Principal::service("dashboard"),
+                "scale_workers",
+                None,
+                Some(case_id),
+                now(),
+            )
+            .await;
+        assert!(
+            first.is_allowed(),
+            "the approved permit must unlock one call, got {:?}",
+            first.deny_code()
+        );
+        let used = approvals
+            .list(Some(ApprovalState::Used), 10)
+            .await
+            .expect("list approvals");
+        assert_eq!(used.len(), 1, "the permit must be consumed");
+
+        assert_eq!(
+            engine
+                .authorize_human_tier_tool(
+                    &Principal::service("dashboard"),
+                    "scale_workers",
+                    None,
+                    Some(case_id),
+                    now(),
+                )
+                .await
+                .deny_code(),
+            Some("tool_requires_human_approval"),
+            "consent is single-use"
         );
     }
 
