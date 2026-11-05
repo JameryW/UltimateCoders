@@ -4,11 +4,10 @@
 > 怎么判定通过、证据放哪、结论回填到哪**。目标是把「端到端验收」从一次口头确认变成一份可以交给别人执行、
 > 结果可以被审计的工件。
 >
-> **状态（诚实，2026-11-04 更新）**：本机已执行并**通过** S1–S7、S8(a) 申请与批准、S9、S10（含 memory 反向对照），
-> 详见 [e2e-runbook.md](e2e-runbook.md) §10 与 §10.1（其中 §10.1 记录了一个尚未修复的治理面差异：
-> `scale_workers` 动作只查权限、不查 human-tier 闸口，所以 S8(b) 单次消费仍无真实动作路径可测）。
-> 仍未执行：S8(b) 动作路径消费、S11 的容器清理、Dashboard HTTP 面。执行者请在 §3 里逐项写结论，
-> 不要用一次部分执行去概括整张表。
+> **状态（诚实，2026-11-05 更新）**：本机已执行并**通过** S1–S10（含 S8(b) 动作路径上的单次许可消费、S10 的
+> memory 反向对照），详见 [e2e-runbook.md](e2e-runbook.md) §10 与 §10.1（§10.1 记录并已修复的闸口缺口：
+> `scale_workers` 动作现在同时检查权限与 human-tier 闸口）。仍未执行：S11 的容器清理、Dashboard HTTP 面。
+> 执行者请在 §3 里逐项写结论，不要用一次部分执行去概括整张表。
 
 ## 0. 谁执行、执行多久
 
@@ -74,11 +73,12 @@ uc-e2e-2026-11-04/
       等于已注册 worker 的 `max_capacity` 之和（不是 env 值）；`slots_saved_by_quiet_waiting` 等于
       `waiting_event + verifying` 计数。没有 worker 时它必然为 0：那只能证明「空集群读作 0」，不是本项通过。
       证据：`05-policy/capacity.json`。验收：少打扰
-- [ ] **S8 审批闭环**（§5.3）— 分两级记录：**(a) 申请 + 批准**（本机可验证：带 `case_id` 的申请会让
-      `attention.list` 出现 `needs_human: approve …`，`approval.decide` 返回 `approved`）；**(b) 单次消费**
-      （需要触发一次 `scale_workers` 动作，即 Docker；`authorize` 只是策略预览、不消费许可）。
-      (b) 未执行时请在 §3 写「未测」而不是「通过」——消费目前只有单元/集成测试证据。
-      证据：`05-approval/`。验收：不越权 + 可验证
+- [ ] **S8 审批闭环**（§5.3）— 分两级记录：**(a) 申请 + 批准**（带 `case_id` 的申请会让 `attention.list`
+      出现 `needs_human: approve …`，`approval.decide` 返回 `approved`）；**(b) 单次消费**——用一个**低于
+      操作者层级**的 service（例如只授 `worker_scale` 的 `service:resizer`）对同一 `case_id` 调
+      `ScaleWorkers(action="deregister")`：第一次到达动作路径且 `approval.list?state=used` 出现 `used_at`，
+      第二次 `PermissionDenied: tool_requires_human_approval`。`deregister` 分支不需要 Docker，所以 (b)
+      现在可以端到端验完。证据：`05-approval/`、`08-gate/`。验收：不越权 + 可验证
 - [ ] **S9 watchdog 升级**（§6）— `UC_PROACTIVE_MODE=observe` 时只记录、不产生提案；
       切到 `propose` 后出现一条 `unblock_stalled` 提案；verdict 为 escalate 时 `attention.list` 出现
       `needs_human`——**报告中必须带 `case_id`**，否则服务端只记 warn、不投影（本机实测）。

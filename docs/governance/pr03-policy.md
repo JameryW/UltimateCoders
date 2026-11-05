@@ -150,6 +150,16 @@ gRPC 层在结构性天花板之外再加一道**身份声明**闸口：`x-uc-pr
 因为 `PrincipalKind::may_hold` 拒绝 agent/worker 持有 `proactive_execute`，这一条同时把「agent 自己给自己
 批准高风险工具」堵死。
 
+**动作路径也走这道门（2026-11-05 修复）**：`ScaleWorkers` 不经过 `authorize_tool`（它要求 mandate，而扩缩容
+不是 case 工作），而是 `PolicyEngine::authorize_human_tier_tool`：同样的表/天花板/权限检查与人工审批闸口，
+但不要求 mandate。请求可带可选 `case_id`，用来消费**该 case** 上已批准的一次性许可；不带 `case_id` 且不在
+操作者层级（`proactive_execute`）时直接返回 `tool_requires_human_approval`。本机实测（2026-11-05）：
+只有 `worker_scale` 的 `service:resizer` 获批一次后，第一次 `ScaleWorkers(action="deregister",
+case_id="case-s8b")` 到达动作路径并消费许可（`used_at` 出现），第二次立即恢复拒绝。测试：引擎层
+`the_operator_tier_resizes_without_an_approval`、`a_granted_service_still_needs_a_human_approval_for_the_pool_resize`、
+`one_approved_permit_authorizes_exactly_one_pool_resize`；gRPC 边界
+`scale_workers_needs_a_human_approval_even_with_the_permission`、`one_approved_permit_unlocks_exactly_one_pool_resize`。
+
 ### 5.1 人工审批回路（`approval.rs` / `approvals.rs` / `approval_service.rs`）
 
 「操作者层级」不是唯一出路。human-tier 工具还有第二条门，是一条**有记录、单人判、一次性**的回路：
@@ -157,7 +167,7 @@ gRPC 层在结构性天花板之外再加一道**身份声明**闸口：`x-uc-pr
 ```
 agent  approval.request(tool, case, action_digest, reason)   ->  Pending（默认 15 分钟，上限 1 天）
 human  approval.decide(id, approve=true, note)               ->  Approved（并 resolve 对应 needs_human 项）
-call   authorize_tool(...)                                    ->  消费许可 -> Used（下一次再要一份）
+call   WorkerService.ScaleWorkers(case_id=…)                 ->  消费许可 -> Used（下一次再要一份）
 ```
 
 | 规则 | 为什么 |
@@ -296,7 +306,7 @@ UI 不提供 `user` 选项——那等于人向自己申请，网关也会拒绝
 | 项 | 现状 | 原因 |
 | --- | --- | --- |
 | 审计导出的调度化 | 导出与面板都已落地（`/api/approvals`、仪表盘「审批」视图 `#/dashboard/approvals`、`/api/approvals/export.csv` 分页 + 截断标记 + 公式中和）；没有的是「定期自动导出并归档」 | 归档节奏是部署策略（cron / 对象存储），治理层只保证数据能完整取出 （测试：`test_export_walks_the_gateway_pages_until_a_short_one`） |
-| `ScaleWorkers` 的授权接线 | **已落地**（见 §7）：`worker_service.rs:745-752` 前置鉴权，空快照默认拒绝 | — （测试：`scale_workers_is_denied_for_a_service_principal_without_worker_scale`、`scale_workers_reaches_the_action_when_worker_scale_is_granted`） |
+| `ScaleWorkers` 的授权接线 | **已落地**（见 §7）：前置鉴权包含 human-tier 闸口（操作者权限或一次性审批），空快照默认拒绝；`case_id` 是消费许可的锚点 | — （测试：`scale_workers_is_denied_for_a_service_principal_without_worker_scale`、`scale_workers_needs_a_human_approval_even_with_the_permission`、`scale_workers_reaches_the_action_for_the_operator_tier`、`one_approved_permit_unlocks_exactly_one_pool_resize`） |
 | 工具**参数**级检查 | 未实现（只检查工具名与 action 类） | 参数语义因工具而异（例如 `Bash` 的命令串），假装能通用检查会给出虚假安全感 |
 | `read_only_rootfs` 强制 | 未实现（见 §6） | 现有 worker 镜像不以只读根文件系统运行 |
 | Graph-backed fencing 相关权限 | 未纳入治理层 | 执行面已有独立设计（`docs/agent-os-architecture.md` 的恢复不变量），重复会造第二权威 |

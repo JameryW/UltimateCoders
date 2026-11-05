@@ -721,8 +721,8 @@ def test_real_corpus_unanchored_census_is_reported():
     guard = _load_guard()
     rows = guard.collect()
     refs = [r for r in rows if r["kind"] == "ref"]
-    assert len(refs) == 323, len(refs)
-    assert sum(1 for r in refs if r["unanchored"]) == 125
+    assert len(refs) == 320, len(refs)
+    assert sum(1 for r in refs if r["unanchored"]) == 124
     # 271 -> 275 across the P2-baseline window (re-measured 9be830df -> HEAD
     # on the red-main repair ticket, keyed on spec+line+ref then re-checked by
     # (ref, verdict) multiset to survive P2's +2 line shift in
@@ -887,7 +887,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # T21 docs numeric pin CI: map + ticket 21 landing names the manifest,
     # checker, test, and workflow (492 -> 500 on T21 alone). Merged:
     # 492 + 8 + 8 = 508, all resolved; unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 687
+    assert sum(1 for r in rows if r["kind"] == "mention") == 688
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1108,10 +1108,10 @@ def test_real_corpus_line_unchecked_census_is_reported():
     guard = _load_guard()
     refs = [r for r in guard.collect() if r["kind"] == "ref"]
     located = [r for r in refs if r["verdict"] in ("OK", "STALE")]
-    assert len(refs) == 323, len(refs)
-    assert len(located) == 250, len(located)
-    assert sum(1 for r in located if r["line_unchecked"]) == 191
-    assert sum(1 for r in located if r["unanchored"]) == 125
+    assert len(refs) == 320, len(refs)
+    assert len(located) == 248, len(located)
+    assert sum(1 for r in located if r["line_unchecked"]) == 189
+    assert sum(1 for r in located if r["unanchored"]) == 124
     assert sum(1 for r in located if r["symbol"] is not None) == 59
 
 
@@ -1131,7 +1131,7 @@ def test_the_two_calibers_are_nested_and_their_difference_is_content_only():
     ]
     assert leaked == [], leaked
     diff = [r for r in located if r["line_unchecked"] and not r["unanchored"]]
-    assert len(diff) == 66, len(diff)
+    assert len(diff) == 65, len(diff)
     assert [(r["symbol"], r["content_candidate_count"] > 0, r["verdict"]) for r in diff] == [
         (None, True, "OK")
     ] * len(diff)
@@ -1160,7 +1160,7 @@ def test_the_summary_number_is_the_wider_one():
     out = _run_guard()
     claim = [line.strip() for line in out.splitlines() if "unchecked line number" in line]
     assert len(claim) == 2, claim  # the advisory and the summary line
-    assert claim[1].startswith("191 of 250"), claim[1]
+    assert claim[1].startswith("189 of 248"), claim[1]
     assert "have NO checkable anchor" not in out
 
 
@@ -1177,8 +1177,8 @@ def test_the_default_advisory_reports_the_wider_number():
         if line.startswith("ADVISORY:") and "unchecked line number" in line
     ]
     assert len(advisory) == 1, advisory
-    assert advisory[0].startswith("ADVISORY: 191 of 250"), advisory[0]
-    assert "(125 of them have no anchor at all" in advisory[0], advisory[0]
+    assert advisory[0].startswith("ADVISORY: 189 of 248"), advisory[0]
+    assert "(124 of them have no anchor at all" in advisory[0], advisory[0]
 
 
 def test_the_audit_list_marks_the_anchor_free_tier():
@@ -1193,8 +1193,8 @@ def test_the_audit_list_marks_the_anchor_free_tier():
     assert out.count(head) == 1
     rest = out.split(head, 1)[1].split("\n", 1)[1]
     rows = [line for line in rest.split("ADVISORY", 1)[0].splitlines() if line.strip()]
-    assert len(rows) == 191, len(rows)
-    assert sum(1 for line in rows if "<- no anchor at all" in line) == 125
+    assert len(rows) == 189, len(rows)
+    assert sum(1 for line in rows if "<- no anchor at all" in line) == 124
 
 
 def test_an_ambiguous_row_is_never_anchored(guard):
@@ -1382,21 +1382,19 @@ def test_real_corpus_moves_only_where_predicted():
     """
     guard = _load_guard()
     rows = [r for r in guard.collect() if r["kind"] == "ref"]
-    # 2026-11-04: the E2E execution record added two live citations to
-    # docs/governance/e2e-runbook.md §10.1, pointing at the two functions that
-    # disagree about the human-tier gate:
-    #   `worker_service.rs:777` (the `require_scale_workers` call inside
-    #     `scale_workers`) -- the file resolves, no symbol on the line -> OK +
-    #     unanchored;
-    #   `policy.rs:252-344` (`authorize_tool`) -- bare basename shared by two
-    #     files -> AMBIGUOUS, and it is the row that counts as located.
-    # Rows 321 -> 323, located 249 -> 250, OK 224 -> 225, AMBIGUOUS 72 -> 73,
-    # unanchored 124 -> 125, line_unchecked 190 -> 191.
-    assert len(rows) == 323, len(rows)
-    # ...and the two calibers move with the corpus for the same reason:
-    # the runbook's §10.1 row names a symbol (`authorize_tool`) that no
-    # longer diverges, (220, 161) -> (221, 162).
-    assert _corpus_calibers(guard) == (221, 162)
+    # 2026-11-05: the E2E follow-up fixed the human-tier gate gap and rewrote
+    # runbook §10.1 around the fix, so the corpus moved back down: the two
+    # `path:line` citations the earlier record had added there
+    # (`worker_service.rs:777`, `policy.rs:252-344`) are gone, and one pr03
+    # acceptance-row citation (`worker_service.rs:745-752`) was replaced with
+    # prose. Rows 323 -> 320, located 250 -> 248, OK 225 -> 223, AMBIGUOUS 73 ->
+    # 72, unanchored 125 -> 124, line_unchecked 191 -> 189, content-only diff
+    # 66 -> 65. Mentions 687 -> 688: the new test-name citations are prose.
+    assert len(rows) == 320, len(rows)
+    # ...and the two calibers move with the corpus for the same reason: the
+    # removed §10.1 citations each named a symbol on their line, so both counts
+    # drop by two, (221, 162) -> (219, 160).
+    assert _corpus_calibers(guard) == (219, 160)
     # and the sides this ticket must NOT move, asserted in the same breath
     # (OK / STALE deliberately NOT moved on the red-main repair ticket).
     # The architecture branch's counts are stated explicitly, not tolerated as a
@@ -1417,12 +1415,12 @@ def test_real_corpus_moves_only_where_predicted():
     # pattern that no longer exists in that file at all -- it now names
     # `worker.py:1369-1422, _save_checkpoint`, which is where the best-effort
     # persistence actually lives. That repair is what keeps OK at 112.
-    assert sum(1 for r in rows if r["verdict"] == "OK") == 225
+    assert sum(1 for r in rows if r["verdict"] == "OK") == 223
     assert sum(1 for r in rows if r["verdict"] == "STALE") == 25
-    assert sum(1 for r in rows if r["verdict"] == "AMBIGUOUS") == 73
+    assert sum(1 for r in rows if r["verdict"] == "AMBIGUOUS") == 72
     assert sum(1 for r in rows if r["symbol"] is not None) == 59
-    assert sum(1 for r in rows if r["unanchored"]) == 125
-    assert sum(1 for r in rows if r["line_unchecked"]) == 191
+    assert sum(1 for r in rows if r["unanchored"]) == 124
+    assert sum(1 for r in rows if r["line_unchecked"]) == 189
 
 
 _PATH_TOKEN_RE = re.compile(
@@ -1507,6 +1505,9 @@ def test_no_path_word_is_ever_a_definition_in_its_own_target():
             (guard.ROOT / row["target"]).read_bytes().decode("utf-8", "replace").split("\n")
         )
         triples.extend((word, row["target"], word in definitions) for word in words)
-    assert len(triples) == 208, len(triples)  # measured, and non-empty
+    # 207 after the 2026-11-05 E2E follow-up: the citations that moved the
+    # corpus (above) were the only ones still carrying a path-shaped word on
+    # those lines; the tripwire's own population shrank with them.
+    assert len(triples) == 207, len(triples)  # measured, and non-empty
     hits = [(word, target) for word, target, hit in triples if hit]
     assert hits == [], hits

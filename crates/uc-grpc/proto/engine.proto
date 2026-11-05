@@ -926,6 +926,13 @@ message ScaleWorkersRequest {
     uint32 target_count = 2;
     // For action="deregister": specific worker to force-evict from registry.
     string worker_id = 3;
+    // Optional case whose approved single-use permit authorizes this action.
+    //
+    // Resizing the pool is a human-tier tool: the caller needs either the
+    // operator permission `proactive_execute` or one approved permit for
+    // `(scale_workers, case_id)`. Below the operator tier the request must name
+    // the case; the permit is spent by this call.
+    optional string case_id = 4;
 }
 
 message ScaleWorkersResponse {
