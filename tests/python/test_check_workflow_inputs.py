@@ -188,8 +188,16 @@ def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
     python_wf = f"{WORKFLOWS}/ci-python.yml"
     dashboard = f"{WORKFLOWS}/ci-dashboard.yml"
     py_paths_item = ITEM.format(path="crates/uc-python/**")
+    # The dashboard's paths block grew when the generated gRPC stubs got a
+    # freshness check: it has to run on proto-only changes too.
     dash_block = (
-        '    paths:\n      - "dashboard/**"\n      - ".github/workflows/ci-dashboard.yml"\n'
+        "    paths:\n"
+        '      - "dashboard/**"\n'
+        '      - "crates/uc-grpc/proto/**"\n'
+        '      - "packages/uc-orchestrator/**"\n'
+        '      - "buf.gen.yaml"\n'
+        '      - "buf.yaml"\n'
+        '      - ".github/workflows/ci-dashboard.yml"\n'
     )
 
     # (label, judgment it pins, file, old, new, expected occurrences, how)
@@ -320,9 +328,17 @@ def test_the_guard_does_not_demand_a_filter(tmp_path) -> None:
     both_events = (
         "  push:\n    branches: [main]\n    paths:\n"
         '      - "dashboard/**"\n'
+        '      - "crates/uc-grpc/proto/**"\n'
+        '      - "packages/uc-orchestrator/**"\n'
+        '      - "buf.gen.yaml"\n'
+        '      - "buf.yaml"\n'
         '      - ".github/workflows/ci-dashboard.yml"\n'
         "  pull_request:\n    branches: [main]\n    paths:\n"
         '      - "dashboard/**"\n'
+        '      - "crates/uc-grpc/proto/**"\n'
+        '      - "packages/uc-orchestrator/**"\n'
+        '      - "buf.gen.yaml"\n'
+        '      - "buf.yaml"\n'
         '      - ".github/workflows/ci-dashboard.yml"\n'
     )
     original = (sb / dashboard).read_bytes()
