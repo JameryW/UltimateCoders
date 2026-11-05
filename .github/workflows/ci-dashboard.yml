@@ -1,16 +1,27 @@
 name: Dashboard CI
 
+# Triggered by the dashboard, the Rust proto its gRPC stubs are generated from,
+# and both generated trees: a proto-only change must re-run the staleness check
+# below, and leaving the proto out is how the checked-in stub fell weeks behind.
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
       - "dashboard/**"
+      - "crates/uc-grpc/proto/**"
+      - "packages/uc-orchestrator/**"
+      - "buf.gen.yaml"
+      - "buf.yaml"
       - ".github/workflows/ci-dashboard.yml"
   pull_request:
     branches: [main]
     paths:
       - "dashboard/**"
+      - "crates/uc-grpc/proto/**"
+      - "packages/uc-orchestrator/**"
+      - "buf.gen.yaml"
+      - "buf.yaml"
       - ".github/workflows/ci-dashboard.yml"
 
 jobs:
@@ -31,6 +42,25 @@ jobs:
         with:
           version: 9
       - run: pnpm install --frozen-lockfile
+      # The two gRPC stubs are generated: `dashboard/src/grpc/engine_pb.ts` from
+      # the root `buf.gen.yaml`, `packages/uc-orchestrator/src/grpc/engine_pb.ts`
+      # from the orchestrator's own (it needs `import_extension=js`). Regenerate
+      # here and fail on any working-tree change, so drift is caught by CI
+      # instead of by a reviewer noticing a stale field.
+      - name: Regenerate gRPC stubs
+        run: |
+          npm run generate
+          cd ../packages/uc-orchestrator
+          PATH="$PWD/../../dashboard/node_modules/.bin:$PATH" buf generate
+      - name: Generated stubs are current
+        run: |
+          changed=$(git status --porcelain -- dashboard/src/grpc packages/uc-orchestrator/src/grpc)
+          if [ -n "$changed" ]; then
+            echo "$changed"
+            git diff -- dashboard/src/grpc packages/uc-orchestrator/src/grpc | head -200
+            echo "::error::generated gRPC stubs are stale; run 'pnpm --dir dashboard run generate' and regenerate packages/uc-orchestrator/src/grpc"
+            exit 1
+          fi
       # Root tsconfig.json is a project-references shell (files:[] + references);
       # a bare `tsc --noEmit` silently skips the referenced projects' src and
       # exits 0 even on real type errors. Check each referenced project directly.

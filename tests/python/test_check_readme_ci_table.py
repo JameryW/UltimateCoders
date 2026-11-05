@@ -159,7 +159,8 @@ def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
             "A a row grows a path the YAML lacks",
             "fabrication",
             README,
-            "| **Dashboard CI** (`ci-dashboard.yml`) | `dashboard/**` |",
+            "| **Dashboard CI** (`ci-dashboard.yml`) | `dashboard/**`, `crates/uc-grpc/proto/**`, "
+            "`packages/uc-orchestrator/**`, `buf.gen.yaml`, `buf.yaml` |",
             "| **Dashboard CI** (`ci-dashboard.yml`) | `dashboard/**`, `newfake/**` |",
             1,
             "first",
@@ -213,12 +214,8 @@ def test_every_judgment_is_pinned_by_a_mutation(tmp_path) -> None:
             "G a workflow loses its paths filter",
             "filter-shape",
             dash,
-            "    paths:\n"
-            + ITEM.format(path="dashboard/**")
-            + "\n"
-            + ITEM.format(path=".github/workflows/ci-dashboard.yml")
-            + "\n",
-            "",
+            "    paths:\n",
+            "    paths_disabled:\n",
             2,
             "all",
         ),
