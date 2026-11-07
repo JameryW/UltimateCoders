@@ -934,13 +934,15 @@ impl ProactiveService for ProactiveServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use tokio::sync::Mutex;
     use uc_types::governance::{
         CaseOrigin, Grant, PolicySnapshot, PolicyVersion, PrincipalKind, WorkCase,
     };
 
     /// Serialize tests that mutate `UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE`.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    /// Tokio mutex so the guard is not held across `.await` (clippy
+    /// `await_holding_lock`).
+    static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
     async fn plane() -> Governance {
         let governance = Governance::in_memory();
@@ -1285,7 +1287,7 @@ mod tests {
 
     #[tokio::test]
     async fn replan_approve_flag_off_projects_no_checklist() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         std::env::remove_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV);
         let governance = plane().await;
         set_mode(&governance, mode_request("propose"))
@@ -1331,7 +1333,7 @@ mod tests {
 
     #[tokio::test]
     async fn replan_approve_flag_on_raises_attention_and_audit() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         std::env::set_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV, "1");
         let governance = plane().await;
         set_mode(&governance, mode_request("propose"))
@@ -1385,7 +1387,7 @@ mod tests {
 
     #[tokio::test]
     async fn replan_reject_flag_on_projects_no_checklist() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         std::env::set_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV, "true");
         let governance = plane().await;
         set_mode(&governance, mode_request("propose"))
@@ -1426,7 +1428,7 @@ mod tests {
 
     #[tokio::test]
     async fn non_replan_approve_flag_on_projects_no_checklist() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         std::env::set_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV, "on");
         let governance = plane().await;
         set_mode(&governance, mode_request("propose"))
@@ -1452,7 +1454,7 @@ mod tests {
 
     #[tokio::test]
     async fn replan_approve_flag_on_missing_case_id_skips_projection() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         std::env::set_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV, "yes");
         let governance = plane().await;
         set_mode(&governance, mode_request("propose"))
