@@ -4,8 +4,8 @@
 
 **Blocked by:** D13
 
-**Status:** ready
+**Status:** implemented (`UC_REPLAN_ACCOUNTING_ENFORCE` default off; `WorkCase.replans_used` + `report_stall` durable path in `proactive_service.rs`)
 
-- [ ] Field + proto + persistence
-- [ ] Flag gate; increment on replan verdict
-- [ ] Tests for on/off / exhaustion / missing case
+- [x] Field + proto + persistence
+- [x] Flag gate; increment on replan verdict
+- [x] Tests for on/off / exhaustion / missing case

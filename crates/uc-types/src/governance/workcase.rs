@@ -358,6 +358,11 @@ pub struct WorkCase {
     pub priority: u8,
     #[serde(default)]
     pub labels: Vec<String>,
+    /// Durable count of watchdog `replan` verdicts recorded for this case.
+    /// Owned by the gateway when `UC_REPLAN_ACCOUNTING_ENFORCE` is on (T18c /
+    /// D13); missing on older documents deserializes as 0.
+    #[serde(default)]
+    pub replans_used: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// CAS token; the store rejects writes carrying a stale version.
@@ -391,6 +396,7 @@ impl WorkCase {
             compacted_runs: 0,
             priority: 0,
             labels: Vec::new(),
+            replans_used: 0,
             created_at: now,
             updated_at: now,
             version: 0,
@@ -683,5 +689,23 @@ mod tests {
             let back: CaseStatus = serde_json::from_str(&json).unwrap();
             assert_eq!(back, status);
         }
+    }
+
+    #[test]
+    fn replans_used_defaults_to_zero_when_missing_from_json() {
+        let case = case_with_mandate();
+        let mut value = serde_json::to_value(&case).unwrap();
+        value.as_object_mut().unwrap().remove("replans_used");
+        let back: WorkCase = serde_json::from_value(value).unwrap();
+        assert_eq!(back.replans_used, 0);
+    }
+
+    #[test]
+    fn replans_used_round_trips() {
+        let mut case = case_with_mandate();
+        case.replans_used = 3;
+        let json = serde_json::to_string(&case).unwrap();
+        let back: WorkCase = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.replans_used, 3);
     }
 }

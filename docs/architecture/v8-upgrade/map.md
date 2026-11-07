@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); closeout #874; T18b checklist **merged** (#875); D1–D13 decided 2026-11-07; follow-on **T18c** (accounting) in progress — full T18 execute still deferred
+Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); closeout #874; T18b checklist **merged** (#875); T18c accounting **implemented** (`UC_REPLAN_ACCOUNTING_ENFORCE`); D1–D13 decided 2026-11-07; full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -68,11 +68,11 @@ Follow-on (D12 — checklist): **merged** (#875)
 - [17 replan execute checklist wire](tickets/17-replan-execute-checklist-wire.md) — **implemented** (`UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE` default off); was blocked by: D12
 - [18 docs T18b](tickets/18-docs-t18b-checklist.md) — **implemented**; was blocked by: none
 
-Follow-on (D13 — accounting): **in progress**
+Follow-on (D13 — accounting): **implemented**
 
 - Spec: [spec-t18c.md](spec-t18c.md)
-- [19 durable replan accounting wire](tickets/19-replan-accounting-wire.md) — ready; was blocked by: D13
-- [20 docs T18c](tickets/20-docs-t18c-accounting.md) — ready; was blocked by: none
+- [19 durable replan accounting wire](tickets/19-replan-accounting-wire.md) — **implemented** (`UC_REPLAN_ACCOUNTING_ENFORCE` default off); was blocked by: D13
+- [20 docs T18c](tickets/20-docs-t18c-accounting.md) — **implemented**; was blocked by: none
 
 Later (still deferred — not grabable as full execute):
 
@@ -82,7 +82,7 @@ Later (still deferred — not grabable as full execute):
 
 ## Frontier (open, unblocked)
 
-- T18c tickets 19–20 (accounting only; D13 — not full T18 execute)
+- _(none for V8 follow-on accounting; true T18 execute remains deferred)_
 
 ## Out of scope
 

@@ -153,6 +153,9 @@ pub struct CaseView {
     pub priority: u32,
     #[serde(default)]
     pub labels: Vec<String>,
+    /// Durable watchdog replan counter (T18c / D13).
+    #[serde(default)]
+    pub replans_used: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub version: u64,
@@ -181,6 +184,7 @@ impl CaseView {
             compacted_runs: case.compacted_runs,
             priority: u32::from(case.priority),
             labels: case.labels.clone(),
+            replans_used: case.replans_used,
             created_at: case.created_at,
             updated_at: case.updated_at,
             version: case.version,
@@ -206,6 +210,7 @@ impl CaseView {
             created_at: encode_timestamp(self.created_at),
             updated_at: encode_timestamp(self.updated_at),
             version: self.version,
+            replans_used: self.replans_used,
         }
     }
 }

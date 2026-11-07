@@ -17,11 +17,11 @@ Make `max_replans` / `replans_remaining` authoritative on the gateway by persist
 
 ## Acceptance criteria
 
-- [ ] Flag off: client-supplied `replans_used` path unchanged (legacy)
-- [ ] Flag on: stored case counter drives staircase; replan verdict increments once
-- [ ] Exhausted budget escalates per existing WatchdogConfig (no silent extra replan)
-- [ ] No digest / DAG / TaskStore / admit_execution mutation
-- [ ] Tests + census pins
+- [x] Flag off: client-supplied `replans_used` path unchanged (legacy)
+- [x] Flag on: stored case counter drives staircase; replan verdict increments once
+- [x] Exhausted budget escalates per existing WatchdogConfig (no silent extra replan)
+- [x] No digest / DAG / TaskStore / admit_execution mutation
+- [x] Tests + census pins
 
 ## Out of scope
 

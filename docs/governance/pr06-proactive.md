@@ -109,6 +109,11 @@ T18b / D12：当 `UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE` 打开（默认关）且�
 `admit_execution`、**不** bump digest、**不**改 DAG。缺少 `case_id` 时 warn 并跳过
 （与 escalate→Attention 同先例）。真 replan execute 仍延后（trust-eval ticket 18）。
 
+T18c / D13：当 `UC_REPLAN_ACCOUNTING_ENFORCE` 打开（默认关）且 stall 带 `case_id` 时，
+网关以 `WorkCase.replans_used` 为权威计数（忽略客户端影子）；`replan` 裁决后 CAS +1，
+并在 stall 响应返回权威 `replans_used` / `replans_remaining`。缺 `case_id` 时 warn 并跳过
+durable 路径（不发明 case）。仍**不** bump digest / **不**改 DAG / **不** `admit_execution`。
+
 一个细节值得记录：拒绝时提案**仍会被存下来**（`Observe` 模式下状态置为 `observed`），条件是
 `mode.evaluates()` 为真。理由写在注释里——让之后的审计能区分「我们看见了但没说」和「我们压根没看见」。
 

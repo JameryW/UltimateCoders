@@ -828,6 +828,8 @@ class Orchestrator:
                 "verdict_source": "gateway",
                 "replans_remaining": action.replans_remaining,
             }
+            if action.replans_used is not None:
+                enriched["replans_used"] = action.replans_used
             if action.preserve_effects:
                 enriched["preserve_effects"] = list(action.preserve_effects)
             result.stall_signal = enriched

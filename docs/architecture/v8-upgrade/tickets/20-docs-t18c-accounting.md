@@ -4,6 +4,6 @@
 
 **Blocked by:** none
 
-**Status:** ready
+**Status:** implemented
 
-- [ ] Map / ops / ticket 18 / agent-os accurate
+- [x] Map / ops / ticket 18 / agent-os accurate
