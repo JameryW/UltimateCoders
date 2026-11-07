@@ -822,11 +822,15 @@ class Orchestrator:
             return self._maybe_stall_agent_redispatch(subtask, result)
 
         if isinstance(result.stall_signal, Mapping):
-            result.stall_signal = {
+            enriched = {
                 **result.stall_signal,
                 "verdict": action.action,
                 "verdict_source": "gateway",
+                "replans_remaining": action.replans_remaining,
             }
+            if action.preserve_effects:
+                enriched["preserve_effects"] = list(action.preserve_effects)
+            result.stall_signal = enriched
 
         if stopping_action(action):
             result.retryable = False
@@ -836,7 +840,7 @@ class Orchestrator:
                 subtask.id[:8],
                 action.reason or "none given",
             )
-            await self._propose_on_stall(task, subtask, result, stall)
+            await self._propose_on_stall(task, subtask, result, stall, watchdog=action)
             return False
 
         if action.attempts_remaining == 0:
@@ -845,13 +849,19 @@ class Orchestrator:
                 "Watchdog has no attempts left for subtask %s; not retrying",
                 subtask.id[:8],
             )
-            await self._propose_on_stall(task, subtask, result, stall)
+            await self._propose_on_stall(task, subtask, result, stall, watchdog=action)
             return False
 
         return self._maybe_stall_agent_redispatch(subtask, result)
 
     async def _propose_on_stall(
-        self, task: Task, subtask: Subtask, result: SubtaskResult, stall: Any
+        self,
+        task: Task,
+        subtask: Subtask,
+        result: SubtaskResult,
+        stall: Any,
+        *,
+        watchdog: Any = None,
     ) -> None:
         """Offer the stopped stall to the proactive evaluator (PR06).
 
@@ -860,9 +870,49 @@ class Orchestrator:
         even evaluate), so a default deployment does no work here. A refusal is
         recorded, never raised: the failure path is already the wrong place for a
         second exception.
+
+        Passes the watchdog verdict as ``action`` (``replan`` / ``escalate`` /
+        ``stop``) so the evaluator can mint a structured replan proposal when
+        ``UC_REPLAN_PROPOSAL_ENFORCE`` is on. Never mutates digest / DAG here.
         """
         if self.governance_client is None:
             return
+        # Prefer the live WatchdogAction; fall back to stall_signal enrichment.
+        action_token = "stop"
+        preserve_effects: list[str] | None = None
+        replans_remaining: int | None = None
+        if watchdog is not None:
+            action_token = getattr(watchdog, "action", None) or "stop"
+            effects = tuple(getattr(watchdog, "preserve_effects", ()) or ())
+            if effects:
+                preserve_effects = list(effects)
+            remaining = getattr(watchdog, "replans_remaining", None)
+            if isinstance(remaining, int) and not isinstance(remaining, bool):
+                replans_remaining = remaining
+        elif isinstance(result.stall_signal, Mapping):
+            verdict = result.stall_signal.get("verdict")
+            if isinstance(verdict, str) and verdict.strip():
+                action_token = verdict.strip()
+            raw_effects = result.stall_signal.get("preserve_effects")
+            if isinstance(raw_effects, (list, tuple)):
+                preserve_effects = [e for e in raw_effects if isinstance(e, str) and e.strip()]
+            remaining = result.stall_signal.get("replans_remaining")
+            if isinstance(remaining, int) and not isinstance(remaining, bool):
+                replans_remaining = remaining
+
+        contract_digest = getattr(stall, "contract_digest", None)
+        if not contract_digest and isinstance(result.stall_signal, Mapping):
+            contract_digest = result.stall_signal.get("contract_digest")
+        if not contract_digest:
+            user_request = getattr(subtask, "user_request", None)
+            if isinstance(user_request, str) and user_request.strip():
+                try:
+                    from ultimate_coders.agent.contract import contract_digest as digest_of
+
+                    contract_digest = digest_of(user_request)
+                except Exception:  # noqa: BLE001 - digest is advisory for proposals
+                    contract_digest = None
+
         try:
             outcome = await propose_on_stall(
                 self.governance_client,
@@ -871,8 +921,11 @@ class Orchestrator:
                 project_id=None,
                 case_id=getattr(task, "case_id", None),
                 stalled_streak=getattr(stall, "stalled_streak", 0),
-                action="stop",
+                action=action_token,
                 subtask_id=subtask.id,
+                preserve_effects=preserve_effects,
+                contract_digest=contract_digest if isinstance(contract_digest, str) else None,
+                replans_remaining=replans_remaining,
                 principal_kind=self.proactive_principal[0],
                 principal_id=self.proactive_principal[1],
             )

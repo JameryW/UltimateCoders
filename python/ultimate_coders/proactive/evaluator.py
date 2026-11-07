@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from enum import Enum
@@ -56,6 +57,17 @@ MAX_PROPOSALS_PER_RULE = 3
 #: CI conclusions that mean "this run failed" (``cancelled`` is not a defect).
 _FAILING_CI_CONCLUSIONS = frozenset({"failure", "timed_out"})
 
+#: Opt-in structured replan proposal on watchdog ``replan`` (V8 P3 / T18a).
+REPLAN_PROPOSAL_ENFORCE_ENV = "UC_REPLAN_PROPOSAL_ENFORCE"
+
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
+
+
+def replan_proposal_enforce_enabled() -> bool:
+    """Whether replan-proposal enforce is on; default off (proposal-only path)."""
+    raw = os.environ.get(REPLAN_PROPOSAL_ENFORCE_ENV, "").strip().lower()
+    return raw in _TRUTHY_ENV
+
 
 class ProposalKind(str, Enum):
     """What kind of work a proposal suggests. Values are the gateway tokens."""
@@ -65,6 +77,7 @@ class ProposalKind(str, Enum):
     FIX_FAILING_CI = "fix_failing_ci"
     MAINTENANCE_DEBT = "maintenance_debt"
     INVESTIGATE_ALERT = "investigate_alert"
+    REPLAN = "replan"
 
 
 #: Every valid ``kind`` token, for request validation.
@@ -77,6 +90,7 @@ ESTIMATED_TOKENS: Mapping[ProposalKind, int] = {
     ProposalKind.DISCOVERED_FOLLOWUP: 20_000,
     ProposalKind.INVESTIGATE_ALERT: 15_000,
     ProposalKind.MAINTENANCE_DEBT: 30_000,
+    ProposalKind.REPLAN: 30_000,
 }
 
 #: Rule priors for the review queue's ordering (not probabilities).
@@ -86,6 +100,7 @@ BASE_CONFIDENCE: Mapping[ProposalKind, float] = {
     ProposalKind.DISCOVERED_FOLLOWUP: 0.45,
     ProposalKind.MAINTENANCE_DEBT: 0.3,
     ProposalKind.INVESTIGATE_ALERT: 0.4,
+    ProposalKind.REPLAN: 0.5,
 }
 
 #: Alert severity priors for ``investigate_alert``.
@@ -271,7 +286,8 @@ class ProactiveEvaluator:
 
     ``stall_limit`` mirrors ``UC_PROGRESS_STALL_LIMIT`` (default 2, the progress
     detector's threshold): below it a task is still making progress and the
-    ``unblock_stalled`` rule stays quiet.
+    ``unblock_stalled`` rule stays quiet for non-terminal actions. Watchdog
+    ``replan`` is handled separately behind ``UC_REPLAN_PROPOSAL_ENFORCE``.
     """
 
     def __init__(self, *, judge: Judge | None = None, stall_limit: int | None = None) -> None:
@@ -383,7 +399,17 @@ class ProactiveEvaluator:
         progress = _mapping(context.get("progress"))
         action = _text(progress.get("action"))
         streak = _count(progress.get("stalled_streak"))
-        if action != "stop" and streak < self.stall_limit:
+        # Watchdog ``replan``: emit a structured proposal when the flag is on.
+        # Flag off returns nothing so we do not pretend unblock is replan.
+        if action == "replan":
+            if not replan_proposal_enforce_enabled():
+                return []
+            return self._replan_candidates(context, ambient, progress, streak)
+        # ``stop`` / ``escalate`` are staircase terminals — always eligible for
+        # unblock once the orchestrator asked us (preserves pre-P3 behaviour when
+        # the verdict was hard-coded to ``stop``). Other actions still need the
+        # progress stall threshold.
+        if action not in {"stop", "escalate"} and streak < self.stall_limit:
             return []
         subtask_id = _text(progress.get("subtask_id"))
         where = (
@@ -410,6 +436,78 @@ class ProactiveEvaluator:
                 proposed_request=request + ".",
                 project_id=ambient.project_id,
                 estimated_tokens=ESTIMATED_TOKENS[ProposalKind.UNBLOCK_STALLED],
+                case_id=ambient.case_id,
+            )
+        ]
+
+    def _replan_candidates(
+        self,
+        context: Mapping[str, Any],
+        ambient: _Ambient,
+        progress: Mapping[str, Any],
+        streak: int,
+    ) -> list[Proposal]:
+        """At most one REPLAN proposal; never mutates digest / DAG / user_request."""
+        replan = _mapping(context.get("replan"))
+        digest = _text(replan.get("contract_digest")) or _text(progress.get("contract_digest"))
+        preserve_raw = replan.get("preserve_effects")
+        if preserve_raw is None:
+            preserve_raw = progress.get("preserve_effects")
+        preserve_effects = tuple(
+            item.strip()
+            for item in _sequence(preserve_raw)
+            if isinstance(item, str) and item.strip()
+        )
+        replans_remaining = replan.get("replans_remaining")
+        if replans_remaining is None:
+            replans_remaining = progress.get("replans_remaining")
+        remaining_text = ""
+        if isinstance(replans_remaining, int) and not isinstance(replans_remaining, bool):
+            remaining_text = f" replans_remaining={max(0, replans_remaining)}"
+
+        subtask_id = _text(progress.get("subtask_id"))
+        where = (
+            f"subtask {subtask_id} of task {ambient.task_id}"
+            if subtask_id and ambient.task_id
+            else f"task {ambient.task_id or '<unnamed>'}"
+        )
+        preserve_note = (
+            f" Preserve confirmed effects {list(preserve_effects)}."
+            if preserve_effects
+            else " No confirmed effects to preserve."
+        )
+        digest_note = f" Current contract_digest={digest}." if digest else ""
+        rationale = (
+            f"Watchdog verdict replan for {where} after {streak} consecutive stalled "
+            f"attempt(s).{digest_note}{preserve_note}{remaining_text} "
+            "Propose a structured replan without mutating the live DAG or digest."
+        )
+        title = f"Replan stalled task {ambient.task_id}".strip()
+        request = (
+            f"Replan the stalled task {ambient.task_id} while preserving confirmed effects"
+        ).strip()
+        evidence: list[str] = []
+        if ambient.task_id and streak:
+            evidence.append(f"stall:{ambient.task_id}:{streak}")
+        elif ambient.task_id:
+            evidence.append(f"stall:{ambient.task_id}")
+        if digest:
+            evidence.append(f"digest:{digest}")
+        for effect_id in preserve_effects:
+            evidence.append(f"effect:{effect_id}")
+        if not evidence:
+            # Gateway refuses empty evidence; refuse rather than invent facts.
+            return []
+        return [
+            Proposal(
+                kind=ProposalKind.REPLAN,
+                title=title,
+                rationale=rationale,
+                confidence=BASE_CONFIDENCE[ProposalKind.REPLAN],
+                evidence=tuple(evidence),
+                proposed_request=request + ".",
+                project_id=ambient.project_id,
+                estimated_tokens=ESTIMATED_TOKENS[ProposalKind.REPLAN],
                 case_id=ambient.case_id,
             )
         ]

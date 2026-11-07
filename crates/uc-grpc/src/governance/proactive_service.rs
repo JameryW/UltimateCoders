@@ -634,6 +634,7 @@ fn parse_proposal_kind(token: &str) -> Option<ProposalKind> {
         "fix_failing_ci" => ProposalKind::FixFailingCi,
         "maintenance_debt" => ProposalKind::MaintenanceDebt,
         "investigate_alert" => ProposalKind::InvestigateAlert,
+        "replan" => ProposalKind::Replan,
         _ => return None,
     })
 }
@@ -1054,6 +1055,7 @@ mod tests {
             ProposalKind::FixFailingCi,
             ProposalKind::MaintenanceDebt,
             ProposalKind::InvestigateAlert,
+            ProposalKind::Replan,
         ] {
             assert_eq!(parse_proposal_kind(kind.as_str()), Some(kind));
         }

@@ -49,7 +49,7 @@ P2 (D7–D8) — **MVP complete except deferred** (13–17 implemented; 18 defer
 - [15 NetworkMode real enforcement](tickets/15-networkmode-real-enforcement.md) — **implemented** (`UC_NETWORK_MODE_ENFORCE`; child-only unshare none; Restricted fail-closed until T16; flag default off); was blocked by: none
 - [16 default-offline allowlist](tickets/16-default-offline-allowlist.md) — **implemented** (`UC_NETWORK_DEFAULT_RESTRICTED` + `UC_NETWORK_ALLOWLIST`; `allowlist_preflight` Restricted applicator; flags default off; OS selective egress deferred); was blocked by: 15
 - [17 Landlock FS later](tickets/17-landlock-fs-later.md) — **implemented** (`UC_LANDLOCK_ENFORCE`; child-only ctypes Landlock after NetworkMode wrap; fail closed; flag default off); was blocked by: 15 (preferably after 16)
-- [18 true replan deferred](tickets/18-true-replan-deferred.md) — **deferred** (not P2 MVP)
+- [18 true replan deferred](tickets/18-true-replan-deferred.md) — **deferred** (not P2 MVP); T18a proposal-only landed under [v8-upgrade P3](../v8-upgrade/spec-p3.md)
 
 P3 (D9–D10) — **MVP complete except deferred** (19–21 implemented; 22 deferred):
 
