@@ -4,8 +4,8 @@
 
 **Blocked by:** none (can land with 13/14)
 
-**Status:** ready
+**Status:** implemented (branch `cursor/v8-graph-cutover-runbook-e6a9`; map P4 marked implemented; frontier notes runbook shipped + T18 deferred; agent-os §5 gap row: runbook landed, defaults still off)
 
-- [ ] Map P3 merged / P4 implemented when 13/14 land
-- [ ] Frontier notes runbook shipped; T18 still deferred
-- [ ] agent-os gap row accurate
+- [x] Map P3 merged / P4 implemented when 13/14 land
+- [x] Frontier notes runbook shipped; T18 still deferred
+- [x] agent-os gap row accurate

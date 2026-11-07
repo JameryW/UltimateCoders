@@ -4,8 +4,8 @@
 
 **Blocked by:** 13 (runbook path must exist so the script can point at it)
 
-**Status:** ready
+**Status:** implemented (branch `cursor/v8-graph-cutover-runbook-e6a9`; `scripts/check-graph-cutover-readiness.py` + `tests/python/test_graph_cutover_readiness.py`; exact `on` gate; hard-fail shadow-on without `UC_DATABASE_URL`; never sets env / never mutates Compose)
 
-- [ ] Script exits 0 when no hard blockers; non-zero when configured inconsistently (e.g. shadow requested without DB URL) — define hard rules in the PRD/tests
-- [ ] Never writes Compose / never sets `UC_GRAPH_SHADOW`
-- [ ] Tests: `tests/python/test_graph_cutover_readiness.py`
+- [x] Script exits 0 when no hard blockers; non-zero when configured inconsistently (e.g. shadow requested without DB URL) — define hard rules in the PRD/tests
+- [x] Never writes Compose / never sets `UC_GRAPH_SHADOW`
+- [x] Tests: `tests/python/test_graph_cutover_readiness.py`

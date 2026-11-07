@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: active — P0–P3 **merged** (#869–#872); P4 graph cutover runbook **in progress** (D6/D10); D1–D10 decided 2026-11-07
+Status: active — P0–P3 **merged** (#869–#872); P4 graph cutover runbook **implemented** (D6/D10; defaults still off); D1–D10 decided 2026-11-07; true replan execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -45,12 +45,14 @@ P3 (D9) — Replan proposal only (T18a): **merged** (#872)
 - [11 evaluator + orchestrator wire](tickets/11-replan-proposal-evaluate-wire.md) — **implemented** (`UC_REPLAN_PROPOSAL_ENFORCE` default off); was blocked by: 10
 - [12 docs P3](tickets/12-docs-p3-replan-proposal.md) — **implemented**; was blocked by: none
 
-P4 (D6 / D10) — Graph-primary cutover runbook: **in progress**
+P4 (D6 / D10) — Graph-primary cutover runbook: **implemented** (no `UC_GRAPH_SHADOW` default flip)
 
 - Spec: [spec-p4.md](spec-p4.md)
-- [13 ops runbook](tickets/13-graph-cutover-runbook.md) — ready; was blocked by: D6/D10
-- [14 dry-run readiness script](tickets/14-graph-cutover-dry-run.md) — ready; blocked by: 13
-- [15 docs P4](tickets/15-docs-p4-graph-cutover.md) — ready; was blocked by: none
+- Runbook: [graph-cutover-runbook.md](../graph-cutover-runbook.md)
+- Dry-run: `scripts/check-graph-cutover-readiness.py`
+- [13 ops runbook](tickets/13-graph-cutover-runbook.md) — **implemented**; was blocked by: D6/D10
+- [14 dry-run readiness script](tickets/14-graph-cutover-dry-run.md) — **implemented**; was blocked by: 13
+- [15 docs P4](tickets/15-docs-p4-graph-cutover.md) — **implemented**; was blocked by: none
 
 Later:
 
@@ -58,7 +60,7 @@ Later:
 
 ## Frontier (open, unblocked)
 
-- P4 tickets 13–15 (runbook + dry-run; no default flip)
+- _(P4 runbook + dry-run shipped; Compose/image defaults remain off)_
 - _(true replan execute remains deferred)_
 
 ## Out of scope

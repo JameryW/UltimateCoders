@@ -52,6 +52,8 @@ The startup wiring currently has two levels:
 
 Default Compose supplies the database URL but does not enable graph shadow mode. Full graph-only task authority is the migration direction; it must not be inferred from database availability alone. The OMP local JSON task files are UI projection caches, with controls issued through Rust.
 
+Ops cutover (enable / verify / rollback) is human-gated: see [the graph cutover runbook](architecture/graph-cutover-runbook.md) and dry-run `python scripts/check-graph-cutover-readiness.py`. Contract lockstep restart rules remain in [durable-runtime upgrade notes](architecture/durable-runtime-upgrade-notes.md).
+
 The executor selector permits local fallback only for `read_only`/`local_safe` nodes with an installed local handler. Coding work needs a capable executor and queues on transport/capacity loss. The optional OMP claim loop can execute claimed nodes locally and report through Rust. A standalone Gateway without a planner/executor does not automatically perform coding tasks.
 
 Explicit review nodes require the opt-in `review` capability and a structured JSON verdict. Shared overflow does not guarantee reviewer independence. Runtime diagnostics read persisted history and report missing measurements; they do not autonomously tune execution or implement monetary worker auctions.

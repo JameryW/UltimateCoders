@@ -15,12 +15,12 @@ Make graph-primary durable-runtime cutover **ready for an explicit human/ops aut
 
 ## Acceptance criteria
 
-- [ ] Runbook states default remains off; enable requires exact `UC_GRAPH_SHADOW=on`
-- [ ] Runbook references durable-runtime upgrade notes for lockstep gateway/worker restart
-- [ ] Dry-run script never enables shadow / never mutates Compose defaults
-- [ ] Script reports at least: whether `UC_GRAPH_SHADOW` is currently on, whether `UC_DATABASE_URL` is set, and pointers to the runbook
-- [ ] Tests cover gate parsing alignment with gateway (`on` exact) and dry-run non-mutation
-- [ ] Map / agent-os mark P4 runbook landed; true replan execute still deferred
+- [x] Runbook states default remains off; enable requires exact `UC_GRAPH_SHADOW=on`
+- [x] Runbook references durable-runtime upgrade notes for lockstep gateway/worker restart
+- [x] Dry-run script never enables shadow / never mutates Compose defaults
+- [x] Script reports at least: whether `UC_GRAPH_SHADOW` is currently on, whether `UC_DATABASE_URL` is set, and pointers to the runbook
+- [x] Tests cover gate parsing alignment with gateway (`on` exact) and dry-run non-mutation
+- [x] Map / agent-os mark P4 runbook landed; true replan execute still deferred
 
 ## Out of scope
 

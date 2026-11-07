@@ -132,7 +132,7 @@
 | Replan proposal only（V8 P3 / T18a） | **落地（默认关闭）** | Watchdog `replan` → 结构化 `ProposalKind.REPLAN`（`UC_REPLAN_PROPOSAL_ENFORCE`）；携带 `contract_digest` / `preserve_effects`；**不**执行新 DAG、**不** bump digest。真 replan execute 仍延后（trust-eval ticket 18）。见 [spec-p3](architecture/v8-upgrade/spec-p3.md)、[D9](architecture/v8-upgrade/issues/D9-replan-proposal-only.md)。 |
 | Portable Capability Tokens | 不做（D4） | 继续 Grant/Mandate；MVP 不引入可移植不透明 token。 |
 | Learning OS / 轨迹导出 | 延后（D3） | 产品决策前不做。 |
-| Graph-primary 默认开启 | 人工门控（D6） | 不在 P0 代码范围。 |
+| Graph-primary 默认开启 | **runbook 落地，默认仍关**（D6 / D10 / P4） | 运维手册 + dry-run：`docs/architecture/graph-cutover-runbook.md`、`scripts/check-graph-cutover-readiness.py`；Compose/镜像默认仍关；不因 `UC_DATABASE_URL` 自动切 graph-only。真 replan execute 仍延后。 |
 
 （模型路由已于 P2 落地，见 §4；新增差距在此表登记，按优先级排序。）
 
