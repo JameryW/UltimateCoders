@@ -283,6 +283,8 @@ def test_real_repo_is_reconciled() -> None:
         (2386, 2377),  # V8 upgrade wayfinder + Decision Record P0 (+ tests/spec).
         (2397, 2388),  # V8 P1 MetaInfer EffectLedger receipts (+ trellis task).
         (2410, 2401),  # V8 P2 coding Champion/Challenger (+ trellis task/spec).
+        (2421, 2412),  # V8 P3 replan proposal only (T18a / D9).
+        (2422, 2413),  # V8 P3 + replan-proposal-spec.md
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

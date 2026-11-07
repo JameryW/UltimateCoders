@@ -898,7 +898,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # (712 -> 720); unclassified stays 0.
     # 2026-11-07 P2: coding Champion/Challenger (D8/spec-p2/tickets 07–09 +
     # coding_challenger.py + coding-challenger-spec) (720 -> 731).
-    assert sum(1 for r in rows if r["kind"] == "mention") == 731
+    # 2026-11-07 P3: replan proposal T18a (D9/spec-p3/tickets 10–12 +
+    # test_replan_proposal.py + governance notes) (731 -> 738).
+    # Plus replan-proposal-spec.md path mentions (738 -> 745).
+    assert sum(1 for r in rows if r["kind"] == "mention") == 745
 
 
 def test_real_corpus_has_no_false_content_mismatch():

@@ -628,6 +628,7 @@ def test_real_corpus_reproduces_the_recorded_numbers():
         988,  # V8 Decision Record Trellis task implement/check.jsonl carriers.
         990,  # V8 P1 effect-receipts Trellis task implement/check.jsonl.
         991,  # V8 P2 coding-challenger Trellis task implement/check.jsonl.
+        992,  # V8 P3 replan-proposal Trellis task implement/check.jsonl.
     ), f"reference count drifted: {len(refs)}"
     assert len(dangling) == 0, f"dangling count drifted: {len(dangling)}"
     assert len(malformed) == 0, f"malformed count drifted: {len(malformed)}"
