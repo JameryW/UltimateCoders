@@ -382,6 +382,26 @@ impl ProactiveGate {
         Err(ProactiveGateError::Contended)
     }
 
+    /// Append one proactive audit row (best-effort callers ignore errors).
+    ///
+    /// Key includes `action` so a post-decision side-effect (e.g. T18b
+    /// `replan_execute_checklist`) cannot overwrite the `decision` row written
+    /// for the same proposal in the same microsecond.
+    pub async fn record_audit(
+        &self,
+        entry: ProactiveAuditEntry,
+        now: DateTime<Utc>,
+    ) -> Result<(), ProactiveGateError> {
+        let key = format!(
+            "{}:{}:{}",
+            now.timestamp_micros(),
+            entry.proposal_id.as_deref().unwrap_or("none"),
+            entry.action
+        );
+        self.audit.put(&key, &entry, None).await?;
+        Ok(())
+    }
+
     /// Audit entries, newest first, optionally filtered.
     pub async fn audit(
         &self,

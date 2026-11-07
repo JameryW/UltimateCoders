@@ -4,7 +4,7 @@
 
 **Blocked by:** none (can land with 17)
 
-**Status:** ready
+**Status:** implemented
 
-- [ ] Map / ops / ticket 18 / agent-os accurate
-- [ ] Distinguishes checklist from full T18 execute
+- [x] Map / ops / ticket 18 / agent-os accurate
+- [x] Distinguishes checklist from full T18 execute

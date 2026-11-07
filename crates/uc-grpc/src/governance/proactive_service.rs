@@ -479,6 +479,17 @@ pub async fn decide_proposal(
         principal = %principal,
         "proactive proposal decided"
     );
+
+    // T18b / D12: approve of Replan under the enforce flag projects a human
+    // execute checklist (Attention + audit). Never admit_execution / mark_executed
+    // / digest bump / DAG / TaskStore mutation from this path.
+    if matches!(decision, ProposalDecision::Approve { .. })
+        && proposal.kind == ProposalKind::Replan
+        && replan_execute_checklist_enforce_enabled()
+    {
+        project_replan_execute_checklist(governance, &proposal, now).await;
+    }
+
     Ok(ProposalView::from_proposal(&proposal))
 }
 
@@ -575,6 +586,132 @@ pub async fn report_stall(
         "watchdog stall report decided"
     );
     Ok(view)
+}
+
+/// Env flag for T18b replan execute checklist (default off).
+pub const REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV: &str = "UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE";
+
+/// Truthy gate matching other `UC_*_ENFORCE` flags (`1`/`true`/`yes`/`on`).
+fn enforce_flag_enabled(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(str::trim).map(str::to_ascii_lowercase),
+        Some(ref v) if matches!(v.as_str(), "1" | "true" | "yes" | "on")
+    )
+}
+
+fn replan_execute_checklist_enforce_enabled() -> bool {
+    enforce_flag_enabled(
+        std::env::var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV)
+            .ok()
+            .as_deref(),
+    )
+}
+
+/// Project an approved Replan proposal onto Attention + proactive audit.
+///
+/// Best-effort: failure to raise or audit must not fail `decide_proposal` (the
+/// status flip already happened). Missing `case_id` skips with warn — same
+/// precedent as [`escalate_to_attention`].
+async fn project_replan_execute_checklist(
+    governance: &Governance,
+    proposal: &ProactiveProposal,
+    now: DateTime<Utc>,
+) {
+    let Some(case_id) = optional_text(proposal.case_id.as_deref()) else {
+        tracing::warn!(
+            proposal_id = %proposal.id,
+            kind = proposal.kind.as_str(),
+            "replan approve checklist skipped: proposal carried no case_id"
+        );
+        return;
+    };
+
+    let digest = proposal
+        .evidence
+        .iter()
+        .find_map(|item| item.strip_prefix("digest:"))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("(none in evidence)");
+    let effects: Vec<&str> = proposal
+        .evidence
+        .iter()
+        .filter_map(|item| item.strip_prefix("effect:"))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let effects_line = if effects.is_empty() {
+        "(none in evidence)".to_string()
+    } else {
+        effects.join(", ")
+    };
+    let proposed = proposal
+        .proposed_request
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("(none)");
+    let detail = format!(
+        "replan_execute_checklist\n\
+         proposal_id={}\n\
+         digest={digest}\n\
+         preserve_effects={effects_line}\n\
+         proposed_request={proposed}\n\
+         rationale={}\n\
+         human_steps:\n\
+         1. Confirm contract_digest and preserve_effects above\n\
+         2. Craft a new plan outside the live DAG (do not bump digest here)\n\
+         3. Submit via normal task intake when ready\n\
+         4. Leave this proposal Approved — do not admit_execution from this checklist",
+        proposal.id,
+        proposal.rationale.trim()
+    );
+    let human_action = "Review the replan checklist, then manually execute a new plan outside this gate (no digest bump / no admit_execution from approval alone)";
+
+    let item = AttentionItem::new(
+        uuid::Uuid::new_v4().to_string(),
+        case_id.clone(),
+        AttentionKind::NeedsHuman,
+        format!(
+            "Approved replan proposal {} awaiting human execute checklist",
+            proposal.id
+        ),
+        now,
+    )
+    .with_detail(detail)
+    .with_human_action(human_action);
+
+    match governance.attention.raise(item, now).await {
+        Ok((item, superseded)) => tracing::info!(
+            attention_id = %item.id,
+            case_id = %item.case_id,
+            proposal_id = %proposal.id,
+            superseded = superseded.as_deref().unwrap_or(""),
+            "replan execute checklist raised an attention item"
+        ),
+        Err(error) => tracing::warn!(
+            error = %error,
+            case_id = %case_id,
+            proposal_id = %proposal.id,
+            "replan execute checklist could not be projected onto the attention board"
+        ),
+    }
+
+    let audit = ProactiveAuditEntry::new(
+        now,
+        governance.proactive.mode(),
+        "replan_execute_checklist",
+        true,
+    )
+    .for_proposal(proposal.id.clone())
+    .for_case(case_id);
+    if let Err(error) = governance.proactive.record_audit(audit, now).await {
+        tracing::warn!(
+            error = %error,
+            proposal_id = %proposal.id,
+            "replan execute checklist audit could not be recorded"
+        );
+    }
 }
 
 /// Put an escalation on the operator's worklist.
@@ -797,9 +934,13 @@ impl ProactiveService for ProactiveServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use uc_types::governance::{
         CaseOrigin, Grant, PolicySnapshot, PolicyVersion, PrincipalKind, WorkCase,
     };
+
+    /// Serialize tests that mutate `UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE`.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     async fn plane() -> Governance {
         let governance = Governance::in_memory();
@@ -1070,6 +1211,283 @@ mod tests {
         ] {
             assert_eq!(parse_proposal_status(status.as_str()), Some(status));
         }
+    }
+
+    #[test]
+    fn replan_execute_checklist_flag_truthy_variants() {
+        for truthy in ["1", "true", "TRUE", "Yes", "on", "  ON  "] {
+            assert!(
+                enforce_flag_enabled(Some(truthy)),
+                "expected truthy: {truthy:?}"
+            );
+        }
+        for falsy in [
+            None,
+            Some(""),
+            Some("  "),
+            Some("0"),
+            Some("false"),
+            Some("off"),
+        ] {
+            assert!(!enforce_flag_enabled(falsy), "expected falsy: {falsy:?}");
+        }
+    }
+
+    fn replan_proposal(
+        case_id: Option<&str>,
+        evidence: &[&str],
+    ) -> crate::ultimate_coders::SubmitProposalRequest {
+        crate::ultimate_coders::SubmitProposalRequest {
+            case_id: case_id.map(str::to_string),
+            kind: "replan".to_string(),
+            title: "Replan stalled task task-1".to_string(),
+            rationale: "Watchdog verdict replan for task task-1.".to_string(),
+            confidence: 0.7,
+            evidence: evidence.iter().map(|item| item.to_string()).collect(),
+            proposed_request: Some(
+                "Replan the stalled task task-1 while preserving confirmed effects.".to_string(),
+            ),
+            project_id: Some("proj".to_string()),
+            estimated_tokens: Some(50_000),
+            principal_kind: "user".to_string(),
+            principal_id: "alice".to_string(),
+        }
+    }
+
+    fn decide_req(
+        proposal_id: &str,
+        decision: &str,
+    ) -> crate::ultimate_coders::DecideProposalRequest {
+        crate::ultimate_coders::DecideProposalRequest {
+            proposal_id: proposal_id.to_string(),
+            decision: decision.to_string(),
+            by: "alice".to_string(),
+            reason: if decision == "reject" {
+                Some("not now".to_string())
+            } else {
+                None
+            },
+            principal_kind: "user".to_string(),
+            principal_id: "alice".to_string(),
+        }
+    }
+
+    async fn seed_case(governance: &Governance) -> String {
+        let case = WorkCase::new(
+            "replan checklist case",
+            "desc",
+            "proj",
+            CaseOrigin::manual(),
+            super::super::now(),
+        );
+        governance.cases.create_unique(case).await.unwrap().0.id.0
+    }
+
+    #[tokio::test]
+    async fn replan_approve_flag_off_projects_no_checklist() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV);
+        let governance = plane().await;
+        set_mode(&governance, mode_request("propose"))
+            .await
+            .unwrap();
+        let case_id = seed_case(&governance).await;
+        let outcome = submit_proposal(
+            &governance,
+            replan_proposal(
+                Some(&case_id),
+                &["stall:task-1:3", "digest:abc123", "effect:eff_push"],
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(outcome.accepted);
+        let decided = decide_proposal(&governance, decide_req(&outcome.proposal.id, "approve"))
+            .await
+            .unwrap();
+        assert_eq!(decided.status, "approved");
+        let worklist = governance.attention.worklist(false, 10).await.unwrap();
+        assert!(
+            worklist.is_empty(),
+            "flag off must not raise attention: {worklist:?}"
+        );
+        let audit = list_audit(
+            &governance,
+            crate::ultimate_coders::ListAuditRequest {
+                limit: 20,
+                proposal_id: Some(outcome.proposal.id.clone()),
+                case_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            !audit
+                .iter()
+                .any(|entry| entry.action == "replan_execute_checklist"),
+            "flag off must not emit checklist audit: {audit:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn replan_approve_flag_on_raises_attention_and_audit() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV, "1");
+        let governance = plane().await;
+        set_mode(&governance, mode_request("propose"))
+            .await
+            .unwrap();
+        let case_id = seed_case(&governance).await;
+        let outcome = submit_proposal(
+            &governance,
+            replan_proposal(
+                Some(&case_id),
+                &["stall:task-1:3", "digest:abc123", "effect:eff_push"],
+            ),
+        )
+        .await
+        .unwrap();
+        let decided = decide_proposal(&governance, decide_req(&outcome.proposal.id, "approve"))
+            .await
+            .unwrap();
+        assert_eq!(decided.status, "approved");
+        // Proposal stays Approved — never mark_executed / admit_execution.
+        assert!(decided.executed_case_id.is_none());
+
+        let worklist = governance.attention.worklist(false, 10).await.unwrap();
+        assert_eq!(worklist.len(), 1, "expected ≤1 open attention item");
+        assert_eq!(worklist[0].case_id, case_id);
+        assert_eq!(worklist[0].kind, AttentionKind::NeedsHuman);
+        let detail = worklist[0].detail.as_deref().unwrap_or("");
+        assert!(detail.contains("digest=abc123"), "{detail}");
+        assert!(detail.contains("eff_push"), "{detail}");
+        assert!(detail.contains("proposed_request="), "{detail}");
+        assert!(detail.contains("human_steps:"), "{detail}");
+
+        let audit = list_audit(
+            &governance,
+            crate::ultimate_coders::ListAuditRequest {
+                limit: 20,
+                proposal_id: Some(outcome.proposal.id.clone()),
+                case_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            audit
+                .iter()
+                .any(|entry| entry.action == "replan_execute_checklist" && entry.allowed),
+            "expected replan_execute_checklist audit: {audit:?}"
+        );
+        std::env::remove_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV);
+    }
+
+    #[tokio::test]
+    async fn replan_reject_flag_on_projects_no_checklist() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV, "true");
+        let governance = plane().await;
+        set_mode(&governance, mode_request("propose"))
+            .await
+            .unwrap();
+        let case_id = seed_case(&governance).await;
+        let outcome = submit_proposal(
+            &governance,
+            replan_proposal(Some(&case_id), &["digest:abc123", "effect:eff_push"]),
+        )
+        .await
+        .unwrap();
+        let decided = decide_proposal(&governance, decide_req(&outcome.proposal.id, "reject"))
+            .await
+            .unwrap();
+        assert_eq!(decided.status, "rejected");
+        assert!(governance
+            .attention
+            .worklist(false, 10)
+            .await
+            .unwrap()
+            .is_empty());
+        let audit = list_audit(
+            &governance,
+            crate::ultimate_coders::ListAuditRequest {
+                limit: 20,
+                proposal_id: Some(outcome.proposal.id.clone()),
+                case_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!audit
+            .iter()
+            .any(|entry| entry.action == "replan_execute_checklist"));
+        std::env::remove_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV);
+    }
+
+    #[tokio::test]
+    async fn non_replan_approve_flag_on_projects_no_checklist() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV, "on");
+        let governance = plane().await;
+        set_mode(&governance, mode_request("propose"))
+            .await
+            .unwrap();
+        let case_id = seed_case(&governance).await;
+        let mut req = proposal(&["ci:run-42"]);
+        req.case_id = Some(case_id);
+        let outcome = submit_proposal(&governance, req).await.unwrap();
+        let decided = decide_proposal(&governance, decide_req(&outcome.proposal.id, "approve"))
+            .await
+            .unwrap();
+        assert_eq!(decided.status, "approved");
+        assert_eq!(decided.kind, "fix_failing_ci");
+        assert!(governance
+            .attention
+            .worklist(false, 10)
+            .await
+            .unwrap()
+            .is_empty());
+        std::env::remove_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV);
+    }
+
+    #[tokio::test]
+    async fn replan_approve_flag_on_missing_case_id_skips_projection() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV, "yes");
+        let governance = plane().await;
+        set_mode(&governance, mode_request("propose"))
+            .await
+            .unwrap();
+        let outcome = submit_proposal(
+            &governance,
+            replan_proposal(None, &["digest:abc123", "effect:eff_push"]),
+        )
+        .await
+        .unwrap();
+        let decided = decide_proposal(&governance, decide_req(&outcome.proposal.id, "approve"))
+            .await
+            .unwrap();
+        assert_eq!(decided.status, "approved");
+        assert!(governance
+            .attention
+            .worklist(false, 10)
+            .await
+            .unwrap()
+            .is_empty());
+        let audit = list_audit(
+            &governance,
+            crate::ultimate_coders::ListAuditRequest {
+                limit: 20,
+                proposal_id: Some(outcome.proposal.id.clone()),
+                case_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!audit
+            .iter()
+            .any(|entry| entry.action == "replan_execute_checklist"));
+        std::env::remove_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); closeout #874; D1–D12 decided 2026-11-07; follow-on **T18b** (checklist) in progress — full T18 execute still deferred
+Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); closeout #874; D1–D12 decided 2026-11-07; follow-on **T18b** checklist **implemented** — full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -61,11 +61,11 @@ P5 (D11) — V8 MVP closeout (docs): **implemented**
 - Spec: [spec-p5.md](spec-p5.md)
 - [16 docs V8 MVP closeout](tickets/16-docs-v8-mvp-closeout.md) — **implemented**; was blocked by: D11
 
-Follow-on (D12 — explicit reopen for checklist only):
+Follow-on (D12 — explicit reopen for checklist only): **implemented**
 
 - Spec: [spec-t18b.md](spec-t18b.md)
-- [17 replan execute checklist wire](tickets/17-replan-execute-checklist-wire.md) — ready; was blocked by: D12
-- [18 docs T18b](tickets/18-docs-t18b-checklist.md) — ready; was blocked by: none
+- [17 replan execute checklist wire](tickets/17-replan-execute-checklist-wire.md) — **implemented** (`UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE` default off); was blocked by: D12
+- [18 docs T18b](tickets/18-docs-t18b-checklist.md) — **implemented**; was blocked by: none
 
 Later (still deferred — not grabable as full execute):
 
@@ -75,9 +75,7 @@ Later (still deferred — not grabable as full execute):
 
 ## Frontier (open, unblocked)
 
-- T18b tickets 17–18 (checklist only)
-
-- _(empty — no grabable implement tickets; V8 MVP closed per D11)_
+- _(empty — no grabable implement tickets; T18b checklist landed; full T18 execute stays deferred)_
 
 ## Out of scope
 

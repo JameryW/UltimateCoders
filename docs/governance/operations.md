@@ -57,6 +57,7 @@ NATS + PostgreSQL（见 §4 手工验收）。
 | `UC_NATS_URL` / NATS 可达性 | 治理桥传输；不可达时 Dashboard 治理端点全部 503 `governance_unavailable`（**不是**空数据） | `governance_client.py` |
 | `UC_COMPLETION_CONDITIONS_ENFORCE` | 打开后完成条件才强制校验；默认关闭。与 PR02 的 `verifying` 状态配合使用 | `python/ultimate_coders/agent/completion_conditions.py` |
 | `UC_REPLAN_PROPOSAL_ENFORCE` | 打开后 watchdog `replan` 可发出结构化 `ProposalKind.REPLAN`（观察/提交仍受 `UC_PROACTIVE_MODE`）；默认关闭；**不**执行新 DAG | `python/ultimate_coders/proactive/evaluator.py`；接线见 `agent/proactive_bridge.py` / `agent/orchestrator.py` |
+| `UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE` | 打开后，操作员 **approve** `ProposalKind.replan` 时投影 Attention 清单 + audit `replan_execute_checklist`；默认关闭；**不** `admit_execution` / **不** bump digest / **不** 改 DAG | `crates/uc-grpc/src/governance/proactive_service.rs`（T18b / D12） |
 | `UC_TASK_BACKEND` / `UC_EVENT_BACKEND` / `UC_GRAPH_SHADOW` | 执行面后端，不属治理层；但 `Governance` 与它们共用 `UC_DATABASE_URL` 时需保证同一个库 | `crates/uc-grpc-server/src/main.rs`、`docs/architecture.md` |
 
 ## 2. 治理桥：唯一传输契约

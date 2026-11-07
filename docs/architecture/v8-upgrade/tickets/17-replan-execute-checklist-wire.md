@@ -4,9 +4,9 @@
 
 **Blocked by:** D12
 
-**Status:** ready
+**Status:** implemented (`UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE` default off; `project_replan_execute_checklist` + audit action `replan_execute_checklist` in `proactive_service.rs`; `ProactiveGate::record_audit`)
 
-- [ ] Flag gate + approve-only Replan branch
-- [ ] Attention detail includes digest/effects/proposed_request when present in evidence
-- [ ] Audit action `replan_execute_checklist`
-- [ ] Tests for on/off / reject / missing case_id
+- [x] Flag gate + approve-only Replan branch
+- [x] Attention detail includes digest/effects/proposed_request when present in evidence
+- [x] Audit action `replan_execute_checklist`
+- [x] Tests for on/off / reject / missing case_id

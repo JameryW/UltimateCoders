@@ -16,12 +16,12 @@ When an operator **approves** a `ProposalKind.replan` proposal under an explicit
 
 ## Acceptance criteria
 
-- [ ] Flag off: approve replan → no new attention / no checklist audit
-- [ ] Flag on + approve replan: ≤1 attention item; DAG/digest untouched
-- [ ] Flag on + reject / other kinds: no checklist side-effect
-- [ ] Missing `case_id`: skip projection with warn (escalate_to_attention precedent)
-- [ ] No `admit_execution` / `mark_executed` / orchestrator decompose / TaskStore mutation
-- [ ] Tests green; census pins if needed
+- [x] Flag off: approve replan → no new attention / no checklist audit
+- [x] Flag on + approve replan: ≤1 attention item; DAG/digest untouched
+- [x] Flag on + reject / other kinds: no checklist side-effect
+- [x] Missing `case_id`: skip projection with warn (escalate_to_attention precedent)
+- [x] No `admit_execution` / `mark_executed` / orchestrator decompose / TaskStore mutation
+- [x] Tests green; census pins if needed
 
 ## Out of scope
 
