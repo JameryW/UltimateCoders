@@ -79,7 +79,8 @@
   记录结果而不是再次执行。合并发布与 Worker 分支推送均已接入
   （`MergeArbiter` 与 `WorkspaceManager.release()`）：以（远端、分支、
   待发布提交）构造稳定 effect id，推送报错时用 `ls-remote` 对账，
-  已落地则报 `already_pushed` 而非重试。
+  已落地则报 `already_pushed` 而非重试。MetaInfer create POST 为第一个非 git
+  kind（`metainfer-create`），默认关闭，由 `UC_EFFECT_LEDGER_METAINFER` 打开。
 - **任务契约版本化**：`contract.py` 以「原始请求文本」的归一化摘要为契约身份
   （仅折叠 CRLF/行尾空白/首尾空行，措辞变化——哪怕一个否定词——必须改变摘要），
   按任务记录版本。同一任务的两次派发若契约摘要不同，Worker **拒绝执行**并上报
@@ -125,6 +126,7 @@
 | 差距 | 状态 | 说明 |
 | --- | --- | --- |
 | Decision Record（V8 P0） | **落地** | 派发 attempt 级审计 join：`decision_record` 命名空间 + Worker start/terminal 写入 + `GET /dashboard/api/decisions`；不含 prompt 内容。见 [v8-upgrade/map.md](architecture/v8-upgrade/map.md)、[D5](architecture/v8-upgrade/issues/D5-decision-record-shape.md)、[ADR 0001](adr/0001-v8-as-agent-decision-evidence-checklist.md)。 |
+| MetaInfer create EffectLedger（V8 P1） | **落地（默认关闭）** | 首个非 git 副作用收据：`kind=metainfer-create`，由 `UC_EFFECT_LEDGER_METAINFER` 打开；`remote_jobs` 仍为操作态。push-on-release 编码路径会惰性绑定 RuntimeState，使 `push-branch` 收据不再静默跳过。见 [spec-p1](architecture/v8-upgrade/spec-p1.md)、[D7](architecture/v8-upgrade/issues/D7-metainfer-effect-kind.md)。 |
 | Portable Capability Tokens | 不做（D4） | 继续 Grant/Mandate；MVP 不引入可移植不透明 token。 |
 | Learning OS / 轨迹导出 | 延后（D3） | 产品决策前不做。 |
 | Graph-primary 默认开启 | 人工门控（D6） | 不在 P0 代码范围。 |
@@ -236,7 +238,7 @@ P1b 三项增量（统一预算、risk 配比、manifest 审计落库）连同�
 | 编号 | 注入故障 | 现有证据 | 状态 |
 |---|---|---|---|
 | F1 | LLM 调用期间崩溃 | `test_unconfirmed_writer_preserves_checkpoint_and_original_baseline` | 覆盖 |
-| F2 | 工具成功但响应丢失 | `test_lost_submission_response_never_creates_another_job`、去重集成测试、`tests/python/test_merge_arbiter_effects.py`、`tests/python/test_workspace_push_effects.py`（已推送但响应丢失 → `already_pushed`，不重试）、`tests/python/test_outbox_effect_identity.py`（重试只取代一条终态记录，消息 id 随内容变化） | 覆盖 |
+| F2 | 工具成功但响应丢失 | `test_lost_submission_response_never_creates_another_job`、去重集成测试、`tests/python/test_merge_arbiter_effects.py`、`tests/python/test_workspace_push_effects.py`（已推送但响应丢失 → `already_pushed`，不重试）、`tests/python/test_metainfer_effects.py`（`UC_EFFECT_LEDGER_METAINFER`：create POST 丢失 → `UNKNOWN`，CONFIRMED 不二次 POST）、`tests/python/test_outbox_effect_identity.py`（重试只取代一条终态记录，消息 id 随内容变化） | 覆盖 |
 | F3 | 沙箱/工作区被销毁 | inference delivery 的 worktree 接管与恢复测试 | 覆盖 |
 | F4 | 外部工具返回恶意指令 | env allowlist 与凭证隔离测试；注入内容侧：毒化的检索块/子任务摘要只进证据/轨迹层、不能自证 verified、也不能伪造 policy 或 P3 计数（内容由 builder 决定信任，文本说了不算） | 覆盖（层内不变量；模型是否遵从注入不在仓内可控） |
 | F5 | 两个 Agent 改同一资源 | `test_merge_arbiter.py`、`test_merge_gate.py` | 覆盖 |

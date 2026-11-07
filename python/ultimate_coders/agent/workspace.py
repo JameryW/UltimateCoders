@@ -38,6 +38,14 @@ _WORKER_IDENTITY_EMAIL = "uc-worker@local"
 _WORKER_IDENTITY_NAME = "UC Worker"
 
 
+def _local_runtime_state_path(project_path: str) -> Path:
+    """SQLite path for RuntimeState: UC_RUNTIME_STATE_DIR or ``<project>/.uc/runtime``."""
+    return (
+        Path(os.environ.get("UC_RUNTIME_STATE_DIR") or Path(project_path).resolve() / ".uc/runtime")
+        / "state.sqlite3"
+    )
+
+
 def subtask_branch(subtask_id: str, *, inference: bool = False) -> str:
     suffix = hashlib.sha256(subtask_id.encode()).hexdigest()[:16] if inference else subtask_id[:12]
     return f"uc/subtask/{suffix}"
@@ -256,12 +264,7 @@ class WorkspaceManager:
 
             if self._state is None:
                 self._state = await asyncio.to_thread(
-                    RuntimeState,
-                    Path(
-                        os.environ.get("UC_RUNTIME_STATE_DIR")
-                        or Path(self._project_path).resolve() / ".uc/runtime"
-                    )
-                    / "state.sqlite3",
+                    RuntimeState, _local_runtime_state_path(self._project_path)
                 )
             lease_key = hashlib.sha256(
                 (str(Path(self._project_path).resolve()) + ":" + subtask_id).encode()
@@ -576,12 +579,7 @@ class WorkspaceManager:
             from ultimate_coders.runtime_state import RuntimeState
 
             self._state = await asyncio.to_thread(
-                RuntimeState,
-                Path(
-                    os.environ.get("UC_RUNTIME_STATE_DIR")
-                    or Path(self._project_path).resolve() / ".uc/runtime"
-                )
-                / "state.sqlite3",
+                RuntimeState, _local_runtime_state_path(self._project_path)
             )
         leases = await asyncio.to_thread(self._state.records, "workspace_leases")
 
@@ -621,14 +619,23 @@ class WorkspaceManager:
         The ledger treats the publish as one durable effect keyed by
         (remote, branch, commit): a dropped connection becomes UNKNOWN and
         is reconciled with ``ls-remote`` before any retry, and a publish
-        that already landed is reported as ``already_pushed``. Without a
-        bound RuntimeState the behaviour stays the historical one.
+        that already landed is reported as ``already_pushed``. When
+        ``push_on_release`` is set but no RuntimeState was bound at acquire
+        (coding path), bind the same local store as exclusive worktree
+        acquire so receipts are not silently skipped.
         """
         from ultimate_coders.effect_ledger import (
             EffectBusyError,
             EffectLedger,
             stable_effect_id,
         )
+
+        if self._state is None and self._push_on_release:
+            from ultimate_coders.runtime_state import RuntimeState
+
+            self._state = await asyncio.to_thread(
+                RuntimeState, _local_runtime_state_path(self._project_path)
+            )
 
         branch = handle.branch_name
         ledger = EffectLedger(self._state) if self._state is not None else None

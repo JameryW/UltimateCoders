@@ -19,7 +19,7 @@ The sandbox adapter launches `python -m ultimate_coders.inference.runner --reque
 
 ## 3. Contracts
 
-- Environment: `UC_METAINFER_URL` enables routing; live probes determine remote operation readiness. Mutating work additionally requires the `uc-metainfer/1` contract, a stable `backend_id`, workspace/quiescence capabilities and (when set) the pinned `UC_METAINFER_REVISION`. `UC_METAINFER_BACKEND_ID` is the operator's stable alias. `inference_benchmark` is local. `UC_DATABASE_URL` is shared by Gateway/coordinator/Worker/API; no configured-DB failure fallback. `UC_RUNTIME_STATE_DIR` supplies local-only SQLite. `UC_METAINFER_TASK_TYPES` and `UC_METAINFER_MAX_CONCURRENCY` are shared backend policy. `UC_OUTBOX_RETENTION_SECONDS` controls indexed delivered-outcome tombstoning.
+- Environment: `UC_METAINFER_URL` enables routing; live probes determine remote operation readiness. Mutating work additionally requires the `uc-metainfer/1` contract, a stable `backend_id`, workspace/quiescence capabilities and (when set) the pinned `UC_METAINFER_REVISION`. `UC_METAINFER_BACKEND_ID` is the operator's stable alias. `inference_benchmark` is local. `UC_DATABASE_URL` is shared by Gateway/coordinator/Worker/API; no configured-DB failure fallback. `UC_RUNTIME_STATE_DIR` supplies local-only SQLite. `UC_METAINFER_TASK_TYPES` and `UC_METAINFER_MAX_CONCURRENCY` are shared backend policy. `UC_OUTBOX_RETENTION_SECONDS` controls indexed delivered-outcome tombstoning. `UC_EFFECT_LEDGER_METAINFER` (default off; truthy `1`/`true`/`yes`/`on`) wraps MetaInfer create `POST …/tasks` with EffectLedger kind `metainfer-create` when `RuntimeState` is bound; `remote_jobs` remains the operational store. Flag off writes no `tool_effects` rows.
 - Domain config: `inference_task` contains operation/repository/objective/framework/model/hardware/constraints/parameters and optional `upstream_type`; `benchmark` contains immutable argv/workload/protected paths; `oracle`, `apply_command`, `max_iterations` are optional policy/execution settings.
 - Explicit agent selection overrides heuristics. Explicit domain tasks remain one node. Remote nodes require `inference_infra` and the matching operation capability; benchmarks require only `inference_benchmark`. Default routing requires framework/inference context and engineering intent.
 - Actual upstream: discover `/api/sys-shell/task-types/{type}/schema`, POST `/api/sys-shell/tasks` with type/answers/raw_request, poll `/api/sys-shell/{id}`, stop via `/{id}/control` with action kill and force true. Never retry POST without upstream idempotency support.
@@ -45,14 +45,18 @@ The sandbox adapter launches `python -m ultimate_coders.inference.runner --reque
 | Benchmark harness mutation | Fail and restore candidate code |
 | Dirty/shared repository, changed HEAD, initialized submodule | Refuse acceptance |
 | Memory write failure | Existing best-effort Memory behavior; artifact evidence remains authoritative |
+| `UC_EFFECT_LEDGER_METAINFER` off / unset | Create POST unchanged for ledger writes (no `tool_effects` rows) |
+| Flag on + successful create | EffectLedger `CONFIRMED` with `kind=metainfer-create`; `remote_jobs` still authoritative for ops |
+| Flag on + transport/uncertain after claim | Ledger `UNKNOWN` (not `FAILED`); existing `RemoteStateUncertainError` path |
+| Flag on + prepare `CONFIRMED` / UNKNOWN with `remote_jobs` proof | No second POST; open receipt confirmed; `remote_jobs.remote_id` filled from receipt when missing |
 
 ## 5. Good / Base / Bad Cases
 
-Good: fixed workload TPOT 43 -> 37, correct numerics, memory under limit: retain patch and evidence. Base: service unset and React task: existing coding path. Bad: service says success but TPOT 43 -> 78, or no measurement: rollback/reject. Backend generation without importing an output leaves the input unchanged and cannot pass as optimization.
+Good: fixed workload TPOT 43 -> 37, correct numerics, memory under limit: retain patch and evidence. Base: service unset and React task: existing coding path. Bad: service says success but TPOT 43 -> 78, or no measurement: rollback/reject. Backend generation without importing an output leaves the input unchanged and cannot pass as optimization. Good (effect ledger): flag on, lost create response → `UNKNOWN`, later `remote_jobs.remote_id` adopt confirms without a second POST. Base (effect ledger): flag off → byte-identical create for ledger writes. Bad (effect ledger): treating uncertain create as `FAILED` and retrying POST.
 
 ## 6. Tests Required
 
-Exercise Oracle metric direction, missing/nonfinite values, correctness/compile/workload/ceilings; schema-valid HTTP submission, unsupported parameters, nonretried POST, cancellation/kill confirmation; real git rollback including additions, file/directory replacement and protected-harness mutation; explicit and heuristic routing, capability opt-in, Dashboard/NATS config forwarding, Worker adapter choice and accepted workflow Memory; real sandbox runner execution/report persistence, coroutine/control cancellation via an HTTP service, command descendant timeout and forced nested-session termination.
+Exercise Oracle metric direction, missing/nonfinite values, correctness/compile/workload/ceilings; schema-valid HTTP submission, unsupported parameters, nonretried POST, cancellation/kill confirmation; real git rollback including additions, file/directory replacement and protected-harness mutation; explicit and heuristic routing, capability opt-in, Dashboard/NATS config forwarding, Worker adapter choice and accepted workflow Memory; real sandbox runner execution/report persistence, coroutine/control cancellation via an HTTP service, command descendant timeout and forced nested-session termination. Effect ledger: `tests/python/test_metainfer_effects.py` (flag off, success CONFIRMED, uncertain UNKNOWN, CONFIRMED/UNKNOWN+proof skip POST).
 
 ## 7. Wrong vs Correct
 

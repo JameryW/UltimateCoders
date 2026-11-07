@@ -35,6 +35,45 @@ DEFAULT_TASK_TYPES = {
     InferenceTaskType.ANALYZE_TRACE: "sglang-trace-analyze",
 }
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+#: Opt-in EffectLedger receipts for MetaInfer create POST (default off).
+EFFECT_LEDGER_METAINFER_ENV = "UC_EFFECT_LEDGER_METAINFER"
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
+
+
+def _effect_ledger_enabled() -> bool:
+    """Whether MetaInfer create POSTs write EffectLedger receipts (default off)."""
+    return os.environ.get(EFFECT_LEDGER_METAINFER_ENV, "").strip().lower() in _TRUTHY_ENV
+
+
+def _confirm_metainfer_create_effect(
+    state: RuntimeState,
+    *,
+    backend_id: str,
+    operation_id: str,
+    request_sha: str,
+    remote_id: str | None,
+) -> None:
+    """Best-effort: settle an open metainfer-create receipt from remote_jobs proof."""
+    from ultimate_coders.effect_ledger import EffectLedger, EffectStatus, stable_effect_id
+
+    effect_id = stable_effect_id("metainfer-create", backend_id, operation_id, request_sha)
+    ledger = EffectLedger(state)
+    record = ledger.get(effect_id)
+    if not record:
+        return
+    status = record.get("status")
+    if status == EffectStatus.CONFIRMED.value:
+        return
+    if status not in (
+        EffectStatus.IN_FLIGHT.value,
+        EffectStatus.UNKNOWN.value,
+        EffectStatus.RECONCILING.value,
+    ):
+        return
+    try:
+        ledger.confirm(effect_id, result={"remote_id": remote_id} if remote_id else {})
+    except Exception:
+        pass
 
 
 def task_types() -> dict:
@@ -296,11 +335,30 @@ class MetaInferAdapter:
                         task.parameters.get("kernel_file_path", ""),
                         record["result"].get("evidence", {}).get("state", {}).get("run", {}),
                     )
+                if _effect_ledger_enabled() and self.state and key:
+                    await asyncio.to_thread(
+                        _confirm_metainfer_create_effect,
+                        self.state,
+                        backend_id=self.backend_id,
+                        operation_id=key,
+                        request_sha=request_sha,
+                        remote_id=record["result"].get("task_id"),
+                    )
                 return MetaInferResult(**record["result"])
             remote_id = record.get("remote_id")
             if not remote_id and record.get("state") != "waiting_resource":
                 raise RemoteStateUncertainError(
                     "Submission outcome unknown; reconcile at MetaInfer before retry"
+                )
+            if remote_id and _effect_ledger_enabled() and self.state and key:
+                # Adopted from remote_jobs — settle any open create receipt.
+                await asyncio.to_thread(
+                    _confirm_metainfer_create_effect,
+                    self.state,
+                    backend_id=self.backend_id,
+                    operation_id=key,
+                    request_sha=request_sha,
+                    remote_id=remote_id,
                 )
         backend_key = self.backend_id
         budget = (
@@ -448,58 +506,156 @@ class MetaInferAdapter:
             artifacts = dict((record or {}).get("artifacts", {}))
             if not remote_id:
                 await reserve()
-                if self.state and key:
-                    claim = uuid.uuid4().hex
-                    claimed = await asyncio.to_thread(
-                        self.state.mutate,
-                        "remote_jobs",
-                        key,
-                        lambda old: (
-                            old
-                            if old.get("state") != "waiting_resource" and old
-                            else {
-                                "state": "submission_unknown",
-                                "operation_id": key,
-                                "claim": claim,
-                                "task_type": task_type,
-                                "backend": self.url,
+                ledger = None
+                effect_id = None
+                skip_post = False
+                if _effect_ledger_enabled() and self.state and key:
+                    from ultimate_coders.effect_ledger import (
+                        EffectBusyError,
+                        EffectLedger,
+                        stable_effect_id,
+                    )
+
+                    effect_id = stable_effect_id(
+                        "metainfer-create", self.backend_id, key, request_sha
+                    )
+                    ledger = EffectLedger(self.state)
+                    try:
+                        prepared = await asyncio.to_thread(
+                            ledger.prepare,
+                            effect_id,
+                            kind="metainfer-create",
+                            request={
                                 "backend_id": self.backend_id,
+                                "operation_id": key,
                                 "request_sha256": request_sha,
-                                "payload_sha256": hashlib.sha256(
-                                    json.dumps(payload, sort_keys=True).encode()
-                                ).hexdigest(),
-                                "deadline": time.time() + self.timeout_seconds,
-                            }
-                        ),
-                    )
-                    # A racing process already owns this intent. Never repeat POST.
-                    if claimed.get("claim") != claim:
-                        raise RemoteStateUncertainError(
-                            "Concurrent remote operation; attach through its owner"
+                                "task_type": task_type,
+                            },
+                            idempotency_key=effect_id,
                         )
-                try:
-                    created = await self._request(
-                        client,
-                        "POST",
-                        f"{shell}/tasks",
-                        json=payload,
-                    )
-                    remote_id = created.get("task_id")
-                    if not isinstance(remote_id, str) or not _SAFE_ID.fullmatch(remote_id):
-                        remote_id = None
-                        raise MetaInferError("MetaInfer returned an invalid task_id")
-                    artifacts = {
-                        key: created[key]
-                        for key in ("workspace_dir", "state_dir")
-                        if isinstance(created.get(key), str)
-                    }
-                    await persist(state="running", remote_id=remote_id, artifacts=artifacts)
-                except BaseException as exc:
-                    if self.state and key:
+                    except EffectBusyError as exc:
                         raise RemoteStateUncertainError(
-                            "MetaInfer submission outcome unknown; workspace quarantined"
+                            "Concurrent MetaInfer create effect; attach through its owner"
                         ) from exc
-                    raise
+                    status = prepared.get("status")
+                    job = (await asyncio.to_thread(self.state.get, "remote_jobs", key)) or {}
+                    if status == "CONFIRMED" or (
+                        status in ("UNKNOWN", "RECONCILING")
+                        and (job.get("remote_id") or job.get("result"))
+                    ):
+                        # Receipt already settled (or remote_jobs proves it): never POST again.
+                        skip_post = True
+                        remote_id = job.get("remote_id") or (prepared.get("result") or {}).get(
+                            "remote_id"
+                        )
+                        if job.get("result") and not remote_id:
+                            await asyncio.to_thread(
+                                _confirm_metainfer_create_effect,
+                                self.state,
+                                backend_id=self.backend_id,
+                                operation_id=key,
+                                request_sha=request_sha,
+                                remote_id=job["result"].get("task_id"),
+                            )
+                            await release_slot()
+                            return MetaInferResult(**job["result"])
+                        if not remote_id:
+                            raise RemoteStateUncertainError(
+                                "Confirmed MetaInfer create lacks remote_id; reconcile before retry"
+                            )
+                        await asyncio.to_thread(
+                            _confirm_metainfer_create_effect,
+                            self.state,
+                            backend_id=self.backend_id,
+                            operation_id=key,
+                            request_sha=request_sha,
+                            remote_id=remote_id,
+                        )
+                        # Keep remote_jobs (operational store) aligned with the receipt.
+                        if not job.get("remote_id"):
+                            await persist(state="running", remote_id=remote_id)
+                    elif status in ("UNKNOWN", "RECONCILING"):
+                        # Ambiguous prior attempt with no local proof — leave UNKNOWN.
+                        raise RemoteStateUncertainError(
+                            "Submission outcome unknown; reconcile at MetaInfer before retry"
+                        )
+                if not skip_post:
+                    if self.state and key:
+                        claim = uuid.uuid4().hex
+                        claimed = await asyncio.to_thread(
+                            self.state.mutate,
+                            "remote_jobs",
+                            key,
+                            lambda old: (
+                                old
+                                if old.get("state") != "waiting_resource" and old
+                                else {
+                                    "state": "submission_unknown",
+                                    "operation_id": key,
+                                    "claim": claim,
+                                    "task_type": task_type,
+                                    "backend": self.url,
+                                    "backend_id": self.backend_id,
+                                    "request_sha256": request_sha,
+                                    "payload_sha256": hashlib.sha256(
+                                        json.dumps(payload, sort_keys=True).encode()
+                                    ).hexdigest(),
+                                    "deadline": time.time() + self.timeout_seconds,
+                                }
+                            ),
+                        )
+                        # A racing process already owns this intent. Never repeat POST.
+                        if claimed.get("claim") != claim:
+                            raise RemoteStateUncertainError(
+                                "Concurrent remote operation; attach through its owner"
+                            )
+                    if ledger is not None and effect_id is not None:
+                        await asyncio.to_thread(
+                            ledger.mark_in_flight,
+                            effect_id,
+                            owner=f"metainfer:{key}",
+                        )
+                    try:
+                        created = await self._request(
+                            client,
+                            "POST",
+                            f"{shell}/tasks",
+                            json=payload,
+                        )
+                        remote_id = created.get("task_id")
+                        if not isinstance(remote_id, str) or not _SAFE_ID.fullmatch(remote_id):
+                            remote_id = None
+                            raise MetaInferError("MetaInfer returned an invalid task_id")
+                        artifacts = {
+                            key: created[key]
+                            for key in ("workspace_dir", "state_dir")
+                            if isinstance(created.get(key), str)
+                        }
+                        await persist(state="running", remote_id=remote_id, artifacts=artifacts)
+                        if ledger is not None and effect_id is not None:
+                            try:
+                                await asyncio.to_thread(
+                                    ledger.confirm,
+                                    effect_id,
+                                    result={"remote_id": remote_id},
+                                )
+                            except Exception:
+                                pass
+                    except BaseException as exc:
+                        if ledger is not None and effect_id is not None:
+                            try:
+                                await asyncio.to_thread(
+                                    ledger.mark_unknown,
+                                    effect_id,
+                                    reason=f"{type(exc).__name__}: {exc}",
+                                )
+                            except Exception:
+                                pass
+                        if self.state and key:
+                            raise RemoteStateUncertainError(
+                                "MetaInfer submission outcome unknown; workspace quarantined"
+                            ) from exc
+                        raise
             else:
                 await reserve()
             artifacts["task"] = f"{self.url}{shell}/{remote_id}"
