@@ -17,7 +17,6 @@ Usage: ``python scripts/check-graph-cutover-readiness.py``
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -85,7 +84,10 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
     snapshot: Mapping[str, str | None]
     if env is None:
         # Read-only view of process env — never assign back into os.environ.
-        snapshot = {SHADOW_ENV: os.environ.get(SHADOW_ENV), DATABASE_ENV: os.environ.get(DATABASE_ENV)}
+        snapshot = {
+            SHADOW_ENV: os.environ.get(SHADOW_ENV),
+            DATABASE_ENV: os.environ.get(DATABASE_ENV),
+        }
     else:
         snapshot = {
             SHADOW_ENV: env.get(SHADOW_ENV),
