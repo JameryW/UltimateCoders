@@ -893,7 +893,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-07: V8 upgrade wayfinder + Decision Record P0 (assessment/map/
     # D1–D6/spec/tickets/ADR/decision_record.py + tests + decision-record-spec)
     # add resolved path mentions (689 -> 712); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 712
+    # 2026-11-07 later: V8 P1 MetaInfer EffectLedger receipts (D7/spec-p1/
+    # tickets 04–06 + test_metainfer_effects.py + inference-infra notes)
+    # (712 -> 720); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 720
 
 
 def test_real_corpus_has_no_false_content_mismatch():
