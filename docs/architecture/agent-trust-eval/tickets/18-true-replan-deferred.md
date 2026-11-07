@@ -10,7 +10,10 @@
 
 **Note (2026-11-07, D11):** V8 MVP closed (P0–P4 / #869–#873) without satisfying this ticket; execute remains deferred outside that wave.
 
+**Note (2026-11-07, D12 / T18b):** Approve→Attention execute **checklist** landed (`UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE`, default off) under [v8-upgrade/spec-t18b.md](../../v8-upgrade/spec-t18b.md). That path projects NeedsHuman + audit only — it does **not** bump digest, re-decompose, or `admit_execution`. This ticket (full true replan execute) remains deferred.
+
 - [ ] Explicitly out of P2 MVP scope
 - [ ] Must not be implemented as a silent contract rewrite during ticket 14
 - [x] T18a proposal-only precursor landed under V8 P3 (does not satisfy this ticket)
+- [x] T18b approve→checklist precursor landed under D12 (does not satisfy this ticket)
 - [ ] Future ticket may split into planner ownership + quota + digest bump rules

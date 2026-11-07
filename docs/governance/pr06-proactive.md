@@ -96,11 +96,18 @@ Python `evaluator.py` 的规则是纯函数（无时钟、无随机、无网络�
 `ProactiveAuditEntry`（`proactive.rs:418-472`）字段：`at`、`mode`、`action`、`proposal_id`、
 `case_id`、`allowed`、`reason`（= deny code）、`detail`（deny reason 的 Debug 形态）。
 
-`action` 的取值约定：`admit_proposal` / `admit_execution` / `decision` / `watchdog`。
+`action` 的取值约定：`admit_proposal` / `admit_execution` / `decision` /
+`replan_execute_checklist` / `watchdog`。
 
 `ProactiveGate::submit` 与 `admit_execution` 都**先写审计再返回**，包括拒绝路径
 （`crates/uc-engine/src/governance/proactive.rs:171-254`）。
 引擎侧 `off_mode_refuses_and_audits`、`evidence_free_proposal_is_refused`。
+
+T18b / D12：当 `UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE` 打开（默认关）且操作员
+**approve** `kind=replan` 时，控制面在 `decision` 之外再写一条
+`replan_execute_checklist` 审计，并把 NeedsHuman 清单投影到 Attention；**不**调用
+`admit_execution`、**不** bump digest、**不**改 DAG。缺少 `case_id` 时 warn 并跳过
+（与 escalate→Attention 同先例）。真 replan execute 仍延后（trust-eval ticket 18）。
 
 一个细节值得记录：拒绝时提案**仍会被存下来**（`Observe` 模式下状态置为 `observed`），条件是
 `mode.evaluates()` 为真。理由写在注释里——让之后的审计能区分「我们看见了但没说」和「我们压根没看见」。

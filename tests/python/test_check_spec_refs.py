@@ -906,7 +906,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # (745 -> 768); unclassified stays 0.
     # 2026-11-07 P5: MVP closeout (D11 / map Later → trust-eval ticket 18)
     # (768 -> 769); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 769
+    # 2026-11-07 T18b: replan execute checklist (D12 / spec-t18b / tickets
+    # 17–18 + replan-execute-checklist-spec.md naming proactive_service.rs /
+    # proactive.rs) (769 -> 775); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 775
 
 
 def test_real_corpus_has_no_false_content_mismatch():

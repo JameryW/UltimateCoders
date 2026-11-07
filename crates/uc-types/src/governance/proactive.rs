@@ -432,7 +432,8 @@ impl ProactiveGateState {
 pub struct ProactiveAuditEntry {
     pub at: DateTime<Utc>,
     pub mode: ProactiveMode,
-    /// `"admit_proposal"` / `"admit_execution"` / `"decision"` / `"watchdog"`.
+    /// `"admit_proposal"` / `"admit_execution"` / `"decision"` /
+    /// `"replan_execute_checklist"` / `"watchdog"`.
     pub action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposal_id: Option<String>,
