@@ -17,6 +17,7 @@ Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏
 - Standing preferences: feature flags off by default; approx↔full rank agreement re-tested when benches change; no CV thresholds without labeled data; Hy-Memory version-pinned + egress compliance
 - Tracker mode: versioned docs tree until user authorizes GitHub map + `wayfinder:*` labels；授权后以 GitHub 为权威，本目录降为镜像
 - P0–P3 implementation backlogs are published below; decision tickets remain authority for D1–D10
+- V8 P2 coding Champion/Challenger ([v8-upgrade/spec-p2.md](../v8-upgrade/spec-p2.md) / D8) is report-role compare after success — complementary to T14 stall redispatch; not T18 true replan; no auto-promote
 
 ## Implementation backlog
 

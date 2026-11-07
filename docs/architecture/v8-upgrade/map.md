@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: active — P0 Decision Record **merged** (#869); P1 effect receipts **implemented** (04–06); D1–D7 decided 2026-11-07
+Status: active — P0–P1 **merged** (#869/#870); P2 coding challenger **implemented** (tickets 07–09); D1–D8 decided 2026-11-07
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -26,6 +26,7 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D5 Decision Record shape](issues/D5-decision-record-shape.md): One attempt-scoped Decision Record aggregating route + context digest + terminal verdict
 - [D6 Graph cutover ownership](issues/D6-graph-cutover-ownership.md): Graph-primary default-on is ready-for-human ops; not part of P0 code
 - [D7 MetaInfer effect kind](issues/D7-metainfer-effect-kind.md): First non-git receipt = `metainfer-create` behind `UC_EFFECT_LEDGER_METAINFER`
+- [D8 Coding Champion/Challenger](issues/D8-coding-challenger.md): Same-contract one-shot report-role challenger after success; no auto-promote
 
 ## Implementation backlog
 
@@ -39,19 +40,25 @@ P0 (D1–D5) — Decision Record:
 P1 (D7) — Tool / side-effect receipts:
 
 - Spec: [spec-p1.md](spec-p1.md)
-- [04 MetaInfer create EffectLedger](tickets/04-metainfer-effect-ledger.md) — **implemented**
-- [05 push-on-release RuntimeState bind](tickets/05-push-ledger-bind.md) — **implemented**
-- [06 docs P1 receipts](tickets/06-docs-p1-receipts.md) — **implemented**
+- [04 MetaInfer create EffectLedger](tickets/04-metainfer-effect-ledger.md) — **implemented** (merged #870)
+- [05 push-on-release RuntimeState bind](tickets/05-push-ledger-bind.md) — **implemented** (merged #870)
+- [06 docs P1 receipts](tickets/06-docs-p1-receipts.md) — **implemented** (merged #870)
 
-P2 (later):
+P2 (D8) — Coding Champion/Challenger:
 
-- Coding Champion/Challenger arena
+- Spec: [spec-p2.md](spec-p2.md)
+- [07 coding challenger policy](tickets/07-coding-challenger-policy.md) — **implemented** (`UC_CODING_CHALLENGER_ENFORCE` / `UC_CODING_CHALLENGER_AGENT`; report-role; no auto-promote)
+- [08 orchestrator challenger wire](tickets/08-orchestrator-challenger-wire.md) — **implemented** (success→Pending once; quota→Completed); was blocked by: 07
+- [09 docs P2 challenger](tickets/09-docs-p2-challenger.md) — **implemented**
+
+P3 (later):
+
 - True replan (see agent-trust-eval ticket 18)
 - Graph-primary cutover runbook (blocked by D6 human ops)
 
 ## Frontier (open, unblocked)
 
-_(none — D1–D7 closed; P1 tickets 04–06 implemented)_
+_(none — D1–D8 closed; P2 tickets 07–09 implemented)_
 
 ## Out of scope
 
