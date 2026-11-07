@@ -890,7 +890,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-05: the PR01 state-machine note added two prose path mentions
     # (`server.rs`, the documented `task-submit:` key prefix) that are not
     # references -- mentions are advisory and neither is a `path:line`.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 689
+    # 2026-11-07: V8 upgrade wayfinder + Decision Record P0 (assessment/map/
+    # D1–D6/spec/tickets/ADR/decision_record.py + tests + decision-record-spec)
+    # add resolved path mentions (689 -> 712); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 712
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -944,7 +947,11 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     stall_signal + `result.stall_signal` attach landed above the checkpoint
     helpers), and the T16 allowlist default slice moved it an eighth,
     1498 -> 1504 (`resolve_network_default` on Worker SandboxConfig landed
-    above the checkpoint helpers). The spec's cited range and this pin were
+    above the checkpoint helpers). The V8 Decision Record slice moved it
+    again, 1550 -> 1650 (`_record_decision_start` / `_record_decision_terminal`
+    and their early-failure call sites landed above the checkpoint helpers;
+    the earlier 1504 pin had already drifted to 1550 with intervening
+    governance/worker growth). The spec's cited range and this pin were
     re-measured together, not guessed.
     """
     guard = _load_guard()
@@ -967,7 +974,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            1550,
+            1650,
         ),
     }
     rows = [
