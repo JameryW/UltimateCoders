@@ -901,7 +901,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-07 P3: replan proposal T18a (D9/spec-p3/tickets 10–12 +
     # test_replan_proposal.py + governance notes) (731 -> 738).
     # Plus replan-proposal-spec.md path mentions (738 -> 745).
-    assert sum(1 for r in rows if r["kind"] == "mention") == 745
+    # 2026-11-07 P4: graph cutover runbook + dry-run (D6/D10/spec-p4/
+    # tickets 13–15 + graph-cutover-runbook-spec + readiness script/tests)
+    # (745 -> 768); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 768
 
 
 def test_real_corpus_has_no_false_content_mismatch():

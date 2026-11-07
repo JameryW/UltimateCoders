@@ -285,6 +285,8 @@ def test_real_repo_is_reconciled() -> None:
         (2410, 2401),  # V8 P2 coding Champion/Challenger (+ trellis task/spec).
         (2421, 2412),  # V8 P3 replan proposal only (T18a / D9).
         (2422, 2413),  # V8 P3 + replan-proposal-spec.md
+        (2432, 2423),  # V8 P4 scaffolding (archive P3 / open P4 task) before artifacts.
+        (2436, 2427),  # V8 P4 runbook + dry-run script + test + graph-cutover-runbook-spec.
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 
