@@ -282,6 +282,7 @@ def test_real_repo_is_reconciled() -> None:
         (2356, 2347),  # docs/agent-runtime-limits.md adds one text file.
         (2386, 2377),  # V8 upgrade wayfinder + Decision Record P0 (+ tests/spec).
         (2397, 2388),  # V8 P1 MetaInfer EffectLedger receipts (+ trellis task).
+        (2410, 2401),  # V8 P2 coding Champion/Challenger (+ trellis task/spec).
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

@@ -896,7 +896,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-07 later: V8 P1 MetaInfer EffectLedger receipts (D7/spec-p1/
     # tickets 04–06 + test_metainfer_effects.py + inference-infra notes)
     # (712 -> 720); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 720
+    # 2026-11-07 P2: coding Champion/Challenger (D8/spec-p2/tickets 07–09 +
+    # coding_challenger.py + coding-challenger-spec) (720 -> 731).
+    assert sum(1 for r in rows if r["kind"] == "mention") == 731
 
 
 def test_real_corpus_has_no_false_content_mismatch():
