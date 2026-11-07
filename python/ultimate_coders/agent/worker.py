@@ -1040,6 +1040,11 @@ class Worker:
                 from ultimate_coders.agent.workspace import WorkspaceManager
 
                 self._workspace_manager = WorkspaceManager(self._sandbox_config.project_path)
+            # Decision Record start after route + context (+ any routed
+            # agent_config governance), before workspace acquire: an
+            # allocation failure still finishes the attempt and must leave
+            # an attempt-scoped audit join (D5 / spec-p0).
+            await self._record_decision_start(subtask)
             workspace_handle = None
             if self._workspace_manager and (subtask.file_constraints or needs_worktree):
                 if needs_worktree:
@@ -1049,7 +1054,7 @@ class Worker:
                     **({"require_worktree": True} if needs_worktree else {}),
                 )
                 if needs_worktree and workspace_handle is None:
-                    return SubtaskResult(
+                    failed = SubtaskResult(
                         subtask_id=subtask.id,
                         worker_id=self.worker_id,
                         success=False,
@@ -1057,6 +1062,8 @@ class Worker:
                         summary="Exclusive inference worktree allocation failed",
                         error="Exclusive inference worktree allocation failed",
                     )
+                    await self._record_decision_terminal(subtask, failed)
+                    return failed
                 if workspace_handle:
                     logger.info(
                         "Subtask %s allocated workspace %s",
@@ -1131,12 +1138,16 @@ class Worker:
                         **({"require_worktree": True} if needs_worktree else {}),
                     )
                     if needs_worktree and workspace_handle is None:
-                        return SubtaskResult(
+                        failed = SubtaskResult(
                             subtask_id=subtask.id,
+                            worker_id=self.worker_id,
                             success=False,
                             retryable=False,
                             summary="Exclusive inference worktree allocation failed",
+                            error="Exclusive inference worktree allocation failed",
                         )
+                        await self._record_decision_terminal(subtask, failed)
+                        return failed
                     if workspace_handle:
                         logger.info(
                             "Subtask %s re-acquired workspace %s (attempt %d)",
@@ -1233,6 +1244,7 @@ class Worker:
 
                     if result.success:
                         await _progress("finalizing", 95)
+                        await self._record_decision_terminal(subtask, result)
                         comp_data: dict[str, Any] = {
                             "summary": result.summary[:300],
                             "success": True,
@@ -1369,6 +1381,7 @@ class Worker:
                                 + f"{failure_data['progress']['stalled_streak']} attempts)"
                             )
                             result.error = (result.error or result.summary)[:2000]
+                        await self._record_decision_terminal(subtask, result)
                         await self._publish_event(
                             "subtask_failed",
                             task_id=subtask.parent_id,
@@ -1384,7 +1397,7 @@ class Worker:
                     if needs_worktree:
                         if workspace_handle:
                             await self._workspace_manager.quarantine(workspace_handle)
-                        return SubtaskResult(
+                        failed = SubtaskResult(
                             subtask_id=subtask.id,
                             worker_id=self.worker_id,
                             success=False,
@@ -1393,6 +1406,8 @@ class Worker:
                             summary="Inference delivery interrupted; workspace preserved",
                             error=str(e)[:2000],
                         )
+                        await self._record_decision_terminal(subtask, failed)
+                        return failed
                     # Release workspace without merge on error
                     if workspace_handle:
                         await self._workspace_manager.release(workspace_handle, merge=False)
@@ -1444,7 +1459,7 @@ class Worker:
                         data={"error": str(e)[:200], "worker_id": self.worker_id},
                     )
                     friendly_summary, error_field = _build_friendly_error(e)
-                    return SubtaskResult(
+                    failed = SubtaskResult(
                         subtask_id=subtask.id,
                         worker_id=self.worker_id,
                         summary=friendly_summary,
@@ -1453,6 +1468,8 @@ class Worker:
                         stderr_tail=str(e)[-2000:],
                         retry_count=subtask.retry_count,
                     )
+                    await self._record_decision_terminal(subtask, failed)
+                    return failed
 
             # Should not reach here, but safety net
             # ponytail: unreachable guard — all branches return or continue
@@ -1539,6 +1556,89 @@ class Worker:
             )
         except Exception:
             logger.debug("context manifest persistence failed", exc_info=True)
+
+    async def _record_decision_start(self, subtask: Subtask) -> None:
+        """Persist this dispatch attempt's Decision Record start facts.
+
+        Joins worker identity, optional non-identity route, and a pointer at
+        the context-manifest summary (digest + key) — never prompt content.
+        Called after route + context compile (and any routed agent_config) and
+        before workspace acquire, so allocation failures still leave a start
+        row. Attempt identity is ``dispatch_retry_count``. Best-effort:
+        persistence failure must never fail the subtask.
+        """
+        try:
+            from ultimate_coders.context_outbox import manifest_key
+            from ultimate_coders.decision_record import (
+                DecisionRecordOutbox,
+                context_digest,
+                decision_key,
+            )
+
+            route = None
+            if self._last_route is not None and not self._last_route.is_identity:
+                route = self._last_route.to_dict()
+            digest = None
+            ctx_key = None
+            if self._last_context_manifest is not None:
+                digest = context_digest(self._last_context_manifest)
+                ctx_key = manifest_key(
+                    subtask.parent_id, subtask.id, subtask.dispatch_retry_count
+                )
+            governance = subtask.agent_config.get("governance")
+            if governance is not None and not isinstance(governance, dict):
+                governance = None
+
+            state = await self._domain_state()
+            await asyncio.to_thread(
+                DecisionRecordOutbox(state).record_start,
+                decision_key(subtask.parent_id, subtask.id, subtask.dispatch_retry_count),
+                worker_id=self.worker_id,
+                route=route,
+                context_digest=digest,
+                context_key=ctx_key,
+                governance=governance,
+            )
+        except Exception:
+            logger.debug("decision record start persistence failed", exc_info=True)
+
+    async def _record_decision_terminal(
+        self, subtask: Subtask, result: SubtaskResult
+    ) -> None:
+        """Merge terminal facts into this dispatch attempt's Decision Record.
+
+        Called only on paths that finish the attempt (success or final
+        failure), not on retry-continue. Compact summary / error class only;
+        optional oracle/review when the domain result or typed review carries
+        them. Best-effort like the start write.
+        """
+        try:
+            from ultimate_coders.decision_record import DecisionRecordOutbox, decision_key
+
+            domain = result.domain_result if isinstance(result.domain_result, dict) else {}
+            oracle = domain.get("oracle") if isinstance(domain.get("oracle"), dict) else None
+            review = None
+            if result.review is not None:
+                review = result.review.to_dict()
+            elif isinstance(domain.get("review"), dict):
+                review = domain["review"]
+            summary = (result.summary or "")[:300] or None
+            error_class = None
+            if not result.success:
+                error_class = classify_failure(result.error or result.summary).kind
+
+            state = await self._domain_state()
+            await asyncio.to_thread(
+                DecisionRecordOutbox(state).record_terminal,
+                decision_key(subtask.parent_id, subtask.id, subtask.dispatch_retry_count),
+                success=result.success,
+                summary=summary,
+                error_class=error_class,
+                oracle=oracle,
+                review=review,
+            )
+        except Exception:
+            logger.debug("decision record terminal persistence failed", exc_info=True)
 
     @staticmethod
     def _is_inference(subtask: Subtask) -> bool:

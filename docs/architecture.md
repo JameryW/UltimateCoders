@@ -98,6 +98,12 @@ File-overlap detection is advisory; authoritative cross-worker reconciliation ha
 
 See [the README](../README.md) for runnable commands and configuration, [the runtime policy](architecture/durable-runtime-p2-policy.md) for diagnostics/review/placement boundaries, and [the migration assessment](architecture/durable-runtime-migration-assessment.md) for the original design decisions and delivery history.
 
+## V8 alignment
+
+UltimateCoders treats the 2026-11 V8 Agent · Decision · Inference · Training diagram as an **Agent + Decision + Evidence hardening checklist**, not as a product expansion into GPU serving or training. Inference Runtime stays MetaInfer-external; Learning OS is deferred. Ownership map, decided issues (D1–D6), and the P0 Decision Record backlog live under [docs/architecture/v8-upgrade/map.md](architecture/v8-upgrade/map.md). The ADR is [0001-v8-as-agent-decision-evidence-checklist](adr/0001-v8-as-agent-decision-evidence-checklist.md).
+
+P0 lands an attempt-scoped Decision Record (`task:subtask:attempt` in RuntimeState namespace `decision_record`) that joins route choice, context-manifest digest/key, and terminal verdict without storing prompt content. Workers write start + terminal facts best-effort; the Dashboard exposes `GET /dashboard/api/decisions?task_id=…`.
+
 ## Inference recovery boundary
 
 The existing PostgreSQL deployment also stores Python operation/experiment records, exclusive workspace and execution claims, delivery receipts, and terminal outbox records. SQLite is a native single-host fallback only. Remote submission intent precedes HTTP creation; confirmed remote IDs are adopted on restart. Unknown submission or stop outcome quarantines the workspace and retains its backend reservation.
