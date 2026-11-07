@@ -28,6 +28,8 @@ class DashboardApp:
     GET /dashboard/api/scheduler → JSONResponse  (scheduler state)
     GET /dashboard/api/stream    → EventSourceResponse (SSE: hybrid real-time events + 5s snapshot)
     GET /dashboard/api/events    → JSONResponse  (event log, supports ?task_id=&limit=)
+    GET /dashboard/api/decisions → JSONResponse  (Decision Record audit; requires ?task_id=; see decision-record-spec.md)
+    GET /dashboard/api/context/manifests → JSONResponse  (context compile audit; requires ?task_id=)
 
     # REST API endpoints (POST — interactive operations)
     POST /dashboard/api/tasks/submit              → JSONResponse (submit new task)

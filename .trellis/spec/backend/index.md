@@ -44,6 +44,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs`) is the unified contract.
 | [NetworkMode Spec](./network-mode-spec.md) | Agent-child `none`/`restricted`/`full` enforce + T16 default-Restricted / allowlist preflight; flags default off | Filled |
 | [Landlock FS Spec](./landlock-fs-spec.md) | Optional agent-child Landlock FS restrict (`UC_LANDLOCK_ENFORCE`); fail closed; default off; Landlock inner + NetworkMode outer | Filled |
 | [Ontology Loader Spec](./ontology-loader-spec.md) | Human-owned `CONTEXT.md` glossary loader; `UC_ONTOLOGY_MCP` default off; soft empty; T20 read-only MCP `list`/`lookup` via `engine_mcp._ontology_tools` | Filled |
+| [Decision Record Spec](./decision-record-spec.md) | V8 P0 attempt-scoped audit join (route + context digest + terminal); Dashboard `/decisions` | Filled |
 | [Inference Infrastructure](./inference-infra-spec.md) | MetaInfer domain, immutable benchmarks, Oracle, adaptation graph and rollback | Filled |
 | [Event Pipeline Spec](./event-pipeline-spec.md) | Unified NATS event pipeline, sandbox-only Worker, dedup/idempotency, decomposition simplification | Filled |
 | [OMP Tools Spec](./omp-tools-spec.md) | LLM-callable tool schemas, GrpcBridge contracts, registration conventions | Filled |

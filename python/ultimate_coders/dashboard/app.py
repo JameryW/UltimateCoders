@@ -465,6 +465,53 @@ class DashboardApp:
                 }
             )
 
+        @app.get("/dashboard/api/decisions")
+        async def decisions_api(request: Request):
+            """Audit read surface for Decision Records (V8 P0).
+
+            One record per ``task:subtask:attempt`` joining route, context
+            digest/key, and terminal verdict — never prompt content. Auth and
+            limit guards match context manifests. ``count`` is the window size;
+            ``total`` is the scan count in scope. Task-wide scans re-sort
+            attempts numerically via ``_manifest_sort_key``.
+            """
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            task_id = request.query_params.get("task_id", "")
+            subtask_id = request.query_params.get("subtask_id", "")
+            if not task_id:
+                return JSONResponse({"error": "task_id is required"}, status_code=400)
+            try:
+                limit = int(request.query_params.get("limit", "100"))
+                if not 1 <= limit <= 1000:
+                    raise ValueError("limit must be between 1 and 1000")
+                from ultimate_coders.decision_record import DecisionRecordOutbox
+
+                outbox = DecisionRecordOutbox(await experiment_state())
+                if subtask_id:
+                    decisions = await asyncio.to_thread(
+                        outbox.history, task_id, subtask_id, limit=limit
+                    )
+                else:
+                    decisions = await asyncio.to_thread(
+                        outbox.task_history, task_id, limit=limit
+                    )
+                    decisions.sort(key=_manifest_sort_key)
+                total = await asyncio.to_thread(
+                    outbox.total, task_id, subtask_id=subtask_id or None
+                )
+            except ValueError:
+                return JSONResponse({"error": "Invalid pagination"}, status_code=400)
+            except Exception as e:
+                return _unavailable("Decision record state unavailable", e)
+            return JSONResponse(
+                {
+                    "decisions": decisions,
+                    "count": len(decisions),
+                    "total": total,
+                }
+            )
+
         @app.get("/dashboard/api/experiments/{experiment_id}/artifacts/{name}")
         async def experiment_artifact_api(experiment_id: str, name: str, request: Request):
             if (resp := self._check_auth(request)) is not None:

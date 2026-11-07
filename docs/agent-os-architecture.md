@@ -122,7 +122,14 @@
 
 ## 5. 差距（按优先级）
 
-（模型路由已于 P2 落地，见 §4；本表现在为空——新增差距在此登记，按优先级排序。）
+| 差距 | 状态 | 说明 |
+| --- | --- | --- |
+| Decision Record（V8 P0） | **落地** | 派发 attempt 级审计 join：`decision_record` 命名空间 + Worker start/terminal 写入 + `GET /dashboard/api/decisions`；不含 prompt 内容。见 [v8-upgrade/map.md](architecture/v8-upgrade/map.md)、[D5](architecture/v8-upgrade/issues/D5-decision-record-shape.md)、[ADR 0001](adr/0001-v8-as-agent-decision-evidence-checklist.md)。 |
+| Portable Capability Tokens | 不做（D4） | 继续 Grant/Mandate；MVP 不引入可移植不透明 token。 |
+| Learning OS / 轨迹导出 | 延后（D3） | 产品决策前不做。 |
+| Graph-primary 默认开启 | 人工门控（D6） | 不在 P0 代码范围。 |
+
+（模型路由已于 P2 落地，见 §4；新增差距在此表登记，按优先级排序。）
 
 ## 6. Context Compiler（P1b，risk 配比 / manifest 审计 / 缓存亲和已落地）
 
