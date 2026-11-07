@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); closeout #874; D1–D12 decided 2026-11-07; follow-on **T18b** checklist **implemented** — full T18 execute still deferred
+Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); closeout #874; T18b checklist **merged** (#875); D1–D13 decided 2026-11-07; follow-on **T18c** (accounting) in progress — full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -31,6 +31,7 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D10 Graph cutover runbook scope](issues/D10-graph-cutover-runbook.md): P4 = ops runbook + dry-run readiness; no `UC_GRAPH_SHADOW` default flip
 - [D11 V8 MVP closure](issues/D11-v8-mvp-closure.md): Close V8 MVP wave after P0–P4; T18 execute / Learning OS / graph default-on stay deferred or human-gated
 - [D12 Replan execute checklist](issues/D12-replan-execute-checklist.md): T18b — approve `replan` → Attention checklist only; no DAG/digest mutation
+- [D13 Durable replan accounting](issues/D13-replan-accounting.md): T18c — `WorkCase.replans_used` behind `UC_REPLAN_ACCOUNTING_ENFORCE`; no DAG/digest
 
 ## Implementation backlog
 
@@ -61,21 +62,27 @@ P5 (D11) — V8 MVP closeout (docs): **implemented**
 - Spec: [spec-p5.md](spec-p5.md)
 - [16 docs V8 MVP closeout](tickets/16-docs-v8-mvp-closeout.md) — **implemented**; was blocked by: D11
 
-Follow-on (D12 — explicit reopen for checklist only): **implemented**
+Follow-on (D12 — checklist): **merged** (#875)
 
 - Spec: [spec-t18b.md](spec-t18b.md)
 - [17 replan execute checklist wire](tickets/17-replan-execute-checklist-wire.md) — **implemented** (`UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE` default off); was blocked by: D12
 - [18 docs T18b](tickets/18-docs-t18b-checklist.md) — **implemented**; was blocked by: none
 
+Follow-on (D13 — accounting): **in progress**
+
+- Spec: [spec-t18c.md](spec-t18c.md)
+- [19 durable replan accounting wire](tickets/19-replan-accounting-wire.md) — ready; was blocked by: D13
+- [20 docs T18c](tickets/20-docs-t18c-accounting.md) — ready; was blocked by: none
+
 Later (still deferred — not grabable as full execute):
 
-- True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a proposal-only; T18b checklist does not satisfy)
+- True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a/T18b/T18c do not satisfy)
 - Learning OS (D3)
 - Graph-primary **default-on** (human/ops gate per D6/D10; Compose defaults stay off)
 
 ## Frontier (open, unblocked)
 
-- _(empty — no grabable implement tickets; T18b checklist landed; full T18 execute stays deferred)_
+- T18c tickets 19–20 (accounting only; D13 — not full T18 execute)
 
 ## Out of scope
 
