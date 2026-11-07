@@ -291,6 +291,7 @@ def test_real_repo_is_reconciled() -> None:
         (2453, 2444),  # T18b replan execute checklist (D12) + backend spec
         (2454, 2445),  # T18b + line-ending pin row
         (2463, 2454),  # T18c replan accounting (D13) + backend spec
+        (2464, 2455),  # T18c + line-ending pin row
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 
