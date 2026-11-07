@@ -4,8 +4,8 @@
 
 **Blocked by:** D11
 
-**Status:** ready
+**Status:** implemented (branch `cursor/v8-mvp-closeout-e6a9`; map status complete (MVP); P4 merged #873; D11 linked; Frontier empty; T18 / Learning / graph default-on remain deferred or human-gated)
 
-- [ ] map.md status + backlog + Frontier updated
-- [ ] ADR / assessment mention P0–P4 landed
-- [ ] No code / flag default changes
+- [x] map.md status + backlog + Frontier updated
+- [x] ADR / assessment mention P0–P4 landed
+- [x] No code / flag default changes

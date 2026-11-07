@@ -14,3 +14,4 @@ Status: accepted
 
 - Wayfinder lives at `docs/architecture/v8-upgrade/`
 - P0 Decision Record is implemented (`decision_record` RuntimeState namespace, Worker start/terminal hooks, `GET /dashboard/api/decisions`); graph default-on and Learning remain human-gated
+- Checklist P0–P4 shipped and merged (#869–#873); map status **complete (MVP)** per [D11](../architecture/v8-upgrade/issues/D11-v8-mvp-closure.md). True replan execute stays on trust-eval ticket 18 (deferred)

@@ -6,6 +6,8 @@ Surveyed: 2026-11-07 (Asia/Shanghai). Source diagram: *Distributed Agent · Deci
 
 UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gated coding control plane**, with inference intentionally externalized via MetaInfer. Treat V8 as a **checklist for hardening the Agent + Decision + Evidence plane**, not as a mandate to grow an in-tree GPU inference or Learning/FSDP stack.
 
+**MVP closeout (2026-11-07, D11):** checklist slices P0–P4 landed and merged (#869–#873). True replan execute (T18), Learning OS (D3), and graph-primary default-on remain deferred or human-gated as before — outside this wave.
+
 ## Domain coverage (compact)
 
 | V8 domain | UC maturity | Notes |

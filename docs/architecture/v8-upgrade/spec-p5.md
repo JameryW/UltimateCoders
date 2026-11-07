@@ -15,11 +15,11 @@ Close the V8 upgrade wayfinder as **MVP complete** after P0–P4 merges, and par
 
 ## Acceptance criteria
 
-- [ ] Map status reads complete (MVP); P0–P4 cite #869–#873
-- [ ] D11 decided and linked
-- [ ] Frontier does not list grabable implement tickets
-- [ ] T18 / Learning OS / graph default-on remain deferred or human-gated as before
-- [ ] No Compose/`UC_*` default flips; no replan execute code
+- [x] Map status reads complete (MVP); P0–P4 cite #869–#873
+- [x] D11 decided and linked
+- [x] Frontier does not list grabable implement tickets
+- [x] T18 / Learning OS / graph default-on remain deferred or human-gated as before
+- [x] No Compose/`UC_*` default flips; no replan execute code
 
 ## Out of scope
 
