@@ -1,4 +1,4 @@
 {"path":"docs/architecture/v8-upgrade/spec-p4.md","reason":"P4 acceptance criteria"}
 {"path":"docs/architecture/v8-upgrade/issues/D10-graph-cutover-runbook.md","reason":"scope decision"}
 {"path":"docs/architecture/v8-upgrade/issues/D6-graph-cutover-ownership.md","reason":"no default flip"}
-{"path":".trellis/tasks/11-07-v8-graph-cutover-runbook/research/seams.md","reason":"implementation seams"}
+{"path":".trellis/tasks/archive/2026-11/11-07-v8-graph-cutover-runbook/research/seams.md","reason":"implementation seams"}

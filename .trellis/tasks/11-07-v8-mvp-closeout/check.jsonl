@@ -1,0 +1,2 @@
+{"path":"docs/architecture/v8-upgrade/spec-p5.md","reason":"verify AC"}
+{"verdict":"PASS","branch":"cursor/v8-mvp-closeout-e6a9","detail":"spec-p5 AC green; map complete(MVP) #869-#873; D11 linked; Frontier empty; no UC_*/Compose flips; census pins 2444/2435 and mentions=769"}

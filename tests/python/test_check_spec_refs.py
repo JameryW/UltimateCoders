@@ -904,7 +904,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-07 P4: graph cutover runbook + dry-run (D6/D10/spec-p4/
     # tickets 13–15 + graph-cutover-runbook-spec + readiness script/tests)
     # (745 -> 768); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 768
+    # 2026-11-07 P5: MVP closeout (D11 / map Later → trust-eval ticket 18)
+    # (768 -> 769); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 769
 
 
 def test_real_corpus_has_no_false_content_mismatch():

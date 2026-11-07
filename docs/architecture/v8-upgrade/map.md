@@ -1,10 +1,10 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: active — P0–P3 **merged** (#869–#872); P4 graph cutover runbook **implemented** (D6/D10; defaults still off); D1–D10 decided 2026-11-07; true replan execute still deferred
+Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); D1–D11 decided 2026-11-07; true replan execute (T18) deferred outside this wave
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
-本图把 V8「Agent · Decision · Inference · Training」闭环映射到 UltimateCoders 的**产品边界**与实现 backlog。决策票不是实现工作；实现票见 `tickets/`。
+本图把 V8「Agent · Decision · Inference · Training」闭环映射到 UltimateCoders 的**产品边界**与实现 backlog。决策票不是实现工作；实现票见 `tickets/`。MVP 波次已关闭（D11）；勿在本图下静默抓取 T18 execute。
 
 ## Destination
 
@@ -29,6 +29,7 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D8 Coding Champion/Challenger](issues/D8-coding-challenger.md): Same-contract one-shot report-role challenger after success; no auto-promote
 - [D9 Replan proposal only](issues/D9-replan-proposal-only.md): T18a — structured `replan` proposal on watchdog verdict; no DAG execute
 - [D10 Graph cutover runbook scope](issues/D10-graph-cutover-runbook.md): P4 = ops runbook + dry-run readiness; no `UC_GRAPH_SHADOW` default flip
+- [D11 V8 MVP closure](issues/D11-v8-mvp-closure.md): Close V8 MVP wave after P0–P4; T18 execute / Learning OS / graph default-on stay deferred or human-gated
 
 ## Implementation backlog
 
@@ -45,7 +46,7 @@ P3 (D9) — Replan proposal only (T18a): **merged** (#872)
 - [11 evaluator + orchestrator wire](tickets/11-replan-proposal-evaluate-wire.md) — **implemented** (`UC_REPLAN_PROPOSAL_ENFORCE` default off); was blocked by: 10
 - [12 docs P3](tickets/12-docs-p3-replan-proposal.md) — **implemented**; was blocked by: none
 
-P4 (D6 / D10) — Graph-primary cutover runbook: **implemented** (no `UC_GRAPH_SHADOW` default flip)
+P4 (D6 / D10) — Graph-primary cutover runbook: **merged** (#873)
 
 - Spec: [spec-p4.md](spec-p4.md)
 - Runbook: [graph-cutover-runbook.md](../graph-cutover-runbook.md)
@@ -54,14 +55,20 @@ P4 (D6 / D10) — Graph-primary cutover runbook: **implemented** (no `UC_GRAPH_S
 - [14 dry-run readiness script](tickets/14-graph-cutover-dry-run.md) — **implemented**; was blocked by: 13
 - [15 docs P4](tickets/15-docs-p4-graph-cutover.md) — **implemented**; was blocked by: none
 
-Later:
+P5 (D11) — V8 MVP closeout (docs): **implemented**
 
-- True replan **execute** (agent-trust-eval ticket 18 remainder — T18a proposal-only landed under V8 P3)
+- Spec: [spec-p5.md](spec-p5.md)
+- [16 docs V8 MVP closeout](tickets/16-docs-v8-mvp-closeout.md) — **implemented**; was blocked by: D11
+
+Later (outside this wave — not grabable under this map):
+
+- True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a proposal-only landed under V8 P3)
+- Learning OS (D3)
+- Graph-primary **default-on** (human/ops gate per D6/D10; Compose defaults stay off)
 
 ## Frontier (open, unblocked)
 
-- _(P4 runbook + dry-run shipped; Compose/image defaults remain off)_
-- _(true replan execute remains deferred)_
+- _(empty — no grabable implement tickets; V8 MVP closed per D11)_
 
 ## Out of scope
 
