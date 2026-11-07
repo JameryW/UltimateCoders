@@ -93,6 +93,8 @@ pub enum ProposalKind {
     MaintenanceDebt,
     /// A regression or alert worth investigating.
     InvestigateAlert,
+    /// Watchdog asked for a replan; proposal-only (no DAG execute).
+    Replan,
 }
 
 impl ProposalKind {
@@ -103,6 +105,7 @@ impl ProposalKind {
             ProposalKind::FixFailingCi => "fix_failing_ci",
             ProposalKind::MaintenanceDebt => "maintenance_debt",
             ProposalKind::InvestigateAlert => "investigate_alert",
+            ProposalKind::Replan => "replan",
         }
     }
 }

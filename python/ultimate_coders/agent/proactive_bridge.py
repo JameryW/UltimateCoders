@@ -27,7 +27,7 @@ a worker must stop.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -82,6 +82,9 @@ def evaluation_context(
     action: str = "stop",
     subtask_id: str | None = None,
     budget: Mapping[str, Any] | None = None,
+    preserve_effects: Sequence[str] | None = None,
+    contract_digest: str | None = None,
+    replans_remaining: int | None = None,
 ) -> dict[str, Any]:
     """The evaluator's context, built only from facts the worker already has."""
     context: dict[str, Any] = {
@@ -98,6 +101,22 @@ def evaluation_context(
         context["progress"]["subtask_id"] = subtask_id
     if budget is not None:
         context["budget"] = dict(budget)
+    replan: dict[str, Any] = {}
+    if preserve_effects is not None:
+        cleaned = [item for item in preserve_effects if isinstance(item, str) and item.strip()]
+        replan["preserve_effects"] = cleaned
+        context["progress"]["preserve_effects"] = cleaned
+    if contract_digest:
+        digest = contract_digest.strip()
+        if digest:
+            replan["contract_digest"] = digest
+            context["progress"]["contract_digest"] = digest
+    if replans_remaining is not None:
+        remaining = max(0, int(replans_remaining))
+        replan["replans_remaining"] = remaining
+        context["progress"]["replans_remaining"] = remaining
+    if replan:
+        context["replan"] = replan
     return context
 
 
@@ -112,6 +131,9 @@ async def propose_on_stall(
     action: str = "stop",
     subtask_id: str | None = None,
     budget: Mapping[str, Any] | None = None,
+    preserve_effects: Sequence[str] | None = None,
+    contract_digest: str | None = None,
+    replans_remaining: int | None = None,
     mode: ProactiveMode | None = None,
     evaluator: ProactiveEvaluator | None = None,
     principal_kind: str = "agent",
@@ -141,6 +163,9 @@ async def propose_on_stall(
         action=action,
         subtask_id=subtask_id,
         budget=budget,
+        preserve_effects=preserve_effects,
+        contract_digest=contract_digest,
+        replans_remaining=replans_remaining,
     )
     try:
         result: EvaluationResult = engine.evaluate(context, mode=active)

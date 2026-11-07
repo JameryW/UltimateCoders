@@ -42,7 +42,7 @@ autonomy on* ——操作者必须察觉到功能**没**开，而不是它悄悄
 
 | 字段 | 作用 |
 | --- | --- |
-| `kind` | `discovered_followup` / `unblock_stalled` / `fix_failing_ci` / `maintenance_debt` / `investigate_alert` |
+| `kind` | `discovered_followup` / `unblock_stalled` / `fix_failing_ci` / `maintenance_debt` / `investigate_alert` / `replan`（V8 P3 / T18a；`UC_REPLAN_PROPOSAL_ENFORCE`） |
 | `title` / `rationale` | 给人读的理由 |
 | `confidence` | 排序提示，**不是概率、不授予执行**（没有基于它的阈值） |
 | `evidence: Vec<String>` | 证据 id，例如 `ci:run-42`、`stall:task-1:2`、`alert:7`、`followup:<id>`、`debt:<id>`；**空 = 拒绝** |

@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: active — P0–P1 **merged** (#869/#870); P2 coding challenger **implemented** (tickets 07–09); D1–D8 decided 2026-11-07
+Status: active — P0–P2 **merged** (#869/#870/#871); P3 replan proposal **implemented** (T18a); D1–D9 decided 2026-11-07
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -24,41 +24,34 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D3 Learning OS deferral](issues/D3-learning-os-deferral.md): Learning OS out of MVP
 - [D4 Capability token model](issues/D4-capability-token-model.md): Keep Grant/Mandate; no portable opaque capability tokens in MVP
 - [D5 Decision Record shape](issues/D5-decision-record-shape.md): One attempt-scoped Decision Record aggregating route + context digest + terminal verdict
-- [D6 Graph cutover ownership](issues/D6-graph-cutover-ownership.md): Graph-primary default-on is ready-for-human ops; not part of P0 code
+- [D6 Graph cutover ownership](issues/D6-graph-cutover-ownership.md): Graph-primary default-on is ready-for-human ops; not part of P0–P3 code
 - [D7 MetaInfer effect kind](issues/D7-metainfer-effect-kind.md): First non-git receipt = `metainfer-create` behind `UC_EFFECT_LEDGER_METAINFER`
 - [D8 Coding Champion/Challenger](issues/D8-coding-challenger.md): Same-contract one-shot report-role challenger after success; no auto-promote
+- [D9 Replan proposal only](issues/D9-replan-proposal-only.md): T18a — structured `replan` proposal on watchdog verdict; no DAG execute
 
 ## Implementation backlog
 
-P0 (D1–D5) — Decision Record:
+P0 (D1–D5) — Decision Record: **merged** (#869)
 
-- Spec: [spec-p0.md](spec-p0.md)
-- [01 decision record outbox + worker write](tickets/01-decision-record-outbox.md) — **implemented** (merged #869)
-- [02 decision record dashboard read API](tickets/02-decision-record-dashboard.md) — **implemented** (merged #869)
-- [03 docs architecture V8 mapping](tickets/03-docs-v8-mapping.md) — **implemented** (merged #869)
+P1 (D7) — Tool / side-effect receipts: **merged** (#870)
 
-P1 (D7) — Tool / side-effect receipts:
+P2 (D8) — Coding Champion/Challenger: **merged** (#871)
 
-- Spec: [spec-p1.md](spec-p1.md)
-- [04 MetaInfer create EffectLedger](tickets/04-metainfer-effect-ledger.md) — **implemented** (merged #870)
-- [05 push-on-release RuntimeState bind](tickets/05-push-ledger-bind.md) — **implemented** (merged #870)
-- [06 docs P1 receipts](tickets/06-docs-p1-receipts.md) — **implemented** (merged #870)
+P3 (D9) — Replan proposal only (T18a): **implemented**
 
-P2 (D8) — Coding Champion/Challenger:
+- Spec: [spec-p3.md](spec-p3.md)
+- [10 ProposalKind replan lockstep](tickets/10-replan-kind-lockstep.md) — **implemented**; was blocked by: none
+- [11 evaluator + orchestrator wire](tickets/11-replan-proposal-evaluate-wire.md) — **implemented** (`UC_REPLAN_PROPOSAL_ENFORCE` default off); was blocked by: 10
+- [12 docs P3](tickets/12-docs-p3-replan-proposal.md) — **implemented**; was blocked by: none
 
-- Spec: [spec-p2.md](spec-p2.md)
-- [07 coding challenger policy](tickets/07-coding-challenger-policy.md) — **implemented** (`UC_CODING_CHALLENGER_ENFORCE` / `UC_CODING_CHALLENGER_AGENT`; report-role; no auto-promote)
-- [08 orchestrator challenger wire](tickets/08-orchestrator-challenger-wire.md) — **implemented** (success→Pending once; quota→Completed); was blocked by: 07
-- [09 docs P2 challenger](tickets/09-docs-p2-challenger.md) — **implemented**
+P4 (later):
 
-P3 (later):
-
-- True replan (see agent-trust-eval ticket 18)
+- True replan **execute** (agent-trust-eval ticket 18 remainder — T18a proposal-only landed under V8 P3)
 - Graph-primary cutover runbook (blocked by D6 human ops)
 
 ## Frontier (open, unblocked)
 
-_(none — D1–D8 closed; P2 tickets 07–09 implemented)_
+_(none — D1–D9 closed; P3 tickets 10–12 implemented; true replan execute remains deferred)_
 
 ## Out of scope
 
