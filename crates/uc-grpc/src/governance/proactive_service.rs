@@ -660,11 +660,7 @@ fn replan_execute_checklist_enforce_enabled() -> bool {
 }
 
 fn replan_accounting_enforce_enabled() -> bool {
-    enforce_flag_enabled(
-        std::env::var(REPLAN_ACCOUNTING_ENFORCE_ENV)
-            .ok()
-            .as_deref(),
-    )
+    enforce_flag_enabled(std::env::var(REPLAN_ACCOUNTING_ENFORCE_ENV).ok().as_deref())
 }
 
 /// Outcome of resolving the replan counter for one stall report.
