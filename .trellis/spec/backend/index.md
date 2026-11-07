@@ -48,6 +48,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs`) is the unified contract.
 | [Decision Record Spec](./decision-record-spec.md) | V8 P0 attempt-scoped audit join (route + context digest + terminal); Dashboard `/decisions` | Filled |
 | [Replan Proposal Spec](./replan-proposal-spec.md) | V8 P3 / T18a flag-gated `ProposalKind.replan` on watchdog verdict; proposal only | Filled |
 | [Replan Execute Checklist Spec](./replan-execute-checklist-spec.md) | V8 T18b / D12 approve-`replan` → Attention checklist + audit; `UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE` default off; no DAG/digest mutation | Filled |
+| [Replan Accounting Spec](./replan-accounting-spec.md) | V8 T18c / D13 durable `WorkCase.replans_used`; `UC_REPLAN_ACCOUNTING_ENFORCE` default off; no DAG/digest mutation | Filled |
 | [Graph Cutover Runbook Spec](./graph-cutover-runbook-spec.md) | V8 P4 / D6/D10 ops runbook + dry-run readiness; `UC_GRAPH_SHADOW` defaults stay off | Filled |
 | [Inference Infrastructure](./inference-infra-spec.md) | MetaInfer domain, immutable benchmarks, Oracle, adaptation graph and rollback | Filled |
 | [Event Pipeline Spec](./event-pipeline-spec.md) | Unified NATS event pipeline, sandbox-only Worker, dedup/idempotency, decomposition simplification | Filled |

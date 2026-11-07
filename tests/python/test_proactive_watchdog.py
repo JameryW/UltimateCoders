@@ -295,18 +295,22 @@ def test_replan_missing_a_confirmed_effect_is_refused() -> None:
         )
 
 
-def test_replan_without_replan_budget_is_refused() -> None:
-    with pytest.raises(WatchdogContractError, match="no replan budget"):
-        apply_verdict(
-            {
-                "verdict": "replan",
-                "attempt": 1,
-                "delay_ms": 1000,
-                "preserve_effects": [],
-                "replans_remaining": 0,
-                "attempts_remaining": 3,
-            }
-        )
+def test_replan_with_zero_remaining_after_accounting_is_accepted() -> None:
+    """T18c: last durable replan may return remaining=0 after the increment."""
+    action = apply_verdict(
+        {
+            "verdict": "replan",
+            "attempt": 2,
+            "delay_ms": 1000,
+            "preserve_effects": [],
+            "replans_remaining": 0,
+            "attempts_remaining": 3,
+            "replans_used": 2,
+        }
+    )
+    assert action.action == "replan"
+    assert action.replans_remaining == 0
+    assert action.replans_used == 2
 
 
 def test_replan_without_an_attempt_number_is_refused() -> None:
@@ -408,6 +412,7 @@ def test_watchdog_action_to_dict_shape() -> None:
         reason="bounded replan",
         replans_remaining=0,
         attempts_remaining=1,
+        replans_used=2,
     )
     assert action.to_dict() == {
         "action": "replan",
@@ -417,4 +422,19 @@ def test_watchdog_action_to_dict_shape() -> None:
         "attempts_remaining": 1,
         "attempt": 2,
         "reason": "bounded replan",
+        "replans_used": 2,
     }
+
+
+def test_apply_verdict_prefers_gateway_replans_used() -> None:
+    action = apply_verdict(
+        {
+            "verdict": "escalate_needs_human",
+            "reason": "budget exhausted",
+            "replans_remaining": 0,
+            "attempts_remaining": 2,
+            "replans_used": 2,
+        }
+    )
+    assert action.replans_used == 2
+    assert action.to_dict()["replans_used"] == 2

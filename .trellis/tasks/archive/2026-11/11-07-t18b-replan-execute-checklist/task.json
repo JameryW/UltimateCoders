@@ -3,7 +3,7 @@
   "name": "t18b-replan-execute-checklist",
   "title": "T18b: replan approve \u2192 execute checklist",
   "description": "T18b: on approve of ProposalKind.replan, flag-gated attention execute checklist; no DAG/digest mutation",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "cursor-agent",
   "assignee": "cursor-agent",
   "createdAt": "2026-11-07",
-  "completedAt": null,
+  "completedAt": "2026-11-07",
   "branch": "cursor/t18b-replan-execute-checklist-e6a9",
   "base_branch": "main",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Merged #875.",
   "meta": {}
 }

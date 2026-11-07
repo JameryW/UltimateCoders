@@ -21,9 +21,10 @@ Three properties of the guard shape this harness:
 Census note (governance PR01–PR06): the docs under `docs/governance/` are
 citation-dense by design (every claim names its file), so adding them moved the
 real-corpus census from 130 refs / 508 mentions to 321 refs / 686 mentions, and
-shifted the composite pins below (OK 224 / STALE 25 / AMBIGUOUS 72, 220 named /
-161 diverging, 190 line-unchecked / 124 unanchored / 59 symbol-anchored).  Those
-pins were re-measured in the same change that added the docs — the mechanism
+shifted the composite pins below (historically OK 224 / STALE 25 / AMBIGUOUS 72;
+T18c re-measure: OK 224 / STALE 24 / AMBIGUOUS 72, with calibers 219 named /
+160 diverging, 189 line-unchecked / 124 unanchored / 59 symbol-anchored).  Those
+pins were re-measured alongside the docs they describe — the mechanism
 tests above are untouched.
 
 The last three tests run against the *real* repo.  They are the enforceable
@@ -909,7 +910,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-07 T18b: replan execute checklist (D12 / spec-t18b / tickets
     # 17–18 + replan-execute-checklist-spec.md naming proactive_service.rs /
     # proactive.rs) (769 -> 775); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 775
+    # 2026-11-07 T18c: durable replan accounting (D13/spec-t18c/tickets 19–20 +
+    # replan-accounting-spec.md) (775 -> 783).
+    assert sum(1 for r in rows if r["kind"] == "mention") == 783
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1441,8 +1444,11 @@ def test_real_corpus_moves_only_where_predicted():
     # pattern that no longer exists in that file at all -- it now names
     # `worker.py:1369-1422, _save_checkpoint`, which is where the best-effort
     # persistence actually lives. That repair is what keeps OK at 112.
-    assert sum(1 for r in rows if r["verdict"] == "OK") == 223
-    assert sum(1 for r in rows if r["verdict"] == "STALE") == 25
+    # 2026-11-07 T18c: WorkCase.replans_used + proactive_service accounting
+    # shifted a live workcase citation back into range (OK 223 -> 224,
+    # STALE 25 -> 24); rows / AMBIGUOUS / calibers unchanged.
+    assert sum(1 for r in rows if r["verdict"] == "OK") == 224
+    assert sum(1 for r in rows if r["verdict"] == "STALE") == 24
     assert sum(1 for r in rows if r["verdict"] == "AMBIGUOUS") == 72
     assert sum(1 for r in rows if r["symbol"] is not None) == 59
     assert sum(1 for r in rows if r["unanchored"]) == 124

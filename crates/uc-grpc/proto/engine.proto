@@ -999,6 +999,8 @@ message CaseProto {
     int64 created_at = 15;
     int64 updated_at = 16;
     uint64 version = 17;
+    // Durable watchdog replan counter (T18c / D13). Missing / 0 on legacy docs.
+    uint32 replans_used = 18;
 }
 
 message CaseOriginProto {
@@ -1539,6 +1541,8 @@ message ReportStallResponse {
     uint32 replans_remaining = 7;
     uint32 attempts_remaining = 8;
     optional string error = 9;
+    // Authoritative replans_used used for / after this decide (T18c).
+    uint32 replans_used = 10;
 }
 
 message AuditEntryProto {

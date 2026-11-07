@@ -211,6 +211,10 @@ pub struct StallVerdictView {
     pub reason: Option<String>,
     pub replans_remaining: u32,
     pub attempts_remaining: u32,
+    /// Authoritative `replans_used` for this decide (client shadow when flag
+    /// off; stored / post-increment when `UC_REPLAN_ACCOUNTING_ENFORCE` is on).
+    #[serde(default)]
+    pub replans_used: u32,
 }
 
 impl StallVerdictView {
@@ -225,6 +229,7 @@ impl StallVerdictView {
             replans_remaining: self.replans_remaining,
             attempts_remaining: self.attempts_remaining,
             error: None,
+            replans_used: self.replans_used,
         }
     }
 }
@@ -518,12 +523,22 @@ pub async fn list_audit(
 /// grants nothing by itself. An `escalate_needs_human` verdict is *projected* onto
 /// the attention board so the operator sees it — that is the one side effect, and
 /// it only ever adds work for a human, never authority for a machine.
+///
+/// When [`REPLAN_ACCOUNTING_ENFORCE_ENV`] is on and the report carries a
+/// `case_id`, the gateway loads `WorkCase.replans_used` as the authoritative
+/// staircase counter (T18c / D13). A recorded `replan` verdict CAS-increments
+/// that counter. Missing `case_id` skips the durable path with a warn — the
+/// gateway never invents a case here. Digest / DAG / TaskStore are untouched.
 pub async fn report_stall(
     governance: &Governance,
     request: crate::ultimate_coders::ReportStallRequest,
 ) -> OpResult<StallVerdictView> {
     let now = super::now();
     let task_id = required_text(&request.task_id, "task_id")?;
+    // T18c: resolve the authoritative counter before consuming request fields.
+    // Flag off keeps the legacy client-supplied shadow.
+    let accounting = resolve_replan_accounting(governance, &request, &task_id).await;
+
     let mut signal = WatchdogSignal::new(task_id);
     signal.subtask_id = optional_text(request.subtask_id.as_deref());
     signal.no_progress_count = request.no_progress_count;
@@ -536,7 +551,7 @@ pub async fn report_stall(
         .filter(|value| !value.is_empty())
         .collect();
     signal.attempts_used = request.attempts_used;
-    signal.replans_used = request.replans_used;
+    signal.replans_used = accounting.replans_used;
 
     let decision = governance
         .watchdog
@@ -544,14 +559,46 @@ pub async fn report_stall(
         .await
         .map_err(|error| OpError::internal("watchdog_failed", error.to_string()))?;
 
+    let mut authoritative_used = signal.replans_used;
+    let mut replans_remaining = decision.replans_remaining;
+    if accounting.active {
+        if matches!(&decision.verdict, WatchdogVerdict::Replan { .. }) {
+            match increment_case_replans_used(governance, &accounting.case_id, now).await {
+                Ok(used) => {
+                    authoritative_used = used;
+                    replans_remaining = governance
+                        .watchdog
+                        .config()
+                        .max_replans
+                        .saturating_sub(authoritative_used);
+                }
+                Err(error) => tracing::warn!(
+                    error = %error,
+                    case_id = %accounting.case_id,
+                    task_id = %signal.task_id,
+                    "durable replan accounting could not CAS-increment WorkCase.replans_used"
+                ),
+            }
+        } else {
+            // Authoritative remaining from the stored counter (may diverge from
+            // a stale client shadow that was ignored above).
+            replans_remaining = governance
+                .watchdog
+                .config()
+                .max_replans
+                .saturating_sub(authoritative_used);
+        }
+    }
+
     let mut view = StallVerdictView {
         verdict: watchdog_token(&decision.verdict).to_string(),
         attempt: None,
         delay_ms: None,
         preserve_effects: Vec::new(),
         reason: None,
-        replans_remaining: decision.replans_remaining,
+        replans_remaining,
         attempts_remaining: decision.attempts_remaining,
+        replans_used: authoritative_used,
     };
     match &decision.verdict {
         WatchdogVerdict::Continue => {}
@@ -583,6 +630,8 @@ pub async fn report_stall(
         verdict = view.verdict,
         attempts_remaining = view.attempts_remaining,
         replans_remaining = view.replans_remaining,
+        replans_used = view.replans_used,
+        accounting = accounting.active,
         "watchdog stall report decided"
     );
     Ok(view)
@@ -590,6 +639,9 @@ pub async fn report_stall(
 
 /// Env flag for T18b replan execute checklist (default off).
 pub const REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV: &str = "UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE";
+
+/// Env flag for T18c durable replan accounting (default off).
+pub const REPLAN_ACCOUNTING_ENFORCE_ENV: &str = "UC_REPLAN_ACCOUNTING_ENFORCE";
 
 /// Truthy gate matching other `UC_*_ENFORCE` flags (`1`/`true`/`yes`/`on`).
 fn enforce_flag_enabled(raw: Option<&str>) -> bool {
@@ -605,6 +657,107 @@ fn replan_execute_checklist_enforce_enabled() -> bool {
             .ok()
             .as_deref(),
     )
+}
+
+fn replan_accounting_enforce_enabled() -> bool {
+    enforce_flag_enabled(std::env::var(REPLAN_ACCOUNTING_ENFORCE_ENV).ok().as_deref())
+}
+
+/// Outcome of resolving the replan counter for one stall report.
+struct ReplanAccounting {
+    /// True only when the flag is on **and** a case was loaded successfully.
+    active: bool,
+    case_id: String,
+    replans_used: u32,
+}
+
+async fn resolve_replan_accounting(
+    governance: &Governance,
+    request: &crate::ultimate_coders::ReportStallRequest,
+    task_id: &str,
+) -> ReplanAccounting {
+    let client_used = request.replans_used;
+    if !replan_accounting_enforce_enabled() {
+        return ReplanAccounting {
+            active: false,
+            case_id: String::new(),
+            replans_used: client_used,
+        };
+    }
+    let Some(case_id) = optional_text(request.case_id.as_deref()) else {
+        tracing::warn!(
+            task_id,
+            "UC_REPLAN_ACCOUNTING_ENFORCE on but stall report has no case_id; \
+             skipping durable accounting (not inventing a case)"
+        );
+        return ReplanAccounting {
+            active: false,
+            case_id: String::new(),
+            replans_used: client_used,
+        };
+    };
+    match governance.cases.get(&case_id).await {
+        Ok(Some((case, _))) => {
+            if case.replans_used != client_used {
+                tracing::warn!(
+                    task_id,
+                    case_id = %case_id,
+                    stored = case.replans_used,
+                    client = client_used,
+                    "client replans_used shadow diverges from WorkCase; using stored counter"
+                );
+            }
+            ReplanAccounting {
+                active: true,
+                case_id,
+                replans_used: case.replans_used,
+            }
+        }
+        Ok(None) => {
+            tracing::warn!(
+                task_id,
+                case_id = %case_id,
+                "UC_REPLAN_ACCOUNTING_ENFORCE on but case not found; \
+                 skipping durable accounting"
+            );
+            ReplanAccounting {
+                active: false,
+                case_id: String::new(),
+                replans_used: client_used,
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                task_id,
+                case_id = %case_id,
+                "UC_REPLAN_ACCOUNTING_ENFORCE on but case load failed; \
+                 skipping durable accounting"
+            );
+            ReplanAccounting {
+                active: false,
+                case_id: String::new(),
+                replans_used: client_used,
+            }
+        }
+    }
+}
+
+async fn increment_case_replans_used(
+    governance: &Governance,
+    case_id: &str,
+    now: DateTime<Utc>,
+) -> Result<u32, uc_engine::governance::CaseStoreError> {
+    let (case, used) = governance
+        .cases
+        .update(case_id, |case| {
+            case.replans_used = case.replans_used.saturating_add(1);
+            case.updated_at = now;
+            Ok(case.replans_used)
+        })
+        .await?;
+    debug_assert_eq!(case.replans_used, used);
+    Ok(used)
 }
 
 /// Project an approved Replan proposal onto Attention + proactive audit.
@@ -939,7 +1092,7 @@ mod tests {
         CaseOrigin, Grant, PolicySnapshot, PolicyVersion, PrincipalKind, WorkCase,
     };
 
-    /// Serialize tests that mutate `UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE`.
+    /// Serialize tests that mutate `UC_REPLAN_*_ENFORCE` env flags.
     /// Tokio mutex so the guard is not held across `.await` (clippy
     /// `await_holding_lock`).
     static ENV_LOCK: Mutex<()> = Mutex::const_new(());
@@ -1490,6 +1643,121 @@ mod tests {
             .iter()
             .any(|entry| entry.action == "replan_execute_checklist"));
         std::env::remove_var(REPLAN_EXECUTE_CHECKLIST_ENFORCE_ENV);
+    }
+
+    fn stall_report(
+        case_id: Option<&str>,
+        replans_used: u32,
+        already_retried: bool,
+    ) -> crate::ultimate_coders::ReportStallRequest {
+        crate::ultimate_coders::ReportStallRequest {
+            task_id: "task-1".to_string(),
+            subtask_id: Some("sub-1".to_string()),
+            no_progress_count: 3,
+            evidence_signature: Some("sig".to_string()),
+            last_error: Some("timeout".to_string()),
+            confirmed_effect_ids: vec!["effect:push-main".to_string()],
+            attempts_used: 2,
+            replans_used,
+            already_retried,
+            case_id: case_id.map(str::to_string),
+        }
+    }
+
+    #[tokio::test]
+    async fn replan_accounting_flag_off_keeps_client_shadow() {
+        let _guard = ENV_LOCK.lock().await;
+        std::env::remove_var(REPLAN_ACCOUNTING_ENFORCE_ENV);
+        let governance = plane().await;
+        let case_id = seed_case(&governance).await;
+        // Client claims used=0 while a replan is due; flag off trusts the client.
+        let verdict = report_stall(&governance, stall_report(Some(&case_id), 0, true))
+            .await
+            .unwrap();
+        assert_eq!(verdict.verdict, "replan");
+        assert_eq!(verdict.replans_used, 0);
+        let stored = governance.cases.get(&case_id).await.unwrap().unwrap().0;
+        assert_eq!(
+            stored.replans_used, 0,
+            "flag off must not mutate WorkCase.replans_used"
+        );
+        std::env::remove_var(REPLAN_ACCOUNTING_ENFORCE_ENV);
+    }
+
+    #[tokio::test]
+    async fn replan_accounting_flag_on_increments_once_per_replan() {
+        let _guard = ENV_LOCK.lock().await;
+        std::env::set_var(REPLAN_ACCOUNTING_ENFORCE_ENV, "1");
+        let governance = plane().await;
+        let case_id = seed_case(&governance).await;
+
+        // Client shadow lies (claims 99); stored 0 must win.
+        let first = report_stall(&governance, stall_report(Some(&case_id), 99, true))
+            .await
+            .unwrap();
+        assert_eq!(first.verdict, "replan");
+        assert_eq!(first.attempt, Some(1));
+        assert_eq!(first.replans_used, 1);
+        assert_eq!(first.replans_remaining, 1); // max_replans=2 → 2-1
+        let stored = governance.cases.get(&case_id).await.unwrap().unwrap().0;
+        assert_eq!(stored.replans_used, 1);
+
+        let second = report_stall(&governance, stall_report(Some(&case_id), 0, true))
+            .await
+            .unwrap();
+        assert_eq!(second.verdict, "replan");
+        assert_eq!(second.attempt, Some(2));
+        assert_eq!(second.replans_used, 2);
+        assert_eq!(second.replans_remaining, 0);
+        let stored = governance.cases.get(&case_id).await.unwrap().unwrap().0;
+        assert_eq!(stored.replans_used, 2);
+
+        std::env::remove_var(REPLAN_ACCOUNTING_ENFORCE_ENV);
+    }
+
+    #[tokio::test]
+    async fn replan_accounting_exhausted_budget_escalates() {
+        let _guard = ENV_LOCK.lock().await;
+        std::env::set_var(REPLAN_ACCOUNTING_ENFORCE_ENV, "true");
+        let governance = plane().await;
+        let case_id = seed_case(&governance).await;
+        governance
+            .cases
+            .update(&case_id, |case| {
+                case.replans_used = 2; // max_replans default
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        // Client still claims unused budget — store must escalate.
+        let verdict = report_stall(&governance, stall_report(Some(&case_id), 0, true))
+            .await
+            .unwrap();
+        assert_eq!(verdict.verdict, "escalate_needs_human");
+        assert_eq!(verdict.replans_used, 2);
+        assert_eq!(verdict.replans_remaining, 0);
+        let stored = governance.cases.get(&case_id).await.unwrap().unwrap().0;
+        assert_eq!(
+            stored.replans_used, 2,
+            "escalate must not increment the replan counter"
+        );
+        std::env::remove_var(REPLAN_ACCOUNTING_ENFORCE_ENV);
+    }
+
+    #[tokio::test]
+    async fn replan_accounting_missing_case_id_skips_durable_path() {
+        let _guard = ENV_LOCK.lock().await;
+        std::env::set_var(REPLAN_ACCOUNTING_ENFORCE_ENV, "yes");
+        let governance = plane().await;
+        // No case_id → warn + legacy client shadow; still returns a verdict.
+        let verdict = report_stall(&governance, stall_report(None, 0, true))
+            .await
+            .unwrap();
+        assert_eq!(verdict.verdict, "replan");
+        assert_eq!(verdict.replans_used, 0);
+        assert!(governance.cases.list(10).await.unwrap().is_empty());
+        std::env::remove_var(REPLAN_ACCOUNTING_ENFORCE_ENV);
     }
 
     #[test]
