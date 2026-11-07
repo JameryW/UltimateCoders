@@ -41,6 +41,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs`) is the unified contract.
 | [Hy-Memory Supersede Spec](./hy-memory-supersede-spec.md) | Supersede-not-delete on `CodingMemory.remember` / MCP remember; no auto-inject | Filled |
 | [Hy-Memory Auto-Context Spec](./hy-memory-auto-context-spec.md) | Opt-in `UC_HY_MEMORY_AUTO_CONTEXT` worker inject; default off; soft skip | Filled |
 | [Stall Redispatch Spec](./stall-redispatch-spec.md) | Progress-stop `stall_signal` + same-contract one-shot agent redispatch; `UC_STALL_REDISPATCH_ENFORCE` default off | Filled |
+| [Coding Challenger Spec](./coding-challenger-spec.md) | V8 P2 same-contract report-role challenger after success; `UC_CODING_CHALLENGER_ENFORCE` default off; observe-only (no auto-promote / no demote) | Filled |
 | [NetworkMode Spec](./network-mode-spec.md) | Agent-child `none`/`restricted`/`full` enforce + T16 default-Restricted / allowlist preflight; flags default off | Filled |
 | [Landlock FS Spec](./landlock-fs-spec.md) | Optional agent-child Landlock FS restrict (`UC_LANDLOCK_ENFORCE`); fail closed; default off; Landlock inner + NetworkMode outer | Filled |
 | [Ontology Loader Spec](./ontology-loader-spec.md) | Human-owned `CONTEXT.md` glossary loader; `UC_ONTOLOGY_MCP` default off; soft empty; T20 read-only MCP `list`/`lookup` via `engine_mcp._ontology_tools` | Filled |

@@ -127,6 +127,7 @@
 | --- | --- | --- |
 | Decision Record（V8 P0） | **落地** | 派发 attempt 级审计 join：`decision_record` 命名空间 + Worker start/terminal 写入 + `GET /dashboard/api/decisions`；不含 prompt 内容。见 [v8-upgrade/map.md](architecture/v8-upgrade/map.md)、[D5](architecture/v8-upgrade/issues/D5-decision-record-shape.md)、[ADR 0001](adr/0001-v8-as-agent-decision-evidence-checklist.md)。 |
 | MetaInfer create EffectLedger（V8 P1） | **落地（默认关闭）** | 首个非 git 副作用收据：`kind=metainfer-create`，由 `UC_EFFECT_LEDGER_METAINFER` 打开；`remote_jobs` 仍为操作态。push-on-release 编码路径会惰性绑定 RuntimeState，使 `push-branch` 收据不再静默跳过。见 [spec-p1](architecture/v8-upgrade/spec-p1.md)、[D7](architecture/v8-upgrade/issues/D7-metainfer-effect-kind.md)。 |
+| Coding Champion/Challenger（V8 P2） | **落地（默认关闭）** | 成功后同契约一次 report-role challenger：`UC_CODING_CHALLENGER_ENFORCE`（可选 `UC_CODING_CHALLENGER_AGENT`）；观察/对比，**不** auto-promote；失败/停滞仍归 T14 stall redispatch。见 [spec-p2](architecture/v8-upgrade/spec-p2.md)、[D8](architecture/v8-upgrade/issues/D8-coding-challenger.md)。 |
 | Portable Capability Tokens | 不做（D4） | 继续 Grant/Mandate；MVP 不引入可移植不透明 token。 |
 | Learning OS / 轨迹导出 | 延后（D3） | 产品决策前不做。 |
 | Graph-primary 默认开启 | 人工门控（D6） | 不在 P0 代码范围。 |

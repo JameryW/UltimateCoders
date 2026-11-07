@@ -29,6 +29,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ultimate_coders.agent.aggregator import ResultAggregator
+from ultimate_coders.agent.coding_challenger import (
+    CHALLENGER_EPISODE_KEY,
+    finalize_coding_challenger_observation,
+    is_report_challenger_episode,
+    load_challenger_episode,
+    maybe_apply_coding_challenger,
+)
 from ultimate_coders.agent.conflict import ConflictDetector
 from ultimate_coders.agent.event_emitter import TaskEventEmitter
 from ultimate_coders.agent.proactive_bridge import propose_on_stall
@@ -639,6 +646,13 @@ class Orchestrator:
         On progress-stop ``stall_signal`` with ``UC_STALL_REDISPATCH_ENFORCE``
         on, may reopen Failed→Pending once with an alternate agent under the
         same contract digest (T14 / D7). Flag off keeps today's terminal stop.
+
+        On success with ``UC_CODING_CHALLENGER_ENFORCE`` on, may reopen
+        success→Pending once (skip Completed) with a report-role challenger
+        under the same digest (V8 P2 / D8). Flag off keeps today's Completed
+        path. Observe-only: no auto-promote; a failed report-role challenger
+        still Completes with the champion outcome. Stall owns failure/stall
+        swaps outside the challenger episode.
         """
         for task in self.tasks.values():
             for st in task.subtasks:
@@ -675,15 +689,60 @@ class Orchestrator:
                             st.id[:8],
                         )
                         return
+                    # Duplicate of a challenger reopen: success already applied
+                    # challenge_once → PENDING; ignore the replay.
+                    if (
+                        st.status == SubtaskStatus.PENDING
+                        and load_challenger_episode(st.agent_config).swaps_used >= 1
+                        and result.success
+                    ):
+                        logger.debug(
+                            "Subtask %s coding challenger already applied; ignoring duplicate",
+                            st.id[:8],
+                        )
+                        return
+
+                    # Finishing the report-role challenger attempt (quota used).
+                    # Observe-only: do not stall-swap or demote champion.
+                    challenger_observe = is_report_challenger_episode(st.agent_config)
 
                     redispatched = False
-                    if not result.success:
+                    if not result.success and not challenger_observe:
                         redispatched = await self._maybe_stall_agent_redispatch_governed(
                             task, st, result
                         )
 
                     if redispatched:
                         # Worker binding is done; free capacity for the reopen.
+                        wid = result.worker_id
+                        entry = self.workers.get(wid)
+                        if entry and entry.current_load > 0:
+                            entry.current_load -= 1
+                        self._update_task_status(task)
+                        task.update_timestamp()
+                        await self._publish_task_update(task)
+                        self.evict_terminal_tasks()
+                        return
+
+                    challenged = False
+                    if result.success and not challenger_observe:
+                        challenged = self._maybe_coding_challenger(st, result)
+
+                    if challenged:
+                        wid = result.worker_id
+                        entry = self.workers.get(wid)
+                        if entry and entry.current_load > 0:
+                            entry.current_load -= 1
+                        self._update_task_status(task)
+                        task.update_timestamp()
+                        await self._publish_task_update(task)
+                        self.evict_terminal_tasks()
+                        return
+
+                    if challenger_observe:
+                        result = finalize_coding_challenger_observation(st, result)
+                        st.status = SubtaskStatus.COMPLETED
+                        st.result = result
                         wid = result.worker_id
                         entry = self.workers.get(wid)
                         if entry and entry.current_load > 0:
@@ -871,6 +930,40 @@ class Orchestrator:
             )
             # Ensure escalate stays non-retryable for outer dispatch.
             result.retryable = False
+        return False
+
+    def _maybe_coding_challenger(self, subtask: Subtask, result: SubtaskResult) -> bool:
+        """Apply same-contract one-shot report-role challenger after success.
+
+        Returns True when the subtask was reopened to Pending (caller must not
+        mark Completed). Noop leaves the subtask for the Completed path —
+        including when the challenger quota is already used.
+        """
+        try:
+            from ultimate_coders.agent.registry import available_agents
+        except Exception:  # pragma: no cover - registry import is hard dependency
+            logger.warning(
+                "Coding challenger: agent registry unavailable for subtask %s",
+                subtask.id[:8],
+                exc_info=True,
+            )
+            return False
+
+        decision = maybe_apply_coding_challenger(
+            subtask,
+            success=True,
+            available=available_agents(),
+            champion_summary=getattr(result, "summary", None),
+        )
+        if decision.action == "challenge_once":
+            logger.info(
+                "Coding challenger: subtask %s → Pending with agent %s "
+                "(eval_role=report; episode key %s)",
+                subtask.id[:8],
+                decision.challenger_agent,
+                CHALLENGER_EPISODE_KEY,
+            )
+            return True
         return False
 
     def _update_task_status(self, task: Task) -> None:
