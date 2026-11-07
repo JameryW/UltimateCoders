@@ -1,1 +1,2 @@
 {"path":"docs/architecture/v8-upgrade/spec-t18c.md","reason":"verify AC"}
+{"ts": "2026-11-07T14:30:00Z", "agent": "trellis-check", "result": "pass_with_fix", "fixed": ["tests/python/test_check_spec_refs.py OK/STALE census pins (223/25 -> 224/24)"], "verified": ["uc-types replans_used serde tests", "uc-grpc replan_accounting_* (4)", "pytest test_proactive_watchdog + line_endings + spec_refs", "clippy await_holding_lock clean; ENV_LOCK is tokio::sync::Mutex", "no admit_execution/digest/DAG/TaskStore mutation on accounting path", "docs D13/map/#875/ops/ticket18"]}
