@@ -10,7 +10,11 @@ Run MetaInfer separately according to its [upstream instructions](https://github
 UC_METAINFER_URL=http://metainfer-host:8765
 UC_METAINFER_REVISION=b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890
 UC_METAINFER_BACKEND_ID=metainfer-gpu-a
+# Optional: durable EffectLedger receipts for create POST (default off).
+# UC_EFFECT_LEDGER_METAINFER=1
 ```
+
+`UC_EFFECT_LEDGER_METAINFER` (truthy: `1`/`true`/`yes`/`on`) wraps MetaInfer create `POST …/tasks` with EffectLedger kind `metainfer-create`. Default unset/off keeps create behaviour byte-identical for ledger writes (`remote_jobs` remains the operational store).
 
 Workers always advertise local `inference_benchmark`. Remote capabilities require successful live schema probes: `inference_infra` plus the supported `model_porting`, `kernel_optimization`, `runtime_optimization` or `trace_analysis` operation. Startup and heartbeats refresh these probes and withdraw unavailable operations. A URL alone does not prove readiness or GPU availability. Explicit agent choices win over automatic routing. Routing requires inference context and engineering intent; ordinary frontend work and references to a Linux kernel retain their coding adapter.
 

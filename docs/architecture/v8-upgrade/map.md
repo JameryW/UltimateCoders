@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: active — P0 Decision Record implemented; D1–D6 decided 2026-11-07
+Status: active — P0 Decision Record **merged** (#869); P1 effect receipts **implemented** (04–06); D1–D7 decided 2026-11-07
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -25,26 +25,33 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D4 Capability token model](issues/D4-capability-token-model.md): Keep Grant/Mandate; no portable opaque capability tokens in MVP
 - [D5 Decision Record shape](issues/D5-decision-record-shape.md): One attempt-scoped Decision Record aggregating route + context digest + terminal verdict
 - [D6 Graph cutover ownership](issues/D6-graph-cutover-ownership.md): Graph-primary default-on is ready-for-human ops; not part of P0 code
+- [D7 MetaInfer effect kind](issues/D7-metainfer-effect-kind.md): First non-git receipt = `metainfer-create` behind `UC_EFFECT_LEDGER_METAINFER`
 
 ## Implementation backlog
 
 P0 (D1–D5) — Decision Record:
 
 - Spec: [spec-p0.md](spec-p0.md)
-- [01 decision record outbox + worker write](tickets/01-decision-record-outbox.md) — **implemented**
-- [02 decision record dashboard read API](tickets/02-decision-record-dashboard.md) — **implemented**
-- [03 docs architecture V8 mapping](tickets/03-docs-v8-mapping.md) — **implemented**
+- [01 decision record outbox + worker write](tickets/01-decision-record-outbox.md) — **implemented** (merged #869)
+- [02 decision record dashboard read API](tickets/02-decision-record-dashboard.md) — **implemented** (merged #869)
+- [03 docs architecture V8 mapping](tickets/03-docs-v8-mapping.md) — **implemented** (merged #869)
 
-P1 (later; not started):
+P1 (D7) — Tool / side-effect receipts:
 
-- Tool/side-effect receipts generalizing EffectLedger
+- Spec: [spec-p1.md](spec-p1.md)
+- [04 MetaInfer create EffectLedger](tickets/04-metainfer-effect-ledger.md) — **implemented**
+- [05 push-on-release RuntimeState bind](tickets/05-push-ledger-bind.md) — **implemented**
+- [06 docs P1 receipts](tickets/06-docs-p1-receipts.md) — **implemented**
+
+P2 (later):
+
 - Coding Champion/Challenger arena
 - True replan (see agent-trust-eval ticket 18)
 - Graph-primary cutover runbook (blocked by D6 human ops)
 
 ## Frontier (open, unblocked)
 
-_(none — D1–D6 closed; P1 items wait for a later planning round)_
+_(none — D1–D7 closed; P1 tickets 04–06 implemented)_
 
 ## Out of scope
 

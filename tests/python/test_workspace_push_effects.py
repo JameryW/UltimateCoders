@@ -165,11 +165,35 @@ async def test_confirmed_effect_skips_the_remote(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_no_bound_state_keeps_legacy_behaviour(tmp_path):
+async def test_lazy_bind_when_state_was_none(tmp_path, monkeypatch):
+    """Coding-path push_on_release binds RuntimeState so receipts are not skipped."""
+    monkeypatch.setenv("UC_RUNTIME_STATE_DIR", str(tmp_path / "runtime"))
     mgr = _manager(tmp_path, with_state=False)
+    assert mgr._state is None
+    git = FakeGit()
+    mgr._git = git  # type: ignore[assignment]
+    info: dict = {"status": "merged"}
+    await mgr._push_subtask_branch(_handle(), info)
+    assert mgr._state is not None
+    assert info["push_status"] == "pushed"
+    assert "effect_id" in info
+    record = EffectLedger(mgr._state).get(info["effect_id"])
+    assert record["status"] == EffectStatus.CONFIRMED.value
+    assert record["kind"] == "push-branch"
+
+
+@pytest.mark.asyncio
+async def test_no_push_on_release_skips_lazy_bind(tmp_path):
+    """Without push_on_release, unbound managers keep legacy non-ledger push."""
+    mgr = WorkspaceManager(
+        project_path=str(tmp_path),
+        remote_url="https://example.invalid/repo.git",
+        push_on_release=False,
+    )
     git = FakeGit(push_exit=128, push_stderr="fatal: unable to access ... timeout")
     mgr._git = git  # type: ignore[assignment]
     info: dict = {"status": "merged"}
     await mgr._push_subtask_branch(_handle(), info)
+    assert mgr._state is None
     assert info["push_status"] == "failed"
     assert "effect_id" not in info
