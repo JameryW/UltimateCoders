@@ -3,7 +3,7 @@
   "name": "v8-replan-proposal",
   "title": "V8 P3: replan proposal only (T18a)",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "cursor-agent",
   "assignee": "cursor-agent",
   "createdAt": "2026-11-07",
-  "completedAt": null,
+  "completedAt": "2026-11-07",
   "branch": "cursor/v8-replan-proposal-e6a9",
   "base_branch": "main",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Merged #872.",
   "meta": {}
 }
