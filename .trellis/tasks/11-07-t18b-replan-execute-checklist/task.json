@@ -1,7 +1,7 @@
 {
   "id": "t18b-replan-execute-checklist",
   "name": "t18b-replan-execute-checklist",
-  "title": "T18b: replan approve → execute checklist",
+  "title": "T18b: replan approve \u2192 execute checklist",
   "description": "T18b: on approve of ProposalKind.replan, flag-gated attention execute checklist; no DAG/digest mutation",
   "status": "in_progress",
   "dev_type": null,
@@ -16,7 +16,7 @@
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
-  "pr_url": null,
+  "pr_url": "https://github.com/JameryW/UltimateCoders/pull/875",
   "subtasks": [],
   "children": [],
   "parent": null,
