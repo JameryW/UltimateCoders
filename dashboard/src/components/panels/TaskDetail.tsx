@@ -3,6 +3,7 @@ import DOMPurify from "dompurify";
 import type { TaskSummary, SubtaskSummary, TaskEvent } from "@/types/dashboard";
 import { InteractionLog } from "@/components/panels/InteractionLog";
 import { ContextManifestTrail } from "@/components/panels/ContextManifestPanel";
+import { DecisionRecordTrail } from "@/components/panels/DecisionRecordPanel";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { renderMermaid } from "@/lib/mermaid";
 import { clampPercent, isSubtaskDone, isSubtaskRunning, subtaskShortLabel } from "@/lib/taskProgress";
@@ -462,6 +463,9 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId, varia
 
       {/* Context compilation trail — what this task's prompts were built from */}
       <ContextManifestTrail taskId={task.id} />
+
+      {/* Decision record trail — verdict, route and local effects per attempt */}
+      <DecisionRecordTrail taskId={task.id} />
     </div>
   );
 }

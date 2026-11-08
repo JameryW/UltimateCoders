@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP + T18 precursors + P6/P7 receipts + P8 effect sourcing)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); P6 MetaInfer kill/control receipts **merged** (#880); P7 local tool receipts **merged** (#881); P8 watchdog effect sourcing **implemented** (D18); D1–D18 decided; full T18 execute still deferred
+Status: **complete (MVP + T18 precursors + P6/P7 receipts + P8 effect sourcing + P9 decision trail)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); P6 MetaInfer kill/control receipts **merged** (#880); P7 local tool receipts **merged** (#881); P8 watchdog effect sourcing **merged**; P9 Decision Record dashboard trail **implemented** (D19); D1–D19 decided; full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -37,6 +37,7 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D16 MetaInfer control receipt](issues/D16-metainfer-control-receipt.md): Next side-effect receipt = `metainfer-kill` behind `UC_EFFECT_LEDGER_METAINFER_CONTROL`; local `write_file` receipts stay out of the ledger (evidence surface, own decision)
 - [D17 Local tool receipts](issues/D17-local-tool-receipts.md): Local effects land as attempt-scoped `workspace` evidence on the Decision Record (git diff + tool names), never per-tool interception
 - [D18 Preserve-effects sourcing](issues/D18-preserve-effects-sourcing.md): The worker derives `confirmed_effect_ids` from CONFIRMED `tool_effects` records (subtask branch / experiment prefix); unscopable effects stay empty
+- [D19 Decision Record dashboard trail](issues/D19-decision-record-dashboard-trail.md): The attempt record gets a read surface (verdict / route / context pointer / local effects); ordering and counts belong to the endpoint, no new API
 
 ## Implementation backlog
 
@@ -110,6 +111,12 @@ P8 (D18) — Confirmed effects for the watchdog: **implemented**
 - [28 confirmed effects watchdog](tickets/28-confirmed-effects-watchdog.md) — **implemented** (worker supplies `confirmed_effect_ids` from `tool_effects`; unscopable stays empty); was blocked by: D18
 - [29 docs P8](tickets/29-docs-p8-confirmed-effects.md) — **implemented**; was blocked by: none
 
+P9 (D19) — Decision Record dashboard trail: **implemented**
+
+- Spec: [spec-p9.md](spec-p9.md)
+- [30 decision record dashboard trail](tickets/30-decision-record-dashboard-trail.md) — **implemented** (read-only render of the existing decisions response; no API change); was blocked by: D19
+- [31 docs P9](tickets/31-docs-p9-decision-trail.md) — **implemented**; was blocked by: none
+
 Later (still deferred — not grabable as full execute):
 
 - True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a–d precursors do not satisfy; blocked until product-stable `UC_COMPLETION_CONDITIONS_ENFORCE` and trusted contract-version ops)
@@ -118,7 +125,7 @@ Later (still deferred — not grabable as full execute):
 
 ## Frontier (open, unblocked)
 
-_(empty — no grabable implement tickets; P6 closed under D16, P7 under D17 and P8 under D18; true replan execute remains deferred on trust-eval ticket 18; Learning OS and graph default-on stay deferred / human-gated. Local `write_file` receipts are evidence on the Decision Record, not ledger kinds, and are already closed by D17; the watchdog's `preserve_effects` source is closed by D18 — do not reopen either here without a new decision. Do not invent T18e+ precursors or silent execute under this map without a new decision.)_
+_(empty — no grabable implement tickets; P6 closed under D16, P7 under D17, P8 under D18 and P9 under D19; true replan execute remains deferred on trust-eval ticket 18; Learning OS and graph default-on stay deferred / human-gated. Local `write_file` receipts are evidence on the Decision Record, not ledger kinds, and are already closed by D17; the watchdog's `preserve_effects` source is closed by D18; the Decision Record read surface is closed by D19 — do not reopen any of them here without a new decision. Do not invent T18e+ precursors or silent execute under this map without a new decision.)_
 
 ## Out of scope
 

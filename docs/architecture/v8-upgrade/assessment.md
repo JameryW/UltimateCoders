@@ -18,6 +18,8 @@ UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gat
 
 **P8 preserve-effects sourcing (2026-11-08, D18):** the worker now supplies `confirmed_effect_ids` on a governed stall, derived from CONFIRMED `tool_effects` records (subtask branch / MetaInfer experiment prefix), so the gateway's `Replan.preserve_effects` carries real receipts instead of an always-empty list. Effects that cannot be scoped stay empty — fewer protections, never a pretended one.
 
+**P9 Decision Record trail (2026-11-08, D19):** the dashboard's task detail now renders the attempt trail (verdict, route, `ctx <12 hex>` pointer, P7 local effects) from the existing decisions response — a pure read surface, with ordering and counts left to the endpoint.
+
 ## Domain coverage (compact)
 
 | V8 domain | UC maturity | Notes |
