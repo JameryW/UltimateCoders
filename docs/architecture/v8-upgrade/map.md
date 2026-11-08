@@ -137,7 +137,7 @@ P11 (D21) — Decision trail subtask scope: **merged** (#884)
 - [34 decisions trail subtask scope](tickets/34-decisions-trail-subtask-scope.md) — **implemented** (row subtask ids scope the trail; paging stays inside the scope); was blocked by: D21
 - [35 docs P11](tickets/35-docs-p11-scope.md) — **implemented**; was blocked by: none
 
-P12 (D22) — Merge receipts carry their branch set: **implemented**
+P12 (D22) — Merge receipts carry their branch set: **merged** (#892)
 
 - Spec: [spec-p12.md](spec-p12.md)
 - [39 merge receipt branch scope](tickets/39-merge-receipt-branch-scope.md) — **implemented** (`push-main` records `merged_branches`; `confirmed_effect_ids` matches them; branch-less receipts stay unscopable); was blocked by: D22
