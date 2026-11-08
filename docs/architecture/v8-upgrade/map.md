@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP + T18 precursors + P6/P7 receipts)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); P6 MetaInfer kill/control receipts **merged** (#880); P7 local tool receipts **implemented** (D17); D1–D17 decided; full T18 execute still deferred
+Status: **complete (MVP + T18 precursors + P6/P7 receipts)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); P6 MetaInfer kill/control receipts **merged** (#880); P7 local tool receipts **merged** (#881); D1–D17 decided; full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -97,7 +97,7 @@ P6 (D16) — MetaInfer kill/control receipts: **merged** (#880)
 - [24 MetaInfer kill/control receipt](tickets/24-metainfer-kill-ledger.md) — **implemented** (`UC_EFFECT_LEDGER_METAINFER_CONTROL` default off); was blocked by: D16
 - [25 docs P6](tickets/25-docs-p6-control-receipts.md) — **implemented**; was blocked by: none
 
-P7 (D17) — Local tool receipts (Decision Record evidence): **implemented**
+P7 (D17) — Local tool receipts (Decision Record evidence): **merged** (#881)
 
 - Spec: [spec-p7.md](spec-p7.md)
 - [26 local tool receipts](tickets/26-local-tool-receipts.md) — **implemented** (attempt-scoped `terminal.workspace`; no flag, audit-only); was blocked by: D17
