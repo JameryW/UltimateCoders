@@ -80,7 +80,9 @@
   （`MergeArbiter` 与 `WorkspaceManager.release()`）：以（远端、分支、
   待发布提交）构造稳定 effect id，推送报错时用 `ls-remote` 对账，
   已落地则报 `already_pushed` 而非重试。MetaInfer create POST 为第一个非 git
-  kind（`metainfer-create`），默认关闭，由 `UC_EFFECT_LEDGER_METAINFER` 打开。
+  kind（`metainfer-create`），默认关闭，由 `UC_EFFECT_LEDGER_METAINFER` 打开；
+  终止控制 POST 为第二个（`metainfer-kill`），由 `UC_EFFECT_LEDGER_METAINFER_CONTROL`
+  打开，丢响应记 `UNKNOWN` 而不是「终止未确认」的不可判状态。
 - **任务契约版本化**：`contract.py` 以「原始请求文本」的归一化摘要为契约身份
   （仅折叠 CRLF/行尾空白/首尾空行，措辞变化——哪怕一个否定词——必须改变摘要），
   按任务记录版本。同一任务的两次派发若契约摘要不同，Worker **拒绝执行**并上报
@@ -133,11 +135,12 @@
 | Replan execute checklist（V8 T18b / D12） | **落地（默认关闭）** | Approve `replan` → Attention NeedsHuman 清单 + audit `replan_execute_checklist`（`UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE`）；**不** `admit_execution`、**不** bump digest、**不** 改 DAG。不满足 trust-eval ticket 18 的真 execute。见 [spec-t18b](architecture/v8-upgrade/spec-t18b.md)、[D12](architecture/v8-upgrade/issues/D12-replan-execute-checklist.md)。 |
 | Durable replan accounting（V8 T18c / D13） | **落地（默认关闭）** | `WorkCase.replans_used` 权威计数（`UC_REPLAN_ACCOUNTING_ENFORCE`）；stall 忽略客户端影子；`replan` 裁决后 CAS +1；**不** bump digest、**不** 改 DAG、**不** `admit_execution`。配额前提，不满足 trust-eval ticket 18 的真 execute。见 [spec-t18c](architecture/v8-upgrade/spec-t18c.md)、[D13](architecture/v8-upgrade/issues/D13-replan-accounting.md)。 |
 | Replan execute readiness（V8 T18d / D14） | **runbook + dry-run 落地** | 运维手册 + 非破坏探针：`docs/architecture/replan-execute-readiness-runbook.md`、`scripts/check-replan-execute-readiness.py`；报告 T18a–c / completion_conditions 前驱状态；**不**启用 execute、**不** bump digest、**不** `admit_execution`。不满足 trust-eval ticket 18。见 [spec-t18d](architecture/v8-upgrade/spec-t18d.md)、[D14](architecture/v8-upgrade/issues/D14-replan-execute-readiness.md)。 |
+| MetaInfer kill/control 收据（V8 P6 / D16） | **落地（默认关闭）** | 第二个非 git kind `metainfer-kill`（`UC_EFFECT_LEDGER_METAINFER_CONTROL`）：终止 POST 丢响应 → `UNKNOWN`（不是不可判的「终止未确认」）；`CONFIRMED` 不重复 POST，`UNKNOWN` 拒绝重试直到对账；服务明确 `ok != true` → `FAILED`。本地 `write_file` 收据**不**进 ledger（证据面，另决策）。见 [spec-p6](architecture/v8-upgrade/spec-p6.md)、[D16](architecture/v8-upgrade/issues/D16-metainfer-control-receipt.md)。 |
 | Portable Capability Tokens | 不做（D4） | 继续 Grant/Mandate；MVP 不引入可移植不透明 token。 |
 | Learning OS / 轨迹导出 | 延后（D3） | 产品决策前不做。 |
 | Graph-primary 默认开启 | **runbook 落地，默认仍关**（D6 / D10 / P4） | 运维手册 + dry-run：`docs/architecture/graph-cutover-runbook.md`、`scripts/check-graph-cutover-readiness.py`；Compose/镜像默认仍关；不因 `UC_DATABASE_URL` 自动切 graph-only。真 replan execute 仍延后。 |
 
-V8 MVP 波次已关闭（P0–P4 / D11）；T18 前驱波次已关闭（T18a–d / D15）；真 replan execute 仍由 trust-eval ticket 18 拥有并延后。
+V8 MVP 波次已关闭（P0–P4 / D11）；T18 前驱波次已关闭（T18a–d / D15）；P6 MetaInfer kill/control 收据已落地（D16，默认关闭）；真 replan execute 仍由 trust-eval ticket 18 拥有并延后。
 
 （模型路由已于 P2 落地，见 §4；新增差距在此表登记，按优先级排序。）
 
@@ -246,7 +249,7 @@ P1b 三项增量（统一预算、risk 配比、manifest 审计落库）连同�
 | 编号 | 注入故障 | 现有证据 | 状态 |
 |---|---|---|---|
 | F1 | LLM 调用期间崩溃 | `test_unconfirmed_writer_preserves_checkpoint_and_original_baseline` | 覆盖 |
-| F2 | 工具成功但响应丢失 | `test_lost_submission_response_never_creates_another_job`、去重集成测试、`tests/python/test_merge_arbiter_effects.py`、`tests/python/test_workspace_push_effects.py`（已推送但响应丢失 → `already_pushed`，不重试）、`tests/python/test_metainfer_effects.py`（`UC_EFFECT_LEDGER_METAINFER`：create POST 丢失 → `UNKNOWN`，CONFIRMED 不二次 POST）、`tests/python/test_outbox_effect_identity.py`（重试只取代一条终态记录，消息 id 随内容变化） | 覆盖 |
+| F2 | 工具成功但响应丢失 | `test_lost_submission_response_never_creates_another_job`、去重集成测试、`tests/python/test_merge_arbiter_effects.py`、`tests/python/test_workspace_push_effects.py`（已推送但响应丢失 → `already_pushed`，不重试）、`tests/python/test_metainfer_effects.py`（`UC_EFFECT_LEDGER_METAINFER`：create POST 丢失 → `UNKNOWN`，CONFIRMED 不二次 POST；`UC_EFFECT_LEDGER_METAINFER_CONTROL`：kill POST 丢失 → `UNKNOWN`、`ok != true` → `FAILED`、CONFIRMED/UNKNOWN 均不二次 POST）、`tests/python/test_outbox_effect_identity.py`（重试只取代一条终态记录，消息 id 随内容变化） | 覆盖 |
 | F3 | 沙箱/工作区被销毁 | inference delivery 的 worktree 接管与恢复测试 | 覆盖 |
 | F4 | 外部工具返回恶意指令 | env allowlist 与凭证隔离测试；注入内容侧：毒化的检索块/子任务摘要只进证据/轨迹层、不能自证 verified、也不能伪造 policy 或 P3 计数（内容由 builder 决定信任，文本说了不算） | 覆盖（层内不变量；模型是否遵从注入不在仓内可控） |
 | F5 | 两个 Agent 改同一资源 | `test_merge_arbiter.py`、`test_merge_gate.py` | 覆盖 |

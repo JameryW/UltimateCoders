@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP + T18 precursors)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); D1–D15 decided; full T18 execute still deferred
+Status: **complete (MVP + T18 precursors + P6 control receipts)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); P6 MetaInfer kill/control receipts **merged** (#880); D1–D16 decided; full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -34,6 +34,7 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D13 Durable replan accounting](issues/D13-replan-accounting.md): T18c — `WorkCase.replans_used` behind `UC_REPLAN_ACCOUNTING_ENFORCE`; no DAG/digest
 - [D14 Replan execute readiness](issues/D14-replan-execute-readiness.md): T18d — ops runbook + dry-run; no execute gate / no DAG/digest / no `admit_execution`
 - [D15 T18 precursor closeout](issues/D15-t18-precursor-closeout.md): Close T18a–d ladder; no silent further precursors or execute without a new decision
+- [D16 MetaInfer control receipt](issues/D16-metainfer-control-receipt.md): Next side-effect receipt = `metainfer-kill` behind `UC_EFFECT_LEDGER_METAINFER_CONTROL`; local `write_file` receipts stay out of the ledger (evidence surface, own decision)
 
 ## Implementation backlog
 
@@ -89,6 +90,12 @@ Follow-on (D15 — precursor closeout): **implemented** (complete)
 - Spec: [spec-t18-closeout.md](spec-t18-closeout.md)
 - [23 docs T18 precursor closeout](tickets/23-docs-t18-precursor-closeout.md) — **implemented**; was blocked by: D15
 
+P6 (D16) — MetaInfer kill/control receipts: **merged** (#880)
+
+- Spec: [spec-p6.md](spec-p6.md)
+- [24 MetaInfer kill/control receipt](tickets/24-metainfer-kill-ledger.md) — **implemented** (`UC_EFFECT_LEDGER_METAINFER_CONTROL` default off); was blocked by: D16
+- [25 docs P6](tickets/25-docs-p6-control-receipts.md) — **implemented**; was blocked by: none
+
 Later (still deferred — not grabable as full execute):
 
 - True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a–d precursors do not satisfy; blocked until product-stable `UC_COMPLETION_CONDITIONS_ENFORCE` and trusted contract-version ops)
@@ -97,7 +104,7 @@ Later (still deferred — not grabable as full execute):
 
 ## Frontier (open, unblocked)
 
-_(empty — no grabable implement tickets; true replan execute remains deferred on trust-eval ticket 18; Learning OS and graph default-on stay deferred / human-gated. Do not invent T18e+ precursors or silent execute under this map without a new decision.)_
+_(empty — no grabable implement tickets; P6 closed under D16; true replan execute remains deferred on trust-eval ticket 18; Learning OS and graph default-on stay deferred / human-gated. MCP `write_file` receipts are an evidence-surface decision, not a ledger kind — do not add them here without a new decision. Do not invent T18e+ precursors or silent execute under this map without a new decision.)_
 
 ## Out of scope
 

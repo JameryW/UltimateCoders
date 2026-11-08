@@ -14,3 +14,5 @@ Which mutating operation should be the first non-git EffectLedger kind for V8 P1
 ## Why
 
 File writes are local and do not suffer the lost-response / double-apply failure mode. MetaInfer create already classifies ambiguous HTTP as `RemoteStateUncertainError` and is the highest-value non-git external side effect in UC. Full replacement of `remote_jobs` is out of scope.
+
+**Note (2026-11-08, D16 / P6):** the second non-git kind landed — `metainfer-kill` behind `UC_EFFECT_LEDGER_METAINFER_CONTROL` (default off). Local `write_file` receipts stay deliberately out of the ledger: they are evidence, not exactly-once. See [D16](D16-metainfer-control-receipt.md).

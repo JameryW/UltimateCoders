@@ -917,7 +917,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # (783 -> 801); unclassified stays 0.
     # 2026-11-08 T18 precursor closeout (D15/spec-t18-closeout backticks map.md)
     # (801 -> 802); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 802
+    # 2026-11-08 P6 MetaInfer kill/control receipts (D16/spec-p6/tickets 24–25 +
+    # inference-infra flag note + agent-os §5/§7) (802 -> 808); unclassified
+    # stays 0. Refs/OK/STALE/calibers unchanged: the new prose names paths
+    # without `path:line` pointers.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 808
 
 
 def test_real_corpus_has_no_false_content_mismatch():

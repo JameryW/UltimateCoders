@@ -37,12 +37,19 @@ DEFAULT_TASK_TYPES = {
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 #: Opt-in EffectLedger receipts for MetaInfer create POST (default off).
 EFFECT_LEDGER_METAINFER_ENV = "UC_EFFECT_LEDGER_METAINFER"
+#: Opt-in EffectLedger receipts for MetaInfer kill/control POST (default off).
+EFFECT_LEDGER_METAINFER_CONTROL_ENV = "UC_EFFECT_LEDGER_METAINFER_CONTROL"
 _TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 
 
 def _effect_ledger_enabled() -> bool:
     """Whether MetaInfer create POSTs write EffectLedger receipts (default off)."""
     return os.environ.get(EFFECT_LEDGER_METAINFER_ENV, "").strip().lower() in _TRUTHY_ENV
+
+
+def _control_ledger_enabled() -> bool:
+    """Whether MetaInfer kill/control POSTs write EffectLedger receipts (default off)."""
+    return os.environ.get(EFFECT_LEDGER_METAINFER_CONTROL_ENV, "").strip().lower() in _TRUTHY_ENV
 
 
 def _confirm_metainfer_create_effect(
@@ -271,6 +278,81 @@ class MetaInferAdapter:
                 await asyncio.sleep(max(self.poll_interval, 0.05))
 
         return await asyncio.wait_for(wait(), timeout=5)
+
+    async def _kill_remote_job(self, client: httpx.AsyncClient, remote_id: str) -> dict:
+        """Stop a remote job, recording an EffectLedger receipt when enabled.
+
+        The receipt exists for the lost-response case: a control POST whose
+        reply never arrives cannot be told apart from "the service refused",
+        so the effect becomes ``UNKNOWN`` and a retry must reconcile instead of
+        re-POSTing. ``CONFIRMED`` skips the POST but still asks for the
+        quiescence proof. Flag off leaves the old path byte-identical.
+        """
+        key = self.operation_id
+        ledger = None
+        effect_id = None
+        if _control_ledger_enabled() and self.state and key:
+            from ultimate_coders.effect_ledger import (
+                EffectBusyError,
+                EffectLedger,
+                stable_effect_id,
+            )
+
+            effect_id = stable_effect_id("metainfer-kill", self.backend_id, key, remote_id)
+            ledger = EffectLedger(self.state)
+            try:
+                prepared = await asyncio.to_thread(
+                    ledger.prepare,
+                    effect_id,
+                    kind="metainfer-kill",
+                    request={
+                        "backend_id": self.backend_id,
+                        "operation_id": key,
+                        "remote_id": remote_id,
+                    },
+                    idempotency_key=effect_id,
+                )
+            except EffectBusyError as exc:
+                raise RemoteStateUncertainError(
+                    "Concurrent MetaInfer kill effect; attach through its owner"
+                ) from exc
+            status = prepared.get("status")
+            if status in ("UNKNOWN", "RECONCILING"):
+                # Ambiguous prior attempt: never repeat the POST.
+                raise RemoteStateUncertainError(
+                    "Termination outcome unknown; reconcile at MetaInfer before retry"
+                )
+            if status == "CONFIRMED":
+                # Termination already confirmed; only the proof is still missing.
+                return await self.confirm_quiescence(client, remote_id)
+            await asyncio.to_thread(ledger.mark_in_flight, effect_id, owner=f"metainfer:{key}")
+        try:
+            stopped = await asyncio.wait_for(
+                self._request(
+                    client,
+                    "POST",
+                    f"/api/sys-shell/{remote_id}/control",
+                    json={"action": "kill", "force": True},
+                ),
+                timeout=5,
+            )
+        except (Exception, asyncio.CancelledError):
+            if ledger is not None and effect_id is not None:
+                await asyncio.to_thread(
+                    ledger.mark_unknown,
+                    effect_id,
+                    reason="control POST outcome unknown",
+                )
+            raise
+        if not isinstance(stopped, dict) or stopped.get("ok") is not True:
+            if ledger is not None and effect_id is not None:
+                await asyncio.to_thread(
+                    ledger.fail, effect_id, error="service did not confirm kill"
+                )
+            raise MetaInferError("Service did not confirm kill")
+        if ledger is not None and effect_id is not None:
+            await asyncio.to_thread(ledger.confirm, effect_id, result={"remote_id": remote_id})
+        return await self.confirm_quiescence(client, remote_id)
 
     async def _execute(
         self,
@@ -711,20 +793,13 @@ class MetaInferAdapter:
                 raise
             if remote_id:
                 try:
-                    stopped = await asyncio.wait_for(
-                        self._request(
-                            client,
-                            "POST",
-                            f"/api/sys-shell/{remote_id}/control",
-                            json={"action": "kill", "force": True},
-                        ),
-                        timeout=5,
-                    )
-                    if not isinstance(stopped, dict) or stopped.get("ok") is not True:
-                        raise MetaInferError("Service did not confirm kill")
-                    proof = await self.confirm_quiescence(client, remote_id)
+                    proof = await self._kill_remote_job(client, remote_id)
                 except (Exception, asyncio.CancelledError) as stop_exc:
                     await persist(state="cleanup_pending", remote_id=remote_id)
+                    if isinstance(stop_exc, RemoteStateUncertainError):
+                        # Keep the specific "reconcile at MetaInfer" message the
+                        # receipt path raised; the generic wrapper would hide it.
+                        raise
                     raise RemoteStateUncertainError(
                         f"MetaInfer task {remote_id}: termination unconfirmed; "
                         "stop it at the service"

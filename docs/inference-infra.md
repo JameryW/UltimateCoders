@@ -12,9 +12,13 @@ UC_METAINFER_REVISION=b3f6505a11ab704ee1cfb68e9c1b2c13c95ac890
 UC_METAINFER_BACKEND_ID=metainfer-gpu-a
 # Optional: durable EffectLedger receipts for create POST (default off).
 # UC_EFFECT_LEDGER_METAINFER=1
+# Optional: durable EffectLedger receipts for kill/control POST (default off).
+# UC_EFFECT_LEDGER_METAINFER_CONTROL=1
 ```
 
 `UC_EFFECT_LEDGER_METAINFER` (truthy: `1`/`true`/`yes`/`on`) wraps MetaInfer create `POST …/tasks` with EffectLedger kind `metainfer-create`. Default unset/off keeps create behaviour byte-identical for ledger writes (`remote_jobs` remains the operational store).
+
+`UC_EFFECT_LEDGER_METAINFER_CONTROL` (same truthy set, default off) wraps the termination `POST …/control {"action":"kill"}` with kind `metainfer-kill`: a lost control response becomes `UNKNOWN` instead of an unrecorded "termination unconfirmed", a `CONFIRMED` receipt skips the repeat POST, and an `UNKNOWN` receipt refuses the retry until it is reconciled. A local `write_file` is deliberately **not** a ledger kind — it has no lost-response failure shape and belongs to the evidence/audit surface (D16).
 
 Workers always advertise local `inference_benchmark`. Remote capabilities require successful live schema probes: `inference_infra` plus the supported `model_porting`, `kernel_optimization`, `runtime_optimization` or `trace_analysis` operation. Startup and heartbeats refresh these probes and withdraw unavailable operations. A URL alone does not prove readiness or GPU availability. Explicit agent choices win over automatic routing. Routing requires inference context and engineering intent; ordinary frontend work and references to a Linux kernel retain their coding adapter.
 
