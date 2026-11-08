@@ -16,10 +16,13 @@
 
 **Note (2026-11-08, D14 / T18d):** Ops readiness runbook + dry-run probe landed under [v8-upgrade/spec-t18d.md](../../v8-upgrade/spec-t18d.md) (`docs/architecture/replan-execute-readiness-runbook.md`, `scripts/check-replan-execute-readiness.py`). That surface reports precursor / completion-conditions flag state and docs presence only — it does **not** enable execute, invent an execute env gate, bump digest, re-decompose, or `admit_execution`. This ticket (full true replan execute) remains deferred.
 
+**Note (2026-11-08, D15):** T18 precursor ladder closed (T18a–d / #872/#875/#876/#877) under [v8-upgrade/spec-t18-closeout.md](../../v8-upgrade/spec-t18-closeout.md). Closing the precursor wave does **not** satisfy this ticket — full true replan execute (digest bump / re-decompose / `admit_execution`) remains deferred here until product-stable `UC_COMPLETION_CONDITIONS_ENFORCE` use and trusted contract-version ops.
+
 - [ ] Explicitly out of P2 MVP scope
 - [ ] Must not be implemented as a silent contract rewrite during ticket 14
 - [x] T18a proposal-only precursor landed under V8 P3 (does not satisfy this ticket)
 - [x] T18b approve→checklist precursor landed under D12 (does not satisfy this ticket)
 - [x] T18c durable replan accounting landed under D13 (quota only; does not satisfy this ticket)
 - [x] T18d ops readiness runbook + dry-run landed under D14 (readiness ≠ execute; does not satisfy this ticket)
+- [x] T18 precursor wave closed under D15 (ladder closed ≠ execute; does not satisfy this ticket)
 - [ ] Future ticket may split into planner ownership + digest bump / execute rules
