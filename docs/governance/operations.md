@@ -61,6 +61,10 @@ NATS + PostgreSQL（见 §4 手工验收）。
 | `UC_REPLAN_ACCOUNTING_ENFORCE` | 打开后，网关以 `WorkCase.replans_used` 作为权威重规划计数（stall 忽略客户端影子；`replan` 裁决后 CAS +1）；默认关闭；**不** bump digest / **不** 改 DAG / **不** `admit_execution` | `crates/uc-grpc/src/governance/proactive_service.rs`（T18c / D13） |
 | `UC_TASK_BACKEND` / `UC_EVENT_BACKEND` / `UC_GRAPH_SHADOW` | 执行面后端，不属治理层；但 `Governance` 与它们共用 `UC_DATABASE_URL` 时需保证同一个库 | `crates/uc-grpc-server/src/main.rs`、`docs/architecture.md` |
 
+真 replan **execute** 仍延后（trust-eval ticket 18）。运维就绪证据（T18d / D14，**不**启用 execute、**不** bump digest、**不**调用 `admit_execution`）：
+[replan-execute-readiness-runbook.md](../architecture/replan-execute-readiness-runbook.md) +
+`python scripts/check-replan-execute-readiness.py`。不要发明 `UC_REPLAN_EXECUTE_ENFORCE` 之类的默认开启门。
+
 ## 2. 治理桥：唯一传输契约
 
 Rust 网关是治理状态的**唯一权威**；Python 只是投影。传输是 NATS request/reply：

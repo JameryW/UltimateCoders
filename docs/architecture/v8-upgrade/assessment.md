@@ -8,6 +8,8 @@ UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gat
 
 **MVP closeout (2026-11-07, D11):** checklist slices P0–P4 landed and merged (#869–#873). True replan execute (T18), Learning OS (D3), and graph-primary default-on remain deferred or human-gated as before — outside this wave.
 
+**Follow-on (2026-11-08, D14 / T18d):** replan-execute readiness runbook + dry-run probe landed (same ops class as P4 graph cutover). Precursor evidence only — does **not** satisfy true replan execute (ticket 18).
+
 ## Domain coverage (compact)
 
 | V8 domain | UC maturity | Notes |

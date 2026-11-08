@@ -132,11 +132,12 @@
 | Replan proposal only（V8 P3 / T18a） | **落地（默认关闭）** | Watchdog `replan` → 结构化 `ProposalKind.REPLAN`（`UC_REPLAN_PROPOSAL_ENFORCE`）；携带 `contract_digest` / `preserve_effects`；**不**执行新 DAG、**不** bump digest。真 replan execute 仍延后（trust-eval ticket 18）。见 [spec-p3](architecture/v8-upgrade/spec-p3.md)、[D9](architecture/v8-upgrade/issues/D9-replan-proposal-only.md)。 |
 | Replan execute checklist（V8 T18b / D12） | **落地（默认关闭）** | Approve `replan` → Attention NeedsHuman 清单 + audit `replan_execute_checklist`（`UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE`）；**不** `admit_execution`、**不** bump digest、**不** 改 DAG。不满足 trust-eval ticket 18 的真 execute。见 [spec-t18b](architecture/v8-upgrade/spec-t18b.md)、[D12](architecture/v8-upgrade/issues/D12-replan-execute-checklist.md)。 |
 | Durable replan accounting（V8 T18c / D13） | **落地（默认关闭）** | `WorkCase.replans_used` 权威计数（`UC_REPLAN_ACCOUNTING_ENFORCE`）；stall 忽略客户端影子；`replan` 裁决后 CAS +1；**不** bump digest、**不** 改 DAG、**不** `admit_execution`。配额前提，不满足 trust-eval ticket 18 的真 execute。见 [spec-t18c](architecture/v8-upgrade/spec-t18c.md)、[D13](architecture/v8-upgrade/issues/D13-replan-accounting.md)。 |
+| Replan execute readiness（V8 T18d / D14） | **runbook + dry-run 落地** | 运维手册 + 非破坏探针：`docs/architecture/replan-execute-readiness-runbook.md`、`scripts/check-replan-execute-readiness.py`；报告 T18a–c / completion_conditions 前驱状态；**不**启用 execute、**不** bump digest、**不** `admit_execution`。不满足 trust-eval ticket 18。见 [spec-t18d](architecture/v8-upgrade/spec-t18d.md)、[D14](architecture/v8-upgrade/issues/D14-replan-execute-readiness.md)。 |
 | Portable Capability Tokens | 不做（D4） | 继续 Grant/Mandate；MVP 不引入可移植不透明 token。 |
 | Learning OS / 轨迹导出 | 延后（D3） | 产品决策前不做。 |
 | Graph-primary 默认开启 | **runbook 落地，默认仍关**（D6 / D10 / P4） | 运维手册 + dry-run：`docs/architecture/graph-cutover-runbook.md`、`scripts/check-graph-cutover-readiness.py`；Compose/镜像默认仍关；不因 `UC_DATABASE_URL` 自动切 graph-only。真 replan execute 仍延后。 |
 
-V8 MVP 波次已关闭（P0–P4 / D11）；T18b checklist + T18c accounting 已落地；真 replan execute（T18）仍延后。
+V8 MVP 波次已关闭（P0–P4 / D11）；T18b checklist + T18c accounting + T18d readiness 已落地；真 replan execute（T18）仍延后。
 
 （模型路由已于 P2 落地，见 §4；新增差距在此表登记，按优先级排序。）
 
