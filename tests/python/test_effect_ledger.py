@@ -114,6 +114,83 @@ def test_reconcile_absent_returns_to_prepared_and_retry_counts(ledger):
     assert ledger.get("eff_test")["attempts"] == 2
 
 
+# ── reconcile lease (T37) ───────────────────────────────────────
+
+
+def _unknown(ledger: EffectLedger, effect_id: str = "eff_test") -> None:
+    ledger.prepare(effect_id, kind="push")
+    ledger.mark_in_flight(effect_id, owner="w1")
+    ledger.mark_unknown(effect_id, reason="timeout")
+
+
+def test_begin_reconcile_takes_a_lease_and_refuses_a_live_one(ledger):
+    _unknown(ledger)
+    record = ledger.begin_reconcile("eff_test", owner="ops:a", lease_seconds=60)
+    assert record["status"] == EffectStatus.RECONCILING.value
+    assert record["owner"] == "ops:a"
+    assert record["lease_until"] > record["updated_at"]
+    assert record["reconcile_attempts"] == 1
+
+    with pytest.raises(EffectBusyError):
+        ledger.begin_reconcile("eff_test", owner="ops:b")
+
+
+def test_begin_reconcile_takes_over_an_expired_lease(ledger):
+    _unknown(ledger)
+    ledger.begin_reconcile("eff_test", owner="ops:a", lease_seconds=-1)
+    record = ledger.begin_reconcile("eff_test", owner="ops:b", lease_seconds=60)
+    assert record["status"] == EffectStatus.RECONCILING.value
+    assert record["owner"] == "ops:b"
+    assert record["reconcile_attempts"] == 2
+    assert "taken over" in record["reason"]
+
+
+def test_a_legacy_reconcile_record_without_a_lease_is_takeover_able(ledger):
+    ledger.state.mutate(
+        ledger.namespace,
+        "eff_legacy",
+        lambda old: {
+            "effect_id": "eff_legacy",
+            "kind": "push",
+            "status": EffectStatus.RECONCILING.value,
+            "attempts": 1,
+            "updated_at": 0.0,
+        },
+    )
+    record = ledger.begin_reconcile("eff_legacy", owner="ops:b")
+    assert record["owner"] == "ops:b"
+    assert record["lease_until"] > 0
+
+
+def test_resolve_reconcile_clears_the_lease(ledger):
+    _unknown(ledger)
+    ledger.begin_reconcile("eff_test", owner="ops:a", lease_seconds=60)
+    confirmed = ledger.resolve_reconcile("eff_test", applied=True)
+    assert confirmed["owner"] == ""
+    assert confirmed["lease_until"] == 0
+
+    _unknown(ledger, "eff_retry")
+    ledger.begin_reconcile("eff_retry", owner="ops:a", lease_seconds=60)
+    prepared = ledger.resolve_reconcile("eff_retry", applied=False)
+    assert prepared["owner"] == ""
+    assert prepared["lease_until"] == 0
+
+
+def test_reconciling_lists_only_that_state(ledger):
+    _unknown(ledger, "eff_a")
+    ledger.begin_reconcile("eff_a", owner="ops:a")
+    _unknown(ledger, "eff_b")
+
+    assert [record["effect_id"] for record in ledger.reconciling()] == ["eff_a"]
+    assert [record["effect_id"] for record in ledger.unknown()] == ["eff_b"]
+
+
+def test_begin_reconcile_refuses_a_prepared_record(ledger):
+    _prepared(ledger)
+    with pytest.raises(EffectTransitionError):
+        ledger.begin_reconcile("eff_test", owner="ops:a")
+
+
 def test_definite_failure_can_be_retried_under_the_same_id(ledger):
     _prepared(ledger)
     ledger.mark_in_flight("eff_test", owner="w1")

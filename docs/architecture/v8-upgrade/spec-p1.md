@@ -27,6 +27,7 @@ Close the V8 Agent OS gap where only git publish has durable side-effect receipt
 - [x] Flag on + prepare finds `CONFIRMED` → no second POST (covered by test with fake client / stub).
 - [x] Existing push-effect and MetaInfer reliability tests stay green.
 - [x] Coding-path: when `push_on_release` and RuntimeState available, `_push_subtask_branch` uses the ledger (bind happens).
+- [x] Reconcile is crash-detectable too: `begin_reconcile` takes the ledger's soft lease, a live lease refuses a second reconciler, and an expired (or legacy, lease-less) one is taken over instead of leaving the effect wedged in `RECONCILING` (T37).
 
 ## Out of scope
 

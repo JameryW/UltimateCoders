@@ -45,7 +45,10 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 
 P0 (D1–D5) — Decision Record: **merged** (#869)
 
-P1 (D7) — Tool / side-effect receipts: **merged** (#870)
+P1 (D7) — Tool / side-effect receipts: **merged** (#870) + reconcile leases (**#890**)
+
+- Spec: [spec-p1.md](spec-p1.md)
+- [37 reconcile leases](tickets/37-reconcile-leases.md) — **implemented** (`begin_reconcile` takes the soft lease; expired/legacy leases are takeover-able; `reconciling()`); was blocked by: D7
 
 P2 (D8) — Coding Champion/Challenger: **merged** (#871)
 

@@ -946,7 +946,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # agent-os §5) (859 -> 862); unclassified stays 0.
     # 2026-11-09 MetaInfer receipt settlement (T36/D16 note + ticket 36 + v8 map +
     # agent-os §5) (862 -> 868); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 868
+    # 2026-11-09 reconcile leases (T37/spec-p1 + ticket 37 + v8 map + agent-os §5)
+    # (868 -> 870); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 870
 
 
 def test_real_corpus_has_no_false_content_mismatch():

@@ -109,6 +109,17 @@ class EffectLedger:
         """Effects whose outcome needs reconciliation (oldest first)."""
         return self.state.query(self.namespace, status=EffectStatus.UNKNOWN.value, limit=limit)
 
+    def reconciling(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Effects someone is actively reconciling (oldest first).
+
+        A record whose ``lease_until`` has passed belongs to a dead reconciler and
+        can be taken over with :meth:`begin_reconcile`; that is the only way out of
+        ``RECONCILING`` short of a resolution.
+        """
+        return self.state.query(
+            self.namespace, status=EffectStatus.RECONCILING.value, limit=limit
+        )
+
     def in_flight(self, limit: int = 100) -> list[dict[str, Any]]:
         return self.state.query(self.namespace, status=EffectStatus.IN_FLIGHT.value, limit=limit)
 
@@ -291,12 +302,51 @@ class EffectLedger:
 
         return self.state.mutate(self.namespace, effect_id, change)
 
-    def begin_reconcile(self, effect_id: str, *, owner: str) -> dict[str, Any]:
+    def begin_reconcile(
+        self, effect_id: str, *, owner: str, lease_seconds: float = 120
+    ) -> dict[str, Any]:
+        """Claim the reconcile for ``owner`` under the same soft lease as execution.
+
+        ``UNKNOWN`` -> ``RECONCILING``. A ``RECONCILING`` record whose lease is still
+        live raises :class:`EffectBusyError`; an expired one means the reconciler died,
+        so the new owner takes it over in place. Without this, a crashed reconciler
+        leaves the effect wedged in ``RECONCILING`` forever: no other transition leaves
+        that state, ``prepare`` refuses it, and ``unknown()`` never lists it.
+        """
         now = time.time()
 
         def change(old: dict[str, Any]) -> dict[str, Any]:
-            _require(old, effect_id, EffectStatus.UNKNOWN)
-            return _moved(old, EffectStatus.RECONCILING, now, owner=owner, reason="")
+            _require(old, effect_id)
+            status = EffectStatus(old.get("status", ""))
+            attempts = int(old.get("reconcile_attempts", 0)) + 1
+            if status is EffectStatus.UNKNOWN:
+                return _moved(
+                    old,
+                    EffectStatus.RECONCILING,
+                    now,
+                    owner=owner,
+                    lease_until=now + lease_seconds,
+                    reconcile_attempts=attempts,
+                    reason="",
+                )
+            if status is EffectStatus.RECONCILING:
+                held_until = float(old.get("lease_until", 0))
+                if held_until > now:
+                    raise EffectBusyError(
+                        f"{effect_id} is being reconciled by {old.get('owner', '?')} "
+                        f"until {held_until}"
+                    )
+                return {
+                    **old,
+                    "owner": owner,
+                    "lease_until": now + lease_seconds,
+                    "reconcile_attempts": attempts,
+                    "reason": "reconcile lease expired; taken over",
+                    "updated_at": now,
+                }
+            raise EffectTransitionError(
+                f"{effect_id}: {status.value} is not UNKNOWN/RECONCILING"
+            )
 
         return self.state.mutate(self.namespace, effect_id, change)
 
@@ -324,11 +374,14 @@ class EffectLedger:
                     EffectStatus.CONFIRMED,
                     now,
                     owner="",
+                    lease_until=0,
                     result=result or {},
                     reason=reason,
                     confirmed_at=now,
                 )
-            return _moved(old, EffectStatus.PREPARED, now, owner="", reason=reason)
+            return _moved(
+                old, EffectStatus.PREPARED, now, owner="", lease_until=0, reason=reason
+            )
 
         return self.state.mutate(self.namespace, effect_id, change)
 
