@@ -926,7 +926,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # unchanged for the same reason.
     # 2026-11-08 P8 confirmed effects for the watchdog (D18/spec-p8/tickets
     # 28–29 + agent-os §5 + PR06 §6.5) (814 -> 821); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 821
+    # 2026-11-08 P9 Decision Record dashboard trail (D19/spec-p9/tickets 30–31 +
+    # the dashboard lib/panel/test names + map/agent-os/assessment/architecture)
+    # (821 -> 838); unclassified stays 0. Refs stay unchanged: the new prose
+    # names paths without `path:line` pointers.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 838
 
 
 def test_real_corpus_has_no_false_content_mismatch():
