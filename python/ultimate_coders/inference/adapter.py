@@ -83,6 +83,63 @@ def _confirm_metainfer_create_effect(
         pass
 
 
+def settle_metainfer_effects_from_operator_evidence(
+    state: RuntimeState,
+    *,
+    backend_id: str,
+    operation_id: str,
+    request_sha: str | None = None,
+    remote_id: str | None = None,
+    evidence: str,
+) -> list[str]:
+    """Settle open ``metainfer-create`` / ``metainfer-kill`` receipts from operator proof.
+
+    The operator reconcile path (``inference/reconcile.py``) proves remote state and
+    moves ``remote_jobs``; without this, the ledger receipts it just made obsolete stay
+    ``IN_FLIGHT``/``UNKNOWN`` forever -- ``EffectLedger.unknown()`` keeps listing them,
+    and a later kill retry is refused as "outcome unknown" even though an operator
+    proved quiescence.
+
+    Best-effort by design: missing rows are skipped, ``FAILED`` rows are left alone
+    (evidence never fabricates a success), and a write error cannot undo a
+    reconciliation that already happened on the remote side.
+    """
+    from ultimate_coders.effect_ledger import EffectLedger, EffectStatus, stable_effect_id
+
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    if request_sha:
+        candidates.append(
+            (
+                stable_effect_id("metainfer-create", backend_id, operation_id, request_sha),
+                {"remote_id": remote_id} if remote_id else {},
+            )
+        )
+    if remote_id:
+        candidates.append(
+            (
+                stable_effect_id("metainfer-kill", backend_id, operation_id, remote_id),
+                {"remote_id": remote_id},
+            )
+        )
+    open_states = {
+        EffectStatus.IN_FLIGHT.value,
+        EffectStatus.UNKNOWN.value,
+        EffectStatus.RECONCILING.value,
+    }
+    ledger = EffectLedger(state)
+    settled: list[str] = []
+    for effect_id, result in candidates:
+        record = ledger.get(effect_id)
+        if not record or record.get("status") not in open_states:
+            continue
+        try:
+            ledger.confirm(effect_id, result={**result, "operator_evidence": evidence})
+        except Exception:
+            continue
+        settled.append(effect_id)
+    return settled
+
+
 def task_types() -> dict:
     overrides = json.loads(os.environ.get("UC_METAINFER_TASK_TYPES") or "{}")
     if not isinstance(overrides, dict):
