@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP + T18 precursors + P6 control receipts)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); P6 MetaInfer kill/control receipts **implemented** (D16); D1–D16 decided; full T18 execute still deferred
+Status: **complete (MVP + T18 precursors + P6 control receipts)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); P6 MetaInfer kill/control receipts **merged** (#880); D1–D16 decided; full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -90,7 +90,7 @@ Follow-on (D15 — precursor closeout): **implemented** (complete)
 - Spec: [spec-t18-closeout.md](spec-t18-closeout.md)
 - [23 docs T18 precursor closeout](tickets/23-docs-t18-precursor-closeout.md) — **implemented**; was blocked by: D15
 
-P6 (D16) — MetaInfer kill/control receipts: **implemented**
+P6 (D16) — MetaInfer kill/control receipts: **merged** (#880)
 
 - Spec: [spec-p6.md](spec-p6.md)
 - [24 MetaInfer kill/control receipt](tickets/24-metainfer-kill-ledger.md) — **implemented** (`UC_EFFECT_LEDGER_METAINFER_CONTROL` default off); was blocked by: D16
