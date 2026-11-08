@@ -31,13 +31,13 @@ retry cannot silently repeat the POST.
 
 ## Acceptance criteria
 
-- [ ] Flag off: zero `tool_effects` rows and the termination path is byte-identical.
-- [ ] Flag on + kill accepted → `CONFIRMED`, `kind=metainfer-kill`, `result.remote_id`.
-- [ ] Flag on + lost control response → `UNKNOWN` (not `FAILED`).
-- [ ] Flag on + service answers `ok != true` → `FAILED`.
-- [ ] Flag on + prior `CONFIRMED` receipt → no second control POST.
-- [ ] Flag on + prior `UNKNOWN` receipt → retry refused with no control POST.
-- [ ] Existing create-receipt and MetaInfer reliability tests stay green.
+- [x] Flag off: zero `tool_effects` rows and the termination path is byte-identical.
+- [x] Flag on + kill accepted → `CONFIRMED`, `kind=metainfer-kill`, `result.remote_id`.
+- [x] Flag on + lost control response → `UNKNOWN` (not `FAILED`).
+- [x] Flag on + service answers `ok != true` → `FAILED`.
+- [x] Flag on + prior `CONFIRMED` receipt → no second control POST.
+- [x] Flag on + prior `UNKNOWN` receipt → retry refused with no control POST.
+- [x] Existing create-receipt and MetaInfer reliability tests stay green.
 
 ## Out of scope
 
