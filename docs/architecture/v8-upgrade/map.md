@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); closeout #874; T18b checklist **merged** (#875); T18c accounting **merged** (#876); T18d readiness **implemented** (`check-replan-execute-readiness`); D1–D14 decided; full T18 execute still deferred
+Status: **complete (MVP + T18 precursors)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout open (D15); D1–D15 decided; full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -33,6 +33,7 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D12 Replan execute checklist](issues/D12-replan-execute-checklist.md): T18b — approve `replan` → Attention checklist only; no DAG/digest mutation
 - [D13 Durable replan accounting](issues/D13-replan-accounting.md): T18c — `WorkCase.replans_used` behind `UC_REPLAN_ACCOUNTING_ENFORCE`; no DAG/digest
 - [D14 Replan execute readiness](issues/D14-replan-execute-readiness.md): T18d — ops runbook + dry-run; no execute gate / no DAG/digest / no `admit_execution`
+- [D15 T18 precursor closeout](issues/D15-t18-precursor-closeout.md): Close T18a–d ladder; no silent further precursors or execute without a new decision
 
 ## Implementation backlog
 
@@ -75,7 +76,7 @@ Follow-on (D13 — accounting): **merged** (#876)
 - [19 durable replan accounting wire](tickets/19-replan-accounting-wire.md) — **implemented** (`UC_REPLAN_ACCOUNTING_ENFORCE` default off); was blocked by: D13
 - [20 docs T18c](tickets/20-docs-t18c-accounting.md) — **implemented**; was blocked by: none
 
-Follow-on (D14 — readiness): **implemented**
+Follow-on (D14 — readiness): **merged** (#877)
 
 - Spec: [spec-t18d.md](spec-t18d.md)
 - Runbook: [replan-execute-readiness-runbook.md](../replan-execute-readiness-runbook.md)
@@ -83,15 +84,20 @@ Follow-on (D14 — readiness): **implemented**
 - [21 replan execute readiness wire](tickets/21-replan-execute-readiness-wire.md) — **implemented**; was blocked by: D14
 - [22 docs T18d](tickets/22-docs-t18d-readiness.md) — **implemented**; was blocked by: none
 
+Follow-on (D15 — precursor closeout): **open**
+
+- Spec: [spec-t18-closeout.md](spec-t18-closeout.md)
+- [23 docs T18 precursor closeout](tickets/23-docs-t18-precursor-closeout.md) — open; blocked by: D15
+
 Later (still deferred — not grabable as full execute):
 
-- True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a/T18b/T18c/T18d do not satisfy)
+- True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a–d do not satisfy)
 - Learning OS (D3)
 - Graph-primary **default-on** (human/ops gate per D6/D10; Compose defaults stay off)
 
 ## Frontier (open, unblocked)
 
-_(empty — T18d readiness landed; full T18 execute remains deferred on trust-eval ticket 18)_
+- [23 docs T18 precursor closeout](tickets/23-docs-t18-precursor-closeout.md)
 
 ## Out of scope
 
