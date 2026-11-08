@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); closeout #874; T18b checklist **merged** (#875); T18c accounting **implemented** (`UC_REPLAN_ACCOUNTING_ENFORCE`); D1–D13 decided 2026-11-07; full T18 execute still deferred
+Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); closeout #874; T18b checklist **merged** (#875); T18c accounting **merged** (#876); T18d readiness **open** (`check-replan-execute-readiness`); D1–D14 decided; full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -32,6 +32,7 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D11 V8 MVP closure](issues/D11-v8-mvp-closure.md): Close V8 MVP wave after P0–P4; T18 execute / Learning OS / graph default-on stay deferred or human-gated
 - [D12 Replan execute checklist](issues/D12-replan-execute-checklist.md): T18b — approve `replan` → Attention checklist only; no DAG/digest mutation
 - [D13 Durable replan accounting](issues/D13-replan-accounting.md): T18c — `WorkCase.replans_used` behind `UC_REPLAN_ACCOUNTING_ENFORCE`; no DAG/digest
+- [D14 Replan execute readiness](issues/D14-replan-execute-readiness.md): T18d — ops runbook + dry-run; no execute gate / no DAG/digest / no `admit_execution`
 
 ## Implementation backlog
 
@@ -68,21 +69,28 @@ Follow-on (D12 — checklist): **merged** (#875)
 - [17 replan execute checklist wire](tickets/17-replan-execute-checklist-wire.md) — **implemented** (`UC_REPLAN_EXECUTE_CHECKLIST_ENFORCE` default off); was blocked by: D12
 - [18 docs T18b](tickets/18-docs-t18b-checklist.md) — **implemented**; was blocked by: none
 
-Follow-on (D13 — accounting): **implemented**
+Follow-on (D13 — accounting): **merged** (#876)
 
 - Spec: [spec-t18c.md](spec-t18c.md)
 - [19 durable replan accounting wire](tickets/19-replan-accounting-wire.md) — **implemented** (`UC_REPLAN_ACCOUNTING_ENFORCE` default off); was blocked by: D13
 - [20 docs T18c](tickets/20-docs-t18c-accounting.md) — **implemented**; was blocked by: none
 
+Follow-on (D14 — readiness): **open**
+
+- Spec: [spec-t18d.md](spec-t18d.md)
+- [21 replan execute readiness wire](tickets/21-replan-execute-readiness-wire.md) — open; blocked by: D14
+- [22 docs T18d](tickets/22-docs-t18d-readiness.md) — open; blocked by: none
+
 Later (still deferred — not grabable as full execute):
 
-- True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a/T18b/T18c do not satisfy)
+- True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a/T18b/T18c/T18d do not satisfy)
 - Learning OS (D3)
 - Graph-primary **default-on** (human/ops gate per D6/D10; Compose defaults stay off)
 
 ## Frontier (open, unblocked)
 
-- _(none for V8 follow-on accounting; true T18 execute remains deferred)_
+- [21 replan execute readiness wire](tickets/21-replan-execute-readiness-wire.md)
+- [22 docs T18d](tickets/22-docs-t18d-readiness.md)
 
 ## Out of scope
 
