@@ -1,10 +1,10 @@
 # Wayfinder Map: Agent Trust / Eval
 
-Status: active — **P0–P2 MVP shipped**; P3 ready-for-agent (D9–D10); **P4 identity layer merged** (#885; corpus authoring stays ops). GitHub Issues publication still pending explicit authorization
-Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24; P2 MVP closed 2026-10-27; D9–D10 decided 2026-10-27; P3 ticketed 2026-10-27; D11 decided 2026-11-09)
+Status: active — **P0–P2 MVP shipped**; P3 ready-for-agent (D9–D10); **P4 identity layer merged** (#885) and **P5 label boundary implemented** (D12); corpus authoring stays ops. GitHub Issues publication still pending explicit authorization
+Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24; P2 MVP closed 2026-10-27; D9–D10 decided 2026-10-27; P3 ticketed 2026-10-27; D11–D12 decided 2026-11-09)
 Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏差) + P0–P2 priorities + P3 fog graduation
 
-本图收敛「Agent 结果是否可信」路线上的决策，并挂接实现 backlog。决策票**不是**实现工作；P0 见 [spec-p0.md](spec-p0.md) + tickets/01–06（**implemented**）；P1 见 [spec-p1.md](spec-p1.md) + tickets/07–12（**implemented**）；P2 见 [spec-p2.md](spec-p2.md) + tickets/13–17（**implemented**）/ [18 deferred](tickets/18-true-replan-deferred.md)；P3 见 [spec-p3.md](spec-p3.md) + tickets/19–22；P4 见 [spec-p4.md](spec-p4.md) + tickets/23–24（**implemented**）。
+本图收敛「Agent 结果是否可信」路线上的决策，并挂接实现 backlog。决策票**不是**实现工作；P0 见 [spec-p0.md](spec-p0.md) + tickets/01–06（**implemented**）；P1 见 [spec-p1.md](spec-p1.md) + tickets/07–12（**implemented**）；P2 见 [spec-p2.md](spec-p2.md) + tickets/13–17（**implemented**）/ [18 deferred](tickets/18-true-replan-deferred.md)；P3 见 [spec-p3.md](spec-p3.md) + tickets/19–22；P4 见 [spec-p4.md](spec-p4.md) + tickets/23–24（**implemented**）；P5 见 [spec-p5.md](spec-p5.md) + tickets/25–26（**implemented**）。
 
 ## Destination
 
@@ -65,7 +65,13 @@ P4 (D11) — **identity layer merged** (#885); corpus authoring stays ops:
 - [23 workload role + report hold-out boundary](tickets/23-workload-role-split.md) — **implemented** (`UC_EVAL_ROLE_SPLIT_ENFORCE` default off; `BenchmarkSpec.eval_role` + runner stamping + `report_benchmark`); was blocked by: D11
 - [24 docs P4](tickets/24-docs-p4-workload-role.md) — **implemented**; was blocked by: none
 
-Frontier for implementers: _(none on P3 MVP / P4 identity)_. Ticket **18** remains deferred. Ticket **22** remains deferred. Remaining fog below is not decision-ready.
+P5 (D12) — **label boundary implemented**; corpus authoring stays ops:
+
+- Spec: [spec-p5.md](spec-p5.md)
+- [25 label corpus manifest](tickets/25-label-corpus-manifest.md) — **implemented** (`python/ultimate_coders/agent/review_labels.py`; human labeler + external URI + no `report` source role; artifact cross-check with the structural floor); was blocked by: D12
+- [26 docs P5](tickets/26-docs-p5-label-boundary.md) — **implemented**; was blocked by: none
+
+Frontier for implementers: _(none on P3 MVP / P4 identity / P5 labels)_. Ticket **18** remains deferred. Ticket **22** remains deferred. Remaining fog below is not decision-ready.
 
 ## Decisions so far
 
@@ -80,10 +86,11 @@ Frontier for implementers: _(none on P3 MVP / P4 identity)_. Ticket **18** remai
 - [D9 project ontology MCP](issues/D9-project-ontology-mcp.md): 人维护 `CONTEXT.md` + 只读 MCP；默认关；写回/Evo 延后
 - [D10 README numeric CI](issues/D10-readme-numeric-ci.md): 数字清单 + pin checker hard fail（先 SSE 族）；live 重测后置；对齐 D1/T2
 - [D11 workload role + report hold-out](issues/D11-workload-role-and-report-boundary.md): role 上移到 workload（`BenchmarkSpec.eval_role`）；runner 盖章；`mint_report_result` 在 `UC_EVAL_ROLE_SPLIT_ENFORCE` 下拒绝跨角色 mint；report remeasure 跑 report workload（缺失 fail-closed）；语料拆分仍属运维
+- [D12 label corpus boundary](issues/D12-label-corpus-boundary.md): 标注人写、语料在仓外（manifest 只存出处）；agent/worker/service 只能提议不能认证；`source_eval_roles` 禁 `report`（hold-out 泄漏）；artifact 带 manifest 时校验 kind/`n_labels` 与 `cv_folds*2` 结构下限
 
 ## Frontier (open, unblocked)
 
-_(none — decision tickets D1–D11 closed; remaining fog items below are not decision tickets)_
+_(none — decision tickets D1–D12 closed; remaining fog items below are not decision tickets)_
 
 ## Blocked
 
@@ -92,7 +99,7 @@ _(none)_
 ## Not yet specified
 
 - 严格三分 search/select/report 的**语料作者/存放**（D11 已把**身份层**定死：workload 声明 role、runner 盖章、report remeasure 跑 report workload；剩下的是谁写、放哪、如何防止泄漏进报告集的运维问题）
-- 标注数据管线（谁标、存在哪、如何防止泄漏进报告集）— D5 已定无标注则关闭；管线细节仍雾
+- 标注数据管线（谁标、存在哪、如何防止泄漏进报告集）— D12 已把**边界层**定死（人写 + 仓外 URI + manifest 出处 + 禁 report 来源 + artifact 交叉校验）；剩下的是语料作者与存放运维、标注 row 的具体格式
 
 ## Out of scope
 
