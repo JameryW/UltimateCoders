@@ -21,6 +21,7 @@ from .graph import ExecutionAdaptationGraph
 from .models import (
     EVAL_ROLE_SPLIT_ENFORCE_ENV,
     BenchmarkResult,
+    EvalRole,
     InferenceTaskType,
     MetaInferResult,
     MetaInferTask,
@@ -183,10 +184,34 @@ class OptimizationWorkflow:
         if root != git_root or (not checkpoint and _git(root, "status", "--porcelain")):
             raise ValueError("Optimization requires an exclusively owned clean git worktree")
         if report_benchmark is not None:
+            # Fail fast: a "report" remeasure that runs a select-declared workload
+            # would only be caught later, inside the remeasure, as a mint error.
+            if report_benchmark.spec.eval_role is not EvalRole.REPORT:
+                raise ValueError(
+                    "report_benchmark must declare eval_role=report; got "
+                    f"eval_role={report_benchmark.spec.eval_role.value}"
+                )
             # The report workload is a different harness; fingerprint it here so
             # the remeasure can verify it instead of failing on "not protected".
             report_benchmark.protect(str(root))
         if checkpoint:
+            recorded_role = checkpoint.get("eval_role")
+            current_role = benchmark.spec.eval_role.value
+            if recorded_role is None:
+                # Legacy checkpoint: provenance unknown. A select run may resume
+                # (the historical default); anything else may not, because those
+                # numbers would inherit a role nobody declared.
+                if current_role != EvalRole.SELECT.value:
+                    raise ValueError(
+                        "Experiment checkpoint has no recorded eval_role; cannot "
+                        f"resume a {current_role!r} run from unknown-provenance numbers"
+                    )
+            elif recorded_role != current_role:
+                raise ValueError(
+                    "Experiment checkpoint was measured under eval_role="
+                    f"{recorded_role!r}; this run declares {current_role!r} -- "
+                    "resume with the workload role that produced the numbers"
+                )
             if checkpoint["workspace"] != str(root):
                 raise ValueError("Experiment workspace identity changed")
             benchmark.restore_checkpoint(str(root), checkpoint["harness"])
@@ -214,6 +239,7 @@ class OptimizationWorkflow:
                 checkpoint_path,
                 {
                     "workspace": str(root),
+                    "eval_role": benchmark.spec.eval_role.value,
                     "baseline": initial.to_dict(),
                     "best": best.to_dict(),
                     "accepted": accepted,
