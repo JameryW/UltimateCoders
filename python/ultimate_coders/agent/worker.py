@@ -1613,7 +1613,11 @@ class Worker:
         them. Best-effort like the start write.
         """
         try:
-            from ultimate_coders.decision_record import DecisionRecordOutbox, decision_key
+            from ultimate_coders.decision_record import (
+                DecisionRecordOutbox,
+                decision_key,
+                workspace_summary,
+            )
 
             domain = result.domain_result if isinstance(result.domain_result, dict) else {}
             oracle = domain.get("oracle") if isinstance(domain.get("oracle"), dict) else None
@@ -1636,6 +1640,7 @@ class Worker:
                 error_class=error_class,
                 oracle=oracle,
                 review=review,
+                workspace=workspace_summary(result.modified_files, result.recent_tool_calls),
             )
         except Exception:
             logger.debug("decision record terminal persistence failed", exc_info=True)

@@ -14,12 +14,14 @@ UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gat
 
 **P6 control receipts (2026-11-08, D16):** the MetaInfer kill/control POST now records `kind=metainfer-kill` behind `UC_EFFECT_LEDGER_METAINFER_CONTROL` (default off). That closes the last external side effect with the ledger's lost-response shape; local `write_file` receipts are an evidence-surface decision, not a ledger kind.
 
+**P7 local tool receipts (2026-11-08, D17):** local effects now land as an attempt-scoped `terminal.workspace` block on the Decision Record (changed paths + tool names, never content), derived from the git diff the sandbox already computes. No per-tool interception and no new store.
+
 ## Domain coverage (compact)
 
 | V8 domain | UC maturity | Notes |
 |---|---|---|
-| 1 Agent OS | High code / medium default-on | DAG lease/fence/commit-once exist behind `UC_GRAPH_SHADOW`; MergeArbiter + EffectLedger for git, MetaInfer create and kill/control; local tool receipts remain an open evidence-surface decision |
-| 2 Decision + Context + StateOS | High policy/context; medium StateOS naming | Governance Policy Kernel + Context Compiler exist; **no unified Decision Record**; Capability Tokens stay Grant/Mandate |
+| 1 Agent OS | High code / medium default-on | DAG lease/fence/commit-once exist behind `UC_GRAPH_SHADOW`; MergeArbiter + EffectLedger for git, MetaInfer create and kill/control; local tool receipts land as attempt-scoped workspace evidence (P7) |
+| 2 Decision + Context + StateOS | High policy/context; medium StateOS naming | Governance Policy Kernel + Context Compiler exist; unified Decision Record landed (P0) and now carries workspace evidence (P7); Capability Tokens stay Grant/Mandate |
 | 3 Inference Runtime | Intentional external | MetaInfer boundary; KV ephemeral invariant already documented |
 | 4 Learning OS | Absent | Out of MVP; trajectory export only if a later decision re-opens scope |
 | 5 Research / Evidence OS | Medium–high | agent-trust-eval P0–P3 shipped; Champion/Challenger unnamed for coding agents |
@@ -30,12 +32,12 @@ UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gat
 1. **Control plane out of token hot path** — aligned (Gateway schedules; workers/MetaInfer call models).
 2. **KV discardable / recomputable** — aligned (`docs/agent-os-architecture.md` invariant #6).
 3. **Prod inference physically isolated from RL** — aligned by non-participation in Learning OS + MetaInfer externalization.
-4. **EP / KV / side-effect boundaries** — partially aligned (git EffectLedger; broad tool receipts still open).
+4. **EP / KV / side-effect boundaries** — partially aligned (git EffectLedger; MetaInfer create/control receipts; local tool receipts now on the Decision Record).
 
 ## Highest-leverage upgrade slices (no GPU engine)
 
 1. **Unify Decision Record** (Governance × Routing × Context × terminal verdict) — this map's P0.
-2. **Generalize Effect Ledger → tool/side-effect receipts** (P1 `metainfer-create`, P6 `metainfer-kill`; local write receipts remain an evidence-surface decision).
+2. **Generalize Effect Ledger → tool/side-effect receipts** (P1 `metainfer-create`, P6 `metainfer-kill`; local effects land as Decision Record workspace evidence, P7).
 3. **Coding-domain Champion/Challenger** reusing trust/eval gates.
 4. **Graph-primary durable runtime cutover** (ops/human gate; code largely exists).
 5. **True replan** (agent-trust-eval ticket 18 deferred).

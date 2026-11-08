@@ -10,8 +10,11 @@ overwriting it.
 Start facts create the record; terminal facts merge into the same key.
 Identical start content is a no-op that keeps ``recorded_at``; a different
 start replaces start fields, re-stamps ``recorded_at``, and preserves any
-existing terminal. Terminal always re-stamps ``terminal_at``. Persistence is
-best-effort at the worker: losing a record must never fail the subtask.
+existing terminal. Terminal always re-stamps ``terminal_at``. The terminal block
+may also carry a compact ``workspace`` summary (changed paths + tool names,
+never content) so the attempt's local effects are auditable without per-tool
+interception (D17). Persistence is best-effort at the worker: losing a record
+must never fail the subtask.
 """
 
 from __future__ import annotations
@@ -33,6 +36,53 @@ NAMESPACE = "decision_record"
 SCAN_PAGE = 1000
 
 _START_KEYS = ("worker_id", "route", "context_digest", "context_key", "governance")
+
+#: Caps for the attempt-scoped workspace evidence. The record is a summary, not
+#: a diff: past these limits the block says ``truncated`` instead of growing.
+WORKSPACE_FILE_LIMIT = 50
+WORKSPACE_TOOL_LIMIT = 20
+
+
+def workspace_summary(modified_files, tool_calls) -> dict[str, Any] | None:
+    """Compact, log-safe summary of an attempt's local effects.
+
+    ``modified_files`` may hold ``FileChange``-like objects (``file_path`` /
+    ``change_type``) or mappings; paths are sorted and de-duplicated, tool names
+    keep first-seen order and repeat once only. Content (``FileChange.diff``)
+    is **never** copied -- the record must stay log-safe.
+
+    Returns ``None`` when there is nothing to say (no changed file and no tool
+    name): an empty block would claim "ran and changed nothing" even on paths
+    where no agent ran at all.
+    """
+    files: dict[str, str] = {}
+    for item in modified_files or ():
+        if isinstance(item, dict):
+            path = str(item.get("file_path") or item.get("path") or "").strip()
+            change = item.get("change_type") or item.get("status") or "modified"
+        else:
+            path = str(getattr(item, "file_path", "") or "").strip()
+            change = getattr(item, "change_type", "modified")
+        if not path:
+            continue
+        # ChangeType is an Enum; ``str()`` would store "ChangeType.MODIFIED".
+        files[path] = getattr(change, "value", None) or str(change)
+    ordered = [{"path": path, "change_type": files[path]} for path in sorted(files)]
+
+    tools: list[str] = []
+    for name in tool_calls or ():
+        text = str(name or "").strip()
+        if text and text not in tools:
+            tools.append(text)
+
+    if not ordered and not tools:
+        return None
+    return {
+        "files": ordered[:WORKSPACE_FILE_LIMIT],
+        "file_count": len(ordered),
+        "tool_calls": tools[:WORKSPACE_TOOL_LIMIT],
+        "truncated": len(ordered) > WORKSPACE_FILE_LIMIT or len(tools) > WORKSPACE_TOOL_LIMIT,
+    }
 
 
 class CursorNotFoundError(ValueError):
@@ -147,12 +197,13 @@ class DecisionRecordOutbox:
         error_class: str | None = None,
         oracle: dict | None = None,
         review: dict | None = None,
+        workspace: dict | None = None,
     ) -> dict:
         """Merge terminal facts into ``key`` and always re-stamp ``terminal_at``.
 
-        Compact only: truncated summary / error class / optional oracle or
-        review verdicts — never tool stdout or prompt content. A terminal
-        write with no prior start still creates a record so a late-join
+        Compact only: truncated summary / error class / optional oracle, review
+        or workspace evidence — never tool stdout, diffs or prompt content. A
+        terminal write with no prior start still creates a record so a late-join
         auditor can see the verdict.
         """
         terminal: dict[str, Any] = {"success": success}
@@ -164,6 +215,8 @@ class DecisionRecordOutbox:
             terminal["oracle"] = oracle
         if review is not None:
             terminal["review"] = review
+        if workspace is not None:
+            terminal["workspace"] = workspace
 
         def change(old: dict) -> dict:
             updated = dict(old) if old else {}

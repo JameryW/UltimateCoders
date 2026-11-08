@@ -28,6 +28,8 @@ still thin". Which operation is the next receipt surface — and should MCP
    new out-of-band pipeline; that collides with the repository's "no new pipeline"
    discipline. A `write_file` receipt is **evidence**, not exactly-once — it belongs
    to the Decision Record / audit surface and gets its own decision ticket later.
+   → Landed as **D17 / P7**: attempt-scoped `terminal.workspace` evidence derived from
+   the git diff, not per-tool interception.
 3. **Do not pick "replace `remote_jobs` with EffectLedger"**: D7 already put that
    out of scope; `remote_jobs` stays the operational store.
 
