@@ -128,7 +128,7 @@
 
 | 差距 | 状态 | 说明 |
 | --- | --- | --- |
-| Decision Record（V8 P0） | **落地** | 派发 attempt 级审计 join：`decision_record` 命名空间 + Worker start/terminal 写入 + `GET /dashboard/api/decisions`；不含 prompt 内容。P9 起 Dashboard 任务详情里有只读 trail（verdict / route / context 指针 / 本地效果），P10 起与 context manifest 同契约分页（`order=recent` + `before`）；排序与计数归端点。见 [v8-upgrade/map.md](architecture/v8-upgrade/map.md)、[D5](architecture/v8-upgrade/issues/D5-decision-record-shape.md)、[D19](architecture/v8-upgrade/issues/D19-decision-record-dashboard-trail.md)、[D20](architecture/v8-upgrade/issues/D20-decisions-trail-paging.md)、[ADR 0001](adr/0001-v8-as-agent-decision-evidence-checklist.md)。 |
+| Decision Record（V8 P0） | **落地** | 派发 attempt 级审计 join：`decision_record` 命名空间 + Worker start/terminal 写入 + `GET /dashboard/api/decisions`；不含 prompt 内容。P9 起 Dashboard 任务详情里有只读 trail（verdict / route / context 指针 / 本地效果），P10 起与 context manifest 同契约分页（`order=recent` + `before`），P11 起可按子任务收窄且分页留在该范围内；排序与计数归端点。见 [v8-upgrade/map.md](architecture/v8-upgrade/map.md)、[D5](architecture/v8-upgrade/issues/D5-decision-record-shape.md)、[D19](architecture/v8-upgrade/issues/D19-decision-record-dashboard-trail.md)、[D20](architecture/v8-upgrade/issues/D20-decisions-trail-paging.md)、[D21](architecture/v8-upgrade/issues/D21-decisions-trail-subtask-scope.md)、[ADR 0001](adr/0001-v8-as-agent-decision-evidence-checklist.md)。 |
 | MetaInfer create EffectLedger（V8 P1） | **落地（默认关闭）** | 首个非 git 副作用收据：`kind=metainfer-create`，由 `UC_EFFECT_LEDGER_METAINFER` 打开；`remote_jobs` 仍为操作态。push-on-release 编码路径会惰性绑定 RuntimeState，使 `push-branch` 收据不再静默跳过。见 [spec-p1](architecture/v8-upgrade/spec-p1.md)、[D7](architecture/v8-upgrade/issues/D7-metainfer-effect-kind.md)。 |
 | Coding Champion/Challenger（V8 P2） | **落地（默认关闭）** | 成功后同契约一次 report-role challenger：`UC_CODING_CHALLENGER_ENFORCE`（可选 `UC_CODING_CHALLENGER_AGENT`）；观察/对比，**不** auto-promote；失败/停滞仍归 T14 stall redispatch。见 [spec-p2](architecture/v8-upgrade/spec-p2.md)、[D8](architecture/v8-upgrade/issues/D8-coding-challenger.md)。 |
 | Replan proposal only（V8 P3 / T18a） | **落地（默认关闭）** | Watchdog `replan` → 结构化 `ProposalKind.REPLAN`（`UC_REPLAN_PROPOSAL_ENFORCE`）；携带 `contract_digest` / `preserve_effects`；**不**执行新 DAG、**不** bump digest。真 replan execute 仍延后（trust-eval ticket 18）。见 [spec-p3](architecture/v8-upgrade/spec-p3.md)、[D9](architecture/v8-upgrade/issues/D9-replan-proposal-only.md)。 |
@@ -142,7 +142,7 @@
 | Learning OS / 轨迹导出 | 延后（D3） | 产品决策前不做。 |
 | Graph-primary 默认开启 | **runbook 落地，默认仍关**（D6 / D10 / P4） | 运维手册 + dry-run：`docs/architecture/graph-cutover-runbook.md`、`scripts/check-graph-cutover-readiness.py`；Compose/镜像默认仍关；不因 `UC_DATABASE_URL` 自动切 graph-only。真 replan execute 仍延后。 |
 
-V8 MVP 波次已关闭（P0–P4 / D11）；T18 前驱波次已关闭（T18a–d / D15）；P6 MetaInfer kill/control 收据已落地（D16，默认关闭）；P7 本地工具收据已落到 Decision Record（D17，审计面）；P8 watchdog 的已确认副作用来源已接通（D18）；P9 Decision Record 的 Dashboard 只读 trail 已落地（D19），P10 起与 context manifest 同契约分页（D20）；真 replan execute 仍由 trust-eval ticket 18 拥有并延后。
+V8 MVP 波次已关闭（P0–P4 / D11）；T18 前驱波次已关闭（T18a–d / D15）；P6 MetaInfer kill/control 收据已落地（D16，默认关闭）；P7 本地工具收据已落到 Decision Record（D17，审计面）；P8 watchdog 的已确认副作用来源已接通（D18）；P9 Decision Record 的 Dashboard 只读 trail 已落地（D19），P10 起与 context manifest 同契约分页（D20），P11 起可按子任务收窄（D21）；真 replan execute 仍由 trust-eval ticket 18 拥有并延后。
 
 （模型路由已于 P2 落地，见 §4；新增差距在此表登记，按优先级排序。）
 

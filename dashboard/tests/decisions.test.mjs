@@ -8,6 +8,7 @@ import {
   decisionOrderKey,
   decisionRecordedAt,
   decisionRouteLine,
+  decisionScopeLabel,
   decisionTrailQuery,
   decisionsFromPayload,
   parseDecisionKey,
@@ -51,6 +52,17 @@ test("the trail query asks for the recent window and encodes the id", () => {
     /[?&]before=t1%3As1%3A9(&|$)/,
   );
   assert.ok(!decisionTrailQuery("t1").includes("before="));
+  assert.ok(!decisionTrailQuery("t1").includes("subtask_id="), "task-wide by default");
+  assert.match(
+    decisionTrailQuery("t1", { subtaskId: "s 1" }),
+    /[?&]subtask_id=s%201(&|$)/,
+  );
+});
+
+test("the scope label names the subtask only when scoped", () => {
+  assert.equal(decisionScopeLabel("s1"), "subtask s1 · ");
+  assert.equal(decisionScopeLabel(null), "");
+  assert.equal(decisionScopeLabel(undefined), "");
 });
 
 test("paging appends without repeating a row and follows the cursor", () => {
@@ -221,4 +233,24 @@ test("an auditor sees the verdict, the route and what the attempt changed", asyn
 test("an empty trail says so instead of pretending", async () => {
   const html = await renderList({ records: [] });
   assert.match(html, /No dispatch attempts recorded for this task\./);
+});
+
+test("the subtask id becomes a scope button when a selector is supplied", async () => {
+  const html = await renderList({
+    records: [record("t1:s1:2")],
+    onSelectSubtask: () => {},
+  });
+  assert.match(html, /<button[^>]*>s1<\/button>/);
+
+  const plain = await renderList({ records: [record("t1:s1:2")] });
+  assert.ok(!/<button/.test(plain), plain);
+});
+
+test("a scoped empty trail names the subtask", async () => {
+  const html = await renderList({
+    records: [],
+    emptyLabel: "No dispatch attempts recorded for this subtask.",
+  });
+  assert.match(html, /for this subtask\./);
+  assert.ok(!/for this task\./.test(html), html);
 });

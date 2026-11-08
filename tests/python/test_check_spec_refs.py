@@ -933,7 +933,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-08 P10 decisions trail paging (D20/spec-p10/tickets 32–33 +
     # map/agent-os/assessment/architecture/D19 note) (838 -> 843); unclassified
     # stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 843
+    # 2026-11-09 P11 decisions trail subtask scope (D21/spec-p11/tickets 34–35 +
+    # map/agent-os/assessment/architecture/D19 note) (843 -> 846); unclassified
+    # stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 846
 
 
 def test_real_corpus_has_no_false_content_mismatch():

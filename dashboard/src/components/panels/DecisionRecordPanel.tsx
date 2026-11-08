@@ -7,6 +7,7 @@ import {
   decisionHeadline,
   decisionRecordedAt,
   decisionRouteLine,
+  decisionScopeLabel,
   decisionTrailQuery,
   parseDecisionKey,
   workspaceLine,
@@ -16,19 +17,29 @@ import type { DecisionRecord, DecisionTrailState } from "@/lib/decisions";
 interface DecisionRecordListProps {
   records: DecisionRecord[];
   emptyLabel?: string;
+  /** When set, each row's subtask id becomes a scope selector. */
+  onSelectSubtask?: (subtaskId: string) => void;
 }
 
 /**
  * The attempt trail as text. Pure render — no fetch, no effects — so the SSR
  * tests can check what an auditor actually sees. Rows keep the order the
- * endpoint returned: the backend owns its key window, and re-sorting here
- * would invent a second order.
+ * endpoint returned: the backend owns its window, and re-sorting here would
+ * invent a second order.
  *
  * Each row shows the terminal verdict, the route the attempt took, a short
  * context pointer, and the local effects P7 recorded (changed paths + tool
  * names). None of those fields can carry prompt content or a diff.
+ *
+ * `onSelectSubtask` makes the row's subtask id a button: the endpoint already
+ * scopes by `subtask_id`, so a long task-wide trail can be narrowed without a
+ * separate view (D21).
  */
-export function DecisionRecordList({ records, emptyLabel }: DecisionRecordListProps) {
+export function DecisionRecordList({
+  records,
+  emptyLabel,
+  onSelectSubtask,
+}: DecisionRecordListProps) {
   if (records.length === 0) {
     return (
       <p className="text-xs text-[var(--text-muted)]">
@@ -41,7 +52,8 @@ export function DecisionRecordList({ records, emptyLabel }: DecisionRecordListPr
       {records.map((record) => {
         const { subtaskId, attempt } = parseDecisionKey(record.key);
         const at = decisionRecordedAt(record.terminal_at ?? record.recorded_at);
-        const meta = `${at ? `${at} · ` : ""}${subtaskId || "?"} · attempt ${attempt}`;
+        const prefix = at ? `${at} · ` : "";
+        const suffix = ` · attempt ${attempt}`;
         const route = decisionRouteLine(record.route);
         const digest = decisionDigestLabel(record.context_digest);
         const effects = workspaceLine(record.terminal?.workspace);
@@ -53,7 +65,22 @@ export function DecisionRecordList({ records, emptyLabel }: DecisionRecordListPr
             className="border-l-2 border-l-violet-500/40 pl-2 py-0.5"
           >
             <div className="flex items-center gap-1.5">
-              <span className="font-mono text-[10px] text-[var(--text-muted)]">{meta}</span>
+              <span className="font-mono text-[10px] text-[var(--text-muted)]">
+                {prefix}
+                {onSelectSubtask && subtaskId ? (
+                  <button
+                    type="button"
+                    onClick={() => onSelectSubtask(subtaskId)}
+                    title={`Show only subtask ${subtaskId}`}
+                    className="underline"
+                  >
+                    {subtaskId}
+                  </button>
+                ) : (
+                  subtaskId || "?"
+                )}
+                {suffix}
+              </span>
               <span className="text-[10px] text-[var(--text-primary)] truncate">
                 {decisionHeadline(record)}
               </span>
@@ -87,6 +114,8 @@ interface DecisionRecordTrailProps {
 
 interface LoadedTrail {
   taskId: string;
+  /** null = task-wide; a subtask id = scoped trail. */
+  subtaskId: string | null;
   trail: DecisionTrailState;
 }
 
@@ -97,72 +126,104 @@ interface LoadedTrail {
  * truncated. The panel appends pages deduped by key and keeps the rows it
  * already holds when a page fails.
  *
+ * Rows' subtask ids scope the trail to one subtask (D21): paging and the count
+ * line stay inside that scope, and "all subtasks" returns to the task-wide
+ * window. The scope is part of the loaded state's identity, so a task or scope
+ * switch never shows the previous window while the new one is in flight.
+ *
  * A task with no attempts shows that, rather than an error: "nothing
- * recorded" is the fact here. A failed first request keeps no stale rows: the
- * loaded state is only valid for the task it was fetched for.
+ * recorded" is the fact here.
  */
 export function DecisionRecordTrail({ taskId }: DecisionRecordTrailProps) {
+  const [scope, setScope] = useState<{ taskId: string; subtaskId: string } | null>(null);
   const [loaded, setLoaded] = useState<LoadedTrail | null>(null);
-  const [failedFor, setFailedFor] = useState<string | null>(null);
+  const [failedFor, setFailedFor] = useState<{
+    taskId: string;
+    subtaskId: string | null;
+  } | null>(null);
   const [moreState, setMoreState] = useState<{
     taskId: string;
+    subtaskId: string | null;
     busy: boolean;
     failed: boolean;
   } | null>(null);
 
-  const trail = loaded?.taskId === taskId ? loaded.trail : null;
-  const failed = failedFor === taskId;
-  const more = moreState?.taskId === taskId ? moreState : null;
+  const activeScope = scope?.taskId === taskId ? scope.subtaskId : null;
+  const trail =
+    loaded?.taskId === taskId && loaded.subtaskId === activeScope ? loaded.trail : null;
+  const failed =
+    failedFor?.taskId === taskId && failedFor?.subtaskId === activeScope;
+  const more =
+    moreState?.taskId === taskId && moreState?.subtaskId === activeScope
+      ? moreState
+      : null;
   const loadingMore = more?.busy ?? false;
   const moreFailed = more?.failed ?? false;
 
   useEffect(() => {
     let cancelled = false;
     const token = getStoredToken();
-    fetch(`${decisionTrailQuery(taskId)}${token ? `&token=${encodeURIComponent(token)}` : ""}`)
+    fetch(
+      `${decisionTrailQuery(taskId, { subtaskId: activeScope })}${
+        token ? `&token=${encodeURIComponent(token)}` : ""
+      }`,
+    )
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled) return;
         if (data && Array.isArray(data.decisions)) {
-          setLoaded({ taskId, trail: appendDecisionPage({ records: [], total: 0 }, data) });
+          setLoaded({
+            taskId,
+            subtaskId: activeScope,
+            trail: appendDecisionPage({ records: [], total: 0 }, data),
+          });
           setFailedFor(null);
         } else {
-          setFailedFor(taskId);
+          setFailedFor({ taskId, subtaskId: activeScope });
         }
       })
       .catch(() => {
-        if (!cancelled) setFailedFor(taskId);
+        if (!cancelled) setFailedFor({ taskId, subtaskId: activeScope });
       });
     return () => {
       cancelled = true;
     };
-  }, [taskId]);
+  }, [taskId, activeScope]);
 
   const loadMore = () => {
     const cursor = trail?.nextCursor;
     if (!cursor) return;
     const token = getStoredToken();
-    setMoreState({ taskId, busy: true, failed: false });
+    const identity = { taskId, subtaskId: activeScope };
+    setMoreState({ ...identity, busy: true, failed: false });
     fetch(
-      `${decisionTrailQuery(taskId, { before: cursor })}${
+      `${decisionTrailQuery(taskId, { subtaskId: activeScope, before: cursor })}${
         token ? `&token=${encodeURIComponent(token)}` : ""
       }`,
     )
       .then((res) => (res.ok ? res.json() : null))
       .then((page) => {
         if (!page || !Array.isArray(page.decisions)) {
-          setMoreState({ taskId, busy: false, failed: true });
+          setMoreState({ ...identity, busy: false, failed: true });
           return;
         }
         setLoaded((current) =>
-          current && current.taskId === taskId
-            ? { taskId, trail: appendDecisionPage(current.trail, page) }
+          current &&
+          current.taskId === taskId &&
+          current.subtaskId === activeScope
+            ? {
+                taskId,
+                subtaskId: activeScope,
+                trail: appendDecisionPage(current.trail, page),
+              }
             : current,
         );
-        setMoreState({ taskId, busy: false, failed: false });
+        setMoreState({ ...identity, busy: false, failed: false });
       })
-      .catch(() => setMoreState({ taskId, busy: false, failed: true }));
+      .catch(() => setMoreState({ ...identity, busy: false, failed: true }));
   };
+
+  const scopeLabel = decisionScopeLabel(activeScope);
 
   return (
     <div className="mb-2">
@@ -170,8 +231,18 @@ export function DecisionRecordTrail({ taskId }: DecisionRecordTrailProps) {
         Decision records{" "}
         {trail ? (
           <span className="text-[10px] text-[var(--text-muted)]">
-            {decisionCountLine(trail.records.length, trail.total)}
+            {scopeLabel}
+            {decisionCountLine(trail.records.length, trail.total)} · newest first
           </span>
+        ) : null}
+        {activeScope ? (
+          <button
+            type="button"
+            onClick={() => setScope(null)}
+            className="ml-1.5 text-[10px] text-[var(--text-muted)] underline"
+          >
+            all subtasks
+          </button>
         ) : null}
       </p>
       {failed ? (
@@ -180,7 +251,17 @@ export function DecisionRecordTrail({ taskId }: DecisionRecordTrailProps) {
         </p>
       ) : trail ? (
         <>
-          <DecisionRecordList records={trail.records} />
+          <DecisionRecordList
+            records={trail.records}
+            onSelectSubtask={
+              activeScope ? undefined : (subtaskId) => setScope({ taskId, subtaskId })
+            }
+            emptyLabel={
+              activeScope
+                ? "No dispatch attempts recorded for this subtask."
+                : undefined
+            }
+          />
           {trail.nextCursor ? (
             <button
               type="button"
@@ -188,7 +269,11 @@ export function DecisionRecordTrail({ taskId }: DecisionRecordTrailProps) {
               disabled={loadingMore}
               className="mt-1 text-[10px] text-[var(--text-muted)] underline disabled:opacity-50"
             >
-              {loadingMore ? "Loading…" : moreFailed ? "Retry older attempts" : "Load older attempts"}
+              {loadingMore
+                ? "Loading…"
+                : moreFailed
+                  ? "Retry older attempts"
+                  : "Load older attempts"}
             </button>
           ) : null}
         </>

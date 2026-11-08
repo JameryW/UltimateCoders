@@ -22,6 +22,8 @@ UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gat
 
 **P10 trail paging (2026-11-08, D20):** the decisions route gained the context-manifest route's `order=recent` + `before` cursor contract, so a long trail is fully reachable; key order stays a cursorless window and the panel pages deduped, keeping rows when a page fails.
 
+**P11 subtask scope (2026-11-09, D21):** the trail scopes to one subtask via the row's subtask id and pages inside that scope — the control D19 deferred until paging existed, now at parity with the context-compile trail.
+
 ## Domain coverage (compact)
 
 | V8 domain | UC maturity | Notes |
