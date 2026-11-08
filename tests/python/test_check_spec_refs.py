@@ -948,7 +948,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # agent-os §5) (862 -> 868); unclassified stays 0.
     # 2026-11-09 reconcile leases (T37/spec-p1 + ticket 37 + v8 map + agent-os §5)
     # (868 -> 870); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 870
+    # 2026-11-09 reconcile fencing (T38/spec-p1 + ticket 38 + v8 map) (870 -> 874);
+    # unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 874
 
 
 def test_real_corpus_has_no_false_content_mismatch():

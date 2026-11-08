@@ -585,7 +585,10 @@ class MergeArbiter:
             return "applied"
         if current in (expected_before, ""):
             self._ledger.resolve_reconcile(
-                effect_id, applied=False, reason="remote does not have the commit"
+                effect_id,
+                applied=False,
+                reason="remote does not have the commit",
+                owner="merge-arbiter",
             )
             return "absent"
         self._ledger.mark_unknown(effect_id, reason="remote moved to an unexpected head")

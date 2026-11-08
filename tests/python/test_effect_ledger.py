@@ -261,3 +261,39 @@ def test_confirmed_effect_ids_excludes_unconfirmed_and_needs_a_selector(ledger):
     assert ledger.confirmed_effect_ids(branches=["uc/subtask/abc"]) == []
     assert ledger.confirmed_effect_ids() == []
     assert ledger.confirmed_effect_ids(branches=[""]) == []
+
+
+# ── resolve fencing (T38) ───────────────────────────────────────
+
+
+def test_a_stale_reconciler_cannot_settle_a_taken_over_effect(ledger):
+    _unknown(ledger)
+    ledger.begin_reconcile("eff_test", owner="ops:a", lease_seconds=60)
+    # ops:b takes over only after ops:a's lease expires; while it is live, ops:a
+    # is still the owner and a different owner must not settle the record.
+    with pytest.raises(EffectBusyError):
+        ledger.resolve_reconcile("eff_test", applied=True, owner="ops:b")
+
+
+def test_the_lease_holder_can_settle_its_own_reconcile(ledger):
+    _unknown(ledger)
+    ledger.begin_reconcile("eff_test", owner="ops:a", lease_seconds=60)
+    record = ledger.resolve_reconcile("eff_test", applied=True, owner="ops:a")
+    assert record["status"] == EffectStatus.CONFIRMED.value
+
+
+def test_an_expired_lease_lets_a_new_owner_settle_the_record(ledger):
+    _unknown(ledger)
+    ledger.begin_reconcile("eff_test", owner="ops:a", lease_seconds=-1)
+    ledger.begin_reconcile("eff_test", owner="ops:b", lease_seconds=-1)
+    record = ledger.resolve_reconcile(
+        "eff_test", applied=False, reason="absent", owner="ops:b"
+    )
+    assert record["status"] == EffectStatus.PREPARED.value
+
+
+def test_ownerless_resolve_stays_backward_compatible(ledger):
+    _unknown(ledger)
+    ledger.begin_reconcile("eff_test", owner="ops:a", lease_seconds=60)
+    record = ledger.resolve_reconcile("eff_test", applied=True)
+    assert record["status"] == EffectStatus.CONFIRMED.value
