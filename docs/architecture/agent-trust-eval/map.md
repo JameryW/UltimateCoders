@@ -59,7 +59,7 @@ P3 (D9–D10) — **MVP complete except deferred** (19–21 implemented; 22 defe
 - [21 docs numeric pin CI](tickets/21-docs-numeric-pin-ci.md) — **implemented** (`docs/numeric-pins.yaml` + hard-fail checker + `ci-docs-numeric-pins.yml`; SSE first; uplift ban); was blocked by: none
 - [22 live numeric remeasure deferred](tickets/22-live-numeric-remeasure-deferred.md) — **deferred** (not P3 MVP)
 
-P4 (D11) — **identity layer merged** (#885) + **checkpoint provenance** (T27); corpus authoring stays ops:
+P4 (D11) — **identity layer merged** (#885) + **checkpoint provenance merged** (#887); corpus authoring stays ops:
 
 - Spec: [spec-p4.md](spec-p4.md)
 - [23 workload role + report hold-out boundary](tickets/23-workload-role-split.md) — **implemented** (`UC_EVAL_ROLE_SPLIT_ENFORCE` default off; `BenchmarkSpec.eval_role` + runner stamping + `report_benchmark`); was blocked by: D11
