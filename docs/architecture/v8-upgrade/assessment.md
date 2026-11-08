@@ -12,11 +12,13 @@ UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gat
 
 **T18 precursor closeout (2026-11-08, D15):** T18a–d landed and merged (#872/#875/#876/#877). Precursor ladder closed — no further silent precursor slices under this map without a new decision. True replan execute remains deferred on trust-eval ticket 18; Learning OS (D3) and graph-primary default-on remain deferred / human-gated.
 
+**P6 control receipts (2026-11-08, D16):** the MetaInfer kill/control POST now records `kind=metainfer-kill` behind `UC_EFFECT_LEDGER_METAINFER_CONTROL` (default off). That closes the last external side effect with the ledger's lost-response shape; local `write_file` receipts are an evidence-surface decision, not a ledger kind.
+
 ## Domain coverage (compact)
 
 | V8 domain | UC maturity | Notes |
 |---|---|---|
-| 1 Agent OS | High code / medium default-on | DAG lease/fence/commit-once exist behind `UC_GRAPH_SHADOW`; MergeArbiter + EffectLedger for git; general tool receipts still thin |
+| 1 Agent OS | High code / medium default-on | DAG lease/fence/commit-once exist behind `UC_GRAPH_SHADOW`; MergeArbiter + EffectLedger for git, MetaInfer create and kill/control; local tool receipts remain an open evidence-surface decision |
 | 2 Decision + Context + StateOS | High policy/context; medium StateOS naming | Governance Policy Kernel + Context Compiler exist; **no unified Decision Record**; Capability Tokens stay Grant/Mandate |
 | 3 Inference Runtime | Intentional external | MetaInfer boundary; KV ephemeral invariant already documented |
 | 4 Learning OS | Absent | Out of MVP; trajectory export only if a later decision re-opens scope |
@@ -33,7 +35,7 @@ UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gat
 ## Highest-leverage upgrade slices (no GPU engine)
 
 1. **Unify Decision Record** (Governance × Routing × Context × terminal verdict) — this map's P0.
-2. **Generalize Effect Ledger → tool/side-effect receipts**.
+2. **Generalize Effect Ledger → tool/side-effect receipts** (P1 `metainfer-create`, P6 `metainfer-kill`; local write receipts remain an evidence-surface decision).
 3. **Coding-domain Champion/Challenger** reusing trust/eval gates.
 4. **Graph-primary durable runtime cutover** (ops/human gate; code largely exists).
 5. **True replan** (agent-trust-eval ticket 18 deferred).

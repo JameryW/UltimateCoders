@@ -24,7 +24,7 @@ frontend rendering, Nginx proxies and cross-host latency are outside this
 measurement. This is a localhost transport result, not a deployment-wide SLA.
 
 All 1,800 sequence-indexed samples and the pinned deployment checks are saved
-in [the raw evidence](../.trellis/tasks/10-02-metainfer-architecture/live-verification.json).
+in [the raw evidence](../.trellis/tasks/archive/2026-11/10-02-metainfer-architecture/live-verification.json).
 
 ## Reproduce the SSE measurement
 
@@ -141,7 +141,7 @@ a disposable linked worktree and the pinned evolve-kernel task form, then
 cancelled it; this was a lifecycle check, not a successful kernel optimization.
 
 Sanitized receipts, exact identities and HTTP outcomes are preserved in
-[service-verification.json](../.trellis/tasks/10-02-metainfer-architecture/service-verification.json).
+[service-verification.json](../.trellis/tasks/archive/2026-11/10-02-metainfer-architecture/service-verification.json).
 The local raw runs remain under the ignored .uc verification directories.
 Faults found during these runs included job-directory ownership, short-process
 inspection races, kill racing with natural exit, unsafe host metadata reads and
@@ -178,7 +178,7 @@ R8 remains OPEN. The older streaming attempt repeatedly failed harness review
 and was stopped; independent Git comparison confirmed unchanged repository bytes.
 Complete optimization, protected Oracle outcomes, rollback, delivery and actual
 two-host artifact verification still need passing evidence. See
-[portable GPU receipts](../.trellis/tasks/10-02-metainfer-architecture/gpu-verification.json).
+[portable GPU receipts](../.trellis/tasks/archive/2026-11/10-02-metainfer-architecture/gpu-verification.json).
 
 ## Native artifact and budget verification (2026-10-12 continuation)
 
