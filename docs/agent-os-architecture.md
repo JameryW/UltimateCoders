@@ -137,11 +137,12 @@
 | Replan execute readiness（V8 T18d / D14） | **runbook + dry-run 落地** | 运维手册 + 非破坏探针：`docs/architecture/replan-execute-readiness-runbook.md`、`scripts/check-replan-execute-readiness.py`；报告 T18a–c / completion_conditions 前驱状态；**不**启用 execute、**不** bump digest、**不** `admit_execution`。不满足 trust-eval ticket 18。见 [spec-t18d](architecture/v8-upgrade/spec-t18d.md)、[D14](architecture/v8-upgrade/issues/D14-replan-execute-readiness.md)。 |
 | MetaInfer kill/control 收据（V8 P6 / D16） | **落地（默认关闭）** | 第二个非 git kind `metainfer-kill`（`UC_EFFECT_LEDGER_METAINFER_CONTROL`）：终止 POST 丢响应 → `UNKNOWN`（不是不可判的「终止未确认」）；`CONFIRMED` 不重复 POST，`UNKNOWN` 拒绝重试直到对账；服务明确 `ok != true` → `FAILED`。本地 `write_file` 收据**不**进 ledger（证据面，另决策）。见 [spec-p6](architecture/v8-upgrade/spec-p6.md)、[D16](architecture/v8-upgrade/issues/D16-metainfer-control-receipt.md)。 |
 | 本地工具收据（V8 P7 / D17） | **落地（审计面，无开关）** | attempt 级 `terminal.workspace`：变更文件（路径 + 变更类型，50 上限）+ 工具名（20 上限，去重），来自 `SubtaskResult.modified_files`（git diff）与 `recent_tool_calls`；**不**做逐工具拦截、**不**存 diff/内容、**不**新增存储；best-effort，写失败不影响子任务。见 [spec-p7](architecture/v8-upgrade/spec-p7.md)、[D17](architecture/v8-upgrade/issues/D17-local-tool-receipts.md)。 |
+| watchdog 已确认副作用来源（V8 P8 / D18） | **落地** | 受治理 stall 时 worker 从 `tool_effects`（仅 `CONFIRMED`）派生 `confirmed_effect_ids`：按子任务分支（coding / inference 两种形式）与 MetaInfer `operation_id` 的 `<experiment_id>:` 前缀定域；定域不到的 kind（如 `push-main`）留空——宁可少保护不假装保护。无 provider 时 payload 与旧行为逐字一致。见 [spec-p8](architecture/v8-upgrade/spec-p8.md)、[D18](architecture/v8-upgrade/issues/D18-preserve-effects-sourcing.md)。 |
 | Portable Capability Tokens | 不做（D4） | 继续 Grant/Mandate；MVP 不引入可移植不透明 token。 |
 | Learning OS / 轨迹导出 | 延后（D3） | 产品决策前不做。 |
 | Graph-primary 默认开启 | **runbook 落地，默认仍关**（D6 / D10 / P4） | 运维手册 + dry-run：`docs/architecture/graph-cutover-runbook.md`、`scripts/check-graph-cutover-readiness.py`；Compose/镜像默认仍关；不因 `UC_DATABASE_URL` 自动切 graph-only。真 replan execute 仍延后。 |
 
-V8 MVP 波次已关闭（P0–P4 / D11）；T18 前驱波次已关闭（T18a–d / D15）；P6 MetaInfer kill/control 收据已落地（D16，默认关闭）；P7 本地工具收据已落到 Decision Record（D17，审计面）；真 replan execute 仍由 trust-eval ticket 18 拥有并延后。
+V8 MVP 波次已关闭（P0–P4 / D11）；T18 前驱波次已关闭（T18a–d / D15）；P6 MetaInfer kill/control 收据已落地（D16，默认关闭）；P7 本地工具收据已落到 Decision Record（D17，审计面）；P8 watchdog 的已确认副作用来源已接通（D18）；真 replan execute 仍由 trust-eval ticket 18 拥有并延后。
 
 （模型路由已于 P2 落地，见 §4；新增差距在此表登记，按优先级排序。）
 

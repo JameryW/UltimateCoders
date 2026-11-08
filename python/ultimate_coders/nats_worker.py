@@ -1645,6 +1645,10 @@ class NatsWorker:
             nats_publisher=self._publisher,
             workspace_manager=workspace_manager,
         )
+        # D18: a governed stall names this attempt's CONFIRMED effects so the
+        # gateway can turn them into Replan.preserve_effects. The worker owns the
+        # receipt ledger; the orchestrator only asks. Best-effort by construction.
+        self._orchestrator.confirmed_effects_provider = self._worker.confirmed_effect_ids_for
         # Capacity semaphore: uc.subtask.execute messages are dispatched by NATS
         # to queue-group workers and processed concurrently by the cb. Without a
         # bound, a worker accepted every concurrent message and spawned that many

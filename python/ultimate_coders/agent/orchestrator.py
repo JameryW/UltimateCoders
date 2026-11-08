@@ -219,6 +219,11 @@ class Orchestrator:
         # instead of deciding alone. When None (no bridge, older gateway), the
         # pre-existing local redispatch policy runs unchanged.
         self.governance_client = governance_client
+        # Optional source of this attempt's CONFIRMED effect ids (D18). The
+        # worker owns the receipt ledger and injects a callable returning the
+        # ids; without one a governed stall sends an empty list, exactly as
+        # before. Best-effort: a lookup failure must never block the stall path.
+        self.confirmed_effects_provider: Any = None
         # Who a proactive proposal is attributed to. `agent` is the honest kind:
         # the suggestion came from this worker, and the gateway still decides
         # whether that principal may propose at all.
@@ -775,6 +780,31 @@ class Orchestrator:
                     self.evict_terminal_tasks()
                     return
 
+    async def _confirmed_effect_ids(
+        self, task: Task, subtask: Subtask, result: SubtaskResult
+    ) -> tuple[str, ...]:
+        """This attempt's CONFIRMED effect ids, for the watchdog (D18).
+
+        The provider is injected by the worker, which owns the receipt ledger.
+        Without one — and on any provider failure — the list is empty, i.e. the
+        pre-D18 behaviour: the watchdog then protects nothing rather than a
+        guessed effect, and an evidence lookup never blocks the stall path.
+        """
+        provider = self.confirmed_effects_provider
+        if provider is None:
+            return ()
+        try:
+            ids = await provider(task, subtask, result)
+        except Exception:  # noqa: BLE001 - evidence must not block recovery
+            logger.debug("confirmed-effect lookup failed", exc_info=True)
+            return ()
+        cleaned: list[str] = []
+        for item in ids or ():
+            text = str(item).strip() if isinstance(item, str) else ""
+            if text and text not in cleaned:
+                cleaned.append(text)
+        return tuple(cleaned)
+
     async def _maybe_stall_agent_redispatch_governed(
         self, task: Task, subtask: Subtask, result: SubtaskResult
     ) -> bool:
@@ -805,6 +835,7 @@ class Orchestrator:
                 no_progress_count=stall.stalled_streak,
                 evidence_signature=stall.error_signature or None,
                 last_error=(result.error or None),
+                confirmed_effect_ids=await self._confirmed_effect_ids(task, subtask, result),
                 attempts_used=getattr(result, "retry_count", 0),
                 already_retried=getattr(result, "retry_count", 0) > 0,
                 case_id=getattr(task, "case_id", None),

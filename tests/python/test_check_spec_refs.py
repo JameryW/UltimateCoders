@@ -924,7 +924,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-08 P7 local tool receipts (D17/spec-p7/tickets 26–27 + agent-os §5
     # + architecture.md/D5 notes) (808 -> 814); unclassified stays 0. Refs stay
     # unchanged for the same reason.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 814
+    # 2026-11-08 P8 confirmed effects for the watchdog (D18/spec-p8/tickets
+    # 28–29 + agent-os §5 + PR06 §6.5) (814 -> 821); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 821
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -985,6 +987,8 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     governance/worker growth). The spec's cited range and this pin were
     re-measured together, not guessed. P7 (D17) moved it 1650 -> 1655: the
     terminal write gained the workspace summary (+5 lines above the helpers).
+    P8 (D18) moved it 1655 -> 1685: `confirmed_effect_ids_for` landed above the
+    checkpoint helpers (+30 lines).
     """
     guard = _load_guard()
     want = {
@@ -1006,7 +1010,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            1655,
+            1685,
         ),
     }
     rows = [

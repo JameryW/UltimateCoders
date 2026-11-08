@@ -178,6 +178,12 @@ Python 侧读同样三个变量（`watchdog_input.py`），语义钉死为「不
 （`watchdog_input.py`）。测试：`watchdog_replan_preserves_confirmed_effects`、
 `replan_preserves_confirmed_effects_for_audit`、`tests/python/test_proactive_watchdog.py`。
 
+**id 从哪来（2026-11-08，D18 / P8）**：worker 在受治理 stall 时从自己的收据账本
+（`tool_effects`，仅 `CONFIRMED`）派生并随请求上报——按 `push-branch` 记录的 `branch`
+（子任务分支的 coding / inference 两种形式）与 MetaInfer 记录的 `operation_id`
+（`<experiment_id>:` 前缀）定域。定域不到的 kind（如 `push-main`）**不猜**，留空：
+宁可少保护，也不假装保护。没有 provider 时 payload 与旧行为逐字一致（空数组）。
+
 `effect_ledger` 里状态为 `UNKNOWN` 的效果**必须先对账**，模块明确说「此处不猜」。
 
 ## 7. 审计与历史

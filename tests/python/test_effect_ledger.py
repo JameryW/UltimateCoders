@@ -146,3 +146,41 @@ def test_confirm_from_unknown_is_legal_but_from_prepared_is_not(ledger):
     ledger.mark_unknown("eff_test", reason="lost response")
     confirmed = ledger.confirm("eff_test", result={"recovered": True})
     assert confirmed["status"] == EffectStatus.CONFIRMED.value
+
+
+# ── confirmed ids for the watchdog (D18 / P8) ───────────────────
+
+
+def _confirmed(ledger: EffectLedger, effect_id: str, request: dict, kind: str = "push-branch"):
+    ledger.prepare(effect_id, kind=kind, request=request)
+    ledger.mark_in_flight(effect_id, owner="w1")
+    return ledger.confirm(effect_id, result={})
+
+
+def test_confirmed_effect_ids_scopes_by_branch_and_operation_prefix(ledger):
+    _confirmed(ledger, "eff_branch", {"branch": "uc/subtask/abc", "remote": "origin"})
+    _confirmed(ledger, "eff_other", {"branch": "uc/subtask/zzz", "remote": "origin"})
+    _confirmed(
+        ledger,
+        "eff_infer",
+        {"operation_id": "exp-1:1", "backend_id": "backend-a"},
+        kind="metainfer-create",
+    )
+
+    assert ledger.confirmed_effect_ids(branches=["uc/subtask/abc"]) == ["eff_branch"]
+    assert ledger.confirmed_effect_ids(operation_prefix="exp-1:") == ["eff_infer"]
+    both = ledger.confirmed_effect_ids(
+        branches=["uc/subtask/abc"], operation_prefix="exp-1:"
+    )
+    assert both == ["eff_branch", "eff_infer"], "sorted and de-duplicated"
+
+
+def test_confirmed_effect_ids_excludes_unconfirmed_and_needs_a_selector(ledger):
+    ledger.prepare("eff_prepared", kind="push-branch", request={"branch": "uc/subtask/abc"})
+    ledger.prepare("eff_unknown", kind="push-branch", request={"branch": "uc/subtask/abc"})
+    ledger.mark_in_flight("eff_unknown", owner="w1")
+    ledger.mark_unknown("eff_unknown", reason="lost response")
+
+    assert ledger.confirmed_effect_ids(branches=["uc/subtask/abc"]) == []
+    assert ledger.confirmed_effect_ids() == []
+    assert ledger.confirmed_effect_ids(branches=[""]) == []

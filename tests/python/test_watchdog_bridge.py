@@ -324,3 +324,61 @@ async def test_a_result_without_a_stall_signal_is_not_questioned() -> None:
         is False
     )
     assert client.calls == [], "nothing was asked, so nothing was assumed"
+
+
+# ── confirmed effects on the stall (D18 / P8) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_governed_stall_sends_the_attempts_confirmed_effects() -> None:
+    client = FakeClient(verdict("escalate_needs_human", attempts=0, replans=0))
+    orchestrator = Orchestrator(governance_client=client)
+    seen: list[tuple[str, str]] = []
+
+    async def provider(t: Any, st: Any, res: Any) -> list[str]:
+        seen.append((t.id, st.id))
+        return ["eff_b", "eff_a", "eff_b", "  "]
+
+    orchestrator.confirmed_effects_provider = provider
+    outcome = result()
+
+    assert (
+        await orchestrator._maybe_stall_agent_redispatch_governed(task(), subtask(), outcome)
+        is False
+    )
+    assert seen == [("task-1", "subtask-1")]
+    payload = client.calls[0][1]
+    assert payload["confirmed_effect_ids"] == ["eff_b", "eff_a"], (
+        "blank ids dropped, order kept, duplicates collapsed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_without_a_provider_the_stall_sends_no_effects() -> None:
+    client = FakeClient(verdict("escalate_needs_human", attempts=0, replans=0))
+    orchestrator = Orchestrator(governance_client=client)
+
+    assert (
+        await orchestrator._maybe_stall_agent_redispatch_governed(task(), subtask(), result())
+        is False
+    )
+    assert client.calls[0][1]["confirmed_effect_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_failing_effect_provider_does_not_block_the_stall() -> None:
+    client = FakeClient(verdict("escalate_needs_human", attempts=0, replans=0))
+    orchestrator = Orchestrator(governance_client=client)
+
+    async def provider(t: Any, st: Any, res: Any) -> list[str]:
+        raise RuntimeError("ledger unavailable")
+
+    orchestrator.confirmed_effects_provider = provider
+    outcome = result()
+
+    assert (
+        await orchestrator._maybe_stall_agent_redispatch_governed(task(), subtask(), outcome)
+        is False
+    )
+    assert client.calls[0][1]["confirmed_effect_ids"] == []
+    assert outcome.stall_signal["verdict"] == "escalate"

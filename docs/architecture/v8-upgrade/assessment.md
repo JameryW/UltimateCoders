@@ -16,6 +16,8 @@ UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gat
 
 **P7 local tool receipts (2026-11-08, D17):** local effects now land as an attempt-scoped `terminal.workspace` block on the Decision Record (changed paths + tool names, never content), derived from the git diff the sandbox already computes. No per-tool interception and no new store.
 
+**P8 preserve-effects sourcing (2026-11-08, D18):** the worker now supplies `confirmed_effect_ids` on a governed stall, derived from CONFIRMED `tool_effects` records (subtask branch / MetaInfer experiment prefix), so the gateway's `Replan.preserve_effects` carries real receipts instead of an always-empty list. Effects that cannot be scoped stay empty — fewer protections, never a pretended one.
+
 ## Domain coverage (compact)
 
 | V8 domain | UC maturity | Notes |
@@ -32,7 +34,7 @@ UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gat
 1. **Control plane out of token hot path** — aligned (Gateway schedules; workers/MetaInfer call models).
 2. **KV discardable / recomputable** — aligned (`docs/agent-os-architecture.md` invariant #6).
 3. **Prod inference physically isolated from RL** — aligned by non-participation in Learning OS + MetaInfer externalization.
-4. **EP / KV / side-effect boundaries** — partially aligned (git EffectLedger; MetaInfer create/control receipts; local tool receipts now on the Decision Record).
+4. **EP / KV / side-effect boundaries** — partially aligned (git EffectLedger; MetaInfer create/control receipts; local tool receipts on the Decision Record; confirmed effects now feed the watchdog).
 
 ## Highest-leverage upgrade slices (no GPU engine)
 

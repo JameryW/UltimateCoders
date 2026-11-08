@@ -297,6 +297,7 @@ def test_real_repo_is_reconciled() -> None:
         (2485, 2476),  # T18 precursor closeout scaffolding (D15/spec/ticket 23 + trellis task)
         (2489, 2480),  # V8 P6 MetaInfer kill/control receipts (D16/spec-p6/tickets 24–25)
         (2493, 2484),  # V8 P7 local tool receipts (D17/spec-p7/tickets 26–27)
+        (2497, 2488),  # V8 P8 confirmed effects for the watchdog (D18/spec-p8/tickets 28–29)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

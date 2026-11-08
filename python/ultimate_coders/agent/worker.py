@@ -1645,6 +1645,36 @@ class Worker:
         except Exception:
             logger.debug("decision record terminal persistence failed", exc_info=True)
 
+    async def confirmed_effect_ids_for(self, task, subtask, result) -> list[str]:
+        """Confirmed effects this attempt owns, for the watchdog's preserve_effects.
+
+        Scope is read off what the ledger records already carry (D18): the
+        subtask's branch in both its coding and inference forms, and the
+        attempt's experiment-id prefix on MetaInfer ``operation_id``s. Effects
+        that cannot be scoped stay out — the watchdog then protects nothing
+        rather than a guessed id.
+        """
+        try:
+            from ultimate_coders.agent.workspace import subtask_branch
+            from ultimate_coders.effect_ledger import EffectLedger
+
+            branches = (
+                subtask_branch(subtask.id),
+                subtask_branch(subtask.id, inference=True),
+            )
+            domain = result.domain_result if isinstance(result.domain_result, dict) else {}
+            experiment = domain.get("experiment_id")
+            prefix = f"{experiment}:" if isinstance(experiment, str) and experiment else None
+            ledger = EffectLedger(await self._domain_state())
+            return await asyncio.to_thread(
+                ledger.confirmed_effect_ids,
+                branches=branches,
+                operation_prefix=prefix,
+            )
+        except Exception:  # noqa: BLE001 - evidence must never fail the subtask
+            logger.debug("confirmed-effect lookup failed", exc_info=True)
+            return []
+
     @staticmethod
     def _is_inference(subtask: Subtask) -> bool:
         return bool(

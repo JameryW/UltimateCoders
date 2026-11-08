@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections.abc import Iterable
 from enum import Enum
 from typing import Any
 
@@ -118,6 +119,40 @@ class EffectLedger:
             for r in self.state.records(self.namespace)
             if str(r.get("effect_id", "")).startswith(prefix)
         ][:limit]
+
+    def confirmed_effect_ids(
+        self,
+        *,
+        branches: Iterable[str] = (),
+        operation_prefix: str | None = None,
+    ) -> list[str]:
+        """Confirmed effect ids owned by one attempt, for the watchdog.
+
+        Effect ids are content-addressed, so ownership is read off the fields a
+        record already carries instead of inventing an owner column: a
+        ``push-branch`` record names its ``branch``, and a MetaInfer record names
+        ``operation_id`` as ``<experiment>:<iteration|trace>``.
+
+        Only ``CONFIRMED`` counts: an ``UNKNOWN`` effect must be reconciled before
+        a replan, never preserved. With no selector this returns nothing — the
+        caller gets fewer protections, never a pretended one.
+        """
+        wanted = {branch for branch in branches if branch}
+        if not wanted and not operation_prefix:
+            return []
+        found: set[str] = set()
+        for record in self.state.records(self.namespace):
+            if record.get("status") != EffectStatus.CONFIRMED.value:
+                continue
+            request = record.get("request") or {}
+            matched = request.get("branch") in wanted
+            if not matched and operation_prefix:
+                matched = str(request.get("operation_id", "")).startswith(operation_prefix)
+            if matched:
+                effect_id = str(record.get("effect_id", ""))
+                if effect_id:
+                    found.add(effect_id)
+        return sorted(found)
 
     # ── transitions ─────────────────────────────────────────────
 
