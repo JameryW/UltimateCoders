@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ultimate_coders.agent.review_labels import LabelManifest
 from ultimate_coders.agent.routing import FailureKind
 
 #: Allowed FailureKind string values (no parallel taxonomy).
@@ -109,7 +110,11 @@ def _parse_artifact(data: Mapping[str, Any], *, source: str) -> ThresholdArtifac
     )
 
 
-def load_threshold_artifact(path: str | Path) -> ThresholdArtifact:
+def load_threshold_artifact(
+    path: str | Path,
+    *,
+    label_manifest: LabelManifest | None = None,
+) -> ThresholdArtifact:
     """Load and validate one per-kind CV threshold JSON artifact.
 
     Refuses (raises :class:`ValueError`) on missing file, corrupt JSON, missing
@@ -117,6 +122,11 @@ def load_threshold_artifact(path: str | Path) -> ThresholdArtifact:
     ``n_labels < 1``, unknown ``kind``, or ``calibrated_default: true``.
     A real CV-measured threshold of ``0.5`` is allowed; claiming a calibrated
     default is not.
+
+    With ``label_manifest`` the artifact is also checked against the corpus that
+    supposedly produced it (D12): same kind, same ``n_labels``, and a structural
+    floor ``n_labels >= cv_folds * 2`` so every fold can hold at least two labels.
+    Without a manifest the historical check is unchanged.
     """
     artifact_path = Path(path)
     if not artifact_path.is_file():
@@ -130,7 +140,35 @@ def load_threshold_artifact(path: str | Path) -> ThresholdArtifact:
     except json.JSONDecodeError as exc:
         _refuse(f"threshold artifact corrupt JSON ({artifact_path}): {exc}")
     source = str(artifact_path)
-    return _parse_artifact(_require_mapping(data, source=source), source=source)
+    artifact = _parse_artifact(_require_mapping(data, source=source), source=source)
+    if label_manifest is not None:
+        _check_label_manifest(artifact, label_manifest, source=source)
+    return artifact
+
+
+def _check_label_manifest(
+    artifact: ThresholdArtifact,
+    manifest: LabelManifest,
+    *,
+    source: str,
+) -> None:
+    """Refuse an artifact the label corpus cannot back (D12)."""
+    if manifest.kind != artifact.kind:
+        _refuse(
+            f"threshold artifact kind={artifact.kind!r} does not match the label "
+            f"manifest kind={manifest.kind!r} ({source})"
+        )
+    if manifest.n_labels != artifact.n_labels:
+        _refuse(
+            f"threshold artifact claims n_labels={artifact.n_labels} but the label "
+            f"manifest holds {manifest.n_labels} ({source})"
+        )
+    floor = artifact.cv_folds * 2
+    if artifact.n_labels < floor:
+        _refuse(
+            f"threshold artifact n_labels={artifact.n_labels} is below the structural "
+            f"floor cv_folds*2={floor}: each fold needs at least two labels ({source})"
+        )
 
 
 def _registry_key(kind: str) -> str:
