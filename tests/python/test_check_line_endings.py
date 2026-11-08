@@ -304,6 +304,7 @@ def test_real_repo_is_reconciled() -> None:
         (2516, 2507),  # trust-eval P4 workload role (D11/spec-p4/tickets 23–24)
         (2522, 2513),  # trust-eval P5 label boundary (D12/spec-p5/tickets 25–26 + module)
         (2524, 2515),  # T27 workload role checkpoint (ticket 27 + resume test)
+        (2525, 2516),  # T28 label provenance at registration (ticket 28)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

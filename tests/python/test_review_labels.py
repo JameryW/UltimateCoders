@@ -14,7 +14,14 @@ from pathlib import Path
 
 import pytest
 from ultimate_coders.agent.review_labels import SCHEMA_VERSION, load_label_manifest
-from ultimate_coders.agent.typed_review import load_threshold_artifact
+from ultimate_coders.agent.typed_review import (
+    REVIEWER_LABEL_PROVENANCE_ENV,
+    clear_thresholds,
+    load_threshold_artifact,
+    register_threshold,
+    threshold_available,
+    threshold_provenance,
+)
 
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "reviewer_cv_threshold_schema.json"
 
@@ -138,3 +145,52 @@ def test_artifact_below_the_structural_floor_is_refused(tmp_path):
 def test_artifact_without_a_manifest_keeps_the_old_check(tmp_path):
     artifact = load_threshold_artifact(_write_artifact(tmp_path, n_labels=9))
     assert artifact.n_labels == 9, "no manifest means no corpus claim to check"
+
+
+# ── registration provenance (T28 / D12) ─────────────────────────
+
+
+def test_registration_without_a_manifest_is_historical_when_flag_off(tmp_path, monkeypatch):
+    monkeypatch.delenv(REVIEWER_LABEL_PROVENANCE_ENV, raising=False)
+    clear_thresholds()
+    try:
+        register_threshold(load_threshold_artifact(_FIXTURE))
+        assert threshold_available("schema")
+        assert threshold_provenance("schema") == "unverified"
+    finally:
+        clear_thresholds()
+
+
+def test_registration_requires_a_manifest_when_the_flag_is_on(tmp_path, monkeypatch):
+    monkeypatch.setenv(REVIEWER_LABEL_PROVENANCE_ENV, "1")
+    clear_thresholds()
+    try:
+        with pytest.raises(ValueError, match="label manifest required"):
+            register_threshold(load_threshold_artifact(_FIXTURE))
+        assert threshold_provenance("schema") is None
+        assert not threshold_available("schema")
+    finally:
+        clear_thresholds()
+
+
+def test_registration_with_a_matching_manifest_records_provenance(tmp_path, monkeypatch):
+    monkeypatch.setenv(REVIEWER_LABEL_PROVENANCE_ENV, "1")
+    clear_thresholds()
+    try:
+        manifest = load_label_manifest(_write_manifest(tmp_path, _manifest()))
+        register_threshold(load_threshold_artifact(_FIXTURE), label_manifest=manifest)
+        assert threshold_available("schema")
+        assert threshold_provenance("schema") == "manifest"
+    finally:
+        clear_thresholds()
+
+
+def test_registration_refuses_a_manifest_that_does_not_back_the_artifact(tmp_path, monkeypatch):
+    clear_thresholds()
+    try:
+        manifest = load_label_manifest(_write_manifest(tmp_path, _manifest(n_labels=41)))
+        with pytest.raises(ValueError, match="manifest holds 41"):
+            register_threshold(load_threshold_artifact(_FIXTURE), label_manifest=manifest)
+        assert threshold_provenance("schema") is None
+    finally:
+        clear_thresholds()
