@@ -306,6 +306,7 @@ def test_real_repo_is_reconciled() -> None:
         (2524, 2515),  # T27 workload role checkpoint (ticket 27 + resume test)
         (2525, 2516),  # T28 label provenance at registration (ticket 28)
         (2527, 2518),  # T36 MetaInfer receipt settlement (ticket 36 + settlement test)
+        (2528, 2519),  # T37 reconcile leases (ticket 37)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 
