@@ -25,6 +25,17 @@ is configured).
 6. **Docs**: map (D11 + P4), agent-os §5 note, and the D1 follow-on marked resolved at
    the identity layer.
 
+## Role provenance (T27)
+
+A resumed experiment must keep the role it was measured under:
+
+- a `report_benchmark` whose spec does not declare `report` is refused **before** any
+  measurement (the remeasure would otherwise fail late as a mint error);
+- checkpoint.json records `eval_role`; resuming with a different declared role is
+  refused, naming both;
+- a legacy checkpoint with no `eval_role` may only be resumed by a `select` run — a
+  `report`/`search` run would inherit numbers nobody declared a role for.
+
 ## Acceptance criteria
 
 - [ ] A spec declared `report` produces report-role results (success and early return).
@@ -35,6 +46,9 @@ is configured).
       result is a no-op.
 - [ ] Flag on + no `report_benchmark`: the report remeasure fails closed.
 - [ ] Flag on + `report_benchmark`: the remeasure uses it (and its role is report).
+- [ ] A non-report `report_benchmark` is refused before any measurement (T27).
+- [ ] A resume that switches the declared role is refused; a legacy checkpoint resumes
+      only as `select` (T27).
 - [ ] Existing eval-role / report-uplift / workflow suites stay green.
 
 ## Out of scope
