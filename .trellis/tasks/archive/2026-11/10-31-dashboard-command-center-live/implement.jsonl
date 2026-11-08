@@ -1,5 +1,5 @@
-{"file": ".trellis/tasks/10-31-dashboard-command-center-live/prd.md", "reason": "Locked Approach A requirements"}
-{"file": ".trellis/tasks/10-31-dashboard-command-center-live/research/grounding.md", "reason": "UC data→UI mapping and touch points"}
+{"file": ".trellis/tasks/archive/2026-11/10-31-dashboard-command-center-live/prd.md", "reason": "Locked Approach A requirements"}
+{"file": ".trellis/tasks/archive/2026-11/10-31-dashboard-command-center-live/research/grounding.md", "reason": "UC data→UI mapping and touch points"}
 {"file": ".trellis/spec/frontend/index.md", "reason": "Frontend guideline index / checklist"}
 {"file": "dashboard/src/components/terminal/TerminalDashboard.tsx", "reason": "Existing terminal dashboard to redesign"}
 {"file": "dashboard/src/index.css", "reason": "Terminal CSS tokens and layout"}
