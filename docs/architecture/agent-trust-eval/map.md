@@ -1,6 +1,6 @@
 # Wayfinder Map: Agent Trust / Eval
 
-Status: active — **P0–P2 MVP shipped**; P3 ready-for-agent (D9–D10); **P4 identity layer merged** (#885) and **P5 label boundary implemented** (D12); corpus authoring stays ops. GitHub Issues publication still pending explicit authorization
+Status: active — **P0–P2 MVP shipped**; P3 ready-for-agent (D9–D10); **P4 identity layer merged** (#885) and **P5 label boundary merged** (#886) (D12); corpus authoring stays ops. GitHub Issues publication still pending explicit authorization
 Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24; P2 MVP closed 2026-10-27; D9–D10 decided 2026-10-27; P3 ticketed 2026-10-27; D11–D12 decided 2026-11-09)
 Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏差) + P0–P2 priorities + P3 fog graduation
 
@@ -65,7 +65,7 @@ P4 (D11) — **identity layer merged** (#885); corpus authoring stays ops:
 - [23 workload role + report hold-out boundary](tickets/23-workload-role-split.md) — **implemented** (`UC_EVAL_ROLE_SPLIT_ENFORCE` default off; `BenchmarkSpec.eval_role` + runner stamping + `report_benchmark`); was blocked by: D11
 - [24 docs P4](tickets/24-docs-p4-workload-role.md) — **implemented**; was blocked by: none
 
-P5 (D12) — **label boundary implemented**; corpus authoring stays ops:
+P5 (D12) — **label boundary merged** (#886); corpus authoring stays ops:
 
 - Spec: [spec-p5.md](spec-p5.md)
 - [25 label corpus manifest](tickets/25-label-corpus-manifest.md) — **implemented** (`python/ultimate_coders/agent/review_labels.py`; human labeler + external URI + no `report` source role; artifact cross-check with the structural floor); was blocked by: D12
