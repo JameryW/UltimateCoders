@@ -936,7 +936,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-09 P11 decisions trail subtask scope (D21/spec-p11/tickets 34–35 +
     # map/agent-os/assessment/architecture/D19 note) (843 -> 846); unclassified
     # stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 846
+    # 2026-11-09 trust-eval P4 workload role (D11/spec-p4/tickets 23–24 +
+    # agent-trust-eval map + agent-os §5) (846 -> 851); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 851
 
 
 def test_real_corpus_has_no_false_content_mismatch():

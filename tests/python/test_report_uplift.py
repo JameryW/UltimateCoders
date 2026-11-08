@@ -291,3 +291,82 @@ async def test_remeasure_failure_does_not_publish_select_uplift(tmp_path, monkey
     }
     with pytest.raises(ValueError, match="report remasure"):
         published_uplift_verdict(select_only)
+
+
+# ── workload role + report hold-out boundary (D11 / P4) ─────────
+
+
+def _report_runner(root: Path) -> BenchmarkRunner:
+    return BenchmarkRunner(
+        BenchmarkSpec(
+            [sys.executable, "-B", "bench.py"],
+            "fixed",
+            protected_paths=["bench.py"],
+            eval_role="report",
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_stamps_the_spec_role_on_measurements(tmp_path):
+    root = _make_repository(tmp_path)
+    select_runner = _runner(root)
+    report_runner = _report_runner(root)
+    select_runner.protect(str(root))
+    report_runner.protect(str(root))
+
+    assert (await select_runner.measure(str(root))).eval_role is EvalRole.SELECT
+    assert (await report_runner.measure(str(root))).eval_role is EvalRole.REPORT
+
+
+@pytest.mark.asyncio
+async def test_split_enforce_without_a_report_runner_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setenv(REPORT_UPLIFT_ENFORCE_ENV, "1")
+    monkeypatch.setenv("UC_EVAL_ROLE_SPLIT_ENFORCE", "1")
+    root = _make_repository(tmp_path)
+
+    async def propose(request):
+        (root / "latency.txt").write_text("37", encoding="utf-8")
+        return MetaInferResult("candidate", "completed")
+
+    with pytest.raises(RuntimeError, match="report workload required"):
+        await OptimizationWorkflow(Oracle(OraclePolicy("tpot_ms"))).run(
+            MetaInferTask("optimize_runtime", str(root), "minimize TPOT", framework="sglang"),
+            _runner(root),
+            propose,
+            str(tmp_path / "artifacts"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_split_enforce_remeasures_with_the_report_runner(tmp_path, monkeypatch):
+    monkeypatch.setenv(REPORT_UPLIFT_ENFORCE_ENV, "1")
+    monkeypatch.setenv("UC_EVAL_ROLE_SPLIT_ENFORCE", "1")
+    root = _make_repository(tmp_path)
+    report_runner = _report_runner(root)
+    calls = {"report": 0}
+    original = report_runner.measure
+
+    async def counted_measure(path, *, baseline=False):
+        calls["report"] += 1
+        return await original(path, baseline=baseline)
+
+    report_runner.measure = counted_measure  # type: ignore[method-assign]
+
+    async def propose(request):
+        (root / "latency.txt").write_text("37", encoding="utf-8")
+        return MetaInferResult("candidate", "completed")
+
+    result = await OptimizationWorkflow(Oracle(OraclePolicy("tpot_ms"))).run(
+        MetaInferTask("optimize_runtime", str(root), "minimize TPOT", framework="sglang"),
+        _runner(root),
+        propose,
+        str(tmp_path / "artifacts"),
+        report_benchmark=report_runner,
+    )
+
+    assert result["success"]
+    assert calls["report"] == 2, "candidate + protected baseline both came from the report workload"
+    assert result["report_verdict"]["eval_role"] == "report"
+    assert result["optimized"]["eval_role"] == "select"
+    assert result["public_uplift"]["eval_role"] == "report"

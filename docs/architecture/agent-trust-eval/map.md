@@ -1,10 +1,10 @@
 # Wayfinder Map: Agent Trust / Eval
 
-Status: active — **P0–P2 MVP shipped**; P3 ready-for-agent (D9–D10; GitHub Issues publication still pending explicit authorization)
-Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24; P2 MVP closed 2026-10-27; D9–D10 decided 2026-10-27; P3 ticketed 2026-10-27)
+Status: active — **P0–P2 MVP shipped**; P3 ready-for-agent (D9–D10); **P4 identity layer shipped** (D11; corpus authoring stays ops). GitHub Issues publication still pending explicit authorization
+Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24; P2 MVP closed 2026-10-27; D9–D10 decided 2026-10-27; P3 ticketed 2026-10-27; D11 decided 2026-11-09)
 Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏差) + P0–P2 priorities + P3 fog graduation
 
-本图收敛「Agent 结果是否可信」路线上的决策，并挂接实现 backlog。决策票**不是**实现工作；P0 见 [spec-p0.md](spec-p0.md) + tickets/01–06（**implemented**）；P1 见 [spec-p1.md](spec-p1.md) + tickets/07–12（**implemented**）；P2 见 [spec-p2.md](spec-p2.md) + tickets/13–17（**implemented**）/ [18 deferred](tickets/18-true-replan-deferred.md)；P3 见 [spec-p3.md](spec-p3.md) + tickets/19–22。
+本图收敛「Agent 结果是否可信」路线上的决策，并挂接实现 backlog。决策票**不是**实现工作；P0 见 [spec-p0.md](spec-p0.md) + tickets/01–06（**implemented**）；P1 见 [spec-p1.md](spec-p1.md) + tickets/07–12（**implemented**）；P2 见 [spec-p2.md](spec-p2.md) + tickets/13–17（**implemented**）/ [18 deferred](tickets/18-true-replan-deferred.md)；P3 见 [spec-p3.md](spec-p3.md) + tickets/19–22；P4 见 [spec-p4.md](spec-p4.md) + tickets/23–24（**implemented**）。
 
 ## Destination
 
@@ -59,7 +59,13 @@ P3 (D9–D10) — **MVP complete except deferred** (19–21 implemented; 22 defe
 - [21 docs numeric pin CI](tickets/21-docs-numeric-pin-ci.md) — **implemented** (`docs/numeric-pins.yaml` + hard-fail checker + `ci-docs-numeric-pins.yml`; SSE first; uplift ban); was blocked by: none
 - [22 live numeric remeasure deferred](tickets/22-live-numeric-remeasure-deferred.md) — **deferred** (not P3 MVP)
 
-Frontier for implementers: _(none on P3 MVP)_. Ticket **18** remains deferred. Ticket **22** remains deferred. Remaining fog below is not decision-ready.
+P4 (D11) — **identity layer implemented** (corpus authoring stays ops):
+
+- Spec: [spec-p4.md](spec-p4.md)
+- [23 workload role + report hold-out boundary](tickets/23-workload-role-split.md) — **implemented** (`UC_EVAL_ROLE_SPLIT_ENFORCE` default off; `BenchmarkSpec.eval_role` + runner stamping + `report_benchmark`); was blocked by: D11
+- [24 docs P4](tickets/24-docs-p4-workload-role.md) — **implemented**; was blocked by: none
+
+Frontier for implementers: _(none on P3 MVP / P4 identity)_. Ticket **18** remains deferred. Ticket **22** remains deferred. Remaining fog below is not decision-ready.
 
 ## Decisions so far
 
@@ -73,10 +79,11 @@ Frontier for implementers: _(none on P3 MVP)_. Ticket **18** remains deferred. T
 - [D8 sandbox isolation target](issues/D8-sandbox-isolation-target.md): 先让 `NetworkMode` None/Restricted/Full 成真（默认偏离线 + LLM allowlist）；Landlock FS 后置同地图票
 - [D9 project ontology MCP](issues/D9-project-ontology-mcp.md): 人维护 `CONTEXT.md` + 只读 MCP；默认关；写回/Evo 延后
 - [D10 README numeric CI](issues/D10-readme-numeric-ci.md): 数字清单 + pin checker hard fail（先 SSE 族）；live 重测后置；对齐 D1/T2
+- [D11 workload role + report hold-out](issues/D11-workload-role-and-report-boundary.md): role 上移到 workload（`BenchmarkSpec.eval_role`）；runner 盖章；`mint_report_result` 在 `UC_EVAL_ROLE_SPLIT_ENFORCE` 下拒绝跨角色 mint；report remeasure 跑 report workload（缺失 fail-closed）；语料拆分仍属运维
 
 ## Frontier (open, unblocked)
 
-_(none — decision tickets D1–D10 closed; remaining fog items below are not decision tickets)_
+_(none — decision tickets D1–D11 closed; remaining fog items below are not decision tickets)_
 
 ## Blocked
 
@@ -84,7 +91,7 @@ _(none)_
 
 ## Not yet specified
 
-- 严格三分 search/select/report **数据集**拆分（D1 P1 follow-on；P1 approx 先用 report-role hold-out）
+- 严格三分 search/select/report 的**语料作者/存放**（D11 已把**身份层**定死：workload 声明 role、runner 盖章、report remeasure 跑 report workload；剩下的是谁写、放哪、如何防止泄漏进报告集的运维问题）
 - 标注数据管线（谁标、存在哪、如何防止泄漏进报告集）— D5 已定无标注则关闭；管线细节仍雾
 
 ## Out of scope
