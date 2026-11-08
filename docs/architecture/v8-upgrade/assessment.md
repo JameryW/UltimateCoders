@@ -10,6 +10,8 @@ UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gat
 
 **Follow-on (2026-11-08, D14 / T18d):** replan-execute readiness runbook + dry-run probe landed (same ops class as P4 graph cutover). Precursor evidence only — does **not** satisfy true replan execute (ticket 18).
 
+**T18 precursor closeout (2026-11-08, D15):** T18a–d landed and merged (#872/#875/#876/#877). Precursor ladder closed — no further silent precursor slices under this map without a new decision. True replan execute remains deferred on trust-eval ticket 18; Learning OS (D3) and graph-primary default-on remain deferred / human-gated.
+
 ## Domain coverage (compact)
 
 | V8 domain | UC maturity | Notes |

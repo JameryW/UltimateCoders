@@ -16,10 +16,10 @@ Close the T18a–d precursor ladder as **complete** after #872 / #875 / #876 / #
 
 ## Acceptance criteria
 
-- [ ] Map marks T18d **merged** (#877); D15 linked; precursor follow-ons complete
-- [ ] Frontier does not list grabable implement tickets
-- [ ] T18 execute / Learning OS / graph default-on remain deferred or human-gated
-- [ ] No Compose/`UC_*` default flips; no replan execute code
+- [x] Map marks T18d **merged** (#877); D15 linked; precursor follow-ons complete
+- [x] Frontier does not list grabable implement tickets
+- [x] T18 execute / Learning OS / graph default-on remain deferred or human-gated
+- [x] No Compose/`UC_*` default flips; no replan execute code
 
 ## Out of scope
 

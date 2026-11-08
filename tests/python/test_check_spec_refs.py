@@ -915,7 +915,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-08 T18d: replan execute readiness (D14/spec-t18d/tickets 21–22 +
     # runbook + dry-run + replan-execute-readiness-spec.md path mentions)
     # (783 -> 801); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 801
+    # 2026-11-08 T18 precursor closeout (D15/spec-t18-closeout backticks map.md)
+    # (801 -> 802); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 802
 
 
 def test_real_corpus_has_no_false_content_mismatch():

@@ -4,8 +4,8 @@
 
 **Blocked by:** D15
 
-**Status:** open
+**Status:** implemented (branch `cursor/t18-precursor-closeout-e6a9`; map status complete (MVP + T18 precursors); T18a–d merged #872/#875/#876/#877; D15 linked; Frontier empty; execute / Learning / graph default-on remain deferred or human-gated)
 
-- [ ] map.md status + backlog + Frontier updated
-- [ ] ADR / assessment mention T18a–d landed; execute deferred
-- [ ] No code / flag default changes
+- [x] map.md status + backlog + Frontier updated
+- [x] ADR / assessment mention T18a–d landed; execute deferred
+- [x] No code / flag default changes

@@ -1,10 +1,10 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP + T18 precursors)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout open (D15); D1–D15 decided; full T18 execute still deferred
+Status: **complete (MVP + T18 precursors)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); D1–D15 decided; full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
-本图把 V8「Agent · Decision · Inference · Training」闭环映射到 UltimateCoders 的**产品边界**与实现 backlog。决策票不是实现工作；实现票见 `tickets/`。MVP 波次已关闭（D11）；勿在本图下静默抓取 T18 execute。
+本图把 V8「Agent · Decision · Inference · Training」闭环映射到 UltimateCoders 的**产品边界**与实现 backlog。决策票不是实现工作；实现票见 `tickets/`。MVP 波次已关闭（D11）；T18 前驱波次已关闭（D15）；勿在本图下静默抓取 T18 execute 或发明新前驱切片。
 
 ## Destination
 
@@ -84,20 +84,20 @@ Follow-on (D14 — readiness): **merged** (#877)
 - [21 replan execute readiness wire](tickets/21-replan-execute-readiness-wire.md) — **implemented**; was blocked by: D14
 - [22 docs T18d](tickets/22-docs-t18d-readiness.md) — **implemented**; was blocked by: none
 
-Follow-on (D15 — precursor closeout): **open**
+Follow-on (D15 — precursor closeout): **implemented** (complete)
 
 - Spec: [spec-t18-closeout.md](spec-t18-closeout.md)
-- [23 docs T18 precursor closeout](tickets/23-docs-t18-precursor-closeout.md) — open; blocked by: D15
+- [23 docs T18 precursor closeout](tickets/23-docs-t18-precursor-closeout.md) — **implemented**; was blocked by: D15
 
 Later (still deferred — not grabable as full execute):
 
-- True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a–d do not satisfy)
+- True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a–d precursors do not satisfy; blocked until product-stable `UC_COMPLETION_CONDITIONS_ENFORCE` and trusted contract-version ops)
 - Learning OS (D3)
 - Graph-primary **default-on** (human/ops gate per D6/D10; Compose defaults stay off)
 
 ## Frontier (open, unblocked)
 
-- [23 docs T18 precursor closeout](tickets/23-docs-t18-precursor-closeout.md)
+_(empty — no grabable implement tickets; true replan execute remains deferred on trust-eval ticket 18; Learning OS and graph default-on stay deferred / human-gated. Do not invent T18e+ precursors or silent execute under this map without a new decision.)_
 
 ## Out of scope
 
