@@ -107,7 +107,12 @@ function toAttempt(tail: string): number {
  */
 export function decisionTrailQuery(
   taskId: string,
-  options: { limit?: number; order?: "key" | "recent"; before?: string | null } = {},
+  options: {
+    limit?: number;
+    order?: "key" | "recent";
+    before?: string | null;
+    subtaskId?: string | null;
+  } = {},
 ): string {
   const limit = options.limit ?? 100;
   const order = options.order ?? "recent";
@@ -116,8 +121,14 @@ export function decisionTrailQuery(
     `limit=${limit}`,
     `order=${order}`,
   ];
+  if (options.subtaskId) parts.push(`subtask_id=${encodeURIComponent(options.subtaskId)}`);
   if (options.before) parts.push(`before=${encodeURIComponent(options.before)}`);
   return `/dashboard/api/decisions?${parts.join("&")}`;
+}
+
+/** `subtask s1 · ` when scoped; empty for the task-wide trail. */
+export function decisionScopeLabel(subtaskId?: string | null): string {
+  return subtaskId ? `subtask ${subtaskId} · ` : "";
 }
 
 /**
