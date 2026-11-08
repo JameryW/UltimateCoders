@@ -357,17 +357,32 @@ class EffectLedger:
         applied: bool,
         result: dict[str, Any] | None = None,
         reason: str = "",
+        owner: str | None = None,
     ) -> dict[str, Any]:
         """Settle a reconciliation.
 
         ``applied=True`` -> CONFIRMED (stop; do not execute again).
         ``applied=False`` -> PREPARED (the external system definitely does
         not have it, so retrying is safe).
+
+        ``owner`` fences a stale reconciler: while the record's lease is live and
+        belongs to someone else, the resolution is refused -- otherwise a reconciler
+        that was taken over could still settle the effect with a stale verdict. An
+        expired lease, or no ``owner`` at all (backward-compatible callers), skips the
+        fence.
         """
         now = time.time()
 
         def change(old: dict[str, Any]) -> dict[str, Any]:
             _require(old, effect_id, EffectStatus.RECONCILING)
+            if owner is not None:
+                held_until = float(old.get("lease_until", 0))
+                holder = str(old.get("owner", ""))
+                if held_until > now and holder != owner:
+                    raise EffectBusyError(
+                        f"{effect_id} is being reconciled by {holder or '?'} until "
+                        f"{held_until}; {owner} cannot settle it"
+                    )
             if applied:
                 return _moved(
                     old,
