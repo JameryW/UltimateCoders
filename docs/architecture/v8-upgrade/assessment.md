@@ -20,6 +20,8 @@ UltimateCoders already is a strong **Agent OS + Governance/Policy + Evidence-gat
 
 **P9 Decision Record trail (2026-11-08, D19):** the dashboard's task detail now renders the attempt trail (verdict, route, `ctx <12 hex>` pointer, P7 local effects) from the existing decisions response — a pure read surface, with ordering and counts left to the endpoint.
 
+**P10 trail paging (2026-11-08, D20):** the decisions route gained the context-manifest route's `order=recent` + `before` cursor contract, so a long trail is fully reachable; key order stays a cursorless window and the panel pages deduped, keeping rows when a page fails.
+
 ## Domain coverage (compact)
 
 | V8 domain | UC maturity | Notes |

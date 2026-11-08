@@ -49,6 +49,16 @@ export interface DecisionPagePayload {
   decisions?: DecisionRecord[];
   count?: number;
   total?: number;
+  /** Cursor for the next page; null/absent means the page was short. */
+  next_cursor?: string | null;
+}
+
+/** The trail as the panel holds it: loaded rows plus the paging cursor. */
+export interface DecisionTrailState {
+  records: DecisionRecord[];
+  total: number;
+  /** Cursor for the next page; undefined means the trail is exhausted. */
+  nextCursor?: string;
 }
 
 export interface DecisionKeyParts {
@@ -89,12 +99,44 @@ function toAttempt(tail: string): number {
 }
 
 /**
- * The trail request: one task, newest window bounded by `limit`. The endpoint
- * takes `task_id` (required) and `limit`; ids are encoded because a task id
- * may contain characters a raw query string would split on.
+ * The trail request: one task, the `order=recent` time window (newest first)
+ * bounded by `limit`, optionally resuming after `before` (the previous page's
+ * `next_cursor`). Key order is a single oldest-key window with no cursor, so
+ * asking for it would hide exactly the attempts an audit is about; ids are
+ * encoded because a task id may contain characters a raw query string splits on.
  */
-export function decisionTrailQuery(taskId: string, limit = 100): string {
-  return `/dashboard/api/decisions?task_id=${encodeURIComponent(taskId)}&limit=${limit}`;
+export function decisionTrailQuery(
+  taskId: string,
+  options: { limit?: number; order?: "key" | "recent"; before?: string | null } = {},
+): string {
+  const limit = options.limit ?? 100;
+  const order = options.order ?? "recent";
+  const parts = [
+    `task_id=${encodeURIComponent(taskId)}`,
+    `limit=${limit}`,
+    `order=${order}`,
+  ];
+  if (options.before) parts.push(`before=${encodeURIComponent(options.before)}`);
+  return `/dashboard/api/decisions?${parts.join("&")}`;
+}
+
+/**
+ * Merge one page into the trail: rows are deduped by key (a resumed page must
+ * never repeat a row), `total` follows the endpoint, and the cursor becomes
+ * undefined when the page was short — the end, not a stale anchor.
+ */
+export function appendDecisionPage(
+  trail: DecisionTrailState,
+  payload: DecisionPagePayload,
+): DecisionTrailState {
+  const page = decisionsFromPayload(payload);
+  const seen = new Set(trail.records.map((record) => record.key));
+  const appended = page.records.filter((record) => !seen.has(record.key));
+  return {
+    records: [...trail.records, ...appended],
+    total: page.total,
+    nextCursor: payload?.next_cursor ?? undefined,
+  };
 }
 
 /** Terminal time in UTC, deterministic on every machine. */

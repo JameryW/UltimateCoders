@@ -41,6 +41,8 @@ truth.
 
 - Not a governance approval surface; it never mutates anything.
 - No cursor paging (the route has none) — the count line states the truncation instead.
+  **Superseded by [D20](D20-decisions-trail-paging.md):** the route now pages with
+  `order=recent` + `before`, and the panel loads older attempts.
 - No subtask-scope selector in this slice (the endpoint supports it; adding a control
   without a cursor would just narrow a bounded window).
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  appendDecisionPage,
   decisionCountLine,
   decisionDigestLabel,
   decisionHeadline,
@@ -39,11 +40,41 @@ test("parse splits on the last two colons so task ids may contain one", () => {
   });
 });
 
-test("the trail query scopes to the task and encodes the id", () => {
+test("the trail query asks for the recent window and encodes the id", () => {
   assert.match(decisionTrailQuery("t1"), /[?&]task_id=t1(&|$)/);
   assert.match(decisionTrailQuery("t1"), /[?&]limit=100(&|$)/);
+  assert.match(decisionTrailQuery("t1"), /[?&]order=recent(&|$)/);
   assert.match(decisionTrailQuery("task 10"), /task_id=task%2010(&|$)/);
-  assert.match(decisionTrailQuery("t1", 5), /[?&]limit=5(&|$)/);
+  assert.match(decisionTrailQuery("t1", { limit: 5 }), /[?&]limit=5(&|$)/);
+  assert.match(
+    decisionTrailQuery("t1", { before: "t1:s1:9" }),
+    /[?&]before=t1%3As1%3A9(&|$)/,
+  );
+  assert.ok(!decisionTrailQuery("t1").includes("before="));
+});
+
+test("paging appends without repeating a row and follows the cursor", () => {
+  const first = appendDecisionPage(
+    { records: [], total: 0 },
+    {
+      decisions: [record("t1:s1:2"), record("t1:s1:1")],
+      total: 3,
+      next_cursor: "t1:s1:1",
+    },
+  );
+  assert.equal(first.total, 3);
+  assert.equal(first.nextCursor, "t1:s1:1");
+
+  const second = appendDecisionPage(first, {
+    decisions: [record("t1:s1:1"), record("t1:s1:0")],
+    total: 3,
+    next_cursor: null,
+  });
+  assert.deepEqual(
+    second.records.map((row) => row.key),
+    ["t1:s1:2", "t1:s1:1", "t1:s1:0"],
+  );
+  assert.equal(second.nextCursor, undefined, "a short page is the end");
 });
 
 test("the terminal time is rendered in UTC", () => {

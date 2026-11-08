@@ -1,17 +1,17 @@
 import { useEffect, useState } from "react";
 import { getStoredToken } from "@/hooks/useAuth";
 import {
+  appendDecisionPage,
   decisionCountLine,
   decisionDigestLabel,
   decisionHeadline,
   decisionRecordedAt,
   decisionRouteLine,
   decisionTrailQuery,
-  decisionsFromPayload,
   parseDecisionKey,
   workspaceLine,
 } from "@/lib/decisions";
-import type { DecisionRecord } from "@/lib/decisions";
+import type { DecisionRecord, DecisionTrailState } from "@/lib/decisions";
 
 interface DecisionRecordListProps {
   records: DecisionRecord[];
@@ -87,27 +87,34 @@ interface DecisionRecordTrailProps {
 
 interface LoadedTrail {
   taskId: string;
-  records: DecisionRecord[];
-  count: number;
-  total: number;
+  trail: DecisionTrailState;
 }
 
 /**
- * Task-scoped attempt trail. The endpoint requires `task_id` and takes a
- * `limit`; there is no cursor on this route, so the panel asks for one bounded
- * window and says so when `total` is larger than what it holds — it never
- * claims the window is the whole trail.
+ * Task-scoped attempt trail. The endpoint requires `task_id`; it answers the
+ * `order=recent` time window (newest first) and pages with `before` — the
+ * previous page's `next_cursor` — so a long trail is reachable instead of
+ * truncated. The panel appends pages deduped by key and keeps the rows it
+ * already holds when a page fails.
  *
  * A task with no attempts shows that, rather than an error: "nothing
- * recorded" is the fact here. A failed request keeps no stale rows: the
+ * recorded" is the fact here. A failed first request keeps no stale rows: the
  * loaded state is only valid for the task it was fetched for.
  */
 export function DecisionRecordTrail({ taskId }: DecisionRecordTrailProps) {
   const [loaded, setLoaded] = useState<LoadedTrail | null>(null);
   const [failedFor, setFailedFor] = useState<string | null>(null);
+  const [moreState, setMoreState] = useState<{
+    taskId: string;
+    busy: boolean;
+    failed: boolean;
+  } | null>(null);
 
-  const trail = loaded?.taskId === taskId ? loaded : null;
+  const trail = loaded?.taskId === taskId ? loaded.trail : null;
   const failed = failedFor === taskId;
+  const more = moreState?.taskId === taskId ? moreState : null;
+  const loadingMore = more?.busy ?? false;
+  const moreFailed = more?.failed ?? false;
 
   useEffect(() => {
     let cancelled = false;
@@ -117,8 +124,7 @@ export function DecisionRecordTrail({ taskId }: DecisionRecordTrailProps) {
       .then((data) => {
         if (cancelled) return;
         if (data && Array.isArray(data.decisions)) {
-          const { records, count, total } = decisionsFromPayload(data);
-          setLoaded({ taskId, records, count, total });
+          setLoaded({ taskId, trail: appendDecisionPage({ records: [], total: 0 }, data) });
           setFailedFor(null);
         } else {
           setFailedFor(taskId);
@@ -132,13 +138,39 @@ export function DecisionRecordTrail({ taskId }: DecisionRecordTrailProps) {
     };
   }, [taskId]);
 
+  const loadMore = () => {
+    const cursor = trail?.nextCursor;
+    if (!cursor) return;
+    const token = getStoredToken();
+    setMoreState({ taskId, busy: true, failed: false });
+    fetch(
+      `${decisionTrailQuery(taskId, { before: cursor })}${
+        token ? `&token=${encodeURIComponent(token)}` : ""
+      }`,
+    )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((page) => {
+        if (!page || !Array.isArray(page.decisions)) {
+          setMoreState({ taskId, busy: false, failed: true });
+          return;
+        }
+        setLoaded((current) =>
+          current && current.taskId === taskId
+            ? { taskId, trail: appendDecisionPage(current.trail, page) }
+            : current,
+        );
+        setMoreState({ taskId, busy: false, failed: false });
+      })
+      .catch(() => setMoreState({ taskId, busy: false, failed: true }));
+  };
+
   return (
     <div className="mb-2">
       <p className="text-xs text-[var(--text-secondary)] mb-1">
         Decision records{" "}
         {trail ? (
           <span className="text-[10px] text-[var(--text-muted)]">
-            {decisionCountLine(trail.count, trail.total)}
+            {decisionCountLine(trail.records.length, trail.total)}
           </span>
         ) : null}
       </p>
@@ -147,7 +179,19 @@ export function DecisionRecordTrail({ taskId }: DecisionRecordTrailProps) {
           Decision records unavailable.
         </p>
       ) : trail ? (
-        <DecisionRecordList records={trail.records} />
+        <>
+          <DecisionRecordList records={trail.records} />
+          {trail.nextCursor ? (
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="mt-1 text-[10px] text-[var(--text-muted)] underline disabled:opacity-50"
+            >
+              {loadingMore ? "Loading…" : moreFailed ? "Retry older attempts" : "Load older attempts"}
+            </button>
+          ) : null}
+        </>
       ) : (
         <p className="text-xs text-[var(--text-muted)]">Loading…</p>
       )}

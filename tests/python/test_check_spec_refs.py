@@ -930,7 +930,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # the dashboard lib/panel/test names + map/agent-os/assessment/architecture)
     # (821 -> 838); unclassified stays 0. Refs stay unchanged: the new prose
     # names paths without `path:line` pointers.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 838
+    # 2026-11-08 P10 decisions trail paging (D20/spec-p10/tickets 32–33 +
+    # map/agent-os/assessment/architecture/D19 note) (838 -> 843); unclassified
+    # stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 843
 
 
 def test_real_corpus_has_no_false_content_mismatch():

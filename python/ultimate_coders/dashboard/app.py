@@ -474,29 +474,61 @@ class DashboardApp:
             limit guards match context manifests. ``count`` is the window size;
             ``total`` is the scan count in scope. Task-wide scans re-sort
             attempts numerically via ``_manifest_sort_key``.
+
+            ``order=recent`` switches from key order to ``recorded_at``
+            newest-first (``DecisionRecordOutbox.recent`` scans the whole prefix
+            before truncating), and pages with ``before`` — the previous page's
+            ``next_cursor`` — resuming strictly after it without duplicating
+            rows (D20). ``next_cursor`` is non-null only when the page was full;
+            it is ``null`` for ``order=key``, whose cursor would be a different
+            mechanism pretending to be the same one, so asking for one is a 400.
             """
             if (resp := self._check_auth(request)) is not None:
                 return resp
             task_id = request.query_params.get("task_id", "")
             subtask_id = request.query_params.get("subtask_id", "")
+            order = request.query_params.get("order", "key")
+            before = request.query_params.get("before", "")
             if not task_id:
                 return JSONResponse({"error": "task_id is required"}, status_code=400)
+            if order not in ("key", "recent"):
+                return JSONResponse({"error": "Invalid order"}, status_code=400)
+            if before and order != "recent":
+                return JSONResponse(
+                    {"error": "Pagination requires order=recent"}, status_code=400
+                )
             try:
                 limit = int(request.query_params.get("limit", "100"))
                 if not 1 <= limit <= 1000:
                     raise ValueError("limit must be between 1 and 1000")
-                from ultimate_coders.decision_record import DecisionRecordOutbox
+                from ultimate_coders.decision_record import (
+                    CursorNotFoundError,
+                    DecisionRecordOutbox,
+                )
 
                 outbox = DecisionRecordOutbox(await experiment_state())
-                if subtask_id:
-                    decisions = await asyncio.to_thread(
-                        outbox.history, task_id, subtask_id, limit=limit
+                try:
+                    if order == "recent":
+                        decisions = await asyncio.to_thread(
+                            outbox.recent,
+                            task_id,
+                            subtask_id=subtask_id or None,
+                            limit=limit,
+                            before_key=before or None,
+                        )
+                    elif subtask_id:
+                        decisions = await asyncio.to_thread(
+                            outbox.history, task_id, subtask_id, limit=limit
+                        )
+                    else:
+                        decisions = await asyncio.to_thread(
+                            outbox.task_history, task_id, limit=limit
+                        )
+                        decisions.sort(key=_manifest_sort_key)
+                except CursorNotFoundError:
+                    return JSONResponse(
+                        {"error": "Unknown cursor in this scope"}, status_code=400
                     )
-                else:
-                    decisions = await asyncio.to_thread(
-                        outbox.task_history, task_id, limit=limit
-                    )
-                    decisions.sort(key=_manifest_sort_key)
                 total = await asyncio.to_thread(
                     outbox.total, task_id, subtask_id=subtask_id or None
                 )
@@ -504,11 +536,15 @@ class DashboardApp:
                 return JSONResponse({"error": "Invalid pagination"}, status_code=400)
             except Exception as e:
                 return _unavailable("Decision record state unavailable", e)
+            next_cursor = (
+                decisions[-1]["key"] if order == "recent" and len(decisions) == limit else None
+            )
             return JSONResponse(
                 {
                     "decisions": decisions,
                     "count": len(decisions),
                     "total": total,
+                    "next_cursor": next_cursor,
                 }
             )
 
