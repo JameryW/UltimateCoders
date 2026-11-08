@@ -58,3 +58,8 @@ still thin". Which operation is the next receipt surface — and should MCP
 T24: wrap the termination path in the ledger — `CONFIRMED` skips a repeat POST,
 `UNKNOWN`/`RECONCILING` refuse the retry, `ok != true` becomes `FAILED`, and a
 transport failure becomes `UNKNOWN`. Native edge T24 ← D16.
+
+T36: an `UNKNOWN`/`IN_FLIGHT` receipt is settled by the **operator proof** that already
+reconciles `remote_jobs` (`inference/reconcile.py` `attach` / `confirm_stop`), so the
+receipt does not stay open forever and a proven quiescence does not leave a later kill
+retry refused. `FAILED` receipts stay `FAILED` — evidence never fabricates a success.

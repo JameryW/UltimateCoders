@@ -14,7 +14,7 @@ import httpx
 
 from ultimate_coders.runtime_state import RuntimeState, process_matches
 
-from .adapter import MetaInferAdapter
+from .adapter import MetaInferAdapter, settle_metainfer_effects_from_operator_evidence
 from .resources import ResourceBudget
 from .service_contract import CONTRACT_VERSION
 
@@ -103,7 +103,19 @@ class RemoteJobs:
                             slot["key"],
                             lambda old: {} if old.get("operation_id") == operation_id else old,
                         )
-            return result
+            # The proof above also settles the ledger receipts for this operation:
+            # leaving them open would keep listing the effect as unreconciled and
+            # block a later kill retry as "outcome unknown" (T29).
+            settled = await asyncio.to_thread(
+                settle_metainfer_effects_from_operator_evidence,
+                self.state,
+                backend_id=backend_id,
+                operation_id=operation_id,
+                request_sha=job.data.get("request_sha256"),
+                remote_id=values.get("remote_id") or job.data.get("remote_id"),
+                evidence=f"operator {action} by {actor}",
+            )
+            return {**result, "settled_effects": settled}
 
         if client is not None:
             return await apply(client)

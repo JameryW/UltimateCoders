@@ -95,11 +95,12 @@ Follow-on (D15 — precursor closeout): **implemented** (complete)
 - Spec: [spec-t18-closeout.md](spec-t18-closeout.md)
 - [23 docs T18 precursor closeout](tickets/23-docs-t18-precursor-closeout.md) — **implemented**; was blocked by: D15
 
-P6 (D16) — MetaInfer kill/control receipts: **merged** (#880)
+P6 (D16) — MetaInfer kill/control receipts: **merged** (#880) + receipts settled from operator proof (**#889**)
 
 - Spec: [spec-p6.md](spec-p6.md)
 - [24 MetaInfer kill/control receipt](tickets/24-metainfer-kill-ledger.md) — **implemented** (`UC_EFFECT_LEDGER_METAINFER_CONTROL` default off); was blocked by: D16
 - [25 docs P6](tickets/25-docs-p6-control-receipts.md) — **implemented**; was blocked by: none
+- [36 MetaInfer receipt settlement](tickets/36-metainfer-receipt-settlement.md) — **implemented** (operator `attach` / `confirm_stop` settles the open receipt; `FAILED` untouched); was blocked by: D16
 
 P7 (D17) — Local tool receipts (Decision Record evidence): **merged** (#881)
 
