@@ -446,7 +446,14 @@ class MergeArbiter:
                 record = self._ledger.prepare(
                     effect_id,
                     kind="push-main",
-                    request={"branch": self._base_branch, "remote": self._remote_name},
+                    request={
+                        "branch": self._base_branch,
+                        "remote": self._remote_name,
+                        # Which subtask branches this publish carried (D22): the
+                        # watchdog scopes a merge receipt to the attempts it
+                        # published, instead of leaving push-main unscopable.
+                        "merged_branches": sorted(result.get("merged_branches") or []),
+                    },
                     expected_after=await self._head(),
                 )
             except EffectBusyError as exc:

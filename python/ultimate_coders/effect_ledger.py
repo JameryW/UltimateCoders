@@ -141,8 +141,10 @@ class EffectLedger:
 
         Effect ids are content-addressed, so ownership is read off the fields a
         record already carries instead of inventing an owner column: a
-        ``push-branch`` record names its ``branch``, and a MetaInfer record names
-        ``operation_id`` as ``<experiment>:<iteration|trace>``.
+        ``push-branch`` record names its ``branch``, a MetaInfer record names
+        ``operation_id`` as ``<experiment>:<iteration|trace>``, and a ``push-main``
+        record names the ``merged_branches`` it published (D22) -- so an attempt
+        whose branch already went out with a merge owns that receipt.
 
         Only ``CONFIRMED`` counts: an ``UNKNOWN`` effect must be reconciled before
         a replan, never preserved. With no selector this returns nothing — the
@@ -157,6 +159,10 @@ class EffectLedger:
                 continue
             request = record.get("request") or {}
             matched = request.get("branch") in wanted
+            if not matched and wanted:
+                merged = request.get("merged_branches")
+                if isinstance(merged, (list, tuple)):
+                    matched = any(branch in wanted for branch in merged if isinstance(branch, str))
             if not matched and operation_prefix:
                 matched = str(request.get("operation_id", "")).startswith(operation_prefix)
             if matched:

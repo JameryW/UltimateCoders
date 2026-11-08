@@ -26,8 +26,10 @@ governed stall.**
    - MetaInfer records name `request.operation_id` as
      `<experiment_id>:<iteration|trace>`; the attempt's experiment id is on
      `result.domain_result["experiment_id"]` ⇒ prefix match `<experiment_id>:`.
-   - Other kinds (`push-main`) carry no subtask identifier ⇒ **not guessed**, not
-     included.
+   - Other kinds (`push-main`) carried no subtask identifier here ⇒ **not guessed**, not
+     included. **Narrowed by [D22](D22-push-main-scope.md):** the merge receipt now
+     records the `uc/subtask/<id>` branches it carried, so a `push-main` is scoped to
+     those attempts; a receipt without a branch set still stays out.
 3. **Plumbing.** The orchestrator gains an optional `confirmed_effects_provider`
    callable, injected by the worker (which owns the `RuntimeState`). Without a
    provider it passes an empty tuple — byte-identical to today.

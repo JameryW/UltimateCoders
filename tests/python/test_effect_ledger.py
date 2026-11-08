@@ -297,3 +297,45 @@ def test_ownerless_resolve_stays_backward_compatible(ledger):
     ledger.begin_reconcile("eff_test", owner="ops:a", lease_seconds=60)
     record = ledger.resolve_reconcile("eff_test", applied=True)
     assert record["status"] == EffectStatus.CONFIRMED.value
+
+
+# ── merge receipt scope (D22 / T39) ─────────────────────────────
+
+
+def _merge_effect(ledger: EffectLedger, effect_id: str = "eff_merge") -> None:
+    ledger.prepare(
+        effect_id,
+        kind="push-main",
+        request={
+            "branch": "main",
+            "remote": "origin",
+            "merged_branches": ["uc/subtask/aaa", "uc/subtask/bbb"],
+        },
+    )
+
+
+def test_a_merge_receipt_is_scoped_to_the_branches_it_carried(ledger):
+    _merge_effect(ledger)
+    ledger.mark_in_flight("eff_merge", owner="arbiter")
+    ledger.confirm("eff_merge")
+
+    assert ledger.confirmed_effect_ids(branches=["uc/subtask/aaa"]) == ["eff_merge"]
+    assert ledger.confirmed_effect_ids(branches=["uc/subtask/bbb"]) == ["eff_merge"]
+    assert ledger.confirmed_effect_ids(branches=["uc/subtask/ccc"]) == []
+    assert ledger.confirmed_effect_ids(branches=["main"]) == ["eff_merge"]
+
+
+def test_an_unreconciled_merge_receipt_is_not_preserved(ledger):
+    _merge_effect(ledger)
+    ledger.mark_in_flight("eff_merge", owner="arbiter")
+    ledger.mark_unknown("eff_merge", reason="lost response")
+
+    assert ledger.confirmed_effect_ids(branches=["uc/subtask/aaa"]) == []
+
+
+def test_a_merge_receipt_without_a_branch_set_stays_unscopable(ledger):
+    ledger.prepare("eff_legacy_merge", kind="push-main", request={"branch": "main"})
+    ledger.mark_in_flight("eff_legacy_merge", owner="arbiter")
+    ledger.confirm("eff_legacy_merge")
+
+    assert ledger.confirmed_effect_ids(branches=["uc/subtask/aaa"]) == []

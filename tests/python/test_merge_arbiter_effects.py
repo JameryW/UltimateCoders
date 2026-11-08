@@ -91,6 +91,21 @@ async def test_success_confirms_the_effect(tmp_path, ledger):
 
 
 @pytest.mark.asyncio
+async def test_the_receipt_names_the_branches_the_publish_carried(tmp_path, ledger):
+    git = FakeGit()
+    result = await _arbiter(tmp_path, ledger, git)._push_base_branch(
+        {
+            "status": "skipped",
+            "merged_branches": ["uc/subtask/bbb", "uc/subtask/aaa"],
+        }
+    )
+    record = ledger.get(result["effect_id"])
+    assert record["request"]["merged_branches"] == ["uc/subtask/aaa", "uc/subtask/bbb"]
+    assert ledger.confirmed_effect_ids(branches=["uc/subtask/aaa"]) == [result["effect_id"]]
+    assert ledger.confirmed_effect_ids(branches=["uc/subtask/zzz"]) == []
+
+
+@pytest.mark.asyncio
 async def test_rejection_is_failed_and_never_reconciled(tmp_path, ledger):
     git = FakeGit(push_exit=1, push_stderr="! [rejected] main -> main (non-fast-forward)")
     result = await _arbiter(tmp_path, ledger, git)._push_base_branch({"status": "skipped"})
