@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP + T18 precursors + P6/P7 receipts + P8 effect sourcing + P9 decision trail)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); P6 MetaInfer kill/control receipts **merged** (#880); P7 local tool receipts **merged** (#881); P8 watchdog effect sourcing **merged**; P9 Decision Record dashboard trail **implemented** (D19); D1–D19 decided; full T18 execute still deferred
+Status: **complete (MVP + T18 precursors + P6/P7 receipts + P8 effect sourcing + P9 decision trail)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); P6 MetaInfer kill/control receipts **merged** (#880); P7 local tool receipts **merged** (#881); P8 watchdog effect sourcing **merged**; P9 Decision Record dashboard trail **merged** (#882); D1–D19 decided; full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -111,7 +111,7 @@ P8 (D18) — Confirmed effects for the watchdog: **implemented**
 - [28 confirmed effects watchdog](tickets/28-confirmed-effects-watchdog.md) — **implemented** (worker supplies `confirmed_effect_ids` from `tool_effects`; unscopable stays empty); was blocked by: D18
 - [29 docs P8](tickets/29-docs-p8-confirmed-effects.md) — **implemented**; was blocked by: none
 
-P9 (D19) — Decision Record dashboard trail: **implemented**
+P9 (D19) — Decision Record dashboard trail: **merged** (#882)
 
 - Spec: [spec-p9.md](spec-p9.md)
 - [30 decision record dashboard trail](tickets/30-decision-record-dashboard-trail.md) — **implemented** (read-only render of the existing decisions response; no API change); was blocked by: D19
