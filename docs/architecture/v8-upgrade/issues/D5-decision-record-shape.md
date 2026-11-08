@@ -20,3 +20,5 @@ One **attempt-scoped Decision Record** (`task:subtask:attempt`) in `RuntimeState
 ## Why
 
 Route and context already exist as separate trails; auditors need one joinable object per attempt. Pointing at the context manifest avoids duplicating summaries. Attempt in the key matches Context Compiler / checkpoint identity.
+
+**Note (2026-11-08, D17 / P7):** the terminal block gained an optional `workspace` summary — changed paths + change type + tool names, capped and never content — so the attempt's local effects are auditable without per-tool interception. See [D17](D17-local-tool-receipts.md).

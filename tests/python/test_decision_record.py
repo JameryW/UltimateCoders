@@ -18,7 +18,13 @@ from ultimate_coders.agent.context_compiler import (
     compile_context,
 )
 from ultimate_coders.agent.routing import ReasoningBudget, RouteDecision
-from ultimate_coders.agent.types import Subtask, SubtaskResult, SubtaskReview
+from ultimate_coders.agent.types import (
+    ChangeType,
+    FileChange,
+    Subtask,
+    SubtaskResult,
+    SubtaskReview,
+)
 from ultimate_coders.agent.worker import Worker
 from ultimate_coders.context_outbox import ContextManifestOutbox, manifest_key
 from ultimate_coders.decision_record import (
@@ -511,3 +517,112 @@ async def test_inference_quarantine_failure_still_records_terminal(monkeypatch, 
     record = DecisionRecordOutbox(RuntimeState()).history("t1", "s1")[0]
     assert record["terminal"]["success"] is False
     assert "interrupted" in record["terminal"]["summary"].lower()
+
+
+# ── local tool receipts: attempt-scoped workspace evidence (D17 / P7) ──
+
+
+def test_workspace_summary_sorts_and_caps():
+    from ultimate_coders.decision_record import (
+        WORKSPACE_FILE_LIMIT,
+        WORKSPACE_TOOL_LIMIT,
+        workspace_summary,
+    )
+
+    files = [
+        FileChange(file_path=f"src/f{i:02}.py", change_type=ChangeType.MODIFIED)
+        for i in range(60)
+    ]
+    tools = [f"tool-{i}" for i in range(25)]
+    summary = workspace_summary(files, tools)
+
+    assert summary["file_count"] == 60
+    assert len(summary["files"]) == WORKSPACE_FILE_LIMIT
+    paths = [row["path"] for row in summary["files"]]
+    assert paths == sorted(paths)
+    assert summary["files"][0]["change_type"] == "modified"
+    assert len(summary["tool_calls"]) == WORKSPACE_TOOL_LIMIT
+    assert summary["truncated"] is True
+
+
+def test_workspace_summary_is_deterministic_and_dedupes():
+    from ultimate_coders.decision_record import workspace_summary
+
+    files = [
+        FileChange(file_path="b.py", change_type=ChangeType.CREATED),
+        FileChange(file_path="a.py", change_type=ChangeType.DELETED),
+        FileChange(file_path="b.py", change_type=ChangeType.CREATED),
+    ]
+    first = workspace_summary(files, ["Edit", "Bash", "Edit"])
+    second = workspace_summary(list(reversed(files)), ["Edit", "Bash", "Edit"])
+    assert first == second
+    assert [row["path"] for row in first["files"]] == ["a.py", "b.py"]
+    assert [row["change_type"] for row in first["files"]] == ["deleted", "created"]
+    assert first["tool_calls"] == ["Edit", "Bash"]
+    assert first["truncated"] is False
+
+
+def test_workspace_summary_never_copies_diff_content():
+    from ultimate_coders.decision_record import workspace_summary
+
+    summary = workspace_summary(
+        [FileChange(file_path="a.py", change_type=ChangeType.MODIFIED, diff="SECRET")],
+        [],
+    )
+    assert "SECRET" not in json.dumps(summary)
+
+
+def test_workspace_summary_drops_blank_paths_and_empty_evidence():
+    from ultimate_coders.decision_record import workspace_summary
+
+    assert workspace_summary([FileChange(file_path="  ")], []) is None
+    assert workspace_summary([], []) is None
+    assert workspace_summary([], ["", "  "]) is None
+
+
+def test_terminal_workspace_is_stored_only_when_supplied(state):
+    from ultimate_coders.decision_record import NAMESPACE
+
+    outbox = DecisionRecordOutbox(state)
+    key = decision_key("t", "s", 0)
+    outbox.record_terminal(key, success=True, summary="ok")
+    assert "workspace" not in state.get(NAMESPACE, key)["terminal"]
+
+    workspace = {
+        "files": [{"path": "a.py", "change_type": "modified"}],
+        "file_count": 1,
+        "tool_calls": ["Edit"],
+        "truncated": False,
+    }
+    outbox.record_terminal(key, success=True, summary="ok", workspace=workspace)
+    assert state.get(NAMESPACE, key)["terminal"]["workspace"] == workspace
+
+
+async def test_worker_terminal_records_workspace_evidence(monkeypatch, tmp_path):
+    worker = _make_worker(monkeypatch, tmp_path)
+
+    async def _with_changes(subtask, context_block, workspace_handle):
+        return SubtaskResult(
+            subtask_id=subtask.id,
+            worker_id="w-audit",
+            summary="ok",
+            success=True,
+            modified_files=[
+                FileChange(file_path="src/app.py", change_type=ChangeType.MODIFIED),
+                FileChange(file_path="tests/test_app.py", change_type=ChangeType.CREATED),
+            ],
+            recent_tool_calls=["Edit", "Bash"],
+        )
+
+    worker._execute_in_sandbox = _with_changes  # type: ignore[assignment]
+    await worker.execute_subtask(Subtask(id="s1", parent_id="t1", description="fix it"))
+
+    record = DecisionRecordOutbox(RuntimeState()).history("t1", "s1")[0]
+    workspace = record["terminal"]["workspace"]
+    assert workspace["file_count"] == 2
+    assert workspace["files"] == [
+        {"path": "src/app.py", "change_type": "modified"},
+        {"path": "tests/test_app.py", "change_type": "created"},
+    ]
+    assert workspace["tool_calls"] == ["Edit", "Bash"]
+    assert workspace["truncated"] is False
