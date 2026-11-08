@@ -66,7 +66,7 @@ P4 (D11) — **identity layer merged** (#885) + **checkpoint provenance merged**
 - [24 docs P4](tickets/24-docs-p4-workload-role.md) — **implemented**; was blocked by: none
 - [27 workload role checkpoint](tickets/27-workload-role-checkpoint.md) — **implemented** (checkpoint records `eval_role`; role switch on resume refused; non-report `report_benchmark` refused up front); was blocked by: D11
 
-P5 (D12) — **label boundary merged** (#886) + **registration provenance** (T28); corpus authoring stays ops:
+P5 (D12) — **label boundary merged** (#886) + **registration provenance merged** (#888); corpus authoring stays ops:
 
 - Spec: [spec-p5.md](spec-p5.md)
 - [25 label corpus manifest](tickets/25-label-corpus-manifest.md) — **implemented** (`python/ultimate_coders/agent/review_labels.py`; human labeler + external URI + no `report` source role; artifact cross-check with the structural floor); was blocked by: D12
