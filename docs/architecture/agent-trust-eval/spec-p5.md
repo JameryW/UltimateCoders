@@ -21,9 +21,17 @@ with its manifest.
 2. **`typed_review_thresholds.load_threshold_artifact(path, *, label_manifest=None)`**:
    - with a manifest: same `kind`, same `n_labels`, and `n_labels >= cv_folds * 2`;
    - without one: unchanged behaviour.
-3. **Tests**: manifest validation (happy path, each refusal, report role, agent
-   labeler, bad URI, bad schema) and the artifact cross-checks (kind mismatch, count
-   mismatch, structural floor, manifest-less path unchanged).
+3. **`typed_review_thresholds.register_threshold(artifact, *, label_manifest=None)`**:
+   - with a manifest: the same cross-checks as loading, and the kind is recorded as
+     `manifest`;
+   - under `UC_REVIEWER_LABEL_PROVENANCE` (default off): a registration with **no**
+     manifest is refused, so a kind cannot open on an unbacked `n_labels` claim;
+   - flag off: unchanged registration, recorded as `unverified`.
+4. **`threshold_provenance(kind)`** — `manifest` / `unverified` / `None` for observability.
+5. **Tests**: manifest validation (happy path, each refusal, report role, agent
+   labeler, bad URI, bad schema), the artifact cross-checks (kind mismatch, count
+   mismatch, structural floor, manifest-less path unchanged), and the registration
+   gate.
 
 ## Acceptance criteria
 
@@ -33,6 +41,9 @@ with its manifest.
 - [ ] A repo-relative `corpus_uri` (no scheme) is refused.
 - [ ] Artifact + manifest cross-checks refuse kind/count mismatch and the sub-floor case.
 - [ ] Loading an artifact without a manifest behaves exactly as today.
+- [ ] Under `UC_REVIEWER_LABEL_PROVENANCE`, registering without a manifest is refused and
+      the kind stays closed; with a matching manifest it is recorded as `manifest`.
+- [ ] Flag off records `unverified` and registers exactly as today.
 
 ## Out of scope
 

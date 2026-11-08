@@ -21,13 +21,16 @@ from typing import Any
 
 from ultimate_coders.agent.routing import FailureKind
 from ultimate_coders.agent.typed_review_thresholds import (
+    REVIEWER_LABEL_PROVENANCE_ENV,
     ThresholdArtifact,
     clear_thresholds,
     get_threshold_artifact,
     load_threshold_artifact,
     register_threshold,
+    reviewer_label_provenance_enabled,
     threshold_available,
     threshold_for,
+    threshold_provenance,
 )
 
 TYPED_REVIEW_ENFORCE_ENV = "UC_TYPED_REVIEW_ENFORCE"
@@ -173,6 +176,7 @@ def apply_typed_review(
 
 
 __all__ = [
+    "REVIEWER_LABEL_PROVENANCE_ENV",
     "TYPED_REVIEW_ENFORCE_ENV",
     "ThresholdArtifact",
     "TypedReviewOutcome",
@@ -186,7 +190,9 @@ __all__ = [
     "register_labels",
     "register_threshold",
     "review_for_kind",
+    "reviewer_label_provenance_enabled",
     "threshold_available",
     "threshold_for",
+    "threshold_provenance",
     "typed_review_enforce_enabled",
 ]

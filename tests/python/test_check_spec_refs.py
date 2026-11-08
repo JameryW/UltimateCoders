@@ -942,7 +942,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # agent-trust-eval map + agent-os §5) (851 -> 857); unclassified stays 0.
     # 2026-11-09 workload role checkpoint provenance (T27/spec-p4 note +
     # ticket 27 + agent-os §5) (857 -> 859); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 859
+    # 2026-11-09 label provenance at registration (T28/spec-p5 note + ticket 28 +
+    # agent-os §5) (859 -> 862); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 862
 
 
 def test_real_corpus_has_no_false_content_mismatch():

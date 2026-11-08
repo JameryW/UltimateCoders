@@ -66,11 +66,12 @@ P4 (D11) — **identity layer merged** (#885) + **checkpoint provenance merged**
 - [24 docs P4](tickets/24-docs-p4-workload-role.md) — **implemented**; was blocked by: none
 - [27 workload role checkpoint](tickets/27-workload-role-checkpoint.md) — **implemented** (checkpoint records `eval_role`; role switch on resume refused; non-report `report_benchmark` refused up front); was blocked by: D11
 
-P5 (D12) — **label boundary merged** (#886); corpus authoring stays ops:
+P5 (D12) — **label boundary merged** (#886) + **registration provenance merged** (#888); corpus authoring stays ops:
 
 - Spec: [spec-p5.md](spec-p5.md)
 - [25 label corpus manifest](tickets/25-label-corpus-manifest.md) — **implemented** (`python/ultimate_coders/agent/review_labels.py`; human labeler + external URI + no `report` source role; artifact cross-check with the structural floor); was blocked by: D12
 - [26 docs P5](tickets/26-docs-p5-label-boundary.md) — **implemented**; was blocked by: none
+- [28 label provenance at registration](tickets/28-label-provenance-registration.md) — **implemented** (`UC_REVIEWER_LABEL_PROVENANCE` default off; manifest required to open a kind; `threshold_provenance`); was blocked by: D12
 
 Frontier for implementers: _(none on P3 MVP / P4 identity / P5 labels)_. Ticket **18** remains deferred. Ticket **22** remains deferred. Remaining fog below is not decision-ready.
 

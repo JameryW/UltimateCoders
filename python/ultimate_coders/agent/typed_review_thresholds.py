@@ -3,12 +3,17 @@
 Thresholds load only from checked-in (or offline-generated) JSON artifacts.
 Missing, corrupt, or ``calibrated_default: true`` artifacts are refused; kinds
 without a registered artifact stay closed. Never invent a mid-score default.
+
+Registration can also require the label manifest that backs an artifact's
+``n_labels`` (``UC_REVIEWER_LABEL_PROVENANCE``, D12 / T28): an artifact that
+claims 40 labels with no corpus behind it should not open a reviewer kind.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +21,11 @@ from typing import Any
 
 from ultimate_coders.agent.review_labels import LabelManifest
 from ultimate_coders.agent.routing import FailureKind
+
+#: Require a manifest-backed artifact at registration time (default off).
+REVIEWER_LABEL_PROVENANCE_ENV = "UC_REVIEWER_LABEL_PROVENANCE"
+
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 
 #: Allowed FailureKind string values (no parallel taxonomy).
 _VALID_KINDS = frozenset(k.value for k in FailureKind)
@@ -38,6 +48,16 @@ class ThresholdArtifact:
 
 #: In-process threshold registry: FailureKind value → artifact.
 _THRESHOLDS: dict[str, ThresholdArtifact] = {}
+
+#: How each registered kind earned its place: ``manifest`` (backed by a label
+#: manifest) or ``unverified`` (legacy registration without one).
+_PROVENANCE: dict[str, str] = {}
+
+
+def reviewer_label_provenance_enabled() -> bool:
+    """True when registration demands the manifest behind ``n_labels``."""
+    raw = os.environ.get(REVIEWER_LABEL_PROVENANCE_ENV, "").strip().lower()
+    return raw in _TRUTHY_ENV
 
 
 def _refuse(message: str) -> None:
@@ -178,11 +198,21 @@ def _registry_key(kind: str) -> str:
     return kind.strip().lower()
 
 
-def register_threshold(artifact: ThresholdArtifact) -> None:
+def register_threshold(
+    artifact: ThresholdArtifact,
+    *,
+    label_manifest: LabelManifest | None = None,
+) -> None:
     """Register a validated CV threshold for ``artifact.kind``.
 
     Kind is normalized to a FailureKind value. Invalid kinds are refused so a
     hand-built artifact cannot open a parallel taxonomy in the registry.
+
+    With ``label_manifest`` the artifact is cross-checked against the corpus that
+    backs its ``n_labels`` (D12), and the kind is recorded as manifest-backed.
+    Under ``UC_REVIEWER_LABEL_PROVENANCE`` a registration **without** a manifest
+    is refused: an artifact claiming 40 labels with no corpus behind it should
+    not open a reviewer kind (T28).
     """
     if not isinstance(artifact, ThresholdArtifact):
         raise TypeError(f"artifact must be ThresholdArtifact, got {type(artifact)!r}")
@@ -201,12 +231,30 @@ def register_threshold(artifact: ThresholdArtifact) -> None:
             n_labels=artifact.n_labels,
             generated_at=artifact.generated_at,
         )
+    if label_manifest is not None:
+        _check_label_manifest(artifact, label_manifest, source=f"registration of {kind!r}")
+        provenance = "manifest"
+    elif reviewer_label_provenance_enabled():
+        raise ValueError(
+            "label manifest required under "
+            f"{REVIEWER_LABEL_PROVENANCE_ENV}: register {kind!r} with the manifest "
+            "that backs its n_labels"
+        )
+    else:
+        provenance = "unverified"
     _THRESHOLDS[kind] = artifact
+    _PROVENANCE[kind] = provenance
 
 
 def clear_thresholds() -> None:
     """Clear all registered thresholds (test / reset helper)."""
     _THRESHOLDS.clear()
+    _PROVENANCE.clear()
+
+
+def threshold_provenance(kind: str) -> str | None:
+    """``manifest`` / ``unverified`` for a registered kind, else ``None``."""
+    return _PROVENANCE.get(_registry_key(kind))
 
 
 def threshold_available(kind: str) -> bool:
