@@ -40,6 +40,7 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D19 Decision Record dashboard trail](issues/D19-decision-record-dashboard-trail.md): The attempt record gets a read surface (verdict / route / context pointer / local effects); ordering and counts belong to the endpoint, no new API
 - [D20 Decision trail paging](issues/D20-decisions-trail-paging.md): The decisions route gains the manifest route's `order=recent` + `before` cursor contract, so a long trail is reachable; key order stays a cursorless window
 - [D21 Decision trail subtask scope](issues/D21-decisions-trail-subtask-scope.md): Rows' subtask ids scope the trail and paging stays inside the scope; no new endpoint/parameter, no verdict/route filtering
+- [D22 Merge receipt branch scope](issues/D22-push-main-scope.md): A `push-main` receipt records the `uc/subtask/<id>` branches it carried, so the watchdog can scope it; branch-less receipts stay unscopable (D18's fallback unchanged)
 
 ## Implementation backlog
 
@@ -135,6 +136,12 @@ P11 (D21) — Decision trail subtask scope: **merged** (#884)
 - Spec: [spec-p11.md](spec-p11.md)
 - [34 decisions trail subtask scope](tickets/34-decisions-trail-subtask-scope.md) — **implemented** (row subtask ids scope the trail; paging stays inside the scope); was blocked by: D21
 - [35 docs P11](tickets/35-docs-p11-scope.md) — **implemented**; was blocked by: none
+
+P12 (D22) — Merge receipts carry their branch set: **implemented**
+
+- Spec: [spec-p12.md](spec-p12.md)
+- [39 merge receipt branch scope](tickets/39-merge-receipt-branch-scope.md) — **implemented** (`push-main` records `merged_branches`; `confirmed_effect_ids` matches them; branch-less receipts stay unscopable); was blocked by: D22
+- [40 docs P12](tickets/40-docs-p12-merge-scope.md) — **implemented**; was blocked by: none
 
 Later (still deferred — not grabable as full execute):
 
