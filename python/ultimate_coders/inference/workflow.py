@@ -19,11 +19,13 @@ from ultimate_coders.runtime_state import atomic_json, atomic_write
 from .benchmark import BenchmarkRunner
 from .graph import ExecutionAdaptationGraph
 from .models import (
+    EVAL_ROLE_SPLIT_ENFORCE_ENV,
     BenchmarkResult,
     InferenceTaskType,
     MetaInferResult,
     MetaInferTask,
     dual_gate_enforce_enabled,
+    eval_role_split_enforce_enabled,
     mint_report_result,
     report_uplift_enforce_enabled,
 )
@@ -157,6 +159,7 @@ class OptimizationWorkflow:
         *,
         max_iterations: int = 1,
         on_phase=None,
+        report_benchmark: BenchmarkRunner | None = None,
     ) -> dict:
         if type(max_iterations) is not int or not 1 <= max_iterations <= 50:
             raise ValueError("max_iterations must be between 1 and 50")
@@ -179,6 +182,10 @@ class OptimizationWorkflow:
         )
         if root != git_root or (not checkpoint and _git(root, "status", "--porcelain")):
             raise ValueError("Optimization requires an exclusively owned clean git worktree")
+        if report_benchmark is not None:
+            # The report workload is a different harness; fingerprint it here so
+            # the remeasure can verify it instead of failing on "not protected".
+            report_benchmark.protect(str(root))
         if checkpoint:
             if checkpoint["workspace"] != str(root):
                 raise ValueError("Experiment workspace identity changed")
@@ -372,7 +379,9 @@ class OptimizationWorkflow:
             "backend": last_backend.to_dict() if last_backend else None,
         }
         if report_uplift_enforce_enabled() and accepted:
-            report_verdict = await self._report_remeasure(root, benchmark, on_phase=phase)
+            report_verdict = await self._report_remeasure(
+                root, benchmark, report_benchmark=report_benchmark, on_phase=phase
+            )
             outcome["report_verdict"] = report_verdict.to_dict()
             outcome["public_uplift"] = {
                 "improvement_pct": report_verdict.improvement_pct,
@@ -380,8 +389,26 @@ class OptimizationWorkflow:
             }
         return outcome
 
-    async def _report_remeasure(self, root: Path, benchmark: BenchmarkRunner, *, on_phase=None):
-        """Protected baseline + accepted remasure tagged ``eval_role=report``."""
+    async def _report_remeasure(
+        self,
+        root: Path,
+        benchmark: BenchmarkRunner,
+        *,
+        report_benchmark: BenchmarkRunner | None = None,
+        on_phase=None,
+    ):
+        """Protected baseline + accepted remasure tagged ``eval_role=report``.
+
+        The report hold-out must be a **report-declared workload** (D11). When one
+        is configured the remeasure runs it; without one, enforcement fails closed
+        rather than publishing the tuning workload as the hold-out.
+        """
+        if eval_role_split_enforce_enabled() and report_benchmark is None:
+            raise RuntimeError(
+                "report workload required under "
+                f"{EVAL_ROLE_SPLIT_ENFORCE_ENV}: configure report_benchmark"
+            )
+        runner = report_benchmark or benchmark
 
         async def phase(name, **data):
             if on_phase:
@@ -390,7 +417,7 @@ class OptimizationWorkflow:
         await phase("report_remeasure")
         # Working tree holds the accepted candidate; remasure it first.
         try:
-            candidate_raw = await benchmark.measure(str(root))
+            candidate_raw = await runner.measure(str(root))
             accepted_snap = WorkspaceTransaction(root)
             _git(root, "restore", "--source=HEAD", "--worktree", "--staged", "--", ".")
             head_names = {
@@ -407,7 +434,7 @@ class OptimizationWorkflow:
                 elif path.is_dir():
                     shutil.rmtree(path)
             try:
-                baseline_raw = await benchmark.measure(str(root), baseline=True)
+                baseline_raw = await runner.measure(str(root), baseline=True)
             finally:
                 accepted_snap.restore()
             report_baseline = mint_report_result(baseline_raw)

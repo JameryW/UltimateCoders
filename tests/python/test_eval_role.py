@@ -167,3 +167,61 @@ def test_invalid_eval_role_rejected():
                 "eval_role": "holdout",
             }
         )
+
+
+# ── workload role + report minting (D11 / P4) ────────────────────
+
+
+def test_benchmark_spec_declares_select_by_default():
+    from ultimate_coders.inference.benchmark import BenchmarkSpec
+
+    spec = BenchmarkSpec(["true"], "fixed")
+    assert spec.eval_role is EvalRole.SELECT
+
+
+def test_benchmark_spec_accepts_an_explicit_report_role():
+    from ultimate_coders.inference.benchmark import BenchmarkSpec
+
+    spec = BenchmarkSpec(["true"], "fixed", eval_role="report")
+    assert spec.eval_role is EvalRole.REPORT
+
+
+def test_benchmark_spec_rejects_an_unknown_role():
+    from ultimate_coders.inference.benchmark import BenchmarkSpec
+
+    with pytest.raises(ValueError):
+        BenchmarkSpec(["true"], "fixed", eval_role="holdout")
+
+
+def test_mint_report_from_select_is_refused_when_split_enforced(monkeypatch):
+    from ultimate_coders.inference.models import (
+        EVAL_ROLE_SPLIT_ENFORCE_ENV,
+        mint_report_result,
+    )
+
+    monkeypatch.setenv(EVAL_ROLE_SPLIT_ENFORCE_ENV, "1")
+    with pytest.raises(ValueError, match="report workload required"):
+        mint_report_result(_result(eval_role=EvalRole.SELECT))
+    with pytest.raises(ValueError, match="report workload required"):
+        mint_report_result(_result(eval_role=EvalRole.SEARCH))
+
+
+def test_mint_report_from_report_is_a_no_op_when_split_enforced(monkeypatch):
+    from ultimate_coders.inference.models import (
+        EVAL_ROLE_SPLIT_ENFORCE_ENV,
+        mint_report_result,
+    )
+
+    monkeypatch.setenv(EVAL_ROLE_SPLIT_ENFORCE_ENV, "1")
+    report = _result(eval_role=EvalRole.REPORT)
+    assert mint_report_result(report) is report
+
+
+def test_mint_report_is_allowed_when_split_enforcement_is_off(monkeypatch):
+    from ultimate_coders.inference.models import (
+        EVAL_ROLE_SPLIT_ENFORCE_ENV,
+        mint_report_result,
+    )
+
+    monkeypatch.delenv(EVAL_ROLE_SPLIT_ENFORCE_ENV, raising=False)
+    assert mint_report_result(_result()).eval_role is EvalRole.REPORT

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .hardware import capture_environment
-from .models import BenchmarkResult, nonnegative_number
+from .models import BenchmarkResult, EvalRole, coerce_eval_role, nonnegative_number
 from .process import spawn_command
 
 
@@ -102,10 +102,15 @@ class BenchmarkSpec:
     warmup_runs: int = 1
     repetitions: int = 3
     environment: dict[str, str] = field(default_factory=dict)
+    #: What this workload may be used for (D11). The spec is authoritative: a
+    #: workload's own emitted ``eval_role`` is overridden, because the workload
+    #: is the thing under measurement, not the policy that governs it.
+    eval_role: EvalRole = EvalRole.SELECT
 
     def __post_init__(self) -> None:
         if not isinstance(self.workload_id, str) or not self.workload_id:
             raise ValueError("workload_id is required")
+        object.__setattr__(self, "eval_role", coerce_eval_role(self.eval_role))
         for command in (
             self.command,
             self.compile_command,
@@ -186,7 +191,7 @@ class BenchmarkRunner:
                 raise ValueError("Benchmark workload_id differs from the configured workload")
             self.verify_harness()
             if not result.compile_success or not result.correctness:
-                return result
+                return replace(result, eval_role=self.spec.eval_role)
             if index >= self.spec.warmup_runs:
                 samples.append(result)
         if any(sample.metrics.keys() != samples[0].metrics.keys() for sample in samples):
@@ -229,6 +234,7 @@ class BenchmarkRunner:
             environment_id=hashlib.sha256(
                 json.dumps(identity, sort_keys=True).encode()
             ).hexdigest(),
+            eval_role=self.spec.eval_role,
         )
         self.verify_harness()
         if self.spec.profile_command:

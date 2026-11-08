@@ -301,6 +301,7 @@ def test_real_repo_is_reconciled() -> None:
         (2504, 2495),  # V8 P9 decision trail (D19/spec-p9/tickets 30–31 + dashboard)
         (2508, 2499),  # V8 P10 decisions trail paging (D20/spec-p10/tickets 32–33)
         (2512, 2503),  # V8 P11 decisions trail subtask scope (D21/spec-p11/tickets 34–35)
+        (2516, 2507),  # trust-eval P4 workload role (D11/spec-p4/tickets 23–24)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

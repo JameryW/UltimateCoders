@@ -20,6 +20,8 @@ EVAL_ROLE_ENFORCE_ENV = "UC_EVAL_ROLE_ENFORCE"
 REPORT_UPLIFT_ENFORCE_ENV = "UC_REPORT_UPLIFT_ENFORCE"
 INDEPENDENT_REEVAL_ENFORCE_ENV = "UC_INDEPENDENT_REEVAL_ENFORCE"
 DUAL_GATE_ENFORCE_ENV = "UC_DUAL_GATE_ENFORCE"
+#: Refuse cross-role report minting (the workload declares its role; D11).
+EVAL_ROLE_SPLIT_ENFORCE_ENV = "UC_EVAL_ROLE_SPLIT_ENFORCE"
 
 _TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
 
@@ -55,6 +57,16 @@ def independent_reeval_enforce_enabled() -> bool:
 def dual_gate_enforce_enabled() -> bool:
     """Require attestation AND independent re-eval for Oracle accept; default off."""
     return _env_flag_enabled(DUAL_GATE_ENFORCE_ENV)
+
+
+def eval_role_split_enforce_enabled() -> bool:
+    """Refuse cross-role report minting when the workload declared another role.
+
+    Default off: flag off keeps the historical "mint report from a select
+    measurement" path byte-identical. On, the report remeasure must run a
+    report-declared workload (D11).
+    """
+    return _env_flag_enabled(EVAL_ROLE_SPLIT_ENFORCE_ENV)
 
 
 class InferenceTaskType(str, Enum):
@@ -208,7 +220,20 @@ class BenchmarkResult:
 
 
 def mint_report_result(result: BenchmarkResult) -> BenchmarkResult:
-    """Mint a report-role result via explicit construction (not ``with_role`` relabel)."""
+    """Mint a report-role result via explicit construction (not ``with_role`` relabel).
+
+    Under ``UC_EVAL_ROLE_SPLIT_ENFORCE`` the source must already be a report-role
+    measurement: minting report from a select/search workload is the leakage the
+    three-way split exists to prevent (D11). A report source is returned unchanged,
+    so a report-declared runner and this helper compose without double-stamping.
+    """
+    if eval_role_split_enforce_enabled() and result.eval_role is not EvalRole.REPORT:
+        raise ValueError(
+            "report workload required: cannot mint report from "
+            f"eval_role={result.eval_role.value} under {EVAL_ROLE_SPLIT_ENFORCE_ENV}"
+        )
+    if result.eval_role is EvalRole.REPORT:
+        return result
     data = result.to_dict()
     data["eval_role"] = EvalRole.REPORT.value
     return BenchmarkResult.from_dict(data)
