@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP + T18 precursors + P6/P7 receipts + P8 effect sourcing + P9/P10/P11 decision trail)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); P6 MetaInfer kill/control receipts **merged** (#880); P7 local tool receipts **merged** (#881); P8 watchdog effect sourcing **merged**; P9 Decision Record dashboard trail **merged** (#882); P10 trail paging **merged** (#883); P11 subtask scope **implemented** (D21); D1–D21 decided; full T18 execute still deferred
+Status: **complete (MVP + T18 precursors + P6/P7 receipts + P8 effect sourcing + P9/P10/P11 decision trail)** — P0–P4 **merged** (#869–#873); closeout #874; T18a–d **merged** (#872/#875/#876/#877); precursor closeout **complete** (D15 / ticket 23); P6 MetaInfer kill/control receipts **merged** (#880); P7 local tool receipts **merged** (#881); P8 watchdog effect sourcing **merged**; P9 Decision Record dashboard trail **merged** (#882); P10 trail paging **merged** (#883); P11 subtask scope **merged** (#884); D1–D21 decided; full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -125,7 +125,7 @@ P10 (D20) — Decision trail paging: **merged** (#883)
 - [32 decisions trail paging](tickets/32-decisions-trail-paging.md) — **implemented** (`order=recent` + `before` cursor, same contract as the manifest route); was blocked by: D20
 - [33 docs P10](tickets/33-docs-p10-paging.md) — **implemented**; was blocked by: none
 
-P11 (D21) — Decision trail subtask scope: **implemented**
+P11 (D21) — Decision trail subtask scope: **merged** (#884)
 
 - Spec: [spec-p11.md](spec-p11.md)
 - [34 decisions trail subtask scope](tickets/34-decisions-trail-subtask-scope.md) — **implemented** (row subtask ids scope the trail; paging stays inside the scope); was blocked by: D21
