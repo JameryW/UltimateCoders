@@ -1,6 +1,6 @@
 # Wayfinder Map: Agent Trust / Eval
 
-Status: active — **P0–P2 MVP shipped**; P3 ready-for-agent (D9–D10); **P4 identity layer shipped** (D11; corpus authoring stays ops). GitHub Issues publication still pending explicit authorization
+Status: active — **P0–P2 MVP shipped**; P3 ready-for-agent (D9–D10); **P4 identity layer merged** (#885; corpus authoring stays ops). GitHub Issues publication still pending explicit authorization
 Assessment: [agent-trust-eval-assessment.md](../agent-trust-eval-assessment.md) (surveyed 2026-10-24; D1–D8 decided 2026-10-24; P2 MVP closed 2026-10-27; D9–D10 decided 2026-10-27; P3 ticketed 2026-10-27; D11 decided 2026-11-09)
 Intake: user gap list (评测 / 评审 / 防作弊 / 隔离 / 记忆 / 选择偏差) + P0–P2 priorities + P3 fog graduation
 
@@ -59,7 +59,7 @@ P3 (D9–D10) — **MVP complete except deferred** (19–21 implemented; 22 defe
 - [21 docs numeric pin CI](tickets/21-docs-numeric-pin-ci.md) — **implemented** (`docs/numeric-pins.yaml` + hard-fail checker + `ci-docs-numeric-pins.yml`; SSE first; uplift ban); was blocked by: none
 - [22 live numeric remeasure deferred](tickets/22-live-numeric-remeasure-deferred.md) — **deferred** (not P3 MVP)
 
-P4 (D11) — **identity layer implemented** (corpus authoring stays ops):
+P4 (D11) — **identity layer merged** (#885); corpus authoring stays ops:
 
 - Spec: [spec-p4.md](spec-p4.md)
 - [23 workload role + report hold-out boundary](tickets/23-workload-role-split.md) — **implemented** (`UC_EVAL_ROLE_SPLIT_ENFORCE` default off; `BenchmarkSpec.eval_role` + runner stamping + `report_benchmark`); was blocked by: D11
