@@ -15,11 +15,11 @@ Make true replan execute **ready for an explicit human/ops authorization later**
 
 ## Acceptance criteria
 
-- [ ] Runbook present and states execute remains deferred / no silent DAG rewrite
-- [ ] Dry-run never mutates env or Compose; hard-fails when runbook missing
-- [ ] Reports proposal / checklist / accounting / completion_conditions flag states
-- [ ] Tests cover helper parsing + non-mutation
-- [ ] Map / agent-os / ticket 18 note T18d readiness without satisfying full execute
+- [x] Runbook present and states execute remains deferred / no silent DAG rewrite
+- [x] Dry-run never mutates env or Compose; hard-fails when runbook missing
+- [x] Reports proposal / checklist / accounting / completion_conditions flag states
+- [x] Tests cover helper parsing + non-mutation
+- [x] Map / agent-os / ticket 18 note T18d readiness without satisfying full execute
 
 ## Out of scope
 

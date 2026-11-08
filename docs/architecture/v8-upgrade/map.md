@@ -1,6 +1,6 @@
 # Wayfinder Map: V8 Architecture Upgrade
 
-Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); closeout #874; T18b checklist **merged** (#875); T18c accounting **merged** (#876); T18d readiness **open** (`check-replan-execute-readiness`); D1–D14 decided; full T18 execute still deferred
+Status: **complete (MVP)** — P0–P4 **merged** (#869–#873); closeout #874; T18b checklist **merged** (#875); T18c accounting **merged** (#876); T18d readiness **implemented** (`check-replan-execute-readiness`); D1–D14 decided; full T18 execute still deferred
 Assessment: [assessment.md](assessment.md)
 Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC Agent OS / governance / trust-eval / MetaInfer boundaries
 
@@ -75,11 +75,13 @@ Follow-on (D13 — accounting): **merged** (#876)
 - [19 durable replan accounting wire](tickets/19-replan-accounting-wire.md) — **implemented** (`UC_REPLAN_ACCOUNTING_ENFORCE` default off); was blocked by: D13
 - [20 docs T18c](tickets/20-docs-t18c-accounting.md) — **implemented**; was blocked by: none
 
-Follow-on (D14 — readiness): **open**
+Follow-on (D14 — readiness): **implemented**
 
 - Spec: [spec-t18d.md](spec-t18d.md)
-- [21 replan execute readiness wire](tickets/21-replan-execute-readiness-wire.md) — open; blocked by: D14
-- [22 docs T18d](tickets/22-docs-t18d-readiness.md) — open; blocked by: none
+- Runbook: [replan-execute-readiness-runbook.md](../replan-execute-readiness-runbook.md)
+- Dry-run: `scripts/check-replan-execute-readiness.py`
+- [21 replan execute readiness wire](tickets/21-replan-execute-readiness-wire.md) — **implemented**; was blocked by: D14
+- [22 docs T18d](tickets/22-docs-t18d-readiness.md) — **implemented**; was blocked by: none
 
 Later (still deferred — not grabable as full execute):
 
@@ -89,8 +91,7 @@ Later (still deferred — not grabable as full execute):
 
 ## Frontier (open, unblocked)
 
-- [21 replan execute readiness wire](tickets/21-replan-execute-readiness-wire.md)
-- [22 docs T18d](tickets/22-docs-t18d-readiness.md)
+_(empty — T18d readiness landed; full T18 execute remains deferred on trust-eval ticket 18)_
 
 ## Out of scope
 

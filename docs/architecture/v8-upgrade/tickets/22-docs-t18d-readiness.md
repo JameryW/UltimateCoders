@@ -4,7 +4,7 @@
 
 **Blocked by:** none
 
-**Status:** open
+**Status:** implemented
 
-- [ ] Map / assessment / agent-os updated
-- [ ] Distinguishes readiness dry-run from full T18 execute
+- [x] Map / assessment / agent-os updated
+- [x] Distinguishes readiness dry-run from full T18 execute

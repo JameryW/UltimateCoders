@@ -4,8 +4,8 @@
 
 **Blocked by:** D14
 
-**Status:** open
+**Status:** implemented (branch `cursor/t18d-replan-execute-readiness-e6a9`; runbook + dry-run + `tests/python/test_replan_execute_readiness.py`; truthy tokens match UC enforce flags; hard-fail when runbook missing; never sets env / never mutates Compose)
 
-- [ ] Runbook
-- [ ] Dry-run script + hard blocker when runbook missing
-- [ ] Tests: `tests/python/test_replan_execute_readiness.py`
+- [x] Runbook
+- [x] Dry-run script + hard blocker when runbook missing
+- [x] Tests: `tests/python/test_replan_execute_readiness.py`

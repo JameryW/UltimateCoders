@@ -912,7 +912,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # proactive.rs) (769 -> 775); unclassified stays 0.
     # 2026-11-07 T18c: durable replan accounting (D13/spec-t18c/tickets 19–20 +
     # replan-accounting-spec.md) (775 -> 783).
-    assert sum(1 for r in rows if r["kind"] == "mention") == 783
+    # 2026-11-08 T18d: replan execute readiness (D14/spec-t18d/tickets 21–22 +
+    # runbook + dry-run + replan-execute-readiness-spec.md path mentions)
+    # (783 -> 801); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 801
 
 
 def test_real_corpus_has_no_false_content_mismatch():
