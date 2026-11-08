@@ -26,9 +26,11 @@ replans by itself -- it returns the decision for the caller to act on.
 
 Honest limitations:
 
-* ``attempts_used`` / ``replans_used`` are the caller's counters. They are
-  accepted as given, so a caller that loses track of a replan makes the case
-  look less exhausted than it is; the gateway's own state is the cross-check.
+* ``attempts_used`` / ``replans_used`` on the *request* are the caller's
+  shadow counters. When ``UC_REPLAN_ACCOUNTING_ENFORCE`` is on and the stall
+  carries a ``case_id``, the gateway ignores that shadow and returns
+  authoritative ``replans_used`` / ``replans_remaining`` on the verdict —
+  prefer those for any subsequent local bookkeeping.
 * ``preserve_effects`` can only protect effects the caller *knows* are
   confirmed. An effect whose outcome is ``UNKNOWN`` in the ledger must be
   reconciled before a replan is attempted -- this module does not guess.
@@ -55,6 +57,9 @@ ENV_WATCHDOG_MAX_ATTEMPTS = "UC_WATCHDOG_MAX_ATTEMPTS"
 #: Consecutive no-evidence attempts before a stall is declared (shared with the
 #: progress detector, which reads the same variable in ``agent/worker.py``).
 ENV_PROGRESS_STALL_LIMIT = "UC_PROGRESS_STALL_LIMIT"
+#: Gateway owns durable ``WorkCase.replans_used`` when truthy (T18c / D13).
+#: Default off. Mirrored here for callers that prefer the returned counters.
+REPLAN_ACCOUNTING_ENFORCE_ENV = "UC_REPLAN_ACCOUNTING_ENFORCE"
 
 DEFAULT_STALL_LIMIT = 2
 DEFAULT_MAX_REPLANS = 2
@@ -331,6 +336,8 @@ class WatchdogAction:
     reason: str | None = None
     replans_remaining: int = 0
     attempts_remaining: int = 0
+    #: Authoritative gateway counter when present on the verdict (T18c).
+    replans_used: int | None = None
 
     def __post_init__(self) -> None:
         if self.action not in WATCHDOG_ACTIONS:
@@ -348,6 +355,8 @@ class WatchdogAction:
             payload["attempt"] = self.attempt
         if self.reason:
             payload["reason"] = self.reason
+        if self.replans_used is not None:
+            payload["replans_used"] = self.replans_used
         return payload
 
 
@@ -375,14 +384,19 @@ def apply_verdict(
     """Map one ``watchdog.stall.report`` answer to an orchestrator action.
 
     The gateway owns the verdict; this function only translates it and enforces
-    the two invariants a recovery path must not lose:
+    the invariants a recovery path must not lose:
 
     * a ``replan`` must carry ``preserve_effects`` covering every confirmed
       effect id the caller holds -- otherwise it raises
       :class:`WatchdogContractError` instead of handing back a replan that could
       repeat a push or a comment;
-    * a ``replan`` must leave replan budget (``replans_remaining >= 1``) and an
-      ``attempt`` number. A contradictory answer is an error, not a loop.
+    * a ``replan`` must carry an ``attempt`` number. With durable accounting
+      (T18c) the last allowed replan may return ``replans_remaining=0`` after
+      the gateway records the increment — trust the gateway verdict rather than
+      inventing a local escalate.
+
+    When the reply includes ``replans_used``, prefer that counter over any
+    local shadow (especially when ``UC_REPLAN_ACCOUNTING_ENFORCE`` is on).
 
     An unreadable verdict token raises as well: treating it as ``continue``
     would let a malformed response run forever.
@@ -398,12 +412,16 @@ def apply_verdict(
         )
     replans_remaining = _contract_int(report, "replans_remaining", 0)
     attempts_remaining = _contract_int(report, "attempts_remaining", 0)
+    replans_used = None
+    if "replans_used" in report and report.get("replans_used") is not None:
+        replans_used = _contract_int(report, "replans_used", 0)
 
     if action == "continue":
         return WatchdogAction(
             action="continue",
             replans_remaining=replans_remaining,
             attempts_remaining=attempts_remaining,
+            replans_used=replans_used,
         )
 
     if action == "retry_same_contract":
@@ -412,13 +430,10 @@ def apply_verdict(
             delay_ms=_contract_int(report, "delay_ms", 0),
             replans_remaining=replans_remaining,
             attempts_remaining=attempts_remaining,
+            replans_used=replans_used,
         )
 
     if action == "replan":
-        if replans_remaining < 1:
-            raise WatchdogContractError(
-                "replan verdict with no replan budget remaining; escalate instead"
-            )
         attempt = report.get("attempt")
         if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 0:
             raise WatchdogContractError(f"replan verdict without a valid attempt: {attempt!r}")
@@ -437,6 +452,7 @@ def apply_verdict(
             reason=_text(report.get("reason")) or None,
             replans_remaining=replans_remaining,
             attempts_remaining=attempts_remaining,
+            replans_used=replans_used,
         )
 
     reason = _text(report.get("reason"))
@@ -445,4 +461,5 @@ def apply_verdict(
         reason=reason or None,
         replans_remaining=replans_remaining,
         attempts_remaining=attempts_remaining,
+        replans_used=replans_used,
     )

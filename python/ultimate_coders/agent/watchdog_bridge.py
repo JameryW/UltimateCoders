@@ -11,9 +11,10 @@ This module is that question. It is deliberately thin:
 
 * **One op**, `watchdog.stall.report`, carrying the detector's evidence.
 * **The gateway decides**; this module only translates the verdict with
-  `apply_verdict`, which enforces the two invariants a recovery path must not
-  lose: a `replan` may not drop a confirmed external effect, and a `replan` must
-  have budget left.
+  `apply_verdict`, which enforces that a `replan` may not drop a confirmed
+  external effect. When `UC_REPLAN_ACCOUNTING_ENFORCE` is on, prefer the
+  authoritative `replans_used` / `replans_remaining` on the reply over any
+  local shadow.
 * **Fail-open, not fail-silent.** No client, a transport error, or an unreadable
   verdict returns ``None`` (or raises `WatchdogContractError` for a *malformed*
   verdict) so the caller can fall back to the pre-existing local policy. A bridge
