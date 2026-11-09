@@ -962,7 +962,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # agent-os §5) (890 -> 897); unclassified stays 0.
     # 2026-11-09 cursor parity + view addressability (T47/ticket 47 + spec-p13 line
     # + v8 map) (897 -> 901); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 901
+    # 2026-11-09 NATS retry robustness (T48/ticket 48 + v8 map follow-up line)
+    # (901 -> 903); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 903
 
 
 def test_real_corpus_has_no_false_content_mismatch():

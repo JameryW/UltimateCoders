@@ -2066,12 +2066,55 @@ class DashboardApp:
         await asyncio.wait_for(client.flush(), timeout=5.0)
         return client
 
+    async def _retry_connect_once(self) -> bool:
+        """One retry attempt: connect **and** subscribe before claiming success.
+
+        A connect that succeeds but cannot subscribe must not leave the dashboard
+        half-attached: with ``_nats_client`` set nothing would retry again, and the
+        exception would only surface as a "task exception was never retrieved"
+        warning at GC -- while the dashboard silently stops receiving events. So a
+        failed subscription drops the client (and closes it) and reports failure, so
+        the loop keeps trying.
+        """
+        client = await self._connect_nats_once()
+        self._nats_client = client
+        self._owns_nats_client = True
+        created_publisher = False
+        try:
+            if self._nats_publisher is None:
+                from ultimate_coders.nats_worker import NatsPublisher
+
+                self._nats_publisher = NatsPublisher(self._nats_client)
+                created_publisher = True
+            await self._subscribe_nats_subjects()
+        except Exception:
+            logger.warning(
+                "Dashboard connected to NATS but could not subscribe; retrying",
+                exc_info=True,
+            )
+            self._nats_client = None
+            self._owns_nats_client = False
+            if created_publisher:
+                # A publisher bound to the client we just dropped would keep
+                # publishing into a closed connection on the next attempt.
+                self._nats_publisher = None
+            close = getattr(client, "close", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception:
+                    logger.debug("NATS client close after failed subscribe", exc_info=True)
+            return False
+        return True
+
     def _spawn_nats_connect_retry(self) -> None:
         """Retry the initial NATS connection until it succeeds.
 
         Runs on the server's event loop (started from a startup-hook
-        context). Stops after a successful connect; the client's own
-        reconnect callbacks take over from there.
+        context). Stops after a successful connect **and** subscribe; the
+        client's own reconnect callbacks take over from there. If the loop
+        dies for any other reason the exception is logged instead of being
+        dropped with the task.
         """
         if self._nats_retry_task is not None and not self._nats_retry_task.done():
             return
@@ -2082,7 +2125,7 @@ class DashboardApp:
                 attempt += 1
                 await asyncio.sleep(10.0)
                 try:
-                    client = await self._connect_nats_once()
+                    connected = await self._retry_connect_once()
                 except Exception:
                     logger.debug(
                         "NATS connect retry %d failed (will keep retrying)",
@@ -2090,22 +2133,27 @@ class DashboardApp:
                         exc_info=True,
                     )
                     continue
-                self._nats_client = client
-                self._owns_nats_client = True
+                if not connected:
+                    continue
                 logger.info(
                     "Dashboard connected to NATS at %s after %d retr%s",
                     self._nats_url,
                     attempt,
                     "y" if attempt == 1 else "ies",
                 )
-                if self._nats_publisher is None:
-                    from ultimate_coders.nats_worker import NatsPublisher
-
-                    self._nats_publisher = NatsPublisher(self._nats_client)
-                await self._subscribe_nats_subjects()
                 return
 
-        self._nats_retry_task = asyncio.create_task(_retry_loop())
+        task = asyncio.create_task(_retry_loop())
+
+        def _log_death(completed: asyncio.Task[None]) -> None:
+            if completed.cancelled():
+                return
+            error = completed.exception()
+            if error is not None:
+                logger.warning("Dashboard NATS retry loop stopped: %s", error, exc_info=error)
+
+        task.add_done_callback(_log_death)
+        self._nats_retry_task = task
 
     async def _subscribe_nats_subjects(self) -> None:
         """Subscribe to the dashboard NATS subjects on the current client."""
