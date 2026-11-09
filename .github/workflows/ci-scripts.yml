@@ -201,3 +201,27 @@ jobs:
         # The sandbox tests force `core.autocrlf=false` so their meaning does not
         # depend on the runner's gitconfig; the real-repo test pins the scan shape.
         run: pytest tests/python/test_check_line_endings.py -v -o addopts=""
+
+  async-task-hygiene:
+    name: async task hygiene (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - run: pip install ruff pytest
+      - name: ruff check (the guard and its test only)
+        run: ruff check scripts/check-async-task-hygiene.py tests/python/test_check_async_task_hygiene.py
+      - name: run the guard
+        # A syntactically decidable class: a `create_task(...)` whose task is never
+        # kept, awaited, gathered or cancelled can be garbage-collected mid-flight
+        # and reports its exception only as "Task exception was never retrieved".
+        # T48 found that shape in the dashboard NATS retry loop.
+        run: python scripts/check-async-task-hygiene.py
+      - name: the guard can say no, and the repo is clean
+        run: pytest tests/python/test_check_async_task_hygiene.py -v -o addopts=""

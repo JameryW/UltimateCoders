@@ -163,6 +163,7 @@ P14 (D24) — Receipt queue view: **implemented**
 Follow-up fixes (post-P14 robustness audit, no new decision):
 
 - [48 NATS retry does not die silently](tickets/48-nats-retry-does-not-die-silently.md) — **implemented** (the dashboard retry loop claims success only after subscribe; a half-attached connect is dropped, closed and retried; a dead retry task logs); was blocked by: none
+- [49 async task hygiene guard](tickets/49-async-task-hygiene-guard.md) — **implemented** (scripts/check-async-task-hygiene.py + Scripts CI job: a create_task whose task is never kept/awaited/gathered/returned/cancelled fails the build); was blocked by: none
 
 Later (still deferred — not grabable as full execute):
 
