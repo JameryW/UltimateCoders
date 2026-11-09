@@ -958,7 +958,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # + inference-infra.md) (879 -> 885); unclassified stays 0.
     # 2026-11-09 receipts read surface (D23/spec-p13/tickets 43–44 + v8 map +
     # inference-infra.md + agent-os §5) (885 -> 890); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 890
+    # 2026-11-09 receipt queue view (D24/spec-p14/tickets 45–46 + v8 map +
+    # agent-os §5) (890 -> 897); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 897
 
 
 def test_real_corpus_has_no_false_content_mismatch():

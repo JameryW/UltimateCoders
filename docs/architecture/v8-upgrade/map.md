@@ -42,6 +42,7 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D21 Decision trail subtask scope](issues/D21-decisions-trail-subtask-scope.md): Rows' subtask ids scope the trail and paging stays inside the scope; no new endpoint/parameter, no verdict/route filtering
 - [D22 Merge receipt branch scope](issues/D22-push-main-scope.md): A `push-main` receipt records the `uc/subtask/<id>` branches it carried, so the watchdog can scope it; branch-less receipts stay unscopable (D18's fallback unchanged)
 - [D23 Effect receipts read surface](issues/D23-effect-receipts-read-surface.md): `GET /dashboard/api/effects` shows the `UNKNOWN` queue and expired-lease `RECONCILING` receipts; read-only, no mutation, no new storage
+- [D24 Effect queue view](issues/D24-effect-queue-view.md): the queue becomes a `#/dashboard/effects` view — one status at a time, `lease expired` filter for `RECONCILING`, read-only (acting stays with the CLI / arbiter)
 
 ## Implementation backlog
 
@@ -151,6 +152,12 @@ P13 (D23) — Receipts read surface: **implemented**
 - Spec: [spec-p13.md](spec-p13.md)
 - [43 effect receipts endpoint](tickets/43-effect-receipts-endpoint.md) — **implemented** (`GET /dashboard/api/effects`, default `UNKNOWN`, `stale=1` for expired reconcile leases, read-only); was blocked by: D23
 - [44 docs receipts endpoint](tickets/44-docs-effect-receipts-endpoint.md) — **implemented**; was blocked by: none
+
+P14 (D24) — Receipt queue view: **implemented**
+
+- Spec: [spec-p14.md](spec-p14.md)
+- [45 effect queue view](tickets/45-effect-queue-view.md) — **implemented** (`#/dashboard/effects`; `UNKNOWN` default, `lease expired` filter for `RECONCILING`, paging, no mutation control); was blocked by: D24
+- [46 docs effect queue view](tickets/46-docs-effect-queue-view.md) — **implemented**; was blocked by: none
 
 Later (still deferred — not grabable as full execute):
 
