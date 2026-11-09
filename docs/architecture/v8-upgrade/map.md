@@ -41,6 +41,7 @@ Intake: V8 architecture diagram (2026-11-07 Recommended Version) + existing UC A
 - [D20 Decision trail paging](issues/D20-decisions-trail-paging.md): The decisions route gains the manifest route's `order=recent` + `before` cursor contract, so a long trail is reachable; key order stays a cursorless window
 - [D21 Decision trail subtask scope](issues/D21-decisions-trail-subtask-scope.md): Rows' subtask ids scope the trail and paging stays inside the scope; no new endpoint/parameter, no verdict/route filtering
 - [D22 Merge receipt branch scope](issues/D22-push-main-scope.md): A `push-main` receipt records the `uc/subtask/<id>` branches it carried, so the watchdog can scope it; branch-less receipts stay unscopable (D18's fallback unchanged)
+- [D23 Effect receipts read surface](issues/D23-effect-receipts-read-surface.md): `GET /dashboard/api/effects` shows the `UNKNOWN` queue and expired-lease `RECONCILING` receipts; read-only, no mutation, no new storage
 
 ## Implementation backlog
 
@@ -144,6 +145,12 @@ P12 (D22) — Merge receipts carry their branch set: **merged** (#892)
 - [39 merge receipt branch scope](tickets/39-merge-receipt-branch-scope.md) — **implemented** (`push-main` records `merged_branches`; `confirmed_effect_ids` matches them; branch-less receipts stay unscopable); was blocked by: D22
 - [40 docs P12](tickets/40-docs-p12-merge-scope.md) — **implemented**; was blocked by: none
 - [42 docs receipts and reconcile](tickets/42-docs-receipts-and-reconcile.md) — **implemented** (architecture.md + inference-infra.md describe the receipt states, leases/fencing, operator settlement and scoping); was blocked by: none
+
+P13 (D23) — Receipts read surface: **implemented**
+
+- Spec: [spec-p13.md](spec-p13.md)
+- [43 effect receipts endpoint](tickets/43-effect-receipts-endpoint.md) — **implemented** (`GET /dashboard/api/effects`, default `UNKNOWN`, `stale=1` for expired reconcile leases, read-only); was blocked by: D23
+- [44 docs receipts endpoint](tickets/44-docs-effect-receipts-endpoint.md) — **implemented**; was blocked by: none
 
 Later (still deferred — not grabable as full execute):
 

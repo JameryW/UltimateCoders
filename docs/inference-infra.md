@@ -143,4 +143,12 @@ python -m ultimate_coders.inference.reconcile recover_workspace <lease-key> --ex
 
 `attach` and `confirm_stop` settle the matching EffectLedger receipt from the same proof and print the ids under `settled_effects`: a reconciled `remote_jobs` record whose `metainfer-create`/`metainfer-kill` receipt stayed `IN_FLIGHT`/`UNKNOWN` would otherwise keep showing up as unreconciled and keep refusing a retry. A receipt recorded as `FAILED` is left alone — operator evidence never rewrites a definite failure into a success.
 
+To see the queue before deciding to reconcile, read the authenticated Dashboard endpoint (read-only; it never mutates a receipt):
+
+```
+GET /dashboard/api/effects                        # status=UNKNOWN by default: outcomes nobody knows
+GET /dashboard/api/effects?status=RECONCILING&stale=1
+                                                  # reconcilers whose soft lease expired (crashed owner)
+```
+
 Regression and deployment evidence for this repair is recorded in [MetaInfer reliability verification](metainfer-reliability-verification.md).

@@ -27,6 +27,7 @@ import logging
 import os
 import pathlib
 import threading
+import time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -545,6 +546,76 @@ class DashboardApp:
                     "count": len(decisions),
                     "total": total,
                     "next_cursor": next_cursor,
+                }
+            )
+
+        @app.get("/dashboard/api/effects")
+        async def effects_api(request: Request):
+            """Read-only audit surface for EffectLedger receipts (D23 / P13).
+
+            The actionable queue is ``status=UNKNOWN`` (default): an outcome nobody
+            knows must be reconciled. ``stale=1`` narrows ``RECONCILING`` to receipts
+            whose soft lease has expired -- a crashed reconciler someone may take over.
+            Nothing here writes; reconciliation stays with ``inference.reconcile`` and
+            the merge arbiter, which carry an operator identity and CAS version.
+            """
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            status = request.query_params.get("status", "UNKNOWN")
+            stale = request.query_params.get("stale", "") not in ("", "0", "false", "False")
+            after = request.query_params.get("after", "")
+            allowed = {"PREPARED", "IN_FLIGHT", "UNKNOWN", "RECONCILING", "CONFIRMED", "FAILED"}
+            if status not in allowed:
+                return JSONResponse({"error": "Invalid status"}, status_code=400)
+            if stale and status != "RECONCILING":
+                return JSONResponse(
+                    {"error": "stale=1 requires status=RECONCILING"}, status_code=400
+                )
+            try:
+                limit = int(request.query_params.get("limit", "100"))
+                if not 1 <= limit <= 1000:
+                    raise ValueError("limit must be between 1 and 1000")
+                from ultimate_coders.effect_ledger import EffectLedger
+
+                ledger = EffectLedger(await experiment_state())
+                effects = await asyncio.to_thread(
+                    ledger.state.query,
+                    ledger.namespace,
+                    status=status,
+                    after=after,
+                    limit=limit,
+                )
+                stats = await asyncio.to_thread(ledger.state.statistics, ledger.namespace)
+                total = int((stats.get(status) or {}).get("count", 0))
+            except ValueError:
+                return JSONResponse({"error": "Invalid pagination"}, status_code=400)
+            except Exception as e:
+                return _unavailable("Effect ledger state unavailable", e)
+            now = time.time()
+            rows = [
+                {
+                    "effect_id": record.get("effect_id", ""),
+                    "kind": record.get("kind", ""),
+                    "status": record.get("status", ""),
+                    "owner": record.get("owner", ""),
+                    "lease_until": record.get("lease_until", 0),
+                    "lease_expired": bool(record.get("lease_until"))
+                    and float(record.get("lease_until", 0)) <= now,
+                    "updated_at": record.get("updated_at", 0),
+                    "reason": record.get("reason", ""),
+                    "request": record.get("request", {}),
+                }
+                for record in effects
+            ]
+            if stale:
+                rows = [row for row in rows if row["lease_expired"]]
+            next_after = rows[-1]["effect_id"] if len(rows) == limit else None
+            return JSONResponse(
+                {
+                    "effects": rows,
+                    "count": len(rows),
+                    "total": total,
+                    "next_after": next_after,
                 }
             )
 
