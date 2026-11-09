@@ -313,6 +313,7 @@ def test_real_repo_is_reconciled() -> None:
         (2536, 2527),  # T42 receipts/reconcile docs (ticket 42)
         (2541, 2532),  # V8 P13 receipts read surface (D23/spec-p13/tickets 43–44)
         (2548, 2539),  # V8 P14 receipt queue view (D24/spec-p14/tickets 45–46 + dashboard)
+        (2549, 2540),  # T47 cursor parity + view addressability (ticket 47)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 
