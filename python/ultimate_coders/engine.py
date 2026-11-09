@@ -1345,7 +1345,7 @@ class Engine:
             repos = self.list_repos()
             if repos:
                 indexed_ids = {getattr(r, "repo_id", "") for r in repos}
-        except Exception:
+        except Exception:  # best-effort: unreadable repo list just means nothing is known
             pass
 
         # Index explicitly declared repos
@@ -1433,7 +1433,7 @@ class Engine:
             repos = self.list_repos()
             if repos:
                 indexed_ids = {getattr(r, "repo_id", "") for r in repos}
-        except Exception:
+        except Exception:  # best-effort: unreadable repo list just means nothing is known
             pass
 
         # Index new declared repos

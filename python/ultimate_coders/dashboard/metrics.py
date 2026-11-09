@@ -461,7 +461,7 @@ class MetricsAggregator:
         """Best-effort fallback for callers that omit explicit shutdown."""
         try:
             self.close()
-        except Exception:
+        except Exception:  # best-effort: destructors run during partial shutdown
             # Destructors can run during partial construction or interpreter
             # shutdown, when attributes and imported modules may be unavailable.
             pass
@@ -554,7 +554,7 @@ class _ThreadLocalSQLiteStore:
         """Best-effort fallback for callers that omit explicit shutdown."""
         try:
             self.close()
-        except Exception:
+        except Exception:  # best-effort: destructors run during partial shutdown
             pass
 
 

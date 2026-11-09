@@ -1064,7 +1064,7 @@ class SandboxManager:
                     await proc.wait()
                     try:
                         await stderr_task
-                    except Exception:
+                    except Exception:  # best-effort: stderr drain is diagnostics only
                         pass
 
                     elapsed = time.monotonic() - start

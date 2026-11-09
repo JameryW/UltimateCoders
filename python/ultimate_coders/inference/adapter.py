@@ -79,7 +79,7 @@ def _confirm_metainfer_create_effect(
         return
     try:
         ledger.confirm(effect_id, result={"remote_id": remote_id} if remote_id else {})
-    except Exception:
+    except Exception:  # best-effort: the create receipt is settled again from remote_jobs
         pass
 
 
@@ -778,7 +778,7 @@ class MetaInferAdapter:
                                     effect_id,
                                     result={"remote_id": remote_id},
                                 )
-                            except Exception:
+                            except Exception:  # best-effort: settle is bookkeeping after success
                                 pass
                     except BaseException as exc:
                         if ledger is not None and effect_id is not None:
@@ -788,7 +788,7 @@ class MetaInferAdapter:
                                     effect_id,
                                     reason=f"{type(exc).__name__}: {exc}",
                                 )
-                            except Exception:
+                            except Exception:  # best-effort: never mask the transport failure
                                 pass
                         if self.state and key:
                             raise RemoteStateUncertainError(

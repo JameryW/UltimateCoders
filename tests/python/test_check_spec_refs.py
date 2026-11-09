@@ -968,7 +968,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # v8 map follow-up line) (903 -> 906); unclassified stays 0.
     # 2026-11-09 subprocess timeouts (T50/guard script + test + ticket 50 +
     # workflow + README + v8 map line) (906 -> 913); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 913
+    # 2026-11-09 exception swallow reasons (T51/guard + test + ticket 51 +
+    # workflow + README + v8 map line) (913 -> 918); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 918
 
 
 def test_real_corpus_has_no_false_content_mismatch():
