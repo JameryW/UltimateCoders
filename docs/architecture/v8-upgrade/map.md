@@ -153,6 +153,7 @@ P13 (D23) — Receipts read surface: **implemented**
 - [43 effect receipts endpoint](tickets/43-effect-receipts-endpoint.md) — **implemented** (`GET /dashboard/api/effects`, default `UNKNOWN`, `stale=1` for expired reconcile leases, read-only); was blocked by: D23
 - [44 docs receipts endpoint](tickets/44-docs-effect-receipts-endpoint.md) — **implemented**; was blocked by: none
 - [47 cursor parity and view addressability](tickets/47-cursor-parity-and-view-addressability.md) — **implemented** (unknown fter is a 400; the ffects view round-trips through the hash test); was blocked by: D23
+- [52 effects auth over HTTP](tickets/52-effects-auth-over-http.md) — **implemented** (401 without/with a wrong token, 200 with Bearer and ?token, 400s and cursor paging over TestClient; the handler-level tests bypassed _check_auth by using a localhost client); was blocked by: D23
 
 P14 (D24) — Receipt queue view: **implemented**
 

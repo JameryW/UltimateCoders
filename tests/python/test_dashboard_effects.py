@@ -169,3 +169,81 @@ async def test_an_unknown_cursor_is_refused_not_paged_past(app_and_state):
     resp = await _endpoint(app)(_request("after=eff_does_not_exist"))
     assert resp.status_code == 400
     assert (await _payload(resp))["error"] == "Unknown cursor in this scope"
+
+
+# ---------------------------------------------------------------------------
+# Over real HTTP (T52): the route is part of the authenticated surface, and the
+# acceptance criterion "unauthenticated call is refused like the other API
+# routes" had no test proving it. TestClient reports a non-localhost host, so a
+# configured DASHBOARD_PASSWORD is actually enforced here.
+# ---------------------------------------------------------------------------
+
+
+def _http_client(monkeypatch, tmp_path, *, password: str | None = None):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("UC_RUNTIME_STATE_DIR", str(tmp_path / "runtime-http"))
+    monkeypatch.delenv("UC_DATABASE_URL", raising=False)
+    if password is None:
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+    else:
+        monkeypatch.setenv("DASHBOARD_PASSWORD", password)
+    app = DashboardApp(orchestrator=MagicMock())
+    return TestClient(app._app), RuntimeState()
+
+
+def test_an_unauthenticated_remote_caller_is_refused(monkeypatch, tmp_path):
+    client, state = _http_client(monkeypatch, tmp_path, password="s3cret")
+    _seed(state, "a", EffectStatus.UNKNOWN)
+
+    response = client.get("/dashboard/api/effects")
+    assert response.status_code == 401
+    assert response.json()["error"] == "Unauthorized"
+    assert "effects" not in response.json()
+
+    # The wrong token is refused too -- a 401 must not be a formality.
+    assert client.get("/dashboard/api/effects", params={"token": "nope"}).status_code == 401
+
+
+def test_a_bearer_token_opens_the_receipt_queue(monkeypatch, tmp_path):
+    client, state = _http_client(monkeypatch, tmp_path, password="s3cret")
+    effect_id = _seed(state, "a", EffectStatus.UNKNOWN)
+
+    response = client.get(
+        "/dashboard/api/effects",
+        headers={"Authorization": "Bearer s3cret"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert [row["effect_id"] for row in payload["effects"]] == [effect_id]
+    assert payload["effects"][0]["status"] == "UNKNOWN"
+
+
+def test_a_query_token_opens_the_receipt_queue(monkeypatch, tmp_path):
+    client, state = _http_client(monkeypatch, tmp_path, password="s3cret")
+    _seed(state, "a", EffectStatus.UNKNOWN)
+
+    assert client.get("/dashboard/api/effects", params={"token": "s3cret"}).status_code == 200
+
+
+def test_bad_pagination_is_a_400_over_http(monkeypatch, tmp_path):
+    client, _state = _http_client(monkeypatch, tmp_path)
+
+    assert client.get("/dashboard/api/effects", params={"limit": 0}).status_code == 400
+    assert client.get("/dashboard/api/effects", params={"status": "NOPE"}).status_code == 400
+    assert client.get("/dashboard/api/effects", params={"stale": "1"}).status_code == 400
+
+
+def test_the_http_response_carries_the_paging_cursor(monkeypatch, tmp_path):
+    client, state = _http_client(monkeypatch, tmp_path)
+    ids = sorted(_seed(state, name, EffectStatus.UNKNOWN) for name in ("a", "b", "c"))
+
+    payload = client.get("/dashboard/api/effects", params={"limit": 2}).json()
+    assert [row["effect_id"] for row in payload["effects"]] == ids[:2]
+    assert payload["next_after"] == ids[1]
+
+    following = client.get(
+        "/dashboard/api/effects",
+        params={"limit": 2, "after": payload["next_after"]},
+    ).json()
+    assert [row["effect_id"] for row in following["effects"]] == ids[2:]
