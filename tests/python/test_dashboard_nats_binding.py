@@ -88,3 +88,91 @@ async def test_close_owned_nats_drains_only_self_connected():
     app._owns_nats_client = False
     await app._close_owned_nats()
     assert app._nats_client is client
+
+
+class _FakeClient:
+    """Minimal nats client: only what the retry path touches."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+async def test_a_connect_that_cannot_subscribe_is_not_claimed(monkeypatch):
+    """Connected-but-unsubscribed must not look like success.
+
+    Otherwise nothing retries (the client is set), the dashboard silently stops
+    receiving events, and the only trace is a GC warning about the dead task.
+    """
+    client = _FakeClient()
+    app = DashboardApp(orchestrator=None)
+
+    async def connect():
+        return client
+
+    async def subscribe():
+        raise RuntimeError("subjects unavailable")
+
+    monkeypatch.setattr(app, "_connect_nats_once", connect)
+    monkeypatch.setattr(app, "_subscribe_nats_subjects", subscribe)
+
+    assert await app._retry_connect_once() is False
+    assert app._nats_client is None
+    assert app._owns_nats_client is False
+    assert client.closed, "the half-attached client is closed, not leaked"
+    assert app._nats_publisher is None
+
+
+async def test_a_connect_that_subscribes_is_claimed(monkeypatch):
+    client = _FakeClient()
+    app = DashboardApp(orchestrator=None)
+
+    async def connect():
+        return client
+
+    async def subscribe():
+        return None
+
+    monkeypatch.setattr(app, "_connect_nats_once", connect)
+    monkeypatch.setattr(app, "_subscribe_nats_subjects", subscribe)
+
+    assert await app._retry_connect_once() is True
+    assert app._nats_client is client
+    assert app._owns_nats_client is True
+    assert app._nats_publisher is not None
+
+
+async def test_the_retry_loop_keeps_trying_after_a_failed_subscribe(monkeypatch):
+    """The loop survives one bad subscribe instead of dying with the task."""
+    import asyncio
+
+    client = _FakeClient()
+    app = DashboardApp(orchestrator=None)
+    attempts = {"connect": 0, "subscribe": 0}
+
+    async def connect():
+        attempts["connect"] += 1
+        return client
+
+    async def subscribe():
+        attempts["subscribe"] += 1
+        if attempts["subscribe"] == 1:
+            raise RuntimeError("subjects unavailable")
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(app, "_connect_nats_once", connect)
+    monkeypatch.setattr(app, "_subscribe_nats_subjects", subscribe)
+
+    app._spawn_nats_connect_retry()
+    task = app._nats_retry_task
+    assert task is not None
+    await asyncio.wait_for(task, timeout=5)
+
+    assert attempts["subscribe"] == 2
+    assert attempts["connect"] == 2
+    assert app._nats_client is client

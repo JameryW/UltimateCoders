@@ -160,6 +160,10 @@ P14 (D24) — Receipt queue view: **implemented**
 - [45 effect queue view](tickets/45-effect-queue-view.md) — **implemented** (`#/dashboard/effects`; `UNKNOWN` default, `lease expired` filter for `RECONCILING`, paging, no mutation control); was blocked by: D24
 - [46 docs effect queue view](tickets/46-docs-effect-queue-view.md) — **implemented**; was blocked by: none
 
+Follow-up fixes (post-P14 robustness audit, no new decision):
+
+- [48 NATS retry does not die silently](tickets/48-nats-retry-does-not-die-silently.md) — **implemented** (the dashboard retry loop claims success only after subscribe; a half-attached connect is dropped, closed and retried; a dead retry task logs); was blocked by: none
+
 Later (still deferred — not grabable as full execute):
 
 - True replan **execute** ([agent-trust-eval ticket 18](../agent-trust-eval/tickets/18-true-replan-deferred.md) remainder — T18a–d precursors do not satisfy; blocked until product-stable `UC_COMPLETION_CONDITIONS_ENFORCE` and trusted contract-version ops)
