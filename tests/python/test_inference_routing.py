@@ -354,14 +354,18 @@ async def test_sandbox_cancellation_stops_remote_job_and_rolls_back(tmp_path, ca
             await asyncio.sleep(0.05)
 
     try:
-        await asyncio.wait_for(wait_until_started(), 8)
+        # These budgets are hang detectors, not latency claims: the flow spawns a
+        # benchmark subprocess and talks HTTP to a local server, and on a loaded
+        # machine (parallel suites, CI runners) the old 8s/10s were reachable by a
+        # healthy run -- which made this test flake instead of proving cancellation.
+        await asyncio.wait_for(wait_until_started(), 60)
         if cancel_via == "coroutine":
             running.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(running, 10)
+                await asyncio.wait_for(running, 30)
         else:
             assert manager.kill_group(key)
-            assert not (await asyncio.wait_for(running, 10)).success
+            assert not (await asyncio.wait_for(running, 30)).success
         assert stopped.is_set()
         assert (root / "latency.txt").read_text() == "43"
         assert key not in manager._active_procs

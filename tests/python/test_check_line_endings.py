@@ -309,6 +309,7 @@ def test_real_repo_is_reconciled() -> None:
         (2528, 2519),  # T37 reconcile leases (ticket 37)
         (2529, 2520),  # T38 reconcile fencing (ticket 38)
         (2533, 2524),  # V8 P12 merge receipt branch scope (D22/spec-p12/tickets 39–40)
+        (2535, 2526),  # T41 worker effect scope test (ticket 41 + scope test)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 
