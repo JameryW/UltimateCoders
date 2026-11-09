@@ -379,7 +379,7 @@ class CodingMemory:
         if self._owns_client and self._client is not None:
             try:
                 self._client.close()
-            except Exception:  # pragma: no cover - close must not raise
+            except Exception:  # best-effort: a wrapper close must not raise
                 pass
         self._client = None
 
@@ -522,7 +522,7 @@ def preflight_check(timeout_secs: int = 20) -> tuple[bool, str]:
         return False, f"HyMemoryClient(mode={DEFAULT_MODE!r}) failed to construct: {e}"
     try:
         client.close()
-    except Exception:  # pragma: no cover - close must not raise
+    except Exception:  # best-effort: closing a probe client must not raise
         pass
     elapsed_ms = int((time.monotonic() - started) * 1000)
     return True, (

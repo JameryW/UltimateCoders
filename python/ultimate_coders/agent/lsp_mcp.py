@@ -331,7 +331,7 @@ def _sync_file(ls: LanguageServer, abs_path: str) -> None:
                 {LSPConstants.TEXT_DOCUMENT: {LSPConstants.URI: uri}}
             )
             del buffers[uri]
-    except Exception:  # noqa: BLE001 — best-effort sync; request still works
+    except Exception:  # noqa: BLE001  # best-effort: didClose is advisory, request works
         pass
 
 

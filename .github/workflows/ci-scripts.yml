@@ -248,3 +248,26 @@ jobs:
         run: python scripts/check-subprocess-timeouts.py
       - name: the guard can say no, the exemptions hold, and the repo is clean
         run: pytest tests/python/test_check_subprocess_timeouts.py -v -o addopts=""
+
+  exception-swallow-reasons:
+    name: exception swallow reasons (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - run: pip install ruff pytest
+      - name: ruff check (the guard and its test only)
+        run: ruff check scripts/check-exception-swallow-reasons.py tests/python/test_check_exception_swallow_reasons.py
+      - name: run the guard
+        # `except Exception: pass` erases the only evidence something failed. The
+        # rule is "swallow out loud": a broad silent handler carries a written
+        # `# best-effort:` reason; the exception type explains a narrow catch.
+        run: python scripts/check-exception-swallow-reasons.py
+      - name: the guard can say no, and the repo is clean
+        run: pytest tests/python/test_check_exception_swallow_reasons.py -v -o addopts=""
