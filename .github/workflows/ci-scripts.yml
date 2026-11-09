@@ -225,3 +225,26 @@ jobs:
         run: python scripts/check-async-task-hygiene.py
       - name: the guard can say no, and the repo is clean
         run: pytest tests/python/test_check_async_task_hygiene.py -v -o addopts=""
+
+  subprocess-timeouts:
+    name: subprocess timeouts (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - run: pip install ruff pytest
+      - name: ruff check (the guard and its test only)
+        run: ruff check scripts/check-subprocess-timeouts.py tests/python/test_check_subprocess_timeouts.py
+      - name: run the guard
+        # An unbounded subprocess call waits forever: one hung git or nvidia-smi
+        # holds a worker slot with nothing to observe or cancel. The two child
+        # runners are exempt because their parent owns the bound.
+        run: python scripts/check-subprocess-timeouts.py
+      - name: the guard can say no, the exemptions hold, and the repo is clean
+        run: pytest tests/python/test_check_subprocess_timeouts.py -v -o addopts=""

@@ -35,8 +35,26 @@ from .oracle import Oracle, apply_dual_gate
 Candidate = Callable[[MetaInferTask], Awaitable[MetaInferResult]]
 
 
+#: Bound for one git operation inside the experiment workflow. Without it a hung
+#: git (index.lock, network fetch, credentials prompt) would wedge the attempt
+#: forever instead of failing loudly; 120s is far above any healthy local op.
+GIT_TIMEOUT_SECONDS = 120
+
+
 def _git(root: Path, *args: str) -> bytes:
-    result = subprocess.run(["git", *args], cwd=root, capture_output=True, check=False)
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"Inference workspace git operation timed out after {GIT_TIMEOUT_SECONDS}s: "
+            f"{args[0] if args else '<none>'}"
+        ) from exc
     if result.returncode:
         raise RuntimeError(f"Inference workspace git operation failed: {args[0]}")
     return result.stdout
@@ -369,6 +387,7 @@ class OptimizationWorkflow:
                 cwd=root,
                 capture_output=True,
                 check=False,
+                timeout=GIT_TIMEOUT_SECONDS,
             )
             if diff.returncode not in (0, 1):
                 raise RuntimeError("Could not capture newly created candidate file")

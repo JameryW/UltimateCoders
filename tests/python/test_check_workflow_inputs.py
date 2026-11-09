@@ -175,8 +175,9 @@ def test_real_repo_is_reconciled() -> None:
     assert f"{n} workflow(s), " in out, f"the guard must report how much it looked at; got:\n{out}"
     expected = (
             # 23 -> 25: the async-task-hygiene job (T49) adds a ruff step and a
-            # pytest step that both name files.
-            "workflows: 12 workflow(s), 10 path-filtered, 25 run-step reference(s), "
+            # pytest step that both name files. 25 -> 27: the subprocess-timeouts
+            # job (T50) adds the same pair.
+            "workflows: 12 workflow(s), 10 path-filtered, 27 run-step reference(s), "
             "15 subject to coverage"
         )
     assert expected in out, f"the reported summary has moved; got:\n{out}"
