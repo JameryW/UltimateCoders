@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import subprocess
+import sys
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 GUARD = REPO / "scripts" / "check-async-task-hygiene.py"
@@ -121,11 +122,14 @@ def test_an_inline_task_is_not_a_finding(tmp_path):
 
 
 def test_the_real_repository_is_clean():
+    # The interpreter running this test, not a platform-specific venv path: the
+    # same test has to work on Windows locally and on the Linux CI runner.
     result = subprocess.run(
-        [str(REPO / ".venv" / "Scripts" / "python.exe"), str(GUARD)],
+        [sys.executable, str(GUARD)],
         capture_output=True,
         text=True,
         check=False,
+        cwd=str(REPO),
     )
     if result.returncode != 0:
         raise AssertionError(result.stdout + result.stderr)
