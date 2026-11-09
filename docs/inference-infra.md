@@ -141,4 +141,6 @@ python -m ultimate_coders.inference.reconcile confirm_stop <operation-id> --expe
 python -m ultimate_coders.inference.reconcile recover_workspace <lease-key> --expected-version <n> --actor <operator>
 ```
 
+`attach` and `confirm_stop` settle the matching EffectLedger receipt from the same proof and print the ids under `settled_effects`: a reconciled `remote_jobs` record whose `metainfer-create`/`metainfer-kill` receipt stayed `IN_FLIGHT`/`UNKNOWN` would otherwise keep showing up as unreconciled and keep refusing a retry. A receipt recorded as `FAILED` is left alone — operator evidence never rewrites a definite failure into a success.
+
 Regression and deployment evidence for this repair is recorded in [MetaInfer reliability verification](metainfer-reliability-verification.md).

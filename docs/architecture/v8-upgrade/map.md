@@ -143,6 +143,7 @@ P12 (D22) — Merge receipts carry their branch set: **merged** (#892)
 - Spec: [spec-p12.md](spec-p12.md)
 - [39 merge receipt branch scope](tickets/39-merge-receipt-branch-scope.md) — **implemented** (`push-main` records `merged_branches`; `confirmed_effect_ids` matches them; branch-less receipts stay unscopable); was blocked by: D22
 - [40 docs P12](tickets/40-docs-p12-merge-scope.md) — **implemented**; was blocked by: none
+- [42 docs receipts and reconcile](tickets/42-docs-receipts-and-reconcile.md) — **implemented** (architecture.md + inference-infra.md describe the receipt states, leases/fencing, operator settlement and scoping); was blocked by: none
 
 Later (still deferred — not grabable as full execute):
 
