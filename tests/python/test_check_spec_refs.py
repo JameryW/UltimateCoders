@@ -954,7 +954,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # D18 note + agent-os §5) (874 -> 878); unclassified stays 0.
     # 2026-11-09 worker effect scope test (ticket 41 + v8 map P8 line) (878 -> 879);
     # unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 879
+    # 2026-11-09 receipts/reconcile docs (ticket 42 + v8 map P12 line + architecture.md
+    # + inference-infra.md) (879 -> 885); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 885
 
 
 def test_real_corpus_has_no_false_content_mismatch():
