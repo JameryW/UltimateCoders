@@ -161,3 +161,11 @@ async def test_a_receipt_reports_its_request_without_secrets(app_and_state):
     _seed(_state, "a", EffectStatus.UNKNOWN)
     payload = await _payload(await _endpoint(app)(_request()))
     assert payload["effects"][0]["request"] == {"branch": "uc/subtask/a"}
+
+
+async def test_an_unknown_cursor_is_refused_not_paged_past(app_and_state):
+    app, state = app_and_state
+    _seed(state, "a", EffectStatus.UNKNOWN)
+    resp = await _endpoint(app)(_request("after=eff_does_not_exist"))
+    assert resp.status_code == 400
+    assert (await _payload(resp))["error"] == "Unknown cursor in this scope"

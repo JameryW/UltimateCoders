@@ -578,6 +578,15 @@ class DashboardApp:
                 from ultimate_coders.effect_ledger import EffectLedger
 
                 ledger = EffectLedger(await experiment_state())
+                if after:
+                    # A key cursor that names nothing would otherwise page a typo
+                    # into an empty page; the decisions route 400s on this and the
+                    # contract should not depend on which read surface it is.
+                    cursor = await asyncio.to_thread(ledger.state.get, ledger.namespace, after)
+                    if not cursor:
+                        return JSONResponse(
+                            {"error": "Unknown cursor in this scope"}, status_code=400
+                        )
                 effects = await asyncio.to_thread(
                     ledger.state.query,
                     ledger.namespace,

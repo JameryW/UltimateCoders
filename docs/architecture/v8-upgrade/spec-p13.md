@@ -21,6 +21,8 @@ Blocked by: D23 (decided). Read-only; no new storage, no mutations.
 - [ ] Unauthenticated call is refused like the other API routes.
 - [ ] Default view is the `UNKNOWN` queue; an explicit status selects that state.
 - [ ] `after` returns the next window; `next_after` is null on a short page.
+- [ ] An `after` that names no receipt is a 400, not an empty page (T47 — same rule as
+      the decisions route).
 - [ ] `stale=1` returns only expired-lease `RECONCILING` rows, with `lease_expired: true`.
 - [ ] Bad `status` / out-of-range `limit` / `stale` without `RECONCILING` → 400.
 - [ ] Nothing in the route writes to the store.
