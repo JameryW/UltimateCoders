@@ -369,7 +369,12 @@ async def _execute_inference(request: dict[str, Any], artifact_dir: str) -> dict
         "benchmark": benchmark_config,
         "oracle": config.get("oracle", {}),
         "code_sha": subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True, check=False
+            ["git", "rev-parse", "HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
         ).stdout.strip(),
         "state": "accepted" if result["success"] and result.get("patch") else "completed",
         "artifacts": _artifact_metadata(artifacts),
