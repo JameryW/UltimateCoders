@@ -118,6 +118,7 @@ P8 (D18) — Confirmed effects for the watchdog: **implemented**
 - Spec: [spec-p8.md](spec-p8.md)
 - [28 confirmed effects watchdog](tickets/28-confirmed-effects-watchdog.md) — **implemented** (worker supplies `confirmed_effect_ids` from `tool_effects`; unscopable stays empty); was blocked by: D18
 - [29 docs P8](tickets/29-docs-p8-confirmed-effects.md) — **implemented**; was blocked by: none
+- [41 worker effect scope test](tickets/41-worker-effect-scope-test.md) — **implemented** (the real provider covered end to end, including the D22 merge scope); was blocked by: D18
 
 P9 (D19) — Decision Record dashboard trail: **merged** (#882)
 
