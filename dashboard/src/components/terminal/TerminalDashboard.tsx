@@ -16,7 +16,13 @@ import type { Theme } from "@/hooks/useTheme";
 import { useGovernanceCounts } from "@/hooks/useGovernanceCounts";
 import { formatGovernanceCounts } from "@/lib/governanceCounts";
 import { executeUcCommand } from "@/lib/ucCommands";
-import { hashForView, viewFromHash, type TerminalView } from "@/lib/terminalView";
+import {
+  LETTER_VIEWS,
+  hashForView,
+  viewFromHash,
+  viewKeyHint,
+  type TerminalView,
+} from "@/lib/terminalView";
 import { CommandPalette, type PaletteCommand } from "@/components/terminal/CommandPalette";
 
 // FileBrowser pulls in highlight.js, so it loads on demand the first time the
@@ -56,18 +62,7 @@ function isLiveTask(task: { status: string }): boolean {
   return task.status === "inprogress" || task.status === "pending" || task.status === "paused";
 }
 
-/** Single-letter view shortcuts (shown in the "?" help sheet). */
-const LETTER_VIEWS: Record<string, TerminalView> = {
-  o: "overview",
-  t: "tasks",
-  w: "workers",
-  s: "search",
-  m: "memory",
-  e: "logs",
-  i: "inference",
-  a: "approvals",
-};
-
+/** Single-letter view shortcuts live in `@/lib/terminalView` beside the view list. */
 interface TerminalDashboardProps {
   connected: boolean;
   grpcState: GrpcConnectionState;
@@ -1067,7 +1062,7 @@ function OverviewView({
         })}
       </section>
 
-      <p className="terminal-help-line">提示：顶栏 <kbd>1</kbd>–<kbd>7</kbd> 切视图 · <kbd>Ctrl</kbd><kbd>K</kbd> 聚焦命令 · <kbd>/</kbd> 命令行</p>
+      <p className="terminal-help-line">提示：顶栏 <kbd>{viewKeyHint(VIEWS.map((item) => item.key))}</kbd> 切视图 · <kbd>Ctrl</kbd><kbd>K</kbd> 聚焦命令 · <kbd>/</kbd> 命令行</p>
     </div>
   );
 }
@@ -1576,7 +1571,7 @@ export function TerminalDashboard({
 
       <StatusPillBar connected={connected} grpcState={grpcState} dashGrpcState={dashGrpcState} workers={workers} tasks={tasks} eventLog={eventLog} />
       <footer className="terminal-command-bar"><span>uc ❯</span><input ref={commandRef} value={command} onChange={(event) => setCommand(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runCommand(); } }} placeholder='submit "fix flaky heartbeat test"' aria-label="uc 命令行" /><button className={busy ? "is-busy" : undefined} onClick={() => void runCommand()} disabled={!command.trim() || busy}>{busy ? "运行中" : "运行"}</button><kbd>↵</kbd><small>运行 · / 聚焦</small><span className="terminal-footer-status">{governanceCountsText ? `${governanceCountsText} · ` : ""}{connected ? "后端在线" : "后端离线"} · engine {health.version ?? "—"} · {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : "waiting"}</span></footer>
-      <div className="terminal-keybar" role="region" aria-label="Keyboard shortcuts"><span><kbd>Tab</kbd> 面板</span><span><kbd>1</kbd>–<kbd>9</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
+      <div className="terminal-keybar" role="region" aria-label="Keyboard shortcuts"><span><kbd>Tab</kbd> 面板</span><span><kbd>{viewKeyHint(VIEWS.map((item) => item.key))}</kbd> 视图</span><span><kbd>↑↓</kbd> 主操作</span><span><kbd>⏎</kbd> 执行</span><span><kbd>/</kbd> 命令行</span><span><kbd>?</kbd> 帮助</span><span className="terminal-keybar-right">{connected ? "在线" : "离线"} · dashboard · MIT</span></div>
       <nav className="terminal-mobile-nav" aria-label="移动端视图导航">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav>
       {fileBrowserOpen && (
         <div className="terminal-file-browser-panel" role="dialog" aria-label="File browser">
@@ -1613,14 +1608,13 @@ export function TerminalDashboard({
               <section>
                 <h3>视图</h3>
                 <ul>
-                  <li><kbd>1</kbd><kbd>…</kbd><kbd>7</kbd><span>按顺序切换视图</span></li>
-                  <li><kbd>O</kbd><span>概览</span></li>
-                  <li><kbd>T</kbd><span>任务</span></li>
-                  <li><kbd>W</kbd><span>工作节点</span></li>
-                  <li><kbd>S</kbd><span>检索</span></li>
-                  <li><kbd>M</kbd><span>记忆</span></li>
-                  <li><kbd>E</kbd><span>日志</span></li>
-                  <li><kbd>I</kbd><span>推理实验</span></li>
+                  <li><kbd>{viewKeyHint(VIEWS.map((item) => item.key))}</kbd><span>按顺序切换视图</span></li>
+                  {Object.entries(LETTER_VIEWS).map(([letter, id]) => (
+                    <li key={letter}>
+                      <kbd>{letter.toUpperCase()}</kbd>
+                      <span>{VIEWS.find((item) => item.id === id)?.label ?? id}</span>
+                    </li>
+                  ))}
                 </ul>
               </section>
               <section>
