@@ -974,7 +974,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # note) (918 -> 919); unclassified stays 0.
     # 2026-11-09 shortcut hints (T53/ticket 53 + v8 map line + lib/component refs)
     # (919 -> 924); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 924
+    # 2026-11-09 NATS publisher follows its client (T54/ticket 54 + v8 map line +
+    # test refs) (924 -> 928); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 928
 
 
 def test_real_corpus_has_no_false_content_mismatch():

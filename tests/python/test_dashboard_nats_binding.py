@@ -176,3 +176,68 @@ async def test_the_retry_loop_keeps_trying_after_a_failed_subscribe(monkeypatch)
     assert attempts["subscribe"] == 2
     assert attempts["connect"] == 2
     assert app._nats_client is client
+
+
+async def test_dropping_an_owned_client_drops_the_publisher_bound_to_it():
+    """A publisher left over the drained client would publish into a closed socket.
+
+    The retry path only builds a publisher when there is none, so a stale one would
+    never be replaced -- the retry would "succeed" while every publish failed.
+    """
+    from ultimate_coders.nats_worker import NatsPublisher
+
+    client = _FakeClient()
+    app = DashboardApp(orchestrator=None)
+    app._nats_client = client
+    app._owns_nats_client = True
+    app._nats_publisher = NatsPublisher(client)
+
+    await app._close_owned_nats()
+
+    assert app._nats_client is None
+    assert app._nats_publisher is None
+
+
+async def test_a_publisher_bound_to_another_client_is_left_alone():
+    """An injected client's publisher is the caller's; shutdown must not clear it."""
+    from ultimate_coders.nats_worker import NatsPublisher
+
+    injected = _FakeClient()
+    owned = _FakeClient()
+    app = DashboardApp(orchestrator=None)
+    app._nats_publisher = NatsPublisher(injected)
+    app._nats_client = owned
+    app._owns_nats_client = True
+
+    await app._close_owned_nats()
+
+    assert app._nats_client is None
+    assert app._nats_publisher is not None
+
+
+async def test_the_retry_rebinds_a_fresh_publisher(monkeypatch):
+    """After a close, the next connect gets a publisher over the *new* client."""
+    from ultimate_coders.nats_worker import NatsPublisher
+
+    old = _FakeClient()
+    new = _FakeClient()
+    app = DashboardApp(orchestrator=None)
+    app._nats_client = old
+    app._owns_nats_client = True
+    app._nats_publisher = NatsPublisher(old)
+    await app._close_owned_nats()
+    assert app._nats_publisher is None
+
+    async def connect():
+        return new
+
+    async def subscribe():
+        return None
+
+    monkeypatch.setattr(app, "_connect_nats_once", connect)
+    monkeypatch.setattr(app, "_subscribe_nats_subjects", subscribe)
+
+    assert await app._retry_connect_once() is True
+    assert app._nats_client is new
+    assert app._nats_publisher is not None
+    assert app._nats_publisher._nc is new

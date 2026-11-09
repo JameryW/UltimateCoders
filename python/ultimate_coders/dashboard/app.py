@@ -2200,6 +2200,13 @@ class DashboardApp:
                 await self._nats_client.drain()
             except Exception:
                 logger.debug("NATS drain failed (ignoring)", exc_info=True)
+            # A publisher wrapping the client we just drained would keep publishing
+            # into a closed connection -- and the retry path only creates a publisher
+            # when there is none, so it would never be replaced either.
+            dropped = self._nats_client
+            publisher = self._nats_publisher
+            if publisher is not None and getattr(publisher, "_nc", None) is dropped:
+                self._nats_publisher = None
             self._nats_client = None
             self._owns_nats_client = False
 
