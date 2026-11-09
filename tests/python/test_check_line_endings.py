@@ -318,6 +318,7 @@ def test_real_repo_is_reconciled() -> None:
         (2553, 2544),  # T49 async task hygiene guard (script + test + ticket)
         (2556, 2547),  # T50 subprocess timeouts (guard script + test + ticket)
         (2559, 2550),  # T51 exception swallow reasons (guard + test + ticket)
+        (2560, 2551),  # T52 receipts auth over HTTP (ticket 52)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

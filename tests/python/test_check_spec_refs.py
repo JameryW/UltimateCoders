@@ -970,7 +970,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # workflow + README + v8 map line) (906 -> 913); unclassified stays 0.
     # 2026-11-09 exception swallow reasons (T51/guard + test + ticket 51 +
     # workflow + README + v8 map line) (913 -> 918); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 918
+    # 2026-11-09 receipts auth over HTTP (T52/ticket 52 + v8 map line + spec-p13
+    # note) (918 -> 919); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 919
 
 
 def test_real_corpus_has_no_false_content_mismatch():

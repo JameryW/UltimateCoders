@@ -15,6 +15,9 @@ Blocked by: D23 (decided). Read-only; no new storage, no mutations.
 2. Tests in `tests/python/test_dashboard_effects.py`: auth, default status, invalid
    status/limit/stale-combination → 400, paging by `after`, `stale=1` filtering and
    `lease_expired` computation, and that a `CONFIRMED` receipt is not in the default view.
+   *Auth has to be proved over HTTP (`TestClient`, T52): the handler-level tests call the
+   endpoint with a localhost client, which `_check_auth` bypasses by design, so they could
+   never have shown a missing 401.*
 
 ## Acceptance criteria
 
