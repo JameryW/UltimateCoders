@@ -22,7 +22,8 @@ export type TerminalView =
   | "logs"
   | "inference"
   | "attention"
-  | "approvals";
+  | "approvals"
+  | "effects";
 
 export const TERMINAL_VIEWS: readonly TerminalView[] = [
   "overview",
@@ -34,6 +35,7 @@ export const TERMINAL_VIEWS: readonly TerminalView[] = [
   "inference",
   "attention",
   "approvals",
+  "effects",
 ] as const;
 
 const DASHBOARD_PREFIX = "/dashboard";

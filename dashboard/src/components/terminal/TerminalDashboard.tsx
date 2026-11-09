@@ -7,6 +7,7 @@ import { TasksPanel } from "@/components/panels/TasksPanel";
 import { WorkersPanel } from "@/components/panels/WorkersPanel";
 import { InferencePanel } from "@/components/panels/InferencePanel";
 import { ApprovalPanel } from "@/components/panels/ApprovalPanel";
+import { EffectQueue } from "@/components/panels/EffectQueuePanel";
 import { AttentionPanel } from "@/components/panels/AttentionPanel";
 import { MemoryPanel } from "@/components/panels/MemoryPanel";
 import type { GrpcConnectionState, GrpcSubmitResult, GrpcTaskActionResult } from "@/hooks/useGrpcWeb";
@@ -47,6 +48,7 @@ const VIEWS: Array<{ id: TerminalView; label: string; meta: string; key: string;
   { id: "inference", label: "推理实验", meta: "INFERENCE", key: "7", icon: "◈" },
   { id: "attention", label: "待办", meta: "ATTENTION", key: "8", icon: "☑" },
   { id: "approvals", label: "审批", meta: "APPROVALS", key: "9", icon: "✔" },
+  { id: "effects", label: "收据", meta: "RECEIPTS", key: "0", icon: "▦" },
 ];
 
 /** Tasks still moving through the pipeline — listed before finished ones. */
@@ -1558,6 +1560,11 @@ export function TerminalDashboard({
             {view === "approvals" && (
               <div className="terminal-data-view">
                 <ApprovalPanel />
+              </div>
+            )}
+            {view === "effects" && (
+              <div className="terminal-data-view">
+                <EffectQueue />
               </div>
             )}
           </div>
