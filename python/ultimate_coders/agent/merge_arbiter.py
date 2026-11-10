@@ -488,6 +488,12 @@ class MergeArbiter:
                     result["effect_id"] = effect_id
                     result["error"] = "push outcome unknown; awaiting reconciliation"
                     return result
+                if verdict == "busy":
+                    result["status"] = "failed"
+                    result["push_status"] = "busy"
+                    result["effect_id"] = effect_id
+                    result["error"] = "another reconciler holds this push; nothing pushed"
+                    return result
                 # verdict == "absent": the retry below is safe.
             ledger.mark_in_flight(effect_id, owner="merge-arbiter")
 
@@ -561,15 +567,25 @@ class MergeArbiter:
     async def _reconcile_push(self, effect_id: str) -> str:
         """Ask the remote whether the publish landed.
 
-        Returns ``"applied"``, ``"absent"`` or ``"inconclusive"``. Only
-        ``absent`` authorises a retry; ``inconclusive`` leaves the effect
-        UNKNOWN for an operator or a later pass.
+        Returns ``"applied"``, ``"absent"``, ``"inconclusive"`` or ``"busy"``. Only
+        ``absent`` authorises a retry; ``inconclusive`` leaves the effect UNKNOWN for an
+        operator or a later pass; ``busy`` means another arbiter holds the reconcile
+        claim, which is a normal distributed outcome -- not an exception to crash on.
         """
+        from ultimate_coders.effect_ledger import EffectBusyError
+
         record = self._ledger.get(effect_id) or {}
-        if record.get("status") == "PREPARED":
-            self._ledger.mark_in_flight(effect_id, owner="merge-arbiter")
-        if record.get("status") != "RECONCILING":
-            self._ledger.begin_reconcile(effect_id, owner="merge-arbiter")
+        try:
+            if record.get("status") == "PREPARED":
+                self._ledger.mark_in_flight(effect_id, owner="merge-arbiter")
+            if record.get("status") != "RECONCILING":
+                self._ledger.begin_reconcile(effect_id, owner="merge-arbiter")
+        except EffectBusyError as exc:
+            # Another arbiter (or an operator) owns this reconcile. Report it as a
+            # modelled outcome instead of letting the claim refusal escape the merge
+            # pass -- `_push_base_branch` already answers "busy" for `prepare`.
+            logger.warning("MergeArbiter: reconcile claim refused: %s", exc)
+            return "busy"
 
         expected_after = await self._head()
         before = await self._git(
@@ -591,21 +607,27 @@ class MergeArbiter:
         parts = remote["stdout"].split()
         current = parts[0] if parts else ""
 
-        if expected_after and current == expected_after:
-            self._ledger.confirm(
-                effect_id, result={"branch": self._base_branch, "head": current}
-            )
-            return "applied"
-        if current in (expected_before, ""):
-            self._ledger.resolve_reconcile(
-                effect_id,
-                applied=False,
-                reason="remote does not have the commit",
-                owner="merge-arbiter",
-            )
-            return "absent"
-        self._ledger.mark_unknown(effect_id, reason="remote moved to an unexpected head")
-        return "inconclusive"
+        try:
+            if expected_after and current == expected_after:
+                self._ledger.confirm(
+                    effect_id, result={"branch": self._base_branch, "head": current}
+                )
+                return "applied"
+            if current in (expected_before, ""):
+                self._ledger.resolve_reconcile(
+                    effect_id,
+                    applied=False,
+                    reason="remote does not have the commit",
+                    owner="merge-arbiter",
+                )
+                return "absent"
+            self._ledger.mark_unknown(effect_id, reason="remote moved to an unexpected head")
+            return "inconclusive"
+        except EffectBusyError as exc:
+            # The fence refused us: someone else's live claim owns this verdict.
+            # Their reconciliation decides; ours must not overwrite it.
+            logger.warning("MergeArbiter: reconciled verdict refused: %s", exc)
+            return "busy"
 
     async def _try_resolve_conflicts(self) -> bool:
         """Attempt to resolve all conflicted files via ConflictResolver.

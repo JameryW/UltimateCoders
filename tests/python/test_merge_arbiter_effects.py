@@ -227,3 +227,30 @@ async def test_one_failed_head_lookup_does_not_disable_receipts(tmp_path, ledger
     assert second["push_status"] == "pushed"
     record = ledger.get(second["effect_id"])
     assert record["status"] == EffectStatus.CONFIRMED.value
+
+
+@pytest.mark.asyncio
+async def test_a_claim_held_by_another_reconciler_reports_busy(tmp_path, ledger):
+    """Another owner's live claim is a modelled outcome, not an exception.
+
+    In a multi-host deployment two arbiters can reconcile the same publish. The
+    fence must refuse our verdict -- and the merge pass must hear "busy" back,
+    not an exception escaping out of the publish path.
+    """
+    effect_id = stable_effect_id("push-main", "origin", "main", NEW_HEAD)
+    ledger.prepare(effect_id, kind="push-main", expected_after=NEW_HEAD)
+    ledger.mark_in_flight(effect_id, owner="worker", lease_seconds=60)
+    ledger.mark_unknown(effect_id, reason="lost response")
+    ledger.begin_reconcile(effect_id, owner="ops:other", lease_seconds=60)
+
+    # The remote does not carry the commit: without the fence we would settle "absent".
+    git = FakeGit(remote_head=OLD_HEAD)
+    result = await _arbiter(tmp_path, ledger, git)._push_base_branch({"status": "skipped"})
+
+    assert result["push_status"] == "busy"
+    assert result["status"] == "failed"
+    assert not git.pushed(), "a refused reconcile must not authorise a retry push"
+
+    record = ledger.get(effect_id)
+    assert record["status"] == EffectStatus.RECONCILING.value
+    assert record["owner"] == "ops:other", "the other reconciler keeps its claim"

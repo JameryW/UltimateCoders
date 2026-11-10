@@ -716,11 +716,20 @@ class WorkspaceManager:
 
     async def _settle_branch_push(self, ledger, effect_id: str, branch: str, head: str) -> str:
         """Ask the remote whether a subtask-branch publish landed."""
+        from ultimate_coders.effect_ledger import EffectBusyError
+
         record = ledger.get(effect_id) or {}
-        if record.get("status") == "PREPARED":
-            ledger.mark_in_flight(effect_id, owner="release-reconcile")
-        if record.get("status") != "RECONCILING":
-            ledger.begin_reconcile(effect_id, owner="release-reconcile")
+        try:
+            if record.get("status") == "PREPARED":
+                ledger.mark_in_flight(effect_id, owner="release-reconcile")
+            if record.get("status") != "RECONCILING":
+                ledger.begin_reconcile(effect_id, owner="release-reconcile")
+        except EffectBusyError as exc:
+            # Another reconciler owns this publish (a crashed one whose lease has not
+            # lapsed yet). Do not steal it and do not fail the release: the outcome is
+            # simply not knowable from here, so report "inconclusive".
+            logger.warning("Workspace: branch push reconcile held elsewhere: %s", exc)
+            return "inconclusive"
 
         before = await self._git(
             ["rev-parse", f"{self._remote_name}/{branch}"], cwd=self._project_path
@@ -735,19 +744,23 @@ class WorkspaceManager:
             return "inconclusive"
         parts = remote["stdout"].split()
         current = parts[0] if parts else ""
-        if head and current == head:
-            ledger.confirm(effect_id, result={"branch": branch, "head": current})
-            return "applied"
-        if current in (expected_before, ""):
-            ledger.resolve_reconcile(
-                effect_id,
-                applied=False,
-                reason="remote does not have the commit",
-                owner="release-reconcile",
-            )
-            return "absent"
-        ledger.mark_unknown(effect_id, reason="remote moved to an unexpected head")
-        return "inconclusive"
+        try:
+            if head and current == head:
+                ledger.confirm(effect_id, result={"branch": branch, "head": current})
+                return "applied"
+            if current in (expected_before, ""):
+                ledger.resolve_reconcile(
+                    effect_id,
+                    applied=False,
+                    reason="remote does not have the commit",
+                    owner="release-reconcile",
+                )
+                return "absent"
+            ledger.mark_unknown(effect_id, reason="remote moved to an unexpected head")
+            return "inconclusive"
+        except EffectBusyError as exc:
+            logger.warning("Workspace: branch push verdict refused: %s", exc)
+            return "inconclusive"
 
     async def _git(self, args: list[str], cwd: str = "") -> dict[str, Any]:
         """Run a git command and return stdout/stderr/exit_code."""

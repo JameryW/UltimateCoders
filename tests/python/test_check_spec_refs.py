@@ -980,7 +980,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # refs) (928 -> 930); unclassified stays 0.
     # 2026-11-10 arbiter ledger survives a transient failure (T56/ticket 56 +
     # v8 map line + test refs) (930 -> 932); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 932
+    # 2026-11-10 claim held elsewhere (T57/ticket 57 + v8 map line + arbiter and
+    # workspace test refs) (932 -> 937); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 937
 
 
 def test_real_corpus_has_no_false_content_mismatch():
