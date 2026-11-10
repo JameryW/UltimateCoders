@@ -157,6 +157,7 @@ P13 (D23) — Receipts read surface: **implemented**
 - [53 shortcut hints](tickets/53-shortcut-hints.md) — **implemented** (the four view-shortcut hints were stale/incomplete; they now derive from the key list and the shared letter table, and iewKeyHint is tested); was blocked by: D24
 - [54 NATS publisher follows its client](tickets/54-nats-publisher-follows-its-client.md) — **implemented** (dropping an owned client also drops the publisher wrapping it; proven by tests that fail on the unfixed file); was blocked by: none
 - [55 reconcile claim concurrency](tickets/55-reconcile-claim-concurrency.md) — **implemented** (single-winner claim and takeover, plus fencing under 8-thread contention; no defect found — the invariant moved from design claim to regression test); was blocked by: none
+- [56 arbiter ledger survives a transient failure](tickets/56-arbiter-ledger-survives-a-transient-failure.md) — **implemented** (one failed ev-parse used to clear the arbiter's ledger for good, turning later publishes into unrecorded pushes; now per-publish, proven by a test that fails on the unfixed file); was blocked by: none
 
 P14 (D24) — Receipt queue view: **implemented**
 
