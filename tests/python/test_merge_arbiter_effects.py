@@ -197,3 +197,33 @@ async def test_without_a_ledger_behaviour_is_unchanged(tmp_path):
     arbiter._git = git2  # type: ignore[assignment]
     failed = await arbiter._push_base_branch({"status": "skipped"})
     assert failed["push_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_one_failed_head_lookup_does_not_disable_receipts(tmp_path, ledger):
+    """A publish that cannot be named is unrecorded -- that one. Not all of them.
+
+    The arbiter outlives many publishes, so clearing its ledger on a transient
+    ``rev-parse`` failure would turn every later publish into an unrecorded push
+    (silently losing the protection the ledger exists for).
+    """
+    git = FakeGit()
+    arbiter = _arbiter(tmp_path, ledger, git)
+    real = arbiter._push_effect_id
+    calls = {"count": 0}
+
+    async def flaky() -> str | None:
+        calls["count"] += 1
+        return None if calls["count"] == 1 else await real()
+
+    arbiter._push_effect_id = flaky  # type: ignore[method-assign]
+
+    first = await arbiter._push_base_branch({"status": "skipped"})
+    assert first["push_status"] == "pushed"
+    assert "effect_id" not in first, "an unnameable publish stays unrecorded"
+    assert arbiter._ledger is ledger, "the ledger must survive a transient failure"
+
+    second = await arbiter._push_base_branch({"status": "skipped"})
+    assert second["push_status"] == "pushed"
+    record = ledger.get(second["effect_id"])
+    assert record["status"] == EffectStatus.CONFIRMED.value

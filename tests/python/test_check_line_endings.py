@@ -322,6 +322,7 @@ def test_real_repo_is_reconciled() -> None:
         (2561, 2552),  # T53 shortcut hints (ticket 53)
         (2562, 2553),  # T54 NATS publisher follows its client (ticket 54)
         (2564, 2555),  # T55 reconcile claim concurrency (test + ticket)
+        (2565, 2556),  # T56 arbiter ledger survives a transient failure (ticket)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

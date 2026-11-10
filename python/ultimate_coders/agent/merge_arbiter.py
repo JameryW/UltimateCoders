@@ -434,16 +434,22 @@ class MergeArbiter:
            rejection is reported as ``failed``.
         """
         effect_id = await self._push_effect_id()
-        if self._ledger is not None and effect_id is None:
-            # Cannot name the effect (rev-parse failed) -- skip the ledger
-            # rather than record under a guessed identity.
-            self._ledger = None
+        ledger = self._ledger
+        if ledger is not None and effect_id is None:
+            # Cannot name the effect (rev-parse failed) -- skip the ledger for THIS
+            # publish rather than record under a guessed identity. `ledger` is
+            # deliberately left alone: one failed rev-parse must not disable receipts
+            # for the rest of the arbiter's life, which spans many publishes.
+            logger.warning(
+                "MergeArbiter: cannot name the push effect (no HEAD); publishing unrecorded"
+            )
+            ledger = None
 
-        if self._ledger is not None:
+        if ledger is not None:
             from ultimate_coders.effect_ledger import EffectBusyError
 
             try:
-                record = self._ledger.prepare(
+                record = ledger.prepare(
                     effect_id,
                     kind="push-main",
                     request={
@@ -483,7 +489,7 @@ class MergeArbiter:
                     result["error"] = "push outcome unknown; awaiting reconciliation"
                     return result
                 # verdict == "absent": the retry below is safe.
-            self._ledger.mark_in_flight(effect_id, owner="merge-arbiter")
+            ledger.mark_in_flight(effect_id, owner="merge-arbiter")
 
         push_res = await self._git(
             ["push", self._remote_name, self._base_branch],
@@ -492,8 +498,8 @@ class MergeArbiter:
         if push_res["exit_code"] == 0:
             result["status"] = "merged"
             result["push_status"] = "pushed"
-            if self._ledger is not None:
-                self._ledger.confirm(effect_id, result={"branch": self._base_branch})
+            if ledger is not None:
+                ledger.confirm(effect_id, result={"branch": self._base_branch})
                 result["effect_id"] = effect_id
             logger.info("MergeArbiter: pushed %s", self._base_branch)
             return result
@@ -501,20 +507,20 @@ class MergeArbiter:
         stderr = push_res["stderr"][:200]
         result["status"] = "failed"
         result["error"] = f"push failed: {stderr}"
-        if self._ledger is None:
+        if ledger is None:
             result["push_status"] = "failed"
             logger.error("MergeArbiter: %s", result["error"])
             return result
 
         result["effect_id"] = effect_id
         if not _ambiguous_push_failure(push_res["stderr"]):
-            self._ledger.fail(effect_id, error=stderr)
+            ledger.fail(effect_id, error=stderr)
             result["push_status"] = "failed"
             logger.error("MergeArbiter: %s", result["error"])
             return result
 
         # Transport failure: the remote may already have the commit.
-        self._ledger.mark_unknown(effect_id, reason=stderr)
+        ledger.mark_unknown(effect_id, reason=stderr)
         verdict = await self._reconcile_push(effect_id)
         if verdict == "applied":
             result["status"] = "merged"
