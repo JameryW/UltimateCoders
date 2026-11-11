@@ -150,3 +150,92 @@ async def test_confirm_stop_settles_the_kill_receipt_through_the_operator_path(
     assert result["state"] == "stopped"
     assert kill_id in result["settled_effects"]
     assert _status(state, kill_id) == EffectStatus.CONFIRMED.value
+
+
+@pytest.mark.asyncio
+async def test_settling_one_backend_leaves_another_backends_receipt_alone(state):
+    """The backend id is part of the effect identity.
+
+    Evidence for one backend is not evidence for another.
+    """
+    mine = _ledger_row(
+        state, "metainfer-kill", (_BACKEND, _OPERATION, _REMOTE_ID), EffectStatus.UNKNOWN
+    )
+    other = _ledger_row(
+        state, "metainfer-kill", ("metainfer:other", _OPERATION, _REMOTE_ID), EffectStatus.UNKNOWN
+    )
+
+    settled = settle_metainfer_effects_from_operator_evidence(
+        state,
+        backend_id=_BACKEND,
+        operation_id=_OPERATION,
+        remote_id=_REMOTE_ID,
+        evidence="operator confirm_stop by ops:alice",
+    )
+
+    assert settled == [mine]
+    assert _status(state, mine) == EffectStatus.CONFIRMED.value
+    assert _status(state, other) == EffectStatus.UNKNOWN.value
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_receipt_is_not_reported_twice(state):
+    effect_id = _ledger_row(
+        state, "metainfer-kill", (_BACKEND, _OPERATION, _REMOTE_ID), EffectStatus.UNKNOWN
+    )
+    settle_metainfer_effects_from_operator_evidence(
+        state,
+        backend_id=_BACKEND,
+        operation_id=_OPERATION,
+        remote_id=_REMOTE_ID,
+        evidence="operator confirm_stop by ops:alice",
+    )
+    again = settle_metainfer_effects_from_operator_evidence(
+        state,
+        backend_id=_BACKEND,
+        operation_id=_OPERATION,
+        remote_id=_REMOTE_ID,
+        evidence="operator confirm_stop by ops:alice",
+    )
+    assert again == [], "an already-settled receipt is not a new settlement"
+    assert _status(state, effect_id) == EffectStatus.CONFIRMED.value
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_job_without_a_backend_id_uses_the_configured_identity(
+    state, monkeypatch
+):
+    """The adapter's resolution order is env -> url hash; the settle path must match it.
+
+    A worker configured with `UC_METAINFER_BACKEND_ID` writes its receipts under that
+    id. If the job record predates the field, the operator path used to fall straight
+    to the URL hash and settle nothing -- with an empty `settled_effects` and no warning.
+    """
+    monkeypatch.setenv("UC_METAINFER_BACKEND_ID", "metainfer:env")
+    effect_id = _ledger_row(
+        state, "metainfer-kill", ("metainfer:env", _OPERATION, _REMOTE_ID), EffectStatus.UNKNOWN
+    )
+    state.mutate(
+        "remote_jobs",
+        _OPERATION,
+        lambda old: {
+            "state": "cleanup_pending",
+            "remote_id": _REMOTE_ID,
+            "request_sha256": _REQUEST_SHA,
+        },
+    )
+    version = state.versioned_get("remote_jobs", _OPERATION).version
+
+    async def fake_confirm_quiescence(self, client, remote_id):
+        return {"quiesced": True, "remote_id": remote_id}
+
+    monkeypatch.setattr(
+        adapter_module.MetaInferAdapter, "confirm_quiescence", fake_confirm_quiescence
+    )
+
+    result = await RemoteJobs(state, "http://metainfer.test").reconcile(
+        _OPERATION, version, "confirm_stop", actor="ops:alice", client=object()
+    )
+
+    assert effect_id in result["settled_effects"]
+    assert _status(state, effect_id) == EffectStatus.CONFIRMED.value

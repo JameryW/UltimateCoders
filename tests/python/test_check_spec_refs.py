@@ -982,7 +982,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # v8 map line + test refs) (930 -> 932); unclassified stays 0.
     # 2026-11-10 claim held elsewhere (T57/ticket 57 + v8 map line + arbiter and
     # workspace test refs) (932 -> 937); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 937
+    # 2026-11-11 operator settlement backend identity (T58/ticket 58 + v8 map line
+    # + settle-path test refs) (937 -> 940); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 940
 
 
 def test_real_corpus_has_no_false_content_mismatch():
