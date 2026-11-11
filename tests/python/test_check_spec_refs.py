@@ -986,7 +986,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # + settle-path test refs) (937 -> 940); unclassified stays 0.
     # 2026-11-11 protoc install steps removed (T59/ticket 59 + v8 map line + the
     # build.rs reference in the ticket) (940 -> 941); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == MEASURED
+    assert sum(1 for r in rows if r["kind"] == "mention") == 941
 
 
 def test_real_corpus_has_no_false_content_mismatch():
