@@ -324,6 +324,8 @@ def test_real_repo_is_reconciled() -> None:
         (2564, 2555),  # T55 reconcile claim concurrency (test + ticket)
         (2565, 2556),  # T56 arbiter ledger survives a transient failure (ticket)
         (2567, 2558),  # T57 claim held elsewhere (test + ticket)
+        (2568, 2559),  # T58 operator settlement backend identity (ticket)
+        (2569, 2560),  # T59 protoc install resilience (ticket)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

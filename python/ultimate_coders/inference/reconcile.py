@@ -54,7 +54,15 @@ class RemoteJobs:
             raise RecordConflictError("Record version changed")
         if not actor or len(actor) > 128:
             raise ValueError("Operator identity is required")
-        backend_id = job.data.get("backend_id") or hashlib.sha256(self.url.encode()).hexdigest()
+        # Same resolution order the adapter uses to *create* the receipts
+        # (backend_id arg -> UC_METAINFER_BACKEND_ID -> sha256(url)). Dropping the
+        # env step here made the operator settle nothing -- silently -- for a worker
+        # configured with an explicit backend identity and an older job record.
+        backend_id = (
+            job.data.get("backend_id")
+            or os.environ.get("UC_METAINFER_BACKEND_ID")
+            or hashlib.sha256(self.url.encode()).hexdigest()
+        )
         adapter = MetaInferAdapter(self.url, backend_id=backend_id)
 
         async def apply(http):

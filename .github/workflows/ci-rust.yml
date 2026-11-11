@@ -30,8 +30,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo check --workspace
 
   test-no-storage:
@@ -41,8 +39,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo test -p uc-engine -p uc-grpc --no-default-features
 
   test-default:
@@ -52,8 +48,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo test -p uc-engine -p uc-grpc
 
   test-indexing:
@@ -74,8 +68,6 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   fmt:
@@ -120,8 +112,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Run PostgreSQL-backed integration tests
         # Covers the metadata store plus the scheduler's durable jobs
         # (`schedule_postgres_tests`): migrations, legacy ALTER upgrade, and
@@ -168,8 +158,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Start storage infrastructure
         run: |
           # TiKV can OOM on first start in CI; retry once after a short pause.
