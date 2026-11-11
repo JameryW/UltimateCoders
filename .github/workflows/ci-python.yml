@@ -109,8 +109,6 @@ jobs:
       # its base runtime dependencies must be explicit here.
       - run: pip install pytest pytest-asyncio pytest-cov pyyaml maturin httpx anthropic litellm fastapi uvicorn jinja2 sse-starlette nats-py prometheus-client
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Build Rust extension
         run: |
           python -m venv .venv
