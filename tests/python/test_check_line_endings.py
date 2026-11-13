@@ -328,6 +328,7 @@ def test_real_repo_is_reconciled() -> None:
         (2569, 2560),  # T59 protoc install resilience (ticket)
         (2571, 2562),  # T60 workspace recovery tested (test + ticket)
         (2572, 2563),  # T61 concurrency cap claimed (ticket)
+        (2573, 2564),  # T62 token buckets cannot be poisoned (ticket)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

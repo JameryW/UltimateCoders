@@ -5,10 +5,21 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use uc_types::EngineError;
+
+/// Take a bucket lock, ignoring poisoning.
+///
+/// A panic in an unrelated caller must not poison the token buckets into
+/// panicking on every later request: the guarded values are two floats and an
+/// `Instant`, so a poisoned bucket is still numerically sound.
+fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Token bucket for single-dimension rate limiting.
 ///
@@ -52,7 +63,7 @@ impl TokenBucket {
     pub fn try_consume(&self, amount: f64) -> bool {
         self.refill();
 
-        let mut tokens = self.tokens.lock().unwrap();
+        let mut tokens = lock_unpoisoned(&self.tokens);
         if *tokens >= amount {
             *tokens -= amount;
             true
@@ -75,7 +86,7 @@ impl TokenBucket {
     /// Get the current available tokens (after refill).
     pub fn available(&self) -> f64 {
         self.refill();
-        let tokens = self.tokens.lock().unwrap();
+        let tokens = lock_unpoisoned(&self.tokens);
         *tokens
     }
 
@@ -83,20 +94,26 @@ impl TokenBucket {
     /// already consumed). Capped at capacity so a refund can't exceed burst.
     /// Does NOT touch last_refill — the refill clock keeps running.
     pub fn refund(&self, amount: f64) {
-        let mut tokens = self.tokens.lock().unwrap();
+        let mut tokens = lock_unpoisoned(&self.tokens);
         *tokens = (*tokens + amount).min(self.capacity);
     }
 
     /// Get the time until `amount` tokens will be available.
     pub fn wait_time(&self, amount: f64) -> Duration {
         self.refill();
-        let tokens = self.tokens.lock().unwrap();
+        let tokens = lock_unpoisoned(&self.tokens);
         if *tokens >= amount {
             Duration::ZERO
         } else if self.refill_rate > 0.0 {
             let deficit = amount - *tokens;
             let seconds = deficit / self.refill_rate;
-            Duration::from_secs_f64(seconds)
+            // `Duration::from_secs_f64` panics on NaN/negative/overflow, and a
+            // non-finite token estimate (or a huge one) reaches exactly that here.
+            if seconds.is_finite() && seconds > 0.0 {
+                Duration::from_secs_f64(seconds)
+            } else {
+                Duration::from_secs(3600)
+            }
         } else {
             Duration::from_secs(3600) // No refill, effectively infinite wait
         }
@@ -104,11 +121,13 @@ impl TokenBucket {
 
     /// Refill tokens based on elapsed time.
     fn refill(&self) {
-        let mut last_refill = self.last_refill.lock().unwrap();
-        let mut tokens = self.tokens.lock().unwrap();
+        let mut last_refill = lock_unpoisoned(&self.last_refill);
+        let mut tokens = lock_unpoisoned(&self.tokens);
 
         let now = Instant::now();
-        let elapsed = now.duration_since(*last_refill).as_secs_f64();
+        // `duration_since` panics when the caller's `now` is earlier than
+        // `last_refill`; a saturating read treats that as "no time passed".
+        let elapsed = now.saturating_duration_since(*last_refill).as_secs_f64();
         let refill = elapsed * self.refill_rate;
 
         *tokens = (*tokens + refill).min(self.capacity);
@@ -179,6 +198,14 @@ impl LlmRateLimiter {
     /// # Returns
     /// `Ok(())` if capacity is available, `Err(EngineError::RateLimited)` otherwise.
     pub fn try_acquire(&self, estimated_tokens: f64) -> Result<(), EngineError> {
+        // A NaN/infinite estimate would compare false against every bucket and then
+        // panic in `wait_time`'s duration arithmetic; refuse it explicitly instead.
+        if !estimated_tokens.is_finite() || estimated_tokens < 0.0 {
+            return Err(EngineError::InvalidOperation(
+                "estimated_tokens must be finite and non-negative".to_string(),
+            ));
+        }
+
         // Claim the concurrency slot atomically: a plain load-then-add let every
         // thread that observed `active < max` through, so the cap was advisory
         // under load rather than enforced.
@@ -610,6 +637,37 @@ mod tests {
             "the claimed slot must be released"
         );
         assert_eq!(limiter.total_requests(), 0);
+    }
+
+    #[test]
+    fn a_non_finite_token_estimate_is_rejected_not_panicked_on() {
+        let limiter = LlmRateLimiter::with_defaults();
+
+        assert!(limiter.try_acquire(f64::NAN).is_err());
+        assert!(limiter.try_acquire(f64::INFINITY).is_err());
+        assert!(limiter.try_acquire(-1.0).is_err());
+        assert_eq!(
+            limiter.active_count(),
+            0,
+            "a rejected estimate holds no slot"
+        );
+
+        // Still usable: a panic inside the bucket arithmetic would have poisoned
+        // the locks, and every later acquire would panic instead of answering.
+        assert!(limiter.try_acquire(1.0).is_ok());
+        limiter.release();
+        assert_eq!(limiter.active_count(), 0);
+    }
+
+    #[test]
+    fn wait_time_survives_a_non_finite_expectation() {
+        let bucket = TokenBucket::new(10.0, 10.0);
+        assert!(bucket.try_consume(10.0));
+
+        // `Duration::from_secs_f64(NaN)` panics; the fallback is the same
+        // "effectively infinite" answer an unrefilling bucket gives.
+        assert_eq!(bucket.wait_time(f64::NAN), Duration::from_secs(3600));
+        assert_eq!(bucket.wait_time(f64::INFINITY), Duration::from_secs(3600));
     }
 
     #[test]
