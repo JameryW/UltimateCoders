@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import socket
 from dataclasses import dataclass
@@ -17,6 +18,8 @@ from ultimate_coders.runtime_state import RuntimeState, process_matches
 from .adapter import MetaInferAdapter, settle_metainfer_effects_from_operator_evidence
 from .resources import ResourceBudget
 from .service_contract import CONTRACT_VERSION
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -182,10 +185,26 @@ class RemoteJobs:
                 "evidence": "local host/process birth and remote terminal states",
             },
         )
+        released, unreleased = [], []
         for experiment in experiments:
             for resource_id in experiment.get("gpu_reservations", []):
-                ResourceBudget(self.state, resource_id).release(experiment["key"])
-        return result
+                try:
+                    ResourceBudget(self.state, resource_id).release(experiment["key"])
+                except Exception:
+                    # One unreadable budget record must not leak every other
+                    # reservation of the recovered workspace, and the lease is
+                    # already reconciled: report the leftovers instead of raising
+                    # after the fact.
+                    logger.warning(
+                        "Workspace recovery could not release reservation %s of %s",
+                        resource_id,
+                        experiment["key"],
+                        exc_info=True,
+                    )
+                    unreleased.append(resource_id)
+                    continue
+                released.append(resource_id)
+        return {**result, "released_reservations": released, "unreleased_reservations": unreleased}
 
 
 def main() -> None:
