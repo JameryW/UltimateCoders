@@ -182,14 +182,20 @@ impl LlmRateLimiter {
         // Claim the concurrency slot atomically: a plain load-then-add let every
         // thread that observed `active < max` through, so the cap was advisory
         // under load rather than enforced.
-        if self
-            .active_count
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
-                (current < self.max_concurrent).then_some(current + 1)
-            })
-            .is_err()
-        {
-            return Err(EngineError::RateLimited(1));
+        let mut current = self.active_count.load(Ordering::SeqCst);
+        loop {
+            if current >= self.max_concurrent {
+                return Err(EngineError::RateLimited(1));
+            }
+            match self.active_count.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
         }
 
         // Check RPM
@@ -223,11 +229,18 @@ impl LlmRateLimiter {
     /// Saturating: an unmatched release must not wrap the counter to
     /// `usize::MAX`, which would silently disable the concurrency cap forever.
     pub fn release(&self) {
-        let _ = self
-            .active_count
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
-                Some(current.saturating_sub(1))
-            });
+        let mut current = self.active_count.load(Ordering::SeqCst);
+        while current > 0 {
+            match self.active_count.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return,
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     /// Check if a request can be made without actually consuming tokens.
