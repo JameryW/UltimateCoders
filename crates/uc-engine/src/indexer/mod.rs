@@ -83,7 +83,15 @@ impl IndexPipeline {
 
         // Check existing index state for incremental indexing
         let existing_state = self.metadata.get_index_state(&repo_spec.repo_id).await?;
-        let is_incremental = existing_state.is_some() && !request.force_full;
+        // A stored state whose baseline SHA is empty means the previous full index
+        // could not read HEAD (a repo spec without a local git path, or a transient
+        // git failure). There is nothing to diff against, and an incremental run
+        // would fail on the same read -- so treat it as "no baseline" and index in
+        // full, exactly like the call that produced that state.
+        let has_baseline = existing_state
+            .as_ref()
+            .is_some_and(|state| !state.last_indexed_sha.is_empty());
+        let is_incremental = has_baseline && !request.force_full;
 
         if is_incremental {
             self.incremental_index(repo_spec, existing_state.as_ref().unwrap())
@@ -858,6 +866,34 @@ mod tests {
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn a_repo_without_a_local_path_can_be_indexed_twice() {
+        let metadata = Arc::new(PostgresMetadataStore::new_fallback());
+        let pipeline = IndexPipeline::new(metadata);
+
+        let request = IndexRequest {
+            repo: RepoSpec {
+                repo_id: "test-pathless".to_string(),
+                remote_url: "https://example.invalid/repo.git".to_string(),
+                default_branch: "main".to_string(),
+                local_path: None,
+                workspace_id: "default".to_string(),
+            },
+            force_full: false,
+        };
+
+        // The first call indexes in full and records a state with no baseline SHA:
+        // a spec without a local path has no HEAD to read.
+        let first = pipeline.index_repo(&request).await.unwrap();
+        assert_eq!(first.files_indexed, 0);
+
+        // The second call used to choose the incremental path and fail on that same
+        // unreadable HEAD ("local path required for HEAD SHA"). An unknown baseline
+        // must mean "index in full", not "diff against an empty revision".
+        let second = pipeline.index_repo(&request).await.unwrap();
+        assert_eq!(second.files_indexed, 0);
     }
 
     #[tokio::test]

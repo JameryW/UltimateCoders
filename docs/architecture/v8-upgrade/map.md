@@ -164,6 +164,7 @@ P13 (D23) — Receipts read surface: **implemented**
 - [60 workspace recovery tested](tickets/60-workspace-recovery-tested.md) — **implemented** (the operator recovery path had no tests, and one failing release leaked every remaining GPU reservation of the recovered workspace; each release is now independent and the result reports `released_reservations` / `unreleased_reservations`); was blocked by: none
 - [61 concurrency cap claimed](tickets/61-concurrency-cap-claimed.md) — **implemented** (the LLM limiter's `max_concurrent` was a load-then-add check, so bursts exceeded the cap; the slot is now claimed with `fetch_update`, and `release` saturates instead of wrapping the counter to `usize::MAX`); was blocked by: none
 - [62 token buckets cannot be poisoned](tickets/62-token-buckets-cannot-be-poisoned.md) — **implemented** (a non-finite token estimate panicked inside `wait_time` while holding the bucket lock, poisoning it for the process lifetime; estimates are validated, the duration arithmetic guarded, and every bucket lock poison-tolerant); was blocked by: none
+- [63 pathless repo reindex](tickets/63-pathless-repo-reindex.md) — **implemented** (a full index that could not read HEAD stored an empty baseline as `Healthy`, so the next `index_repo` picked the incremental path and failed on the same read; an empty baseline now means "index in full"); was blocked by: none
 
 P14 (D24) — Receipt queue view: **implemented**
 
