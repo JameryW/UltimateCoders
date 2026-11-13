@@ -992,7 +992,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # 947); unclassified stays 0.
     # 2026-11-13 token buckets cannot be poisoned (T62/ticket 62 + v8 map line)
     # (947 -> 949); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 949
+    # 2026-11-13 pathless repo reindex (T63/ticket 63 + v8 map line + the indexer
+    # test refs) (949 -> 951); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 951
 
 
 def test_real_corpus_has_no_false_content_mismatch():
