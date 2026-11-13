@@ -179,15 +179,23 @@ impl LlmRateLimiter {
     /// # Returns
     /// `Ok(())` if capacity is available, `Err(EngineError::RateLimited)` otherwise.
     pub fn try_acquire(&self, estimated_tokens: f64) -> Result<(), EngineError> {
-        // Check concurrent limit
-        let active = self.active_count.load(Ordering::SeqCst);
-        if active >= self.max_concurrent {
+        // Claim the concurrency slot atomically: a plain load-then-add let every
+        // thread that observed `active < max` through, so the cap was advisory
+        // under load rather than enforced.
+        if self
+            .active_count
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                (current < self.max_concurrent).then_some(current + 1)
+            })
+            .is_err()
+        {
             return Err(EngineError::RateLimited(1));
         }
 
         // Check RPM
         if !self.rpm_bucket.try_consume(1.0) {
             let wait = self.rpm_bucket.wait_time(1.0);
+            self.release();
             return Err(EngineError::RateLimited(wait.as_secs() + 1));
         }
 
@@ -198,11 +206,11 @@ impl LlmRateLimiter {
             // TPM-rejection leaked one RPM token, slowly starving the RPM
             // bucket below its configured rate even though no request ran.
             self.rpm_bucket.refund(1.0);
+            self.release();
             return Err(EngineError::RateLimited(wait.as_secs() + 1));
         }
 
         // Record the request
-        self.active_count.fetch_add(1, Ordering::SeqCst);
         self.total_requests.fetch_add(1, Ordering::SeqCst);
         self.total_tokens
             .fetch_add(estimated_tokens as u64, Ordering::SeqCst);
@@ -211,8 +219,15 @@ impl LlmRateLimiter {
     }
 
     /// Release a request slot (call after the request completes).
+    ///
+    /// Saturating: an unmatched release must not wrap the counter to
+    /// `usize::MAX`, which would silently disable the concurrency cap forever.
     pub fn release(&self) {
-        self.active_count.fetch_sub(1, Ordering::SeqCst);
+        let _ = self
+            .active_count
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                Some(current.saturating_sub(1))
+            });
     }
 
     /// Check if a request can be made without actually consuming tokens.
@@ -533,5 +548,65 @@ mod tests {
         assert!(RequestPriority::Critical > RequestPriority::High);
         assert!(RequestPriority::High > RequestPriority::Medium);
         assert!(RequestPriority::Medium > RequestPriority::Low);
+    }
+
+    #[test]
+    fn concurrency_cap_holds_under_contention() {
+        use std::sync::{Arc, Barrier};
+
+        let limiter = Arc::new(LlmRateLimiter::new(&LlmRateLimiterConfig {
+            rpm: 1_000_000.0,
+            tpm: 1_000_000_000.0,
+            max_concurrent: 4,
+        }));
+        let barrier = Arc::new(Barrier::new(32));
+        let mut handles = Vec::new();
+        for _ in 0..32 {
+            let limiter = Arc::clone(&limiter);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                limiter.try_acquire(1.0).is_ok()
+            }));
+        }
+        let accepted = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("worker thread"))
+            .filter(|accepted| *accepted)
+            .count();
+
+        assert_eq!(
+            accepted, 4,
+            "the cap must be claimed atomically, not checked"
+        );
+        assert_eq!(limiter.active_count(), 4);
+    }
+
+    #[test]
+    fn a_rejected_acquire_does_not_hold_a_slot() {
+        let limiter = LlmRateLimiter::new(&LlmRateLimiterConfig {
+            rpm: 60.0,
+            tpm: 0.0, // every token request is rejected by the TPM bucket
+            max_concurrent: 2,
+        });
+
+        assert!(limiter.try_acquire(1.0).is_err());
+        assert_eq!(
+            limiter.active_count(),
+            0,
+            "the claimed slot must be released"
+        );
+        assert_eq!(limiter.total_requests(), 0);
+    }
+
+    #[test]
+    fn releasing_without_acquiring_does_not_wrap_the_counter() {
+        let limiter = LlmRateLimiter::with_defaults();
+        limiter.release();
+        assert_eq!(
+            limiter.active_count(),
+            0,
+            "an unmatched release must not wrap the counter to usize::MAX"
+        );
     }
 }

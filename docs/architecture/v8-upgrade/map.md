@@ -162,6 +162,7 @@ P13 (D23) — Receipts read surface: **implemented**
 - [58 operator settlement backend identity](tickets/58-operator-settlement-backend-identity.md) — **implemented** (the settle path dropped UC_METAINFER_BACKEND_ID from the identity resolution, so a legacy job record settled nothing silently; now matched to the adapter, plus multi-backend isolation tests); was blocked by: none
 - [59 protoc install steps removed](tickets/59-protoc-install-resilience.md) — **implemented** (the seven apt-based Install protoc steps are deleted: crates/uc-grpc/build.rs already sets PROTOC from protoc-bin-vendored, so a runner mirror outage reddened seven jobs for a compiler the build never used); was blocked by: none
 - [60 workspace recovery tested](tickets/60-workspace-recovery-tested.md) — **implemented** (the operator recovery path had no tests, and one failing release leaked every remaining GPU reservation of the recovered workspace; each release is now independent and the result reports `released_reservations` / `unreleased_reservations`); was blocked by: none
+- [61 concurrency cap claimed](tickets/61-concurrency-cap-claimed.md) — **implemented** (the LLM limiter's `max_concurrent` was a load-then-add check, so bursts exceeded the cap; the slot is now claimed with `fetch_update`, and `release` saturates instead of wrapping the counter to `usize::MAX`); was blocked by: none
 
 P14 (D24) — Receipt queue view: **implemented**
 

@@ -988,7 +988,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # build.rs reference in the ticket) (940 -> 941); unclassified stays 0.
     # 2026-11-12 workspace recovery tested (T60/ticket 60 + v8 map line + the
     # test file's own refs) (941 -> 945); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 945
+    # 2026-11-13 concurrency cap claimed (T61/ticket 61 + v8 map line) (945 ->
+    # 947); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 947
 
 
 def test_real_corpus_has_no_false_content_mismatch():
