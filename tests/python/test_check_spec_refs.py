@@ -990,7 +990,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # test file's own refs) (941 -> 945); unclassified stays 0.
     # 2026-11-13 concurrency cap claimed (T61/ticket 61 + v8 map line) (945 ->
     # 947); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 947
+    # 2026-11-13 token buckets cannot be poisoned (T62/ticket 62 + v8 map line)
+    # (947 -> 949); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 949
 
 
 def test_real_corpus_has_no_false_content_mismatch():
