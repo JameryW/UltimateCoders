@@ -330,6 +330,7 @@ def test_real_repo_is_reconciled() -> None:
         (2572, 2563),  # T61 concurrency cap claimed (ticket)
         (2573, 2564),  # T62 token buckets cannot be poisoned (ticket)
         (2574, 2565),  # T63 pathless repo reindex (ticket)
+        (2576, 2567),  # T64 streaming sandbox deadline (test + ticket)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

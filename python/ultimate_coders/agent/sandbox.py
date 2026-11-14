@@ -1033,11 +1033,20 @@ class SandboxManager:
 
                     stderr_task = asyncio.create_task(_read_stderr())
 
+                    # `timeout_secs` is the whole command's budget, exactly as the
+                    # non-streaming path applies it to `communicate()`. Waiting that
+                    # long *per line* made the limit an idle timeout: a command that
+                    # keeps printing reset the clock on every line and ran forever,
+                    # holding the worker slot the budget exists to bound.
+                    deadline = start + timeout_secs
                     try:
                         while True:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise asyncio.TimeoutError
                             line_bytes = await asyncio.wait_for(
                                 proc.stdout.readline(),
-                                timeout=timeout_secs,
+                                timeout=remaining,
                             )
                             if not line_bytes:
                                 break
