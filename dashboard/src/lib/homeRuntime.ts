@@ -142,3 +142,47 @@ export function formatSyncAge(timestamp: number | null, now: number): string {
   if (minutes < 60) return `${minutes}m ago`;
   return `${Math.floor(minutes / 60)}h ago`;
 }
+
+/** Where the operations shell lives inside this SPA. */
+export const DASHBOARD_HREF = "#/dashboard";
+/** The section a visitor can read instead when the shell has no backend. */
+export const WORKFLOW_HREF = "#home-workflow";
+
+export type ShowcaseCta = {
+  /** Button text. */
+  label: string;
+  /** Where it goes. */
+  href: string;
+  /** One line under the button explaining what that destination is. */
+  note: string;
+};
+
+/**
+ * The call to action must not promise a dashboard this host cannot serve.
+ *
+ * On the public showcase (a static nginx host with no orchestrator) the primary
+ * button used to say "Open operations dashboard" next to the claim "real Gateway
+ * connection · live task events" — and `/dashboard` there renders a shell pinned
+ * at OFFLINE that retries forever. Only a reachable Gateway (probe `reachable`)
+ * may be advertised as a dashboard; everything else sends the visitor to the
+ * workflow section and says why.
+ */
+export function showcasePrimaryCta(mode: ShowcaseRuntimeMode): ShowcaseCta {
+  const transportReady = mode === "live" || mode === "connecting";
+  if (transportReady) {
+    return {
+      label: "Open operations dashboard",
+      href: DASHBOARD_HREF,
+      note:
+        mode === "live"
+          ? "Connected Gateway · live task events"
+          : "Gateway reachable · connecting the event stream",
+    };
+  }
+  return {
+    label: "Explore the execution loop",
+    href: WORKFLOW_HREF,
+    note: "No Gateway on this host: the operations dashboard runs from a local or cluster deployment.",
+  };
+}
+

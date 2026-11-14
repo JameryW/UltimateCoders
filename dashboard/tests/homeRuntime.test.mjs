@@ -2,16 +2,19 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  DASHBOARD_HREF,
   HOME_DOCUMENT_TITLE,
   RUNTIME_MAX_FAILURES,
   RUNTIME_POLL_INTERVAL_MS,
   RUNTIME_RETRY_BASE_MS,
   RUNTIME_RETRY_MAX_MS,
+  WORKFLOW_HREF,
   classifyProbeResponse,
   formatSyncAge,
   nextPollDelay,
   runtimeBadge,
   runtimeStatusLabel,
+  showcasePrimaryCta,
   showcaseRuntimeMode,
   shouldStopPolling,
   transportLabel,
@@ -118,3 +121,27 @@ test("the overview owns the document title while it is mounted", () => {
   assert.match(HOME_DOCUMENT_TITLE, /UltimateCoders/);
   assert.notEqual(HOME_DOCUMENT_TITLE, "UltimateCoders Dashboard", "that title names the operations shell");
 });
+
+test("the primary action never promises a dashboard this host cannot serve", () => {
+  // Only a reachable Gateway (probe `reachable` -> live/connecting) may advertise
+  // /dashboard: on the static showcase that route renders a shell pinned at
+  // OFFLINE, so the CTA sends the visitor to the execution loop instead.
+  for (const mode of ["live", "connecting"]) {
+    const cta = showcasePrimaryCta(mode);
+    assert.equal(cta.href, DASHBOARD_HREF, `${mode} must open the dashboard`);
+    assert.match(cta.label, /dashboard/i, `${mode} label must name the dashboard`);
+    assert.ok(cta.note.length > 0, `${mode} still needs a one-line note`);
+    assert.doesNotMatch(cta.note, /No Gateway/, `${mode} has a Gateway and must not claim otherwise`);
+  }
+  for (const mode of ["checking", "preview"]) {
+    const cta = showcasePrimaryCta(mode);
+    assert.equal(cta.href, WORKFLOW_HREF, `${mode} must not send the visitor to a dead shell`);
+    assert.notEqual(cta.label, "", `${mode} needs a label`);
+    assert.match(cta.note, /Gateway/, `${mode} must say why there is no dashboard`);
+    assert.match(cta.note, /deployment/i, `${mode} must point at the deployment that does have one`);
+  }
+  const preview = showcasePrimaryCta("preview");
+  assert.notEqual(preview.label, "Open operations dashboard");
+  assert.notEqual(preview.href, DASHBOARD_HREF);
+});
+

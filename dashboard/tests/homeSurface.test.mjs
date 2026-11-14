@@ -115,3 +115,27 @@ test("the skip link and its target exist", () => {
   assert.match(homePage, /href="#home-content"/);
   assert.match(homePage, /id="home-content"/);
 });
+
+test("the page never claims a live dashboard the host may not have", () => {
+  // The static showcase used to end with "real Gateway connection · live task
+  // events" and a primary button straight into a shell that can only be OFFLINE.
+  assert.ok(
+    !homePage.includes("real Gateway connection"),
+    "that claim is false on a static host; the CTA note comes from the probe verdict",
+  );
+  assert.match(homePage, /showcasePrimaryCta/, "the CTA must be derived from the runtime mode");
+  assert.match(homePage, /href=\{primaryCta\.href\}/, "both CTAs must use the derived destination");
+  assert.match(homePage, /\{primaryCta\.note\}/, "the CTA note must be the derived explanation");
+  assert.match(
+    homePage,
+    /primaryIsDashboard \? "Open live dashboard" : "See the execution loop"/,
+    "the inline dashboard link must stay conditional on the probe verdict",
+  );
+  const liveClaims = homePage.match(/"Open live dashboard"/g) ?? [];
+  assert.equal(
+    liveClaims.length,
+    1,
+    "the claim may exist only inside the conditional, never as a second bare occurrence",
+  );
+});
+
