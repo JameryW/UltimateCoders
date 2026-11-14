@@ -605,17 +605,33 @@ class WorkspaceManager:
                     and item.get("handle", {}).get("worktree_path") == path
                     for item in leases
                 )
-            if not is_active:
-                try:
-                    await self._git(
-                        ["worktree", "remove", path, "--force"],
-                        cwd=self._project_path,
+            if is_active:
+                continue
+            removal = await self._git(
+                ["worktree", "remove", path, "--force"],
+                cwd=self._project_path,
+            )
+            if removal["exit_code"] != 0:
+                # git refuses when the directory is no longer a valid worktree (its
+                # `.git` file is gone after a crash) or when a file is locked. The
+                # old `except Exception` here was dead code -- `_git` returns instead
+                # of raising -- so this counted a removal that never happened and the
+                # branch stayed pinned to a worktree that no longer existed.
+                shutil.rmtree(path, ignore_errors=True)
+                if os.path.exists(path):
+                    logger.warning(
+                        "Workspace cleanup: could not remove %s (%s)",
+                        path,
+                        removal["stderr"][:200],
                     )
-                    cleaned += 1
-                except Exception:
-                    shutil.rmtree(path, ignore_errors=True)
-                    cleaned += 1
+                    continue
+            cleaned += 1
 
+        # Drop metadata for worktrees whose directory is gone: without this, a
+        # worktree that a crash (or the fallback above) unlinked leaves the repo
+        # believing it still exists, which pins its branch against `git branch -D`.
+        # One bounded git call per cleanup, and it repairs older leaks too.
+        await self._git(["worktree", "prune"], cwd=self._project_path)
         return cleaned
 
     async def _push_subtask_branch(

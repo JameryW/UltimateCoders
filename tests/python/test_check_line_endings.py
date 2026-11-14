@@ -333,6 +333,7 @@ def test_real_repo_is_reconciled() -> None:
         (2576, 2567),  # T64 streaming sandbox deadline (test + ticket)
         (2578, 2569),  # T65 Windows tree kill (test + ticket)
         (2580, 2571),  # T66 workspace git timeout (test + ticket)
+        (2582, 2573),  # T67 cleanup reports real removals (test + ticket)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 
