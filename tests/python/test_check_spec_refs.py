@@ -1010,7 +1010,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-14 showcase scrolls and says what it is (T70/ticket 70 + v8 map
     # line + the homeRuntime module and the two new test files' own refs)
     # (975 -> 981); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 981
+    # 2026-11-14 the showcase stops advertising a dashboard it cannot serve
+    # (T71/ticket 71 + v8 map line + the CTA derivation cited by the ticket and
+    # its tests) (981 -> 989); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 989
 
 
 def test_real_corpus_has_no_false_content_mismatch():

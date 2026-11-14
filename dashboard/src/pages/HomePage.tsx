@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useGrpcWeb } from "@/hooks/useGrpcWeb";
 import {
+  DASHBOARD_HREF,
   HOME_DOCUMENT_TITLE,
   RUNTIME_POLL_INTERVAL_MS,
   RUNTIME_PROBE_TIMEOUT_MS,
+  WORKFLOW_HREF,
   formatSyncAge,
   nextPollDelay,
   probeGateway,
   runtimeBadge,
   runtimeStatusLabel,
+  showcasePrimaryCta,
   showcaseRuntimeMode,
   shouldStopPolling,
   transportLabel,
@@ -296,6 +299,15 @@ export default function HomePage() {
   const statusLabel = isLive ? transportLabel(connectionState) : runtimeStatusLabel(mode);
   const canRefresh = probe === "reachable";
 
+  // Only a host that answered the probe may be advertised as a dashboard; on a
+  // static showcase the primary action opens the execution loop and explains why.
+  const primaryCta = showcasePrimaryCta(mode);
+  const primaryIsDashboard = primaryCta.href === DASHBOARD_HREF;
+  const primaryArrow = primaryIsDashboard ? "→" : "↓";
+  const secondaryCta = primaryIsDashboard
+    ? { label: "See how it works", href: WORKFLOW_HREF, arrow: "↓" }
+    : { label: "Open operations dashboard", href: DASHBOARD_HREF, arrow: "→" };
+
   const handleRefresh = useCallback(() => {
     if (canRefresh) {
       void refreshRuntime();
@@ -350,8 +362,12 @@ export default function HomePage() {
               一个入口连接 Gateway、Worker、Search 和 Memory，把复杂 Coding 任务变成可调度、可观察、可恢复的执行链。
             </p>
             <div className="home-hero-actions">
-              <a className="home-button home-button-primary" href="#/dashboard">Open dashboard <span aria-hidden="true">→</span></a>
-              <a className="home-button home-button-secondary" href="#home-workflow">See how it works <span aria-hidden="true">↓</span></a>
+              <a className="home-button home-button-primary" href={primaryCta.href}>
+                {primaryCta.label} <span aria-hidden="true">{primaryArrow}</span>
+              </a>
+              <a className="home-button home-button-secondary" href={secondaryCta.href}>
+                {secondaryCta.label} <span aria-hidden="true">{secondaryCta.arrow}</span>
+              </a>
             </div>
             <div className="home-trust-line">
               <span>BUILT FOR REAL REPOSITORIES</span>
@@ -475,7 +491,10 @@ export default function HomePage() {
               <div className="home-section-kicker">WHY IT MATTERS</div>
               <h2 id="scenarios-title">Designed for the work<br /><em>behind the prompt.</em></h2>
             </div>
-            <a className="home-inline-link" href="#/dashboard">Open live dashboard <span aria-hidden="true">↗</span></a>
+            <a className="home-inline-link" href={primaryCta.href}>
+              {primaryIsDashboard ? "Open live dashboard" : "See the execution loop"}{" "}
+              <span aria-hidden="true">{primaryIsDashboard ? "↗" : "↓"}</span>
+            </a>
           </div>
           <div className="home-scenario-grid">
             {scenarios.map((scenario) => (
@@ -495,8 +514,10 @@ export default function HomePage() {
             <h2>Turn the next idea<br /><em>into a traceable run.</em></h2>
           </div>
           <div className="home-final-actions">
-            <a className="home-button home-button-primary" href="#/dashboard">Open operations dashboard <span aria-hidden="true">→</span></a>
-            <span>real Gateway connection · live task events</span>
+            <a className="home-button home-button-primary" href={primaryCta.href}>
+              {primaryCta.label} <span aria-hidden="true">{primaryArrow}</span>
+            </a>
+            <span>{primaryCta.note}</span>
           </div>
         </section>
 

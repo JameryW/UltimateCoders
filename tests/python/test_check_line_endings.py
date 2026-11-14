@@ -337,6 +337,7 @@ def test_real_repo_is_reconciled() -> None:
         (2584, 2575),  # T68 unconfirmed delivery is not success (test + ticket)
         (2587, 2578),  # T69 push status vocabulary (module + test + ticket)
         (2591, 2582),  # T70 showcase scroll (module + 2 tests + ticket)
+        (2592, 2583),  # T71 showcase CTA honesty (ticket only)
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 
