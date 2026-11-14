@@ -166,6 +166,7 @@ P13 (D23) — Receipts read surface: **implemented**
 - [62 token buckets cannot be poisoned](tickets/62-token-buckets-cannot-be-poisoned.md) — **implemented** (a non-finite token estimate panicked inside `wait_time` while holding the bucket lock, poisoning it for the process lifetime; estimates are validated, the duration arithmetic guarded, and every bucket lock poison-tolerant); was blocked by: none
 - [63 pathless repo reindex](tickets/63-pathless-repo-reindex.md) — **implemented** (a full index that could not read HEAD stored an empty baseline as `Healthy`, so the next `index_repo` picked the incremental path and failed on the same read; an empty baseline now means "index in full"); was blocked by: none
 - [64 streaming sandbox deadline](tickets/64-streaming-sandbox-deadline.md) — **implemented** (the streaming path re-armed `timeout_secs` on every stdout line, so a command that keeps printing was unbounded — measured: a 2 s chatty script under a 0.4 s budget completed; the loop now holds one deadline); was blocked by: none
+- [65 Windows tree kill](tickets/65-windows-tree-kill.md) — **implemented** (killing a sandbox command on Windows used to stop at the direct child, leaving the agent CLI's tool subprocesses running; `taskkill /T` now ends the tree, proven by a grandchild that keeps writing until it is really gone); was blocked by: none
 
 P14 (D24) — Receipt queue view: **implemented**
 

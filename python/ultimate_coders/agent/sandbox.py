@@ -501,16 +501,19 @@ def subtask_usage_from_token_usage(
 
 
 def _kill_process_tree(proc: Any) -> None:
-    """Kill a subprocess and, on POSIX, its whole process group.
+    """Kill a subprocess and everything it spawned.
 
     T7 #643 cooperative cancel: the agent CLI spawns tool subprocesses, so
-    killing only the direct child orphans the rest of the group. Spawns use
+    killing only the direct child orphans the rest of the tree. Spawns use
     ``start_new_session`` on POSIX, making the child a group leader — one
-    ``killpg`` reaps the entire tree. Windows has no process groups; the
-    single-process kill is the documented fallback.
+    ``killpg`` reaps it. Windows has no process groups, but it does have tree
+    termination (``taskkill /T``); without it a timed-out agent left its tool
+    subprocesses running, which is the orphan class this helper exists to
+    prevent — and the very reason a timed-out slot stayed busy.
     """
     import os
     import signal
+    import subprocess
 
     if proc.returncode is not None:
         return
@@ -519,6 +522,18 @@ def _kill_process_tree(proc: Any) -> None:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             return
         except (ProcessLookupError, PermissionError, OSError):
+            pass
+    elif os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=10,
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            return
+        except (OSError, subprocess.SubprocessError):
             pass
     try:
         proc.kill()
