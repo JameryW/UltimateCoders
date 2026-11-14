@@ -65,6 +65,32 @@ from ultimate_coders.agent.workspace import WorkspaceHandle, WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
+#: Release verdicts that mean the accepted work did not reach the remote.
+_DELIVERY_TERMINAL_FAILURES = ("conflict", "commit_failed")
+#: Release verdicts that mean it *may* not have: the publish is unreconciled
+#: ("unknown") or another process holds the effect claim ("busy").
+_DELIVERY_AMBIGUOUS_PUSH = ("unknown", "busy")
+
+
+def _delivery_verdict(merge_result: dict[str, Any]) -> tuple[bool, bool]:
+    """Return ``(failed, retryable)`` for a workspace release result.
+
+    ``push_status`` "unknown" (a publish awaiting reconciliation) and "busy" (the
+    effect claim is held elsewhere) mean the branch may not be on the remote at
+    all. They are transient, so the subtask must be retried -- the retry is what
+    runs reconciliation and settles the publish -- while a conflict, a failed
+    commit or a definite push failure is not retryable.
+    """
+    if merge_result.get("status") in _DELIVERY_TERMINAL_FAILURES:
+        return True, False
+    push_status = merge_result.get("push_status")
+    if push_status in _DELIVERY_AMBIGUOUS_PUSH:
+        return True, True
+    if push_status == "failed":
+        return True, False
+    return False, False
+
+
 DEFAULT_SUBTASK_TIMEOUT_SECONDS = 600
 SUBTASK_TIMEOUT_ENV_VAR = "UC_SUBTASK_TIMEOUT_SECONDS"
 DESCRIPTION_PROFILES_ENV_VAR = "UC_DISABLE_DESCRIPTION_PROFILES"
@@ -1211,12 +1237,14 @@ class Worker:
                                 subtask.id[:8],
                                 merge_result.get("branch_preserved", ""),
                             )
-                        if result.success and (
-                            merge_result.get("status") in ("conflict", "commit_failed")
-                            or merge_result.get("push_status") == "failed"
-                        ):
-                            result.success, result.retryable = False, False
-                            result.summary = "Accepted code delivery failed; workspace preserved"
+                        delivery_failed, delivery_retryable = _delivery_verdict(merge_result)
+                        if result.success and delivery_failed:
+                            result.success, result.retryable = False, delivery_retryable
+                            result.summary = (
+                                "Code delivery unconfirmed; workspace preserved"
+                                if delivery_retryable
+                                else "Accepted code delivery failed; workspace preserved"
+                            )
                             result.error = result.summary
                         if result.domain_result:
                             result.domain_result["delivery"] = merge_result
