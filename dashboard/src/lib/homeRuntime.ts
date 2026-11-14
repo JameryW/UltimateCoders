@@ -186,3 +186,83 @@ export function showcasePrimaryCta(mode: ShowcaseRuntimeMode): ShowcaseCta {
   };
 }
 
+/** Two-digit ordinal for a 1-based position: 1 → "01", 12 → "12". */
+export function padOrdinal(position: number): string {
+  if (!Number.isInteger(position) || position < 1) {
+    throw new RangeError(`ordinal positions are 1-based integers, got ${position}`);
+  }
+  return String(position).padStart(2, "0");
+}
+
+const COUNT_WORDS = [
+  "Zero",
+  "One",
+  "Two",
+  "Three",
+  "Four",
+  "Five",
+  "Six",
+  "Seven",
+  "Eight",
+  "Nine",
+  "Ten",
+  "Eleven",
+  "Twelve",
+] as const;
+
+/** "Five" for 5; a count past the spelling table falls back to digits. */
+export function countWord(count: number): string {
+  if (!Number.isInteger(count) || count < 0) {
+    throw new RangeError(`count must be a non-negative integer, got ${count}`);
+  }
+  return COUNT_WORDS[count] ?? String(count);
+}
+
+const CHINESE_COUNTS = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"] as const;
+
+/** "五" for 5; a count past ten falls back to digits. */
+export function chineseCount(count: number): string {
+  if (!Number.isInteger(count) || count < 0) {
+    throw new RangeError(`count must be a non-negative integer, got ${count}`);
+  }
+  return CHINESE_COUNTS[count] ?? String(count);
+}
+
+/** How a Chinese sentence lists items: "入口、控制、执行、上下文和事件". */
+export function joinChinese(items: readonly string[]): string {
+  const list = items.map((item) => item.trim()).filter((item) => item.length > 0);
+  const [first, ...rest] = list;
+  if (first === undefined) return "";
+  const last = rest.pop();
+  if (last === undefined) return first;
+  return rest.length > 0 ? `${first}、${rest.join("、")}和${last}` : `${first}和${last}`;
+}
+
+export type ShowcaseMetric = {
+  /** The big number. */
+  value: string;
+  /** What it counts. */
+  label: string;
+};
+
+/**
+ * The four summary numbers, with the countable one derived from the data.
+ *
+ * "execution stages" used to be the literal `05` sitting next to a `workflow` array
+ * of five steps, so adding a stage would have made the summary lie. The other three
+ * are not counts of rendered items: one orchestration layer is an architectural
+ * claim, worker scale is unbounded, and events are evaluated continuously.
+ */
+export function showcaseMetrics(workflowSteps: number): readonly ShowcaseMetric[] {
+  if (!Number.isInteger(workflowSteps) || workflowSteps < 1) {
+    throw new RangeError(`workflowSteps must be a positive integer, got ${workflowSteps}`);
+  }
+  return [
+    { value: "01", label: "orchestration layer" },
+    { value: padOrdinal(workflowSteps), label: "execution stages" },
+    { value: "∞", label: "worker scale path" },
+    { value: "24/7", label: "event visibility" },
+  ];
+}
+
+

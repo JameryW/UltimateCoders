@@ -139,3 +139,31 @@ test("the page never claims a live dashboard the host may not have", () => {
   );
 });
 
+test("every number and count the page prints is derived from the arrays", () => {
+  // The arrays used to carry their own copy of the position (`index: "01"`,
+  // `step: "01"`), the metric row hardcoded `<strong>05</strong>`, and the system
+  // map heading hardcoded "Five layers." plus a hand-written list of the five
+  // boundaries. Inserting a card would have left all of it lying.
+  assert.doesNotMatch(homePage, /index: "0\d"/, "no hand-written card ordinal");
+  assert.doesNotMatch(homePage, /step: "0\d"/, "no hand-written workflow ordinal");
+  assert.doesNotMatch(homePage, /<strong>\d\d<\/strong>/, "no hardcoded summary number");
+  assert.doesNotMatch(homePage, /Five layers\./, "the layer count must be spelled from the array");
+  assert.doesNotMatch(homePage, /五个面板对应真实边界/, "the list must be joined from the data");
+  assert.match(homePage, /showcaseMetrics\(workflow\.length\)/, "metrics follow the workflow array");
+  assert.match(homePage, /countWord\(systemLayers\.length\)/, "the heading follows the layer array");
+  assert.match(homePage, /chineseCount\(systemLayers\.length\)/, "the sentence follows the layer array");
+  assert.match(
+    homePage,
+    /joinChinese\(systemLayers\.map\(\(layer\) => layer\.summary\)\)/,
+    "the boundary list is the layers' own summaries",
+  );
+  assert.ok(
+    (homePage.match(/padOrdinal\(/g) ?? []).length >= 3,
+    "capability, layer and workflow markers all derive their ordinal",
+  );
+  assert.match(homePage, /key=\{capability\.title\}/);
+  assert.match(homePage, /key=\{layer\.title\}/);
+  assert.match(homePage, /key=\{item\.title\}/);
+});
+
+

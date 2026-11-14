@@ -9,11 +9,16 @@ import {
   RUNTIME_RETRY_BASE_MS,
   RUNTIME_RETRY_MAX_MS,
   WORKFLOW_HREF,
+  chineseCount,
   classifyProbeResponse,
+  countWord,
   formatSyncAge,
+  joinChinese,
   nextPollDelay,
+  padOrdinal,
   runtimeBadge,
   runtimeStatusLabel,
+  showcaseMetrics,
   showcasePrimaryCta,
   showcaseRuntimeMode,
   shouldStopPolling,
@@ -144,4 +149,64 @@ test("the primary action never promises a dashboard this host cannot serve", () 
   assert.notEqual(preview.label, "Open operations dashboard");
   assert.notEqual(preview.href, DASHBOARD_HREF);
 });
+
+test("ordinals are derived from the position, never hand-written", () => {
+  assert.equal(padOrdinal(1), "01");
+  assert.equal(padOrdinal(9), "09");
+  assert.equal(padOrdinal(10), "10");
+  assert.equal(padOrdinal(12), "12");
+  for (const bad of [0, -1, 1.5, Number.NaN]) {
+    assert.throws(() => padOrdinal(bad), RangeError, `${bad} is not a 1-based position`);
+  }
+});
+
+test("counts are spelled from the number, not typed next to it", () => {
+  assert.equal(countWord(0), "Zero");
+  assert.equal(countWord(1), "One");
+  assert.equal(countWord(5), "Five");
+  assert.equal(countWord(12), "Twelve");
+  assert.equal(countWord(13), "13", "past the spelling table digits are still honest");
+  assert.equal(chineseCount(1), "一");
+  assert.equal(chineseCount(5), "五");
+  assert.equal(chineseCount(10), "十");
+  assert.equal(chineseCount(11), "11");
+  for (const bad of [-1, 2.5, Number.NaN]) {
+    assert.throws(() => countWord(bad), RangeError, `countWord(${bad})`);
+    assert.throws(() => chineseCount(bad), RangeError, `chineseCount(${bad})`);
+  }
+});
+
+test("a Chinese list joins without a dangling separator", () => {
+  assert.equal(joinChinese([]), "");
+  assert.equal(joinChinese(["入口"]), "入口");
+  assert.equal(joinChinese(["入口", "控制"]), "入口和控制");
+  assert.equal(
+    joinChinese(["入口", "控制", "执行", "上下文", "事件"]),
+    "入口、控制、执行、上下文和事件",
+  );
+  assert.equal(joinChinese([" 入口 ", "", "  "]), "入口", "blank entries are skipped");
+});
+
+test("the summary numbers follow the workflow array", () => {
+  const five = showcaseMetrics(5);
+  assert.deepEqual(
+    five.map((metric) => metric.value),
+    ["01", "05", "∞", "24/7"],
+  );
+  assert.deepEqual(
+    five.map((metric) => metric.label),
+    ["orchestration layer", "execution stages", "worker scale path", "event visibility"],
+  );
+  // Adding a stage must move the summary with it, not leave `05` behind.
+  assert.equal(showcaseMetrics(6)[1].value, "06");
+  assert.equal(showcaseMetrics(10)[1].value, "10");
+  // Only the countable slot moves: the other three are not rendered-item counts.
+  assert.deepEqual(showcaseMetrics(7)[0], { value: "01", label: "orchestration layer" });
+  assert.deepEqual(showcaseMetrics(7)[2], { value: "∞", label: "worker scale path" });
+  assert.deepEqual(showcaseMetrics(7)[3], { value: "24/7", label: "event visibility" });
+  for (const bad of [0, -3, 2.5, Number.NaN]) {
+    assert.throws(() => showcaseMetrics(bad), RangeError, `showcaseMetrics(${bad})`);
+  }
+});
+
 
