@@ -1,5 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
-import { useGrpcWeb, type GrpcConnectionState } from "@/hooks/useGrpcWeb";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useGrpcWeb } from "@/hooks/useGrpcWeb";
+import {
+  HOME_DOCUMENT_TITLE,
+  RUNTIME_POLL_INTERVAL_MS,
+  RUNTIME_PROBE_TIMEOUT_MS,
+  formatSyncAge,
+  nextPollDelay,
+  probeGateway,
+  runtimeBadge,
+  runtimeStatusLabel,
+  showcaseRuntimeMode,
+  shouldStopPolling,
+  transportLabel,
+  type ProbeState,
+} from "@/lib/homeRuntime";
 
 const capabilities = [
   {
@@ -129,6 +143,14 @@ const scenarios = [
   },
 ] as const;
 
+/** In-page destinations, in document order: also the order the scroll-spy checks. */
+const navSections = [
+  { id: "home-overview", label: "Overview" },
+  { id: "home-capabilities", label: "Capabilities" },
+  { id: "home-workflow", label: "Execution flow" },
+  { id: "home-scenarios", label: "Use cases" },
+] as const;
+
 type RuntimeSnapshot = {
   gatewayStatus: string;
   gatewayVersion: string;
@@ -143,92 +165,184 @@ const initialRuntime: RuntimeSnapshot = {
   lastSyncedAt: null,
 };
 
-function connectionLabel(state: GrpcConnectionState) {
-  switch (state) {
-    case "connected":
-      return "Gateway transport connected";
-    case "connecting":
-      return "Connecting to Gateway transport";
-    case "reconnecting":
-      return "Reconnecting to Gateway transport";
-    case "error":
-      return "Gateway needs attention";
-    default:
-      return "Gateway transport disconnected";
-  }
-}
-
-function formatSyncTime(timestamp: number | null) {
-  if (timestamp === null) {
-    return "waiting for first sync";
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(timestamp);
-}
-
 export default function HomePage() {
-  const { connectionState, healthCheck, listTasks } = useGrpcWeb({ enabled: true });
+  const [probe, setProbe] = useState<ProbeState>("probing");
+  const [probeNonce, setProbeNonce] = useState(0);
+  const probeAbortRef = useRef<AbortController | null>(null);
+  // Only talk to the Gateway once a probe proved there is one behind this host:
+  // the showcase is also published as a purely static page.
+  const { connectionState, healthCheck, listTasks, connect } = useGrpcWeb({
+    enabled: probe === "reachable",
+  });
+  const connectRef = useRef(connect);
+  connectRef.current = connect;
+
   const [runtime, setRuntime] = useState<RuntimeSnapshot>(initialRuntime);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [activeSection, setActiveSection] = useState(() => window.location.hash.slice(1) || "/");
+  const [consecutiveFailures, setConsecutiveFailures] = useState(0);
+  const failuresRef = useRef(0);
+  const [activeSection, setActiveSection] = useState<string>(navSections[0].id);
 
-  const refreshRuntime = useCallback(async () => {
+  const refreshRuntime = useCallback(async (): Promise<boolean> => {
     setIsRefreshing(true);
     const [health, tasks] = await Promise.allSettled([healthCheck(), listTasks()]);
-    setRuntime((current) => ({
-      gatewayStatus: health.status === "fulfilled" ? health.value.status || "healthy" : current.gatewayStatus,
-      gatewayVersion: health.status === "fulfilled" ? health.value.version || "—" : current.gatewayVersion,
-      taskTotal: tasks.status === "fulfilled" ? tasks.value.total : current.taskTotal,
-      lastSyncedAt:
-        health.status === "fulfilled" || tasks.status === "fulfilled"
-          ? Date.now()
-          : current.lastSyncedAt,
-    }));
     setIsRefreshing(false);
+    if (health.status !== "fulfilled") {
+      failuresRef.current += 1;
+      setConsecutiveFailures(failuresRef.current);
+      return false;
+    }
+    failuresRef.current = 0;
+    setConsecutiveFailures(0);
+    setRuntime((current) => ({
+      gatewayStatus: health.value.status || "healthy",
+      gatewayVersion: health.value.version || "—",
+      taskTotal: tasks.status === "fulfilled" ? tasks.value.total : current.taskTotal,
+      lastSyncedAt: Date.now(),
+    }));
+    return true;
   }, [healthCheck, listTasks]);
 
-  useEffect(() => {
-    const initialTimer = window.setTimeout(() => void refreshRuntime(), 0);
-    const timer = window.setInterval(() => void refreshRuntime(), 30_000);
-    return () => {
-      window.clearTimeout(initialTimer);
-      window.clearInterval(timer);
-    };
-  }, [refreshRuntime]);
-
-  useEffect(() => {
-    const handleHashChange = () => setActiveSection(window.location.hash.slice(1) || "/");
-    window.addEventListener("hashchange", handleHashChange);
-    return () => window.removeEventListener("hashchange", handleHashChange);
+  const probeOnce = useCallback(async (): Promise<ProbeState> => {
+    probeAbortRef.current?.abort();
+    const controller = new AbortController();
+    probeAbortRef.current = controller;
+    const timer = window.setTimeout(() => controller.abort(), RUNTIME_PROBE_TIMEOUT_MS);
+    try {
+      return await probeGateway(fetch, controller.signal);
+    } finally {
+      window.clearTimeout(timer);
+    }
   }, []);
 
-  const isLive = connectionState === "connected";
+  useEffect(() => {
+    let cancelled = false;
+    setProbe("probing");
+    void probeOnce().then((verdict) => {
+      if (cancelled) return;
+      setProbe(verdict);
+      // The hook's own mount-time connect saw `enabled: false`, so open the
+      // stream now that the backend is known to exist.
+      if (verdict === "reachable") connectRef.current();
+    });
+    return () => {
+      cancelled = true;
+      probeAbortRef.current?.abort();
+    };
+  }, [probeOnce, probeNonce]);
+
+  useEffect(() => {
+    if (probe !== "reachable") return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const tick = async () => {
+      const ok = await refreshRuntime();
+      if (cancelled) return;
+      if (ok) {
+        timer = window.setTimeout(() => void tick(), RUNTIME_POLL_INTERVAL_MS);
+        return;
+      }
+      // Back off on failure instead of retrying every 30s forever; stop once the
+      // backend has been gone long enough for the card to say so.
+      if (shouldStopPolling(failuresRef.current)) return;
+      timer = window.setTimeout(() => void tick(), nextPollDelay(failuresRef.current));
+    };
+    timer = window.setTimeout(() => void tick(), 0);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [probe, refreshRuntime]);
+
+  // Title: the shell's <title> names the operations dashboard.
+  useEffect(() => {
+    const previousTitle = document.title;
+    document.title = HOME_DOCUMENT_TITLE;
+    return () => {
+      document.title = previousTitle;
+    };
+  }, []);
+
+  // Scroll-spy: the sticky header highlights the section in view.
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const tracked = navSections
+      .map((section) => document.getElementById(section.id))
+      .filter((element): element is HTMLElement => element !== null);
+    if (tracked.length === 0) return;
+    const visible = new Set<string>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) visible.add(entry.target.id);
+          else visible.delete(entry.target.id);
+        }
+        const first = tracked.find((element) => visible.has(element.id));
+        setActiveSection(first ? first.id : navSections[0].id);
+      },
+      { rootMargin: "-96px 0px -55% 0px", threshold: 0 },
+    );
+    for (const element of tracked) observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const mode = showcaseRuntimeMode({
+    probe,
+    connected: connectionState === "connected",
+    consecutiveFailures,
+  });
+  const badge = runtimeBadge(mode);
+  const isLive = mode === "live";
+  const statusLabel = isLive ? transportLabel(connectionState) : runtimeStatusLabel(mode);
+  const canRefresh = probe === "reachable";
+
+  const handleRefresh = useCallback(() => {
+    if (canRefresh) {
+      void refreshRuntime();
+      return;
+    }
+    // Not reachable: re-probe rather than hammer a backend that is not there.
+    setProbeNonce((nonce) => nonce + 1);
+  }, [canRefresh, refreshRuntime]);
 
   return (
     <main className="home-page">
       <div className="home-grid-glow" aria-hidden="true" />
-      <div className="home-shell">
-        <nav className="home-nav" aria-label="Primary navigation">
-          <a className="home-brand" href="#/">
-            <span className="home-brand-mark">UC</span>
-            <span>
-              <strong>UltimateCoders</strong>
-              <small>distributed AI coding</small>
-            </span>
-          </a>
-          <div className="home-nav-links">
-            <a className={`home-nav-link ${activeSection === "/" ? "home-nav-link-active" : ""}`} href="#/">Overview</a>
-            <a className={`home-nav-link ${activeSection === "home-capabilities" ? "home-nav-link-active" : ""}`} href="#home-capabilities">Capabilities</a>
-            <a className={`home-nav-link ${activeSection === "home-workflow" ? "home-nav-link-active" : ""}`} href="#home-workflow">Execution flow</a>
-            <a className="home-nav-link" href="#/dashboard">Operations dashboard <span aria-hidden="true">↗</span></a>
-          </div>
-        </nav>
+      <a className="home-skip-link" href="#home-content">
+        Skip to content
+      </a>
+      <header className="home-topbar">
+        <div className="home-shell">
+          <nav className="home-nav" aria-label="Primary navigation">
+            <a className="home-brand" href="#home-overview">
+              <span className="home-brand-mark">UC</span>
+              <span>
+                <strong>UltimateCoders</strong>
+                <small>distributed AI coding</small>
+              </span>
+            </a>
+            <div className="home-nav-links">
+              {navSections.map((section) => (
+                <a
+                  key={section.id}
+                  className={`home-nav-link ${activeSection === section.id ? "home-nav-link-active" : ""}`}
+                  href={`#${section.id}`}
+                  aria-current={activeSection === section.id ? "true" : undefined}
+                >
+                  {section.label}
+                </a>
+              ))}
+              <a className="home-nav-link" href="#/dashboard">
+                Operations dashboard <span aria-hidden="true">↗</span>
+              </a>
+            </div>
+          </nav>
+        </div>
+        <div className="home-scroll-progress" aria-hidden="true" />
+      </header>
 
-        <section className="home-hero" aria-labelledby="home-hero-title">
+      <div className="home-shell" id="home-content" tabIndex={-1}>
+        <section className="home-hero" id="home-overview" aria-labelledby="home-hero-title">
           <div className="home-hero-copy">
             <div className="home-eyebrow"><span className="home-eyebrow-dot" /> ORCHESTRATE · EXECUTE · REMEMBER</div>
             <h1 id="home-hero-title">From intent to<br /><em>observable execution.</em></h1>
@@ -249,12 +363,12 @@ export default function HomePage() {
           <div className="home-runtime-card" aria-label="Live runtime status">
             <div className="home-runtime-topline">
               <span className={`home-status-dot ${isLive ? "home-status-dot-live" : ""}`} />
-              <span>{connectionLabel(connectionState)}</span>
+              <span>{statusLabel}</span>
               <span className={`home-runtime-mode ${isLive ? "home-runtime-mode-live" : ""}`}>
-                {isLive ? "LIVE" : "PREVIEW"}
+                {badge}
               </span>
-              <button className="home-refresh-button" type="button" onClick={() => void refreshRuntime()} disabled={isRefreshing}>
-                {isRefreshing ? "syncing" : "refresh"}
+              <button className="home-refresh-button" type="button" onClick={handleRefresh} disabled={isRefreshing || probe === "probing"}>
+                {isRefreshing ? "syncing" : canRefresh ? "refresh" : "retry"}
               </button>
             </div>
             <div className="home-runtime-title">Runtime surface</div>
@@ -271,9 +385,14 @@ export default function HomePage() {
               <div><span>tasks observed</span><strong>{runtime.taskTotal ?? "—"}</strong></div>
               <div><span>event stream</span><strong className={isLive ? "home-live-text" : ""}>{isLive ? "watching" : "standby"}</strong></div>
             </div>
+            {mode === "preview" ? (
+              <p className="home-runtime-hint">
+                静态展品：这个域名没有连接 Gateway，运行时数据来自最近一次成功快照。点 retry 可重新探测。
+              </p>
+            ) : null}
             <div className="home-runtime-foot">
-              <span>live snapshot · {formatSyncTime(runtime.lastSyncedAt)}</span>
-              <span>auto refresh 30s</span>
+              <span>live snapshot · {formatSyncAge(runtime.lastSyncedAt, Date.now())}</span>
+              <span>{canRefresh ? "auto refresh 30s" : "no live API on this host"}</span>
             </div>
           </div>
         </section>
@@ -350,7 +469,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="home-section home-scenarios-section" aria-labelledby="scenarios-title">
+        <section className="home-section home-scenarios-section" id="home-scenarios" aria-labelledby="scenarios-title">
           <div className="home-section-heading home-section-heading-tight">
             <div>
               <div className="home-section-kicker">WHY IT MATTERS</div>
