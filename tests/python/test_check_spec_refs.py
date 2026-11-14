@@ -1000,7 +1000,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # own refs) (954 -> 957); unclassified stays 0.
     # 2026-11-14 workspace git timeout (T66/ticket 66 + v8 map line + the test
     # file's own refs) (957 -> 961); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 961
+    # 2026-11-14 cleanup reports real removals (T67/ticket 67 + v8 map line + the
+    # test file's own refs) (961 -> 964); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 964
 
 
 def test_real_corpus_has_no_false_content_mismatch():
