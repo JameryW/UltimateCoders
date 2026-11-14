@@ -31,9 +31,19 @@ body,
   min-height: 100%;
 }
 
+/*
+ * The document must stay scrollable. <html> computes `overflow: visible`, so
+ * body's overflow value is propagated to the viewport: a `hidden` here does not
+ * just clip body, it makes the whole page unscrollable by wheel/touch (the
+ * product overview is ~3700px tall on a 900px viewport). Scroll containers that
+ * genuinely need the document pinned, i.e. the operations terminal shell, opt in
+ * themselves with `body:has(.terminal-app) { overflow: hidden }` further down.
+ * `overflow-x` alone still clamps sideways overflow, and with one axis hidden the
+ * other computes to `auto`, so the viewport keeps its vertical scrollbar.
+ */
 body {
   margin: 0;
-  overflow: hidden;
+  overflow-x: hidden;
   background: var(--bg-primary);
   color: var(--text-primary);
   font-family: "IBM Plex Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
@@ -117,14 +127,25 @@ input:focus-visible {
 .home-page {
   position: relative;
   min-height: 100vh;
-  overflow-x: hidden;
-  overflow-y: auto;
+  min-height: 100dvh;
+  /* `clip` (not `hidden`) keeps the decorative glows and the 64px grid from
+     spilling sideways WITHOUT turning this element into a scroll container:
+     the overview scrolls with the document, so `overflow-y` must stay visible. */
+  overflow-x: clip;
   background:
     radial-gradient(circle at 82% 7%, rgba(83, 217, 176, 0.13), transparent 25rem),
     radial-gradient(circle at 6% 38%, rgba(112, 132, 255, 0.1), transparent 30rem),
     #0d1218;
   color: #edf4f2;
   font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+}
+
+/*
+ * `scroll-behavior` has to live on the element that actually scrolls — the
+ * document — and only while the overview is mounted, so the terminal shell
+ * keeps its instant scrolling.
+ */
+html:has(.home-page) {
   scroll-behavior: smooth;
 }
 
@@ -232,6 +253,86 @@ input:focus-visible {
 .home-nav-link span,
 .home-inline-link span {
   color: #88f2cb;
+}
+
+/*
+ * Sticky showcase header. The overview is a long read (~5 viewports), so the
+ * navigation stays reachable and a hairline reports reading progress. The
+ * progress bar is driven by a CSS scroll timeline — no scroll listener, no
+ * React state per frame — and simply does not animate where timelines are
+ * unsupported.
+ */
+.home-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, #0d1218 86%, transparent);
+  border-bottom: 1px solid rgba(222, 243, 237, 0.11);
+  backdrop-filter: blur(16px) saturate(130%);
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
+}
+
+.home-topbar .home-nav {
+  min-height: 64px;
+  border-bottom: 0;
+}
+
+.home-scroll-progress {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(139, 240, 204, 0.3), #8bf0cc);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+
+@supports (animation-timeline: scroll()) {
+  .home-scroll-progress {
+    animation: uc-home-progress linear both;
+    animation-timeline: scroll(root block);
+  }
+}
+
+@keyframes uc-home-progress {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Keyboard users tab through the nav first; give them a way past it. */
+.home-skip-link {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 30;
+  padding: 8px 13px;
+  border-radius: 4px;
+  background: #8bf0cc;
+  color: #10221e;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(-200%);
+  transition: transform 140ms ease;
+}
+
+.home-skip-link:focus-visible {
+  outline: 2px solid #edf4f2;
+  outline-offset: 2px;
+  transform: translateY(0);
+}
+
+/* The skip target is focusable (tabindex="-1") purely so focus follows the
+   jump; it must not paint a ring around the whole page. */
+.home-shell:focus {
+  outline: none;
 }
 
 .home-hero {
@@ -502,6 +603,15 @@ input:focus-visible {
   color: #86efca !important;
 }
 
+/* Honest disclosure when this host is a static showcase, not a live Gateway. */
+.home-runtime-hint {
+  margin: 18px 0 0;
+  color: #7f8e93;
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  font-size: 10px;
+  line-height: 1.7;
+}
+
 .home-runtime-foot {
   display: flex;
   justify-content: space-between;
@@ -556,7 +666,7 @@ input:focus-visible {
 
 .home-section {
   padding: 118px 0 0;
-  scroll-margin-top: 24px;
+  scroll-margin-top: 92px;
 }
 
 .home-section-heading {
@@ -1005,20 +1115,36 @@ input:focus-visible {
     min-height: 66px;
   }
 
+  /*
+   * Four links plus a brand do not fit a phone width. The old rules hid the
+   * leading links with `:not(:last-child)` + `:nth-last-child()` arithmetic, so
+   * adding a fifth link silently removed a different destination. Scroll the
+   * row instead: every destination stays reachable and nothing is guessed.
+   */
   .home-nav-links {
-    gap: 11px;
+    max-width: 58vw;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
   }
 
-  .home-nav-link:not(:last-child) {
+  .home-nav-links::-webkit-scrollbar {
     display: none;
   }
 
-  .home-nav-link:nth-last-child(2) {
-    display: inline;
+  .home-nav-link {
+    padding: 7px 8px;
+    scroll-snap-align: start;
+    white-space: nowrap;
   }
 
-  .home-nav-link:nth-last-child(3) {
-    display: inline;
+  .home-brand small {
+    display: none;
+  }
+
+  .home-topbar .home-nav {
+    min-height: 56px;
   }
 
   .home-hero {
@@ -1064,6 +1190,7 @@ input:focus-visible {
   .home-workflow-section,
   .home-scenarios-section {
     padding-top: 84px;
+    scroll-margin-top: 72px;
   }
 
   .home-section-heading {
@@ -1179,7 +1306,7 @@ input:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .home-page {
+  html:has(.home-page) {
     scroll-behavior: auto;
   }
 

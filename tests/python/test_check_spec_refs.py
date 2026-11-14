@@ -1007,7 +1007,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-14 one push status vocabulary (T69/ticket 69 + v8 map line + the
     # vocabulary module and the test file's own refs) (967 -> 975); unclassified
     # stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 975
+    # 2026-11-14 showcase scrolls and says what it is (T70/ticket 70 + v8 map
+    # line + the homeRuntime module and the two new test files' own refs)
+    # (975 -> 981); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 981
 
 
 def test_real_corpus_has_no_false_content_mismatch():
