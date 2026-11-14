@@ -37,6 +37,10 @@ from ultimate_coders.agent.llm import (
     _classify_llm_error,
 )
 from ultimate_coders.agent.progress import AttemptEvidence, ProgressTracker
+from ultimate_coders.agent.push_status import (
+    TRANSIENT_PUSH_STATUSES,
+    UNCONFIRMED_PUSH_STATUSES,
+)
 from ultimate_coders.agent.review import REVIEW_INSTRUCTIONS, parse_review
 from ultimate_coders.agent.routing import ModelRouter, classify_failure
 from ultimate_coders.agent.sandbox import (
@@ -67,9 +71,6 @@ logger = logging.getLogger(__name__)
 
 #: Release verdicts that mean the accepted work did not reach the remote.
 _DELIVERY_TERMINAL_FAILURES = ("conflict", "commit_failed")
-#: Release verdicts that mean it *may* not have: the publish is unreconciled
-#: ("unknown") or another process holds the effect claim ("busy").
-_DELIVERY_AMBIGUOUS_PUSH = ("unknown", "busy")
 
 
 def _delivery_verdict(merge_result: dict[str, Any]) -> tuple[bool, bool]:
@@ -80,14 +81,15 @@ def _delivery_verdict(merge_result: dict[str, Any]) -> tuple[bool, bool]:
     all. They are transient, so the subtask must be retried -- the retry is what
     runs reconciliation and settles the publish -- while a conflict, a failed
     commit or a definite push failure is not retryable.
+
+    The verdict set comes from ``agent.push_status`` so that a status added by a
+    producer is classified here rather than silently treated as success (T68).
     """
     if merge_result.get("status") in _DELIVERY_TERMINAL_FAILURES:
         return True, False
     push_status = merge_result.get("push_status")
-    if push_status in _DELIVERY_AMBIGUOUS_PUSH:
-        return True, True
-    if push_status == "failed":
-        return True, False
+    if push_status in UNCONFIRMED_PUSH_STATUSES:
+        return True, push_status in TRANSIENT_PUSH_STATUSES
     return False, False
 
 
