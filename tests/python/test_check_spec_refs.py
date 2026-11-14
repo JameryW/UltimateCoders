@@ -1004,7 +1004,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # test file's own refs) (961 -> 964); unclassified stays 0.
     # 2026-11-14 unconfirmed delivery is not success (T68/ticket 68 + v8 map line
     # + the test file's own refs) (964 -> 967); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 967
+    # 2026-11-14 one push status vocabulary (T69/ticket 69 + v8 map line + the
+    # vocabulary module and the test file's own refs) (967 -> 975); unclassified
+    # stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 975
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1067,7 +1070,9 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     terminal write gained the workspace summary (+5 lines above the helpers).
     P8 (D18) moved it 1655 -> 1685: `confirmed_effect_ids_for` landed above the
     checkpoint helpers (+30 lines). T68 moved it 1685 -> 1713: `_delivery_verdict`
-    landed above them too (+28 lines).
+    landed above them too (+28 lines). T69 moved it 1713 -> 1715: the delivery
+    gate now imports the shared `push_status` vocabulary (+2 lines); the cited
+    range 1678-1731 still covers the definition.
     """
     guard = _load_guard()
     want = {
@@ -1089,7 +1094,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            1713,
+            1715,
         ),
     }
     rows = [
