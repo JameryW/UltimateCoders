@@ -1002,7 +1002,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # file's own refs) (957 -> 961); unclassified stays 0.
     # 2026-11-14 cleanup reports real removals (T67/ticket 67 + v8 map line + the
     # test file's own refs) (961 -> 964); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 964
+    # 2026-11-14 unconfirmed delivery is not success (T68/ticket 68 + v8 map line
+    # + the test file's own refs) (964 -> 967); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 967
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1064,7 +1066,8 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     re-measured together, not guessed. P7 (D17) moved it 1650 -> 1655: the
     terminal write gained the workspace summary (+5 lines above the helpers).
     P8 (D18) moved it 1655 -> 1685: `confirmed_effect_ids_for` landed above the
-    checkpoint helpers (+30 lines).
+    checkpoint helpers (+30 lines). T68 moved it 1685 -> 1713: `_delivery_verdict`
+    landed above them too (+28 lines).
     """
     guard = _load_guard()
     want = {
@@ -1086,7 +1089,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            1685,
+            1713,
         ),
     }
     rows = [

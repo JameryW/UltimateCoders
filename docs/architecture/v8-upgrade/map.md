@@ -169,6 +169,7 @@ P13 (D23) — Receipts read surface: **implemented**
 - [65 Windows tree kill](tickets/65-windows-tree-kill.md) — **implemented** (killing a sandbox command on Windows used to stop at the direct child, leaving the agent CLI's tool subprocesses running; `taskkill /T` now ends the tree, proven by a grandchild that keeps writing until it is really gone); was blocked by: none
 - [66 workspace git timeout](tickets/66-workspace-git-timeout.md) — **implemented** (every workspace git call was unbounded while holding a worktree, and a timed-out push was recorded as a definite FAILED — authorising a retry of a publish that may have landed; the calls are bounded and a timeout is reconciled as UNKNOWN); was blocked by: none
 - [67 cleanup reports real removals](tickets/67-cleanup-reports-real-removals.md) — **implemented** (`cleanup()` counted removals git had refused — its `except` fallback was dead code — so a dead worktree stayed registered and its branch could never be deleted; the exit code is checked and `git worktree prune` now drops stale metadata); was blocked by: none
+- [68 unconfirmed delivery is not success](tickets/68-unconfirmed-delivery-is-not-success.md) — **implemented** (the worker's delivery gate knew `push_status="failed"` but not the `unknown`/`busy` verdicts T56/T57 added, so a subtask whose publish was never confirmed was recorded complete and its reconciling retry never ran; the verdict is now explicit and retryable); was blocked by: none
 
 P14 (D24) — Receipt queue view: **implemented**
 
