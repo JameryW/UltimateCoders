@@ -998,7 +998,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # test file's own refs) (951 -> 954); unclassified stays 0.
     # 2026-11-14 Windows tree kill (T65/ticket 65 + v8 map line + the test file's
     # own refs) (954 -> 957); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 957
+    # 2026-11-14 workspace git timeout (T66/ticket 66 + v8 map line + the test
+    # file's own refs) (957 -> 961); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 961
 
 
 def test_real_corpus_has_no_false_content_mismatch():
