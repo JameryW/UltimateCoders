@@ -23,11 +23,18 @@ import os
 import shutil
 import socket
 import uuid
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+#: Bound for one git operation. A hung fetch/push (DNS blackhole, credential
+#: prompt, dead SSH) would otherwise block acquire or release forever with the
+#: worktree still held -- the same unbounded-call class as T50, in the async
+#: subprocess form this module uses instead of ``subprocess.run``.
+GIT_TIMEOUT_SECONDS = 120
 
 # Repo-level git identity used when no global user config exists (e.g. worker
 # containers, CI runners). ``release()`` runs ``git merge --no-edit`` in the
@@ -700,7 +707,12 @@ class WorkspaceManager:
         result_info["effect_id"] = effect_id
         from ultimate_coders.agent.merge_arbiter import _ambiguous_push_failure
 
-        if not _ambiguous_push_failure(push_result["stderr"]):
+        # A timed-out push is ambiguous even when git printed nothing useful: the
+        # remote may have applied it, so reconcile before anyone retries.
+        ambiguous = bool(push_result.get("timed_out")) or _ambiguous_push_failure(
+            push_result["stderr"]
+        )
+        if not ambiguous:
             ledger.fail(effect_id, error=stderr)
             result_info["push_status"] = "failed"
             return
@@ -763,7 +775,13 @@ class WorkspaceManager:
             return "inconclusive"
 
     async def _git(self, args: list[str], cwd: str = "") -> dict[str, Any]:
-        """Run a git command and return stdout/stderr/exit_code."""
+        """Run a git command and return stdout/stderr/exit_code.
+
+        Bounded by ``GIT_TIMEOUT_SECONDS``: a hung git blocks the caller (acquire,
+        release, a push) while it holds a worktree. ``timed_out`` is reported
+        separately because a timed-out *push* is ambiguous -- the remote may have
+        applied it -- and must be reconciled, not recorded as a definite failure.
+        """
         proc = await asyncio.create_subprocess_exec(
             "git",
             *args,
@@ -771,11 +789,32 @@ class WorkspaceManager:
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd or self._project_path,
         )
-        stdout, stderr = await proc.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=GIT_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            with suppress(Exception):
+                await asyncio.wait_for(proc.wait(), timeout=10)
+            operation = " ".join(args[:2]) or "git"
+            logger.error(
+                "git %s timed out after %ss (killed)",
+                operation,
+                GIT_TIMEOUT_SECONDS,
+            )
+            return {
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"git {operation} timed out after {GIT_TIMEOUT_SECONDS}s",
+                "timed_out": True,
+            }
         return {
             "exit_code": proc.returncode or 0,
             "stdout": stdout.decode("utf-8", errors="replace"),
             "stderr": stderr.decode("utf-8", errors="replace"),
+            "timed_out": False,
         }
 
     async def _mkdir(self, path: str) -> None:
