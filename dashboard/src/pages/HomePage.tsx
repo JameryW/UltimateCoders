@@ -6,11 +6,16 @@ import {
   RUNTIME_POLL_INTERVAL_MS,
   RUNTIME_PROBE_TIMEOUT_MS,
   WORKFLOW_HREF,
+  chineseCount,
+  countWord,
   formatSyncAge,
+  joinChinese,
   nextPollDelay,
+  padOrdinal,
   probeGateway,
   runtimeBadge,
   runtimeStatusLabel,
+  showcaseMetrics,
   showcasePrimaryCta,
   showcaseRuntimeMode,
   shouldStopPolling,
@@ -20,42 +25,36 @@ import {
 
 const capabilities = [
   {
-    index: "01",
     title: "DAG task orchestration",
     detail: "把一个复杂需求拆成依赖清晰的执行图，按波次调度、汇总结果，并支持暂停、恢复和取消。",
     signal: "plan → dispatch → review",
     tone: "mint",
   },
   {
-    index: "02",
     title: "Capability-aware workers",
     detail: "Worker Registry 根据能力、负载和心跳选择执行者，从本地 fallback 平滑扩展到多 Worker 集群。",
     signal: "match by capability + load",
     tone: "blue",
   },
   {
-    index: "03",
     title: "Hybrid Search + Memory",
     detail: "Text、Semantic、AST 检索与分层 Memory 共享上下文，让 Agent 在多仓库中保持连续的工程记忆。",
     signal: "text / semantic / AST",
     tone: "violet",
   },
   {
-    index: "04",
     title: "Dashboard-first control",
     detail: "从 Web Dashboard 提交任务、查看 Worker 与执行事件，并控制暂停、恢复和取消。",
     signal: "Dashboard ↔ Gateway",
     tone: "amber",
   },
   {
-    index: "05",
     title: "Event-driven recovery",
     detail: "任务状态通过事件广播、Checkpoint 和 WatchTask 实时同步；连接中断后可继续观察，而不是丢失进度。",
     signal: "events + checkpoints",
     tone: "rose",
   },
   {
-    index: "06",
     title: "Local to cluster",
     detail: "同一套产品从本地内存 fallback、Docker Gateway 到 NATS + 多 Worker 部署，按规模渐进扩展。",
     signal: "local → distributed",
@@ -65,8 +64,8 @@ const capabilities = [
 
 const systemLayers = [
   {
-    index: "01",
     label: "Web interface",
+    summary: "入口",
     title: "Dashboard + TaskService",
     route: "intent in",
     detail: "从 Dashboard 提交任务并查看结果，通过 TaskService 控制同一个执行图。",
@@ -74,8 +73,8 @@ const systemLayers = [
     tone: "mint",
   },
   {
-    index: "02",
     label: "Control plane",
+    summary: "控制",
     title: "Rust Gateway",
     route: "plan + coordinate",
     detail: "TaskService、WorkerService 和 WatchTask 把任务、能力和事件组织成一个控制面。",
@@ -83,8 +82,8 @@ const systemLayers = [
     tone: "blue",
   },
   {
-    index: "03",
     label: "Execution plane",
+    summary: "执行",
     title: "Workers that match",
     route: "dispatch + execute",
     detail: "按能力、负载和心跳选择 Worker，在隔离工作区运行 Claude Code、Codex 或 Grok Build。",
@@ -92,8 +91,8 @@ const systemLayers = [
     tone: "amber",
   },
   {
-    index: "04",
     label: "Knowledge plane",
+    summary: "上下文",
     title: "Search + Memory",
     route: "context attached",
     detail: "Text、Semantic、AST 检索与分层 Memory 为每个 subtask 补上跨仓库上下文。",
@@ -101,8 +100,8 @@ const systemLayers = [
     tone: "violet",
   },
   {
-    index: "05",
     label: "Event plane",
+    summary: "事件",
     title: "Signals that return",
     route: "observe + recover",
     detail: "TaskEvent、Checkpoint 和结果流回到 Dashboard，执行过程可追踪、可恢复。",
@@ -112,11 +111,11 @@ const systemLayers = [
 ] as const;
 
 const workflow = [
-  { step: "01", label: "Intent", title: "Describe the change", detail: "在 Dashboard 输入自然语言任务。" },
-  { step: "02", label: "Plan", title: "Build the execution graph", detail: "Orchestrator 生成带依赖关系的 DAG。" },
-  { step: "03", label: "Run", title: "Dispatch to the right worker", detail: "Gateway 按能力和负载调度 Worker。" },
-  { step: "04", label: "Observe", title: "Stream every state change", detail: "TaskEvent 通过 gRPC-Web 返回。" },
-  { step: "05", label: "Recover", title: "Resume with context", detail: "Memory、Checkpoint 和事件让执行可恢复。" },
+  { label: "Intent", title: "Describe the change", detail: "在 Dashboard 输入自然语言任务。" },
+  { label: "Plan", title: "Build the execution graph", detail: "Orchestrator 生成带依赖关系的 DAG。" },
+  { label: "Run", title: "Dispatch to the right worker", detail: "Gateway 按能力和负载调度 Worker。" },
+  { label: "Observe", title: "Stream every state change", detail: "TaskEvent 通过 gRPC-Web 返回。" },
+  { label: "Recover", title: "Resume with context", detail: "Memory、Checkpoint 和事件让执行可恢复。" },
 ] as const;
 
 const scenarios = [
@@ -414,10 +413,9 @@ export default function HomePage() {
         </section>
 
         <div className="home-metrics" aria-label="Product summary">
-          <div><strong>01</strong><span>orchestration layer</span></div>
-          <div><strong>05</strong><span>execution stages</span></div>
-          <div><strong>∞</strong><span>worker scale path</span></div>
-          <div><strong>24/7</strong><span>event visibility</span></div>
+          {showcaseMetrics(workflow.length).map((metric) => (
+            <div key={metric.label}><strong>{metric.value}</strong><span>{metric.label}</span></div>
+          ))}
         </div>
 
         <section className="home-section" id="home-capabilities" aria-labelledby="capabilities-title">
@@ -429,9 +427,9 @@ export default function HomePage() {
             <p>不是一个单点 Terminal demo，而是一套可以从本地验证扩展到分布式执行的 AI Coding 基础设施。</p>
           </div>
           <div className="home-capability-grid">
-            {capabilities.map((capability) => (
-              <article className={`home-capability-card home-tone-${capability.tone}`} key={capability.index}>
-                <div className="home-card-topline"><span>{capability.index}</span><span className="home-card-signal">{capability.signal}</span></div>
+            {capabilities.map((capability, position) => (
+              <article className={`home-capability-card home-tone-${capability.tone}`} key={capability.title}>
+                <div className="home-card-topline"><span>{padOrdinal(position + 1)}</span><span className="home-card-signal">{capability.signal}</span></div>
                 <h3>{capability.title}</h3>
                 <p>{capability.detail}</p>
                 <div className="home-card-line" />
@@ -442,14 +440,17 @@ export default function HomePage() {
             <div className="home-system-map-heading">
               <div>
                 <div className="home-section-kicker">THE PRODUCT MAP</div>
-                <h3>Five layers.<br /><em>One execution surface.</em></h3>
+                <h3>{countWord(systemLayers.length)} layers.<br /><em>One execution surface.</em></h3>
               </div>
-              <p>五个面板对应真实边界：入口、控制、执行、上下文和事件。</p>
+              <p>
+                {chineseCount(systemLayers.length)}个面板对应真实边界：
+                {joinChinese(systemLayers.map((layer) => layer.summary))}。
+              </p>
             </div>
             <div className="home-system-layer-grid">
-              {systemLayers.map((layer) => (
-                <article className={`home-system-layer home-tone-${layer.tone}`} key={layer.index}>
-                  <div className="home-system-layer-topline"><span>{layer.index}</span><b>{layer.route}</b></div>
+              {systemLayers.map((layer, position) => (
+                <article className={`home-system-layer home-tone-${layer.tone}`} key={layer.title}>
+                  <div className="home-system-layer-topline"><span>{padOrdinal(position + 1)}</span><b>{layer.route}</b></div>
                   <div className="home-system-layer-label">{layer.label}</div>
                   <h4>{layer.title}</h4>
                   <p>{layer.detail}</p>
@@ -475,8 +476,8 @@ export default function HomePage() {
           </div>
           <div className="home-workflow-track">
             {workflow.map((item, index) => (
-              <div className="home-workflow-item" key={item.step}>
-                <div className="home-workflow-marker"><span>{item.step}</span>{index < workflow.length - 1 && <i aria-hidden="true" />}</div>
+              <div className="home-workflow-item" key={item.title}>
+                <div className="home-workflow-marker"><span>{padOrdinal(index + 1)}</span>{index < workflow.length - 1 && <i aria-hidden="true" />}</div>
                 <div className="home-workflow-label">{item.label}</div>
                 <h3>{item.title}</h3>
                 <p>{item.detail}</p>

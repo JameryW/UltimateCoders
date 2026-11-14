@@ -1013,7 +1013,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-14 the showcase stops advertising a dashboard it cannot serve
     # (T71/ticket 71 + v8 map line + the CTA derivation cited by the ticket and
     # its tests) (981 -> 989); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 989
+    # 2026-11-15 the showcase's numbers come from its arrays (T72/ticket 72 + v8
+    # map line + the derivation helpers cited by the ticket and its tests)
+    # (989 -> 994); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 994
 
 
 def test_real_corpus_has_no_false_content_mismatch():
