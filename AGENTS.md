@@ -253,6 +253,49 @@ first, then the workers.** Enforcement:
 - `Task/Subtask/AgentEvent` (uc-types/src/agent.rs) — orchestration
 - `WorkerRegistry/RegisteredWorker` (uc-grpc/src/worker_service.rs) — worker registration + capability discovery
 
+## Knowledge Layer (V2.0 evidence-first)
+
+- `python/ultimate_coders/knowledge/` — `model.py` (Visibility / EvidenceKind / ClaimStatus /
+  AttemptRef / KnowledgeScope / RevisionBinding), `rollout.py` (stages + budgets,
+  `UC_KNOWLEDGE_STAGE` / `UC_RECOVERY_BUDGET_TOKENS` / `UC_KNOWLEDGE_RETRIEVAL_BUDGET_TOKENS`),
+  `attempt_chain.py` (immutable attempt patch rounds),
+  `evidence.py` (evidence / claim / validation ledger), `gate.py` (Epistemic Gate),
+  `recovery.py` (bounded retry recovery view), `verdicts.py` (review/oracle/test verdict
+  extraction), `claims.py` (failure/delivery claim producers + promotion callers),
+  `integration.py` (merge/push receipts + repository promotion), `retrieval.py` (budgeted
+  graph read face → `Tier.EVIDENCE` items), `signatures.py` (failure-signature normalization
+  used by `repeated_failure_rate`), `metrics.py` (offline A-B harness:
+  `python -m ultimate_coders.knowledge.metrics --state <url> [--signatures]`, where
+  `--signatures` prints the normalized failure-signature histogram for calibration;
+  procedure in `docs/architecture/knowledge-upgrade/runbook-ab-evaluation.md`), `dashboard.py` (bounded,
+  log-safe overview: attempts/evidence/claims/pages counts plus gate allowed/denied and a
+  denial-reason histogram; `python -m ultimate_coders.knowledge.dashboard --state <url>`,
+  `GET /dashboard/api/knowledge` in `dashboard/app.py`, and the TaskDetail React panel
+  `dashboard/src/components/panels/KnowledgeOverviewPanel.tsx` + `dashboard/src/lib/knowledge.ts`),
+  plus P4 observations
+  `survey.py` (AST survey), `deepen.py` (bounded read-only git deepening) and
+  `pages.py` (versioned knowledge pages — a derived projection in the
+  `knowledge_pages` namespace; the arbiter rebuilds the repository page after a
+  canonical promotion (`integration._rebuild_pages`, T18), the dashboard read face
+  counts them, and they never enter prompts or sync to Qdrant/TiKV (D7)).
+- Authority is the existing PostgreSQL-backed `RuntimeState` (`UC_DATABASE_URL`, SQLite
+  fallback) under namespaces `attempt_chain`, `knowledge_evidence`, `knowledge_claims`;
+  no second database and no Rust Knowledge Authority service (see
+  `docs/architecture/knowledge-upgrade/`).
+- All behavior is off by default: `UC_KNOWLEDGE_STAGE` unset = `DISABLED`; stage `shadow`
+  only captures evidence, stage `recovery` also injects prior-attempt evidence into retries,
+  stage `graph` promotes accepted delivery claims to GRAPH and injects this task graph's
+  already-promoted claims into the prompt (bounded read face), stage `canonical` lets the
+  MergeArbiter promote merge/push receipts to REPOSITORY and rebuild the repository page.
+  The planner-side view budget is the Rust-side `UC_PLANNER_VIEW_BUDGET_BYTES`
+  (`crates/uc-types/src/envelope.rs`, default 8192, clamp 512–8192).
+- Worker hook points: `_record_attempt_round` / `_record_attempt_evidence` (after the sandbox
+  result), `_record_delivery_evidence` / `_record_delivery_claim` (after workspace release),
+  `_recovery_context_block` (attempt > 0), `_knowledge_context_items` (stage ≥ `graph`,
+  before `subtask_started`); orchestrator hook: `MergeArbiter._record_integration`
+  after the base-branch push. Every captured record stays attempt-scoped until the gate
+  promotes it; promotion denials never mutate the claim.
+
 ## Agent Skills
 
 ### Issue tracker
