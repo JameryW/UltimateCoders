@@ -20,7 +20,10 @@ TaskDetail 内挂载，7 个 node 测试，`tsc -b` / `eslint` / 170 个 dashboa
 不同步 Qdrant/TiKV / 不占 Stage）由 D7 定案。2026-11-15 首轮真实小样本已跑通
 （3 个任务对，usage 上报、配对与签名直方图均工作），但两臂 attempt 0 全成功，
 stage C 未注入，结果不构成判读（runbook §7）；同一天的失败注入补齐了 stage C
-验证（C 的 recovery 摘要递增、B 为 `None`，runbook §8）。
+验证（C 的 recovery 摘要递增、B 为 `None`，runbook §8）。随后又用
+`max_turns=1` 注入带 usage 的失败混合样本，验证签名归一化（`<n>`）、
+配对判词与 `verdict` 计算能走通，但该轮 `regressed` 是注入方式的伪信号
+（runbook §9），仍不作为 B/C 性能结论。
 仍在 Frontier：决策级 B/C 数据（成功/失败混合、两轮同向）与签名粒度校准（工具与
 runbook 均已就绪，缺的是数据）、Rust 侧 `cargo test`（本机网络不可达；
 CI `test (uc-types)` job 已加，待首次绿色）。
@@ -188,10 +191,14 @@ P4 — Versioned Knowledge Pages: **implemented**
   且没有触发 stage C 的恢复视图（attempt 0 全成功，成功结果不重跑）。同一天的
   失败注入另一轮验证了 stage C：两臂各 3 次失败 attempt，C 的 `subtask_retry`
   事件带回递增的 recovery 摘要（1→2 轮、95→184 token），B 为 `None`（runbook
-  §8）。可判读的 B/C 数据仍缺：需要成功/失败混合、失败 attempt 两臂配对，并按
-  runbook 跑两轮同向。
-- **签名粒度校准**：T13 已归一化，`--signatures` 已能观测分布；首轮真实样本没有
-  失败 attempt，直方图为空，粗细度仍需在带失败样本的 A-B 数据里校准。
+  §8）。随后 `max_turns=1` 的带 usage 失败混合轮验证了判读管线本身
+  （`paired_tasks=2`、签名 `<n>` 聚合、`verdict=regressed`），但该判词是注入
+  伪信号，不是 stage 结论（runbook §9）。可判读的 B/C 数据仍缺：需要正常
+  `max_turns`、成功/失败混合、失败 attempt 两臂配对，并按 runbook 跑两轮同向。
+- **签名粒度校准**：T13 已归一化，`--signatures` 已能观测分布；首批真实样本
+  没有失败 attempt（空直方图），失败注入轮出现单一连接错误签名，`max_turns`
+  轮出现 `Stopped after max turns (<n>) without done()`，都说明当前归一化在
+  这些类别上可行但粒度仍偏粗，仍需在正常任务集的混合失败样本里校准。
 - **Rust 侧构建验证**：`crates/uc-types` 的 planner 预算改动在本机无法 `cargo test`
   （crates.io 网络不可达且无本地 registry 缓存）；已用独立 `rustc` 提取验证
   解析/clamp/打包逻辑。`.github/workflows/ci-rust.yml` 已新增 `test (uc-types)`

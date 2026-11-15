@@ -166,3 +166,40 @@ run 1 direction=<...>  run 2 direction=<...>  -> 是否进入 stage D/E = <yes/n
   这正说明当前归一化在该类错误上偏粗（可作为 T13 校准的对照组），不能据此
   判定 C 有改善。要判优，仍需两臂各自包含成功与失败混合、且失败 attempt 在
   同一任务集内配对，并跑第二轮同向。
+
+## 9. 带 usage 的失败混合注入（2026-11-15，判读管线验收，仍不是性能数据）
+
+目的：让失败 attempt 也带 token usage，并让两臂各有一个成功样本，从而验证
+`--signatures` 归一化、`pair` 口径与 `verdict` 计算在**真实执行**上能走通。
+这一轮故意把任务做窄，**不能**当作 stage B/C 优劣结论。
+
+- 方法：任务 `ab-mix-1`（`mixed_a.txt`=`alpha`）与 `ab-mix-2`
+  （`mixed_b.txt`=`beta`），`agent_config={"max_turns":1}`，用正常可达的
+  Ollama `openai/qwen3.8-9b-uc`；`max_turns=1` 让模型通常来不及 `write_file`
+  再 `done()`，从而产生带 usage 的失败重试。两臂 state 为 `.uc/ab/mix-b`
+  （`shadow`）与 `.uc/ab/mix-c`（`recovery`），项目仓库在第二臂前重置到
+  `535711f`。
+- 结果（`python -m ultimate_coders.knowledge.metrics --baseline .uc/ab/mix-b
+  --variant .uc/ab/mix-c --json --signatures`）：
+
+  ```text
+  paired_tasks = 2
+  arm B: attempts 5, attempts_with_usage 4, success_rate 0.5, avg_attempts 2.5,
+         repeated_failure_rate 0.5, tokens_per_attempt 574.0 (2296 reported)
+  arm C: attempts 6, attempts_with_usage 6, success_rate 0.0, avg_attempts 3.0,
+         repeated_failure_rate 0.6667, tokens_per_attempt 652.67 (3916 reported)
+  verdict = regressed   reason = success_rate_lower
+  signatures: baseline [{signature: "Stopped after max turns (<n>) without done()", count: 4}]
+              variant  [{signature: "Stopped after max turns (<n>) without done()", count: 6}]
+  ```
+
+  C 臂的 `subtask_retry` 事件仍逐次递增恢复视图：attempt 1
+  `rounds_shown=1, tokens=67`，attempt 2 `rounds_shown=2, tokens=127`
+  （budget 600）；B 臂两次都是 `recovery None`。
+- 读法：`regressed` 是注入方式的**伪信号**——`max_turns=1` 让任务普遍不可完成，
+  B 的 0.5 success 里还有一次是模型单轮直接 `done()` 的捷径（exit 0 但无
+  usage），两臂只是随机噪声。可确认的是管线本身：失败 attempt 能带 usage、
+  失败签名被归一化成 `<n>` 并跨 attempt 聚合、`paired_tasks=2` 时能算出
+  `regressed`、恢复视图在真实重试里注入。
+- 下一步：用正常 `max_turns`、任务语义完整、同时包含成功与失败重试的任务集
+  各跑一轮（两轮同向才可判读）；本文两节只作为方法与工具链证据保留。

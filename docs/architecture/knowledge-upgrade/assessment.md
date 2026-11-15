@@ -129,10 +129,13 @@ Hy-Memory 之上，为什么还需要「补丁链 + 证据账本 + 认知门 + �
   且 stage C 的恢复视图未被触发（attempt 0 全成功）。随后用失败注入单独验证了
   stage C：两臂各 3 次失败 attempt，C 的 `subtask_retry` 事件带回递增的 recovery
   摘要（1→2 轮、95→184 token），B 为 `None`；两条直方图都只剩一条「模型连接
-  错误」签名，正好暴露归一化偏粗。可判读数据仍需成功/失败混合、失败 attempt
-  两臂配对与两轮同向（见
-  [runbook-ab-evaluation.md](runbook-ab-evaluation.md) §7–§8）；失败签名粒度也
-  仍需在这类数据里校准。
+  错误」签名，正好暴露归一化偏粗。再用 `max_turns=1` 把任务做窄、注入带 usage
+  的失败混合样本，`paired_tasks=2` 时判出 `regressed`、签名
+  `Stopped after max turns (<n>) without done()` 在臂内聚合、C 的 recovery 摘要
+  67→127 token 递增——这验证了判读管线，但 `regressed` 是注入伪信号（见
+  [runbook-ab-evaluation.md](runbook-ab-evaluation.md) §9）。可判读数据仍需正常
+  任务语义下成功/失败混合、失败 attempt 两臂配对与两轮同向（见同文件 §7–§9）；
+  失败签名粒度也仍需在这类数据里校准。
 - **门裁决可观测**：`claims.record_gate_decision` 把 allowed/denied 与理由码写成
   `VALIDATION` 证据，`knowledge/dashboard.py`（T16）聚合成理由直方图；HTTP 读面
   `GET /dashboard/api/knowledge` 已接并有 4 个路由测试，React 面板
