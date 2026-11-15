@@ -19,9 +19,11 @@ TaskDetail 内挂载，7 个 node 测试，`tsc -b` / `eslint` / 170 个 dashboa
 （[runbook-ab-evaluation.md](runbook-ab-evaluation.md)）；page 边界（不进 prompt /
 不同步 Qdrant/TiKV / 不占 Stage）由 D7 定案。2026-11-15 首轮真实小样本已跑通
 （3 个任务对，usage 上报、配对与签名直方图均工作），但两臂 attempt 0 全成功，
-stage C 未注入，结果不构成判读（runbook §7）。
-仍在 Frontier：真实 A-B 数据集跑数、签名粒度校准（工具与 runbook 均已就绪，缺的是
-数据）、Rust 侧 `cargo test`（本机网络不可达；CI `test (uc-types)` job 已加，待首次绿色）。
+stage C 未注入，结果不构成判读（runbook §7）；同一天的失败注入补齐了 stage C
+验证（C 的 recovery 摘要递增、B 为 `None`，runbook §8）。
+仍在 Frontier：决策级 B/C 数据（成功/失败混合、两轮同向）与签名粒度校准（工具与
+runbook 均已就绪，缺的是数据）、Rust 侧 `cargo test`（本机网络不可达；
+CI `test (uc-types)` job 已加，待首次绿色）。
 Assessment: [assessment.md](assessment.md)（surveyed 2026-11-15；现状盘点 / 六模块
 差距 / 方案取舍 / 风险）
 Intake: 用户计划的「六模块 / 四原则 / 六阶段 / Stage A–E 放量 / 验收指标 /
@@ -153,8 +155,9 @@ P5（D4、D6 的读取面切片）— Graph 检索 / 签名 / 指标 / 读面 / 
   worker 注入用例)
 - [15 端到端 A-B 指标测量](tickets/15-metrics-harness.md) — **implemented**
   (`knowledge/metrics.py` + CLI，含 `--signatures` 失败签名直方图；
-  `tests/python/test_knowledge_metrics.py` 14 tests；跑数 runbook 见
-  [runbook-ab-evaluation.md](runbook-ab-evaluation.md)；真实数据集跑数仍属 Frontier)
+  `tests/python/test_knowledge_metrics.py` 15 tests；跑数 runbook 见
+  [runbook-ab-evaluation.md](runbook-ab-evaluation.md)；已有两轮真实小样本
+  验收（成功集 §7、失败注入 §8），决策级数据仍属 Frontier)
 - [16 知识层读面：概览与拒绝理由分布](tickets/16-knowledge-read-face.md) —
   **implemented** (`knowledge/dashboard.py` + CLI；门裁决写入 `VALIDATION` 证据后
   聚合为 allowed/denied + 理由直方图；页面按生命周期计数；读面同时是 P4 页面投影
@@ -182,8 +185,11 @@ P4 — Versioned Knowledge Pages: **implemented**
   runbook（[runbook-ab-evaluation.md](runbook-ab-evaluation.md)）都已就绪；
   2026-11-15 已在真实 worker + Ollama 上跑通一轮小样本（3 个任务 × 2 arm × 1
   attempt），但该轮 `verdict=inconclusive` / `tokens_worse`、两臂签名均为空，
-  且没有触发 stage C 的恢复视图（attempt 0 全成功，成功结果不重跑）。可判读的
-  B/C 数据仍缺：需要带 attempt 0 失败的任务集，并按 runbook 跑两轮同向。
+  且没有触发 stage C 的恢复视图（attempt 0 全成功，成功结果不重跑）。同一天的
+  失败注入另一轮验证了 stage C：两臂各 3 次失败 attempt，C 的 `subtask_retry`
+  事件带回递增的 recovery 摘要（1→2 轮、95→184 token），B 为 `None`（runbook
+  §8）。可判读的 B/C 数据仍缺：需要成功/失败混合、失败 attempt 两臂配对，并按
+  runbook 跑两轮同向。
 - **签名粒度校准**：T13 已归一化，`--signatures` 已能观测分布；首轮真实样本没有
   失败 attempt，直方图为空，粗细度仍需在带失败样本的 A-B 数据里校准。
 - **Rust 侧构建验证**：`crates/uc-types` 的 planner 预算改动在本机无法 `cargo test`

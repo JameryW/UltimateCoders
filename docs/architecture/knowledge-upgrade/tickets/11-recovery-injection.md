@@ -10,7 +10,10 @@
 _load_recovery_view` + `_recovery_context_block`，重试环 1168 行起调用；
 `subtask_retry` 事件在重试决策点（约 1418 行）计算并携带 `data["recovery"]`；
 视图层由 `tests/python/test_recovery_view.py` 覆盖；A-B 测量 harness 已就绪
-（`knowledge/metrics.py`，T15），真实数据集跑数仍属 Frontier）
+（`knowledge/metrics.py`，T15）。2026-11-15 失败注入实测：两臂各 3 次失败
+attempt，C 的 `subtask_retry` 事件带回递增的 recovery 摘要（1→2 轮、
+95→184 token / 600 预算），B 为 `None`，整条重试链无异常；记录见
+[../runbook-ab-evaluation.md](../runbook-ab-evaluation.md) §8）
 
 **Implementation**
 
@@ -50,7 +53,8 @@ _load_recovery_view` + `_recovery_context_block`，重试环 1168 行起调用�
       baseline/variant，输出重复失败签名率、平均 attempt 数、成功率与 tokens 的
       判定（`improved` / `non_inferior` / `regressed` / `inconclusive` /
       `insufficient_data`）；见 [spec-p0.md](../spec-p0.md) §评测协议。
-      **真实数据集跑数未做**（Frontier）：数据出来前不得宣称改善。
+      真实失败重试已验证恢复视图注入（runbook §8）；**决策级 B/C 数据未做**
+      （Frontier）：数据出来前不得宣称改善。
 - [ ] 超时/崩溃路径的恢复视图读取（worktree 已 quarantine 时
       `prior_rounds()` 仍应可用）需在联调中确认。
 

@@ -44,8 +44,9 @@ CLI `python -m ultimate_coders.knowledge.metrics --state ... [--baseline ... --v
 - [x] CLI 单状态与配对两种输出都是合法 JSON。
 - [ ] 在真实 A-B 运行集上产出**可判读**结果：脚本已就绪，2026-11-15 已用真实
       worker + Ollama 跑出 3 个任务对的真实数字（`inconclusive`/`tokens_worse`），
-      但该轮 attempt 0 全成功、stage C 恢复视图未注入，属工具链验收而非 B/C 判读；
-      仍需带失败 attempt 的任务集与两轮同向数据。
+      并用失败注入验证了 stage C 的重试恢复视图（两臂各 3 次失败 attempt，C 的
+      `subtask_retry` 带回递增 recovery 摘要、B 为 `None`，见 runbook §7–§8）；
+      但还没有成功/失败混合且失败 attempt 两臂配对的任务集，仍需两轮同向数据。
 
 **Rollout:** 只读聚合，不写权威；可随时跑，默认不影响 worker。
 **Risks:** token 指标依赖 agent 上报 usage；缺失时该维度诚实为 `None`，

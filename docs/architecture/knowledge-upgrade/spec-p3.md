@@ -80,7 +80,8 @@ Blocked by: D4（晋升条件）、D6（预算）。Builds on P1 的补丁链与
       （`tests/python/test_merge_arbiter_knowledge.py`）。
 - [ ] 端到端验收（MVP 闭环）：同一任务集上 stage B → C 配对比较，重复失败签名率
       与平均 attempt 数下降、成功率非劣；**测量 harness 已就绪**
-      （`knowledge/metrics.py` + CLI，见 T15），**真实数据集跑数未做**（Frontier），
+      （`knowledge/metrics.py` + CLI，见 T15），失败注入已验证 C 的恢复视图在真实
+      重试链上注入（runbook §8），但**决策级 B/C 数据未做**（Frontier），
       数据出来前不得宣称改善；具体阈值见 [spec-p0.md](spec-p0.md) §验收指标。
 
 ## Out of scope

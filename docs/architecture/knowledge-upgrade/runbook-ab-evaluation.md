@@ -133,3 +133,36 @@ run 1 direction=<...>  run 2 direction=<...>  -> 是否进入 stage D/E = <yes/n
 - 工具链修复（本轮顺带发现并修）：`harness_local_loop.py` 现在把子进程逐轮
   `usage` 事件求和为 `TokenUsage`（未上报则 `None`，不伪造 0），
   `metrics.load_state` 接受 runbook 的 state 目录并解析到 `state.sqlite3`。
+
+## 8. 失败注入验证 stage C 恢复视图（2026-11-15，方法验收，不是性能数据）
+
+目的：验证 attempt 0 失败后重试路径能真正编译并注入 Recovery View，而不是
+只看「重发成功任务被结算」的静态路径。这一轮同样**不是** B/C 判优。
+
+- 方法：两臂各起一个 worker，任务 id 都是 `ab-fail-1`（文件约束
+  `ab_fail.txt`），但 `OPENAI_API_BASE=http://127.0.0.1:9/v1` 故意不可达，
+  让每次 attempt 都在模型连接处失败；state 为 `.uc/ab/fail-b`（`shadow`）与
+  `.uc/ab/fail-c`（`recovery`），其余环境同上一节。
+- 结果：两臂都产生 3 条 `attempt_chain`（attempt 0/1/2，各自 0 patch）与
+  3 条 `failure_signature`；两臂 `attempts=3`、`attempts_with_usage=0`、
+  `success_rate=0`、`repeated_failure_rate=0.6667`，`tokens_per_attempt=null`
+  （失败发生在模型调用前，没有 usage，诚实为空），配对 `paired_tasks=1`
+  → `insufficient_data`。
+- 关键证据：从 JetStream `UC_TASK_EVENTS` 的 `subtask_retry` 事件读回：
+
+  ```text
+  arm C attempt 1: recovery {rounds_shown: 1, rounds_available: 1,
+                             evidence_records: 0, tokens: 95, budget_tokens: 600}
+  arm C attempt 2: recovery {rounds_shown: 2, rounds_available: 2,
+                             evidence_records: 0, tokens: 184, budget_tokens: 600}
+  arm B attempt 1: recovery None
+  arm B attempt 2: recovery None
+  ```
+
+  即 B 臂重试保持基础 prompt；C 臂每次重试都把此前轮次编译进恢复视图，并在
+  600 token 预算内递增（1→2 轮，95→184 token），未触发截断。
+- 读法：`_outcome_is_settled` 只结算**成功**结果，失败重试会正常进入
+  `_recovery_context_block`；两条失败签名完全相同是因为根因同是模型连接错误，
+  这正说明当前归一化在该类错误上偏粗（可作为 T13 校准的对照组），不能据此
+  判定 C 有改善。要判优，仍需两臂各自包含成功与失败混合、且失败 attempt 在
+  同一任务集内配对，并跑第二轮同向。

@@ -126,10 +126,13 @@ Hy-Memory 之上，为什么还需要「补丁链 + 证据账本 + 认知门 + �
   `knowledge/metrics.py`（T15）与 CLI 已就绪；2026-11-15 用真实 worker +
   Ollama 跑了 3 个任务 × 2 arm × 1 attempt，usage 上报、配对指标与
   `--signatures` 直方图都工作，但该轮 `inconclusive`/`tokens_worse`、签名均为空，
-  且 stage C 的恢复视图未被触发（attempt 0 全成功）。可判读数据仍需带失败
-  attempt 的任务集与两轮同向（见
-  [runbook-ab-evaluation.md](runbook-ab-evaluation.md) §7）；失败签名粒度也仍需
-  在这类数据里校准。
+  且 stage C 的恢复视图未被触发（attempt 0 全成功）。随后用失败注入单独验证了
+  stage C：两臂各 3 次失败 attempt，C 的 `subtask_retry` 事件带回递增的 recovery
+  摘要（1→2 轮、95→184 token），B 为 `None`；两条直方图都只剩一条「模型连接
+  错误」签名，正好暴露归一化偏粗。可判读数据仍需成功/失败混合、失败 attempt
+  两臂配对与两轮同向（见
+  [runbook-ab-evaluation.md](runbook-ab-evaluation.md) §7–§8）；失败签名粒度也
+  仍需在这类数据里校准。
 - **门裁决可观测**：`claims.record_gate_decision` 把 allowed/denied 与理由码写成
   `VALIDATION` 证据，`knowledge/dashboard.py`（T16）聚合成理由直方图；HTTP 读面
   `GET /dashboard/api/knowledge` 已接并有 4 个路由测试，React 面板
@@ -153,7 +156,7 @@ Hy-Memory 之上，为什么还需要「补丁链 + 证据账本 + 认知门 + �
   不需要第二套常量。
 - Dashboard 前端面板已接：聚合模块、CLI、`GET /dashboard/api/knowledge`（T16）与
   TaskDetail 内 React 面板（`KnowledgeOverviewPanel.tsx`）共用同一 counts-only schema；
-  未决的只剩真实数据跑数与签名校准，不再是接口缺口。
+  未决的只剩决策级 A-B 数据与签名校准，不再是接口缺口。
 
 ## 结论
 
