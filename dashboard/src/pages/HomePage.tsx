@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getStoredToken } from "@/hooks/useAuth";
 import { useGrpcWeb } from "@/hooks/useGrpcWeb";
 import {
+  cleanReplaySummary,
   fetchWorkflowReplays,
   formatReplayDuration,
   WorkflowReplayRequestError,
@@ -281,7 +282,10 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    if (probe !== "reachable") return;
+    // Replay is a REST read with the same token as the rest of the dashboard.
+    // It must not wait for the gRPC probe: on a deployed dashboard the health
+    // probe itself is auth-gated, so a probe-gated fetch would show "offline"
+    // to an anonymous visitor instead of the sign-in prompt that unblocks them.
     const controller = new AbortController();
     replayAbortRef.current = controller;
     // Defer the first fetch by a microtask: `loadReplays` flips the state to
@@ -294,14 +298,35 @@ export default function HomePage() {
       controller.abort();
       if (replayAbortRef.current === controller) replayAbortRef.current = null;
     };
-  }, [probe, loadReplays]);
+  }, [loadReplays]);
 
   const activeReplay = replays.find((run) => run.id === activeReplayId) ?? replays[0] ?? null;
   const replaySteps = activeReplay?.steps ?? [];
+  const hasReplayRuns = replays.length > 0;
+  const canRefreshReplay = replayState !== "loading";
+  const replaySourceLabel =
+    replayState === "auth"
+      ? "sign-in required"
+      : replayState === "loading" && !hasReplayRuns
+        ? "loading runs"
+        : hasReplayRuns || replayState === "empty"
+          ? "event-derived"
+          : replayState === "error" && probe === "reachable"
+            ? "read failed"
+            : probe !== "reachable"
+              ? "gateway offline"
+              : "event-derived";
+  const replaySourceClass =
+    replayState === "auth"
+      ? "home-replay-source-auth"
+      : hasReplayRuns || replayState === "empty"
+        ? "home-replay-source-live"
+        : "";
   const replayCursorIndex = replaySteps.length > 0
     ? Math.min(replayCursor, replaySteps.length - 1)
     : 0;
   const currentReplayStep = replaySteps[replayCursorIndex] ?? null;
+  const currentReplaySummary = cleanReplaySummary(currentReplayStep?.summary);
 
   useEffect(() => {
     if (!replayPlaying || !activeReplay || replaySteps.length === 0) return;
@@ -622,38 +647,27 @@ export default function HomePage() {
           </div>
 
           <div className="home-replay-toolbar">
-            <span className={`home-replay-source ${probe === "reachable" ? "home-replay-source-live" : ""}`}>
-              <i aria-hidden="true" /> {probe === "reachable" ? (replayState === "auth" ? "sign-in required" : replayState === "loading" ? "loading runs" : "event-derived") : "gateway offline"}
+            <span className={`home-replay-source ${replaySourceClass}`}>
+              <i aria-hidden="true" /> {replaySourceLabel}
             </span>
             <button
               className="home-replay-refresh"
               type="button"
               onClick={handleReplayRefresh}
-              disabled={!canRefresh || replayState === "loading"}
+              disabled={!canRefreshReplay}
             >
               refresh replay
             </button>
           </div>
 
-          <div className="home-replay-shell">
+          <div className={`home-replay-shell ${replayState === "auth" ? "home-replay-shell-auth" : ""}`}>
             <div className="home-replay-runs" aria-label="Recent workflow runs">
-              {probe !== "reachable" ? (
-                <p className="home-replay-hint">连接 Gateway 后，这里会显示最近的工作流执行。静态展品仍可浏览上面的执行循环。</p>
-              ) : replayState === "loading" && replays.length === 0 ? (
-                <p className="home-replay-hint">Reading recent workflow events…</p>
-              ) : replayState === "auth" ? (
+              {replayState === "auth" ? (
                 <div className="home-replay-auth">
                   <p className="home-replay-hint">回放与其它 Dashboard 读取面使用同一鉴权。登录后可查看真实工作流执行。</p>
                   <a className="home-replay-auth-link" href="#/dashboard">sign in on the operations dashboard →</a>
                 </div>
-              ) : replayState === "error" ? (
-                <div className="home-replay-error">
-                  <p className="home-replay-hint">回放数据暂时不可用。Gateway 可能已恢复，但 REST 事件读取失败。</p>
-                  <button type="button" onClick={handleReplayRefresh}>try again</button>
-                </div>
-              ) : replays.length === 0 ? (
-                <p className="home-replay-hint">还没有可回放的工作流执行。带 steps 的任务完成后，每一步的进度事件会在这里组成时间线。</p>
-              ) : (
+              ) : hasReplayRuns ? (
                 replays.map((run) => (
                   <button
                     className={`home-replay-run ${activeReplay?.id === run.id ? "home-replay-run-active" : ""}`}
@@ -668,10 +682,23 @@ export default function HomePage() {
                     <span className="home-replay-run-age">{replayAge(run.updatedAt)}</span>
                   </button>
                 ))
+              ) : probe !== "reachable" ? (
+                <p className="home-replay-hint">连接 Gateway 后，这里会显示最近的工作流执行。静态展品仍可浏览上面的执行循环。</p>
+              ) : replayState === "loading" ? (
+                <p className="home-replay-hint">Reading recent workflow events…</p>
+              ) : replayState === "error" ? (
+                <div className="home-replay-error">
+                  <p className="home-replay-hint">回放数据暂时不可用。Gateway 可能已恢复，但 REST 事件读取失败。</p>
+                  <button type="button" onClick={handleReplayRefresh}>try again</button>
+                </div>
+              ) : replayState === "empty" ? (
+                <p className="home-replay-hint">还没有可回放的工作流执行。带 steps 的任务完成后，每一步的进度事件会在这里组成时间线。</p>
+              ) : (
+                <p className="home-replay-hint">Reading recent workflow events…</p>
               )}
             </div>
 
-            <div className="home-replay-stage" aria-live="polite">
+            <div className={`home-replay-stage ${activeReplay ? "" : "home-replay-stage-idle"}`} aria-live="polite">
               {activeReplay ? (
                 <>
                   <div className="home-replay-stage-top">
@@ -698,30 +725,33 @@ export default function HomePage() {
                   />
 
                   <ol className="home-replay-timeline">
-                    {replaySteps.map((step, index) => (
-                      <li key={`${step.index}-${index}`}>
-                        <button
-                          className={`home-replay-step ${index === replayCursorIndex ? "home-replay-step-current" : ""} ${index < replayCursorIndex ? "home-replay-step-past" : ""}`}
-                          type="button"
-                          onClick={() => {
-                            setReplayCursor(index);
-                            setReplayPlaying(false);
-                          }}
-                          aria-current={index === replayCursorIndex ? "step" : undefined}
-                        >
-                          <span className={`home-replay-dot home-replay-dot-${step.status}`} aria-hidden="true" />
-                          <span className="home-replay-step-ordinal">{padOrdinal(step.index + 1)}</span>
-                          <span className="home-replay-step-copy">
-                            <strong>{step.agent || "agent"}</strong>
-                            <small>{step.summary || step.status}</small>
-                          </span>
-                          <span className="home-replay-step-meta">
-                            <em className={`home-replay-step-status home-replay-step-status-${step.status}`}>{step.status}</em>
-                            <time>{formatReplayDuration(step.durationMs)}</time>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
+                    {replaySteps.map((step, index) => {
+                      const summary = cleanReplaySummary(step.summary);
+                      return (
+                        <li key={`${step.index}-${index}`}>
+                          <button
+                            className={`home-replay-step ${index === replayCursorIndex ? "home-replay-step-current" : ""} ${index < replayCursorIndex ? "home-replay-step-past" : ""} ${index > replayCursorIndex ? "home-replay-step-future" : ""}`}
+                            type="button"
+                            onClick={() => {
+                              setReplayCursor(index);
+                              setReplayPlaying(false);
+                            }}
+                            aria-current={index === replayCursorIndex ? "step" : undefined}
+                          >
+                            <span className={`home-replay-dot home-replay-dot-${step.status}`} aria-hidden="true" />
+                            <span className="home-replay-step-ordinal">{padOrdinal(step.index + 1)}</span>
+                            <span className="home-replay-step-copy">
+                              <strong>{step.agent || "agent"}</strong>
+                              <small title={summary || undefined}>{summary || step.status}</small>
+                            </span>
+                            <span className="home-replay-step-meta">
+                              <em className={`home-replay-step-status home-replay-step-status-${step.status}`}>{step.status}</em>
+                              <time>{formatReplayDuration(step.durationMs)}</time>
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ol>
 
                   <div className="home-replay-controls">
@@ -767,24 +797,26 @@ export default function HomePage() {
                     </button>
                     <span className="home-replay-progress-label">
                       {currentReplayStep
-                        ? `${currentReplayStep.status} · ${formatReplayDuration(currentReplayStep.durationMs)}`
+                        ? `${currentReplayStep.agent || "step"} · ${currentReplayStep.status} · ${formatReplayDuration(currentReplayStep.durationMs)}`
                         : ""}
                     </span>
                   </div>
 
                   {currentReplayStep ? (
                     <p className="home-replay-current">
-                      {currentReplayStep.summary || "No summary was recorded for this step."}
+                      {currentReplaySummary || "No summary was recorded for this step."}
                     </p>
                   ) : null}
                 </>
               ) : (
                 <p className="home-replay-hint home-replay-stage-empty">
-                  {probe === "reachable"
-                    ? replayState === "auth"
-                      ? "登录后可在这里逐步查看真实工作流执行。"
-                      : "最近还没有工作流执行可回放。"
-                    : "连接 Gateway 后可查看实时工作流回放。"}
+                  {replayState === "auth"
+                    ? "登录后可在这里逐步查看真实工作流执行。"
+                    : replayState === "empty"
+                      ? "最近还没有工作流执行可回放。"
+                      : probe === "reachable"
+                        ? "回放数据暂时不可用，稍后重试。"
+                        : "连接 Gateway 后可查看实时工作流回放。"}
                 </p>
               )}
             </div>

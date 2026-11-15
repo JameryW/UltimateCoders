@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  cleanReplaySummary,
   fetchWorkflowReplays,
   formatReplayDuration,
   normaliseReplayPayload,
@@ -130,4 +131,21 @@ test("durations are human readable at every scale", () => {
   assert.equal(formatReplayDuration(900), "900ms");
   assert.equal(formatReplayDuration(1500), "1.5s");
   assert.equal(formatReplayDuration(65_000), "1m 05s");
+});
+
+test("step summaries lose harness noise but keep the actual sentence", () => {
+  assert.equal(cleanReplaySummary("done\n\nI read the brief."), "I read the brief.");
+  assert.equal(cleanReplaySummary("  Done ✓  wrote brief.md\n"), "wrote brief.md");
+  assert.equal(cleanReplaySummary("completed: analysis ready"), "analysis ready");
+  assert.equal(cleanReplaySummary("Donegal is not a completion marker"), "Donegal is not a completion marker");
+  assert.equal(cleanReplaySummary("done"), "");
+  assert.equal(cleanReplaySummary(null), "");
+  assert.equal(cleanReplaySummary("alpha\u0000  beta"), "alpha beta");
+  assert.equal(cleanReplaySummary("partly \uFFFD corrupted"), "partly corrupted");
+  assert.equal(cleanReplaySummary("line one\nline two"), "line one line two");
+});
+
+test("step summary cleanup collapses whitespace only, never truncates silently", () => {
+  const long = "word ".repeat(80).trim();
+  assert.equal(cleanReplaySummary(long), long);
 });

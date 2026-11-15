@@ -176,6 +176,30 @@ export async function fetchWorkflowReplays(
   return normaliseReplayPayload(payload);
 }
 
+/**
+ * Step summaries arrive from the agent harness verbatim: newlines, terminal
+ * control bytes and a leading "done" marker are common. They are presentation
+ * noise in a one-line replay row, so collapse them here instead of teaching
+ * every render site the same cleanup.
+ */
+export function cleanReplaySummary(value: string | null | undefined): string {
+  const collapsed = (value ?? "")
+    .replace(/\uFFFD/g, " ")
+    // Control bytes become spaces; the whitespace pass below collapses them.
+    .replace(/\p{Cc}/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!collapsed) return "";
+
+  // Strip the harness's leading completion marker ("done", "done ✓"), but leave
+  // words such as "Donegal" untouched: the marker must end at a boundary.
+  const withoutMarker = collapsed
+    .replace(/^[\s✓✔•·]+/, "")
+    .replace(/^(?:done|completed|finished|完成)(?=$|[\s.!,:;—–-])[\s✓✔•·.!,:;—–-]*/i, "")
+    .replace(/^[\s✓✔•·]+/, "");
+  return withoutMarker.trim();
+}
+
 /** Human-friendly wall-clock duration; null means the run is not settled yet. */
 export function formatReplayDuration(durationMs: number | null): string {
   if (durationMs === null || !Number.isFinite(durationMs) || durationMs < 0) {

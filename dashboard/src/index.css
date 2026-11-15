@@ -1031,6 +1031,15 @@ html:has(.home-page) {
   box-shadow: 0 0 10px rgba(139, 240, 204, 0.55);
 }
 
+.home-replay-source-auth {
+  color: #ffcf8a;
+}
+
+.home-replay-source-auth i {
+  background: #ffcf8a;
+  box-shadow: 0 0 10px rgba(255, 207, 138, 0.4);
+}
+
 .home-replay-refresh {
   padding: 7px 11px;
   border: 1px solid rgba(139, 240, 204, 0.28);
@@ -1058,6 +1067,22 @@ html:has(.home-page) {
   grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
   gap: 18px;
   margin-top: 18px;
+}
+
+.home-replay-shell-auth {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.home-replay-shell-auth .home-replay-stage {
+  display: none;
+}
+
+.home-replay-shell-auth .home-replay-auth {
+  max-width: 620px;
+  padding: 20px;
+  border: 1px solid rgba(255, 207, 138, 0.24);
+  border-radius: 5px;
+  background: rgba(255, 207, 138, 0.04);
 }
 
 .home-replay-runs {
@@ -1204,11 +1229,19 @@ html:has(.home-page) {
     rgba(17, 25, 29, 0.92);
 }
 
+.home-replay-stage-idle {
+  min-height: 260px;
+}
+
 .home-replay-stage-empty {
   display: grid;
   min-height: 428px;
   place-items: center;
   text-align: center;
+}
+
+.home-replay-stage-idle .home-replay-stage-empty {
+  min-height: 224px;
 }
 
 .home-replay-stage-top {
@@ -1274,7 +1307,7 @@ html:has(.home-page) {
   color: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease;
+  transition: border-color 140ms ease, background 140ms ease, opacity 140ms ease;
 }
 
 .home-replay-step:hover {
@@ -1288,6 +1321,14 @@ html:has(.home-page) {
 
 .home-replay-step-past {
   opacity: 0.68;
+}
+
+.home-replay-step-future {
+  opacity: 0.38;
+}
+
+.home-replay-step-future:hover {
+  opacity: 0.82;
 }
 
 .home-replay-dot {
@@ -1336,11 +1377,14 @@ html:has(.home-page) {
 }
 
 .home-replay-step-copy small {
+  display: -webkit-box;
   overflow: hidden;
   color: #71858a;
   font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
 }
 
 .home-replay-step-meta {
@@ -1422,13 +1466,17 @@ html:has(.home-page) {
 }
 
 .home-replay-current {
+  max-height: 92px;
   margin: 12px 0 0;
   padding: 10px 12px;
+  overflow-y: auto;
   border-left: 2px solid rgba(139, 240, 204, 0.5);
   background: rgba(139, 240, 204, 0.04);
   color: #9bacaf;
   font-size: 10px;
   line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .home-scenarios-section {
