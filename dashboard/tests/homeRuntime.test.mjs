@@ -16,6 +16,7 @@ import {
   joinChinese,
   nextPollDelay,
   padOrdinal,
+  pollingActive,
   runtimeBadge,
   runtimeStatusLabel,
   showcaseMetrics,
@@ -48,7 +49,12 @@ test("the runtime card can only claim LIVE when the transport is up and nothing 
     ["reachable", true, 0, "live"],
     ["reachable", false, 0, "connecting"],
     ["reachable", true, 1, "connecting"],
-    ["reachable", true, RUNTIME_MAX_FAILURES, "connecting"],
+    ["reachable", true, RUNTIME_MAX_FAILURES - 1, "connecting"],
+    // The poll budget is spent and the loop stops: the card must stop saying
+    // SYNCING, and it must not go back to claiming a connection.
+    ["reachable", true, RUNTIME_MAX_FAILURES, "stalled"],
+    ["reachable", false, RUNTIME_MAX_FAILURES, "stalled"],
+    ["reachable", false, RUNTIME_MAX_FAILURES + 4, "stalled"],
   ];
   for (const [probe, connected, consecutiveFailures, expected] of cases) {
     assert.equal(
@@ -69,14 +75,41 @@ test("LIVE is unreachable without a connected transport", () => {
 });
 
 test("every runtime mode has a distinct badge and a non-empty status label", () => {
-  const modes = ["checking", "connecting", "live", "preview"];
+  const modes = ["checking", "connecting", "live", "stalled", "preview"];
   const badges = modes.map((mode) => runtimeBadge(mode));
   const labels = modes.map((mode) => runtimeStatusLabel(mode));
   assert.equal(new Set(badges).size, modes.length, "badges must be distinguishable");
+  assert.equal(new Set(labels).size, modes.length, "status labels must be distinguishable");
   for (const badge of badges) assert.equal(typeof badge, "string");
   for (const label of labels) assert.ok(label.length > 4, `label too short: ${label}`);
   // A preview must not claim a connection.
   assert.match(runtimeStatusLabel("preview"), /preview/i);
+  // A stalled Gateway is its own verdict, not "SYNCING" forever.
+  assert.equal(runtimeBadge("stalled"), "OFFLINE");
+  assert.match(runtimeStatusLabel("stalled"), /stopped answering/i);
+  assert.doesNotMatch(runtimeStatusLabel("stalled"), /connecting/i);
+});
+
+test("the poll loop runs only in the modes that claim a transport", () => {
+  assert.equal(pollingActive("live"), true);
+  assert.equal(pollingActive("connecting"), true);
+  assert.equal(pollingActive("stalled"), false);
+  assert.equal(pollingActive("preview"), false);
+  assert.equal(pollingActive("checking"), false);
+
+  // Recovery path: the same host that went stalled comes back. The mode is the
+  // only thing the loop keys on, so a successful retry must return to a polling
+  // mode without any extra flag.
+  const stalled = showcaseRuntimeMode({
+    probe: "reachable",
+    connected: true,
+    consecutiveFailures: RUNTIME_MAX_FAILURES,
+  });
+  const recovered = showcaseRuntimeMode({ probe: "reachable", connected: true, consecutiveFailures: 0 });
+  assert.equal(stalled, "stalled");
+  assert.equal(recovered, "live");
+  assert.equal(pollingActive(stalled), false);
+  assert.equal(pollingActive(recovered), true);
 });
 
 test("every transport state has a label", () => {
@@ -148,6 +181,16 @@ test("the primary action never promises a dashboard this host cannot serve", () 
   const preview = showcasePrimaryCta("preview");
   assert.notEqual(preview.label, "Open operations dashboard");
   assert.notEqual(preview.href, DASHBOARD_HREF);
+
+  // Stalled is not the no-Gateway case: this host answered the probe, so the
+  // dashboard is the right destination — but the note may not borrow the
+  // "connected" claim while nothing answers.
+  const stalled = showcasePrimaryCta("stalled");
+  assert.equal(stalled.href, DASHBOARD_HREF);
+  assert.match(stalled.note, /stopped answering/i);
+  assert.doesNotMatch(stalled.note, /No Gateway/);
+  assert.notEqual(stalled.note, showcasePrimaryCta("live").note);
+  assert.notEqual(stalled.note, showcasePrimaryCta("connecting").note);
 });
 
 test("ordinals are derived from the position, never hand-written", () => {

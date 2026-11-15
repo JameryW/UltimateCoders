@@ -30,8 +30,8 @@ export const HOME_DOCUMENT_TITLE = "UltimateCoders — distributed AI coding";
 /** `probing` is the pre-probe state; the other two are the probe's verdicts. */
 export type ProbeState = "probing" | "reachable" | "absent";
 /** What the runtime card is allowed to claim. */
-export type ShowcaseRuntimeMode = "checking" | "connecting" | "live" | "preview";
-export type ShowcaseRuntimeBadge = "CHECKING" | "SYNCING" | "LIVE" | "PREVIEW";
+export type ShowcaseRuntimeMode = "checking" | "connecting" | "live" | "stalled" | "preview";
+export type ShowcaseRuntimeBadge = "CHECKING" | "SYNCING" | "LIVE" | "OFFLINE" | "PREVIEW";
 /** The subset of `useGrpcWeb`'s connection state this page reacts to. */
 export type TransportState = "connected" | "connecting" | "reconnecting" | "error" | "disconnected";
 
@@ -67,6 +67,8 @@ export async function probeGateway(
 /**
  * The card may only say LIVE when the transport is up *and* nothing is
  * currently failing; an unknown probe means CHECKING, an absent one PREVIEW.
+ * Once the poll budget is spent the page stops trying, so the card must stop
+ * saying SYNCING: it is stalled, and only a manual retry can revive it.
  */
 export function showcaseRuntimeMode(input: {
   probe: ProbeState;
@@ -75,8 +77,18 @@ export function showcaseRuntimeMode(input: {
 }): ShowcaseRuntimeMode {
   if (input.probe === "probing") return "checking";
   if (input.probe === "absent") return "preview";
+  if (shouldStopPolling(input.consecutiveFailures)) return "stalled";
   if (input.connected && input.consecutiveFailures === 0) return "live";
   return "connecting";
+}
+
+/**
+ * Whether the poll loop should be running in this mode. The loop is keyed on
+ * the mode, so it stops when the card says OFFLINE *and* restarts by itself if
+ * a manual retry brings the Gateway back (the mode flips back to live).
+ */
+export function pollingActive(mode: ShowcaseRuntimeMode): boolean {
+  return mode === "live" || mode === "connecting";
 }
 
 export function runtimeBadge(mode: ShowcaseRuntimeMode): ShowcaseRuntimeBadge {
@@ -85,6 +97,8 @@ export function runtimeBadge(mode: ShowcaseRuntimeMode): ShowcaseRuntimeBadge {
       return "LIVE";
     case "connecting":
       return "SYNCING";
+    case "stalled":
+      return "OFFLINE";
     case "preview":
       return "PREVIEW";
     default:
@@ -98,6 +112,8 @@ export function runtimeStatusLabel(mode: ShowcaseRuntimeMode): string {
       return "Gateway transport connected";
     case "connecting":
       return "Connecting to Gateway transport";
+    case "stalled":
+      return "Gateway stopped answering";
     case "preview":
       return "Static preview · no Gateway behind this host";
     default:
@@ -168,6 +184,16 @@ export type ShowcaseCta = {
  * workflow section and says why.
  */
 export function showcasePrimaryCta(mode: ShowcaseRuntimeMode): ShowcaseCta {
+  if (mode === "stalled") {
+    // The probe did find a Gateway here, so the dashboard is the right
+    // destination — but it is offline right now, and the note has to say so
+    // instead of borrowing the "connected" claim.
+    return {
+      label: "Open operations dashboard",
+      href: DASHBOARD_HREF,
+      note: "Gateway stopped answering on this host: the dashboard reports OFFLINE until it recovers.",
+    };
+  }
   const transportReady = mode === "live" || mode === "connecting";
   if (transportReady) {
     return {
