@@ -97,8 +97,23 @@ test("the overview never opens a Gateway stream before probing one exists", () =
   assert.match(homePage, /enabled:\s*probe === "reachable"/);
   assert.match(homePage, /from "@\/lib\/homeRuntime"/);
   assert.match(homePage, /probeGateway\(/, "the probe is the only way to enable live traffic");
-  assert.match(homePage, /shouldStopPolling\(/);
+  assert.match(homePage, /pollingActive\(mode\)/, "the poll loop must key on the mode");
+  assert.match(homePage, /\[mode, refreshRuntime\]/, "the loop must restart when the mode recovers");
   assert.match(homePage, /nextPollDelay\(/);
+});
+
+test("the card stops claiming a transport that stopped answering", () => {
+  // A stalled Gateway used to keep the SYNCING badge forever with no poll loop
+  // running; the page has to say so and offer the retry that revives the loop.
+  assert.match(homePage, /mode === "stalled"/, "the card must render the stalled verdict");
+  assert.match(homePage, /auto refresh paused/, "a stopped loop may not claim auto refresh");
+  assert.match(
+    homePage,
+    /canRefresh && mode !== "stalled" \? "refresh" : "retry"/,
+    "the button must say retry when it is the only way to recover",
+  );
+  assert.match(homePage, /自动刷新已暂停/, "the stalled hint must explain the paused refresh");
+  assert.doesNotMatch(homePage, /shouldStopPolling\(/, "the loop is governed by the mode, not two stops");
 });
 
 test("every nav destination exists in the markup", () => {

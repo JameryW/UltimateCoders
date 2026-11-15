@@ -1016,7 +1016,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-15 the showcase's numbers come from its arrays (T72/ticket 72 + v8
     # map line + the derivation helpers cited by the ticket and its tests)
     # (989 -> 994); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 994
+    # 2026-11-15 the runtime card stops claiming a transport that stopped
+    # answering (T73/ticket 73 + v8 map line + the new mode, badge, label,
+    # polling gate and CTA note cited by the ticket and its tests)
+    # (994 -> 998); unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 998
 
 
 def test_real_corpus_has_no_false_content_mismatch():

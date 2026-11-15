@@ -12,13 +12,13 @@ import {
   joinChinese,
   nextPollDelay,
   padOrdinal,
+  pollingActive,
   probeGateway,
   runtimeBadge,
   runtimeStatusLabel,
   showcaseMetrics,
   showcasePrimaryCta,
   showcaseRuntimeMode,
-  shouldStopPolling,
   transportLabel,
   type ProbeState,
 } from "@/lib/homeRuntime";
@@ -185,6 +185,25 @@ export default function HomePage() {
   const failuresRef = useRef(0);
   const [activeSection, setActiveSection] = useState<string>(navSections[0].id);
 
+  const mode = showcaseRuntimeMode({
+    probe,
+    connected: connectionState === "connected",
+    consecutiveFailures,
+  });
+  const badge = runtimeBadge(mode);
+  const isLive = mode === "live";
+  const statusLabel = isLive ? transportLabel(connectionState) : runtimeStatusLabel(mode);
+  const canRefresh = probe === "reachable";
+
+  // Only a host that answered the probe may be advertised as a dashboard; on a
+  // static showcase the primary action opens the execution loop and explains why.
+  const primaryCta = showcasePrimaryCta(mode);
+  const primaryIsDashboard = primaryCta.href === DASHBOARD_HREF;
+  const primaryArrow = primaryIsDashboard ? "→" : "↓";
+  const secondaryCta = primaryIsDashboard
+    ? { label: "See how it works", href: WORKFLOW_HREF, arrow: "↓" }
+    : { label: "Open operations dashboard", href: DASHBOARD_HREF, arrow: "→" };
+
   const refreshRuntime = useCallback(async (): Promise<boolean> => {
     setIsRefreshing(true);
     const [health, tasks] = await Promise.allSettled([healthCheck(), listTasks()]);
@@ -233,28 +252,29 @@ export default function HomePage() {
     };
   }, [probeOnce, probeNonce]);
 
+  // Poll only while the card claims a live or connecting transport. Keying the
+  // loop on the mode is what makes it stop when the card says OFFLINE — and what
+  // makes it restart by itself when a manual retry brings the Gateway back.
   useEffect(() => {
-    if (probe !== "reachable") return;
+    if (!pollingActive(mode)) return;
     let cancelled = false;
     let timer: number | undefined;
     const tick = async () => {
       const ok = await refreshRuntime();
       if (cancelled) return;
-      if (ok) {
-        timer = window.setTimeout(() => void tick(), RUNTIME_POLL_INTERVAL_MS);
-        return;
-      }
-      // Back off on failure instead of retrying every 30s forever; stop once the
-      // backend has been gone long enough for the card to say so.
-      if (shouldStopPolling(failuresRef.current)) return;
-      timer = window.setTimeout(() => void tick(), nextPollDelay(failuresRef.current));
+      // Back off on failure instead of retrying every 30s forever; the mode
+      // turns "stalled" once the budget is spent and the cleanup cancel wins.
+      timer = window.setTimeout(
+        () => void tick(),
+        ok ? RUNTIME_POLL_INTERVAL_MS : nextPollDelay(failuresRef.current),
+      );
     };
     timer = window.setTimeout(() => void tick(), 0);
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [probe, refreshRuntime]);
+  }, [mode, refreshRuntime]);
 
   // Title: the shell's <title> names the operations dashboard.
   useEffect(() => {
@@ -287,25 +307,6 @@ export default function HomePage() {
     for (const element of tracked) observer.observe(element);
     return () => observer.disconnect();
   }, []);
-
-  const mode = showcaseRuntimeMode({
-    probe,
-    connected: connectionState === "connected",
-    consecutiveFailures,
-  });
-  const badge = runtimeBadge(mode);
-  const isLive = mode === "live";
-  const statusLabel = isLive ? transportLabel(connectionState) : runtimeStatusLabel(mode);
-  const canRefresh = probe === "reachable";
-
-  // Only a host that answered the probe may be advertised as a dashboard; on a
-  // static showcase the primary action opens the execution loop and explains why.
-  const primaryCta = showcasePrimaryCta(mode);
-  const primaryIsDashboard = primaryCta.href === DASHBOARD_HREF;
-  const primaryArrow = primaryIsDashboard ? "→" : "↓";
-  const secondaryCta = primaryIsDashboard
-    ? { label: "See how it works", href: WORKFLOW_HREF, arrow: "↓" }
-    : { label: "Open operations dashboard", href: DASHBOARD_HREF, arrow: "→" };
 
   const handleRefresh = useCallback(() => {
     if (canRefresh) {
@@ -383,7 +384,7 @@ export default function HomePage() {
                 {badge}
               </span>
               <button className="home-refresh-button" type="button" onClick={handleRefresh} disabled={isRefreshing || probe === "probing"}>
-                {isRefreshing ? "syncing" : canRefresh ? "refresh" : "retry"}
+                {isRefreshing ? "syncing" : canRefresh && mode !== "stalled" ? "refresh" : "retry"}
               </button>
             </div>
             <div className="home-runtime-title">Runtime surface</div>
@@ -405,9 +406,20 @@ export default function HomePage() {
                 静态展品：这个域名没有连接 Gateway，运行时数据来自最近一次成功快照。点 retry 可重新探测。
               </p>
             ) : null}
+            {mode === "stalled" ? (
+              <p className="home-runtime-hint">
+                Gateway 已停止响应：自动刷新已暂停，卡片上的数据是最后一次成功快照。点 retry 重新探测。
+              </p>
+            ) : null}
             <div className="home-runtime-foot">
               <span>live snapshot · {formatSyncAge(runtime.lastSyncedAt, Date.now())}</span>
-              <span>{canRefresh ? "auto refresh 30s" : "no live API on this host"}</span>
+              <span>
+                {mode === "stalled"
+                  ? "auto refresh paused"
+                  : canRefresh
+                    ? "auto refresh 30s"
+                    : "no live API on this host"}
+              </span>
             </div>
           </div>
         </section>
