@@ -23,7 +23,11 @@ stage C 未注入，结果不构成判读（runbook §7）；同一天的失败�
 验证（C 的 recovery 摘要递增、B 为 `None`，runbook §8）。随后又用
 `max_turns=1` 注入带 usage 的失败混合样本，验证签名归一化（`<n>`）、
 配对判词与 `verdict` 计算能走通，但该轮 `regressed` 是注入方式的伪信号
-（runbook §9），仍不作为 B/C 性能结论。
+（runbook §9），仍不作为 B/C 性能结论。2026-11-15 又用 AwesomeWorkflows
+裁剪出的真实 2 步工作流任务跑通 B/C：真实 worktree/commit/attempt_chain、
+确定性产物验收（doc/report）与 paired `non_inferior` 均工作；但两条配对任务
+在 C 臂 attempt 0 都成功，恢复视图未注入，token 差异只是模型波动
+（runbook §10），同样不是判读数据。
 仍在 Frontier：决策级 B/C 数据（成功/失败混合、两轮同向）与签名粒度校准（工具与
 runbook 均已就绪，缺的是数据）、Rust 侧 `cargo test`（本机网络不可达；
 CI `test (uc-types)` job 已加，待首次绿色）。
@@ -193,8 +197,13 @@ P4 — Versioned Knowledge Pages: **implemented**
   事件带回递增的 recovery 摘要（1→2 轮、95→184 token），B 为 `None`（runbook
   §8）。随后 `max_turns=1` 的带 usage 失败混合轮验证了判读管线本身
   （`paired_tasks=2`、签名 `<n>` 聚合、`verdict=regressed`），但该判词是注入
-  伪信号，不是 stage 结论（runbook §9）。可判读的 B/C 数据仍缺：需要正常
-  `max_turns`、成功/失败混合、失败 attempt 两臂配对，并按 runbook 跑两轮同向。
+  伪信号，不是 stage 结论（runbook §9）。2026-11-15 又从 AwesomeWorkflows 裁剪
+  真实 2 步工作流语料（doc/report）跑通 B/C：真实 worktree/commit/attempt_chain、
+  确定性产物检查和 `paired_tasks=2` / `non_inferior` 可用，但两条配对任务的
+  attempt 0 都成功，恢复视图未注入，token 差异是模型波动；且同一路径
+  `brief.md` 会跨任务覆盖，需按任务分目录或在完成时立即验收（runbook §10）。
+  可判读的 B/C 数据仍缺：需要正常 `max_turns`、成功/失败混合、失败 attempt
+  两臂配对，并按 runbook 跑两轮同向。
 - **签名粒度校准**：T13 已归一化，`--signatures` 已能观测分布；首批真实样本
   没有失败 attempt（空直方图），失败注入轮出现单一连接错误签名，`max_turns`
   轮出现 `Stopped after max turns (<n>) without done()`，都说明当前归一化在

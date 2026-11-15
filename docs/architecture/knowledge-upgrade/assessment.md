@@ -133,8 +133,12 @@ Hy-Memory 之上，为什么还需要「补丁链 + 证据账本 + 认知门 + �
   的失败混合样本，`paired_tasks=2` 时判出 `regressed`、签名
   `Stopped after max turns (<n>) without done()` 在臂内聚合、C 的 recovery 摘要
   67→127 token 递增——这验证了判读管线，但 `regressed` 是注入伪信号（见
-  [runbook-ab-evaluation.md](runbook-ab-evaluation.md) §9）。可判读数据仍需正常
-  任务语义下成功/失败混合、失败 attempt 两臂配对与两轮同向（见同文件 §7–§9）；
+  [runbook-ab-evaluation.md](runbook-ab-evaluation.md) §9）。2026-11-15 又用
+  AwesomeWorkflows 裁剪的真实 2 步工作流任务（doc/report）跑 B/C：真实
+  worktree/commit/attempt_chain、确定性产物检查、`paired_tasks=2` 与
+  `non_inferior` 均工作；但配对任务的 attempt 0 都成功，恢复视图未注入，
+  token 差异只是模型波动，且共享 `brief.md` 会跨任务覆盖（§10）。可判读数据
+  仍需正常任务语义下成功/失败混合、失败 attempt 两臂配对与两轮同向（§7–§10）；
   失败签名粒度也仍需在这类数据里校准。
 - **门裁决可观测**：`claims.record_gate_decision` 把 allowed/denied 与理由码写成
   `VALIDATION` 证据，`knowledge/dashboard.py`（T16）聚合成理由直方图；HTTP 读面

@@ -203,3 +203,58 @@ run 1 direction=<...>  run 2 direction=<...>  -> 是否进入 stage D/E = <yes/n
   `regressed`、恢复视图在真实重试里注入。
 - 下一步：用正常 `max_turns`、任务语义完整、同时包含成功与失败重试的任务集
   各跑一轮（两轮同向才可判读）；本文两节只作为方法与工具链证据保留。
+
+## 10. 真实工作流语料小跑（2026-11-15，管线验收，仍不是性能数据）
+
+目的：用 AwesomeWorkflows 模板中裁剪出的**真实工作流任务**，验证「真实执行 →
+确定性产物验收 → usage/失败签名 → 配对指标」这条链路，而不是只看模型自述的
+`done()`。语料仍是缩小版，**不能**当作 stage B/C 的判读结论。
+
+- 语料：从 `C:\Users\jamer\aiworks\AwesomeWorkflows` 的 `business-document`、
+  `data-report` 模板裁剪出 2 步任务（`awf-doc-1`、`awf-report-1` / `awf-report-3`），
+  外加保留未跑的 `awf-site-1`（`website-building`）。任务通过
+  `.uc/ab/wf_corpus.py` 直接发到 `uc.subtask.execute`，`file_constraints` +
+  `steps` 让 worker 走 worktree 与 step 链；验收脚本 `.uc/ab/wf_validate.py`
+  检查产物文件、关键数字和必需句子。
+- 首轮问题与修正：
+  - 测试仓库默认分支是 `master`，而 `WorkspaceManager.base_branch` 默认 `main`，
+    导致 release 后 `main..HEAD` 为空、产物被当作 `no_changes` 丢掉。三个测试
+    仓库改名为 `main` 并快进后，doc 任务首次 7/7。
+  - 三个任务都写根目录 `brief.md`，后跑的任务会覆盖前一个任务在 base branch
+    上的 brief；因此验收必须在每个任务完成的当下做，或按任务分目录。
+  - `max_turns=4` 的 report 任务在 593s 后触发
+    `[step <n> (local-harness) failed] Stopped after max turns (<n>) without done()`；
+    `max_turns=8` 的 report 任务在 step 1+step 2 超过 900s subtask timeout 时被
+    `Subtask timed out after 900s` 终止。语料最终固定 `max_turns=8`、
+    `timeout_seconds=1800`。
+- B 臂（`shadow`，`.uc/ab/wf-b2`，仓库 `.uc/ab/wf-work-b`）：
+  - `awf-doc-1` 成功，7/7，commit `5309748`。
+  - `awf-report-1`（max_turns 4）失败并重试，计入失败样本；`awf-report-2`
+    （900s timeout）失败并重试；`awf-report-3`（1800s）成功，9/9，commit
+    `b6e6e0a`。
+  - 指标：attempts 4、attempts_with_usage 3、success_rate 0.5、failures 2、
+    tokens_per_attempt 2300.67（6902 reported）、tokens_per_subtask 1725.5；
+    签名 `Subtask timed out after 900s` 与
+    `[step <n> (local-harness) failed] Stopped after max turns (<n>) without done()`。
+- C 臂（`recovery`，`.uc/ab/wf-c2`，仓库 `.uc/ab/wf-work-c`）：
+  - `awf-doc-1` 成功（原验收 6/7，仅因模型写 `three days per week` 而非
+    `3 days in office`；放宽同义检查后 7/7），commit `5a6614c`。
+  - `awf-report-3` 成功，9/9（`units sold multiplied by price per unit` 被
+    同义检查接受），commit `fedf24d`。
+  - 指标：attempts 2、attempts_with_usage 2、success_rate 1.0、
+    tokens_per_attempt 1193.5（2387 reported）。
+- 配对（`--baseline .uc/ab/wf-b2 --variant .uc/ab/wf-c2 --json --signatures`）：
+  `paired_tasks=2`、`verdict=non_inferior`，baseline
+  `tokens_per_attempt=1580.5`（3161 reported），variant `1193.5`（2387 reported）；
+  baseline 两个失败签名，variant 无签名。
+- 读法：两条配对任务在 C 臂的 attempt 0 都成功，而
+  `_outcome_is_settled` 不重跑成功结果，所以 **stage C 的恢复视图没有被注入**；
+  两臂在配对任务上实际是同一行为，token 差异只是模型输出长度波动，
+  `non_inferior` 不能归因于 stage C。B 臂的 timeout / max-turns 失败不在 C 臂
+  数据集内，也不参与配对。可确认的是：真实 workflow steps 能执行并留下
+  worktree/commit/attempt_chain；确定性产物检查能独立于 `done()` 判断结果；
+  usage、失败签名和 paired verdict 在真实语料上继续工作；timeout 与
+  `max_turns` 必须按 9B 模型的实际步耗时设置。
+- 结论：这是对工作流语料与验收方法的管线验收，仍不是决策级 A/B 数据。
+  下一步仍是：正常 `max_turns` 下同时覆盖成功/失败 attempt 的成对任务集，
+  同向跑两轮，并修掉「同一路径产物相互覆盖」的语料设计问题。

@@ -10,7 +10,7 @@
 CLI `python -m ultimate_coders.knowledge.metrics --state ... [--baseline ... --variant ...]
 [--json] [--signatures]`；`tests/python/test_knowledge_metrics.py` 15 tests；
 跑数步骤见 [../runbook-ab-evaluation.md](../runbook-ab-evaluation.md)；
-2026-11-15 真实运行记录见该 runbook §7（成功小样本）、§8（失败注入）、§9（带 usage 的失败混合 / 判词管线验收））
+2026-11-15 真实运行记录见该 runbook §7（成功小样本）、§8（失败注入）、§9（带 usage 的失败混合 / 判词管线验收）、§10（AwesomeWorkflows 裁剪的真实 2 步工作流任务，真实 worktree/commit/产物验收 + `non_inferior`，但 stage C 未注入））
 
 **Implementation**
 
@@ -47,8 +47,11 @@ CLI `python -m ultimate_coders.knowledge.metrics --state ... [--baseline ... --v
       并用失败注入验证了 stage C 的重试恢复视图（两臂各 3 次失败 attempt，C 的
       `subtask_retry` 带回递增 recovery 摘要、B 为 `None`，见 runbook §7–§8）；
       随后用 `max_turns=1` 的带 usage 失败混合轮验证了配对判词与签名 `<n>`
-      聚合能走通（`paired_tasks=2`、`regressed`，但属注入伪信号，见 runbook §9）。
-      仍缺正常任务语义下成功/失败混合、失败 attempt 两臂配对的两轮同向数据。
+      聚合能走通（`paired_tasks=2`、`regressed`，但属注入伪信号，见 runbook §9）；
+      2026-11-15 又用 AwesomeWorkflows 裁剪的真实 2 步工作流语料跑 B/C，
+      `paired_tasks=2`、`non_inferior`，但两臂 attempt 0 都成功，stage C 未注入
+      （runbook §10）。仍缺正常任务语义下成功/失败混合、失败 attempt 两臂配对
+      的两轮同向数据。
 
 **Rollout:** 只读聚合，不写权威；可随时跑，默认不影响 worker。
 **Risks:** token 指标依赖 agent 上报 usage；缺失时该维度诚实为 `None`，

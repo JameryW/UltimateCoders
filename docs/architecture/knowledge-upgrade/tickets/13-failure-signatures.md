@@ -33,9 +33,10 @@ normalize_failure_signature`；worker 在失败路径写
       的端到端指标；校准前不对外承诺比率改善）。
       观测工具已就绪：`knowledge/metrics.py --signatures` 输出失败签名直方图，
       判读步骤见 [runbook-ab-evaluation.md](../runbook-ab-evaluation.md)。
-      2026-11-15 真实样本已出现三类签名：模型连接错误（失败注入）、
-      `Stopped after max turns (<n>) without done()`（`max_turns=1` 注入）、
-      空直方图（成功样本）；正式校准仍需正常任务语义下的混合失败数据。
+      2026-11-15 真实样本已出现四类签名：模型连接错误（失败注入）、
+      `Stopped after max turns (<n>) without done()`（`max_turns=1` 注入与
+      workflow report 任务）、`Subtask timed out after 900s`（workflow report
+      任务超时）、空直方图（成功样本）；正式校准仍需正常任务语义下的混合失败数据。
 
 **Rollout:** 随 `UC_KNOWLEDGE_STAGE`≥`shadow` 采集；默认关。
 **Risks:** 归一化是启发式；异常类型行缺失时退化为「首行」，可能仍含项目个性化文本。
