@@ -13,6 +13,7 @@ from ultimate_coders.knowledge.metrics import (
     collect_samples,
     compare_metrics,
     compute_metrics,
+    load_state,
     main,
     signature_histogram,
 )
@@ -321,3 +322,13 @@ def test_cli_paired_comparison_can_include_both_histograms(tmp_path: Path, capsy
     assert code == 0
     assert payload["signatures"]["baseline"] == [{"signature": "boom", "count": 1}]
     assert payload["signatures"]["variant"] == [{"signature": "zap", "count": 1}]
+
+
+def test_load_state_accepts_the_runbook_state_directory(tmp_path: Path) -> None:
+    # The A/B runbook gives each arm a --state directory (UC_RUNTIME_STATE_DIR);
+    # the harness must resolve it to the SQLite file inside, not fail at open.
+    import sqlite3
+
+    sqlite3.connect(tmp_path / "state.sqlite3").close()
+    loaded = load_state(str(tmp_path))
+    assert loaded.path == (tmp_path / "state.sqlite3").resolve()

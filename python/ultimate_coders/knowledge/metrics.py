@@ -435,12 +435,21 @@ def signature_histogram(
 
 
 def load_state(value: str) -> RuntimeState:
-    """Build a state handle from a SQLite path or a database URL."""
+    """Build a state handle from a state directory, SQLite file, or database URL.
+
+    A directory is the ``UC_RUNTIME_STATE_DIR`` layout the A/B runbook tells an
+    operator to create per arm; resolving it to ``state.sqlite3`` here keeps
+    ``--state .uc/ab/b`` working instead of failing with "unable to open
+    database file".
+    """
 
     text = (value or "").strip()
     if text.startswith(("postgres://", "postgresql://")):
         return RuntimeState(database_url=text)
-    return RuntimeState(Path(text))
+    path = Path(text)
+    if path.is_dir():
+        path = path / "state.sqlite3"
+    return RuntimeState(path)
 
 
 def _format_metrics(metrics: KnowledgeMetrics) -> str:

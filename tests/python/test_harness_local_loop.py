@@ -112,6 +112,29 @@ class TestAdapterParse:
         envelope = _final_envelope(stdout)
         assert envelope is not None and envelope["summary"] == "second"
 
+    def test_usage_events_are_summed(self) -> None:
+        stdout = "\n".join(
+            [
+                json.dumps(
+                    {"event": "usage", "turn": 1, "prompt_tokens": 11, "completion_tokens": 3}
+                ),
+                json.dumps({"event": "tool_call", "tool": "read_file"}),
+                json.dumps(
+                    {"event": "usage", "turn": 2, "prompt_tokens": 7, "completion_tokens": 2}
+                ),
+                json.dumps({"event": "final", "success": True, "summary": "done"}),
+            ]
+        )
+        out = self._parse(stdout)
+        assert out.token_usage is not None
+        assert out.token_usage.input_tokens == 18
+        assert out.token_usage.output_tokens == 5
+        assert out.token_usage.source == "local-harness"
+
+    def test_missing_usage_is_not_reported_as_zero(self) -> None:
+        out = self._parse(json.dumps({"event": "final", "success": True, "summary": "done"}))
+        assert out.token_usage is None
+
 
 class TestRunnerTools:
     def test_safe_resolve_rejects_escape(self, tmp_path: Path) -> None:
@@ -190,6 +213,10 @@ class TestRunnerLoop:
         lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
         tools = [ln["tool"] for ln in lines if ln.get("event") == "tool_call"]
         assert tools == ["list_dir", "write_file", "done"]
+        usage = [ln for ln in lines if ln.get("event") == "usage"]
+        assert [row["turn"] for row in usage] == [1, 2, 3]
+        assert sum(row["prompt_tokens"] for row in usage) == 3
+        assert sum(row["completion_tokens"] for row in usage) == 3
         final = [ln for ln in lines if ln.get("event") == "final"][-1]
         assert final["success"] is True
         assert final["files_written"] == ["out.txt"]

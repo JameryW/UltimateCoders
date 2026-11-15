@@ -38,7 +38,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ultimate_coders.agent.sandbox import AgentAdapter, AgentOutput, ExecResult, SandboxConfig
+from ultimate_coders.agent.sandbox import (
+    AgentAdapter,
+    AgentOutput,
+    ExecResult,
+    SandboxConfig,
+    TokenUsage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +212,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             )
 
         envelope = _final_envelope(result.stdout)
+        token_usage = _usage_from_events(result.stdout)
         tool_calls = [
             json.loads(line)["tool"]
             for line in result.stdout.splitlines()
@@ -226,6 +233,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
                 success=result.exit_code == 0,
                 stderr_tail=stderr_tail,
                 tool_calls=tool_calls,
+                token_usage=token_usage,
             )
 
         return AgentOutput(
@@ -233,6 +241,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             success=bool(envelope.get("success", result.exit_code == 0)),
             stderr_tail=stderr_tail,
             tool_calls=tool_calls,
+            token_usage=token_usage,
         )
 
 
@@ -254,6 +263,42 @@ def _final_envelope(stdout: str) -> dict[str, Any] | None:
         if isinstance(d, dict) and d.get("event") == "final":
             envelope = d
     return envelope
+
+
+def _usage_from_events(stdout: str) -> TokenUsage | None:
+    """Sum the per-turn ``usage`` events the child streamed.
+
+    Returns ``None`` when the provider reported no usage at all, so the
+    knowledge layer records "not reported" instead of a fake zero that would
+    make an A/B token comparison look free.
+    """
+    input_tokens = 0
+    output_tokens = 0
+    seen = False
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("event") != "usage":
+            continue
+        seen = True
+        for key in ("prompt_tokens", "completion_tokens"):
+            try:
+                value = max(0, int(event.get(key, 0) or 0))
+            except (TypeError, ValueError):
+                value = 0
+            if key == "prompt_tokens":
+                input_tokens += value
+            else:
+                output_tokens += value
+    if not seen:
+        return None
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        source=AGENT_NAME,
+    )
 
 
 # ── Runner (child-process side) ──────────────────────────────────────
@@ -398,6 +443,16 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                 _emit({"event": "assistant", "text": assistant_text[:400]})
 
             tool_calls = list(getattr(message, "tool_calls", None) or [])
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                _emit(
+                    {
+                        "event": "usage",
+                        "turn": stats.turns,
+                        "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+                        "completion_tokens": getattr(usage, "completion_tokens", 0),
+                    }
+                )
             if not tool_calls:
                 final_summary = assistant_text or "Local harness finished"
                 hit_done = True
@@ -420,16 +475,6 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                     ],
                 }
             )
-            usage = getattr(response, "usage", None)
-            if usage is not None:
-                _emit(
-                    {
-                        "event": "usage",
-                        "turn": stats.turns,
-                        "prompt_tokens": getattr(usage, "prompt_tokens", 0),
-                        "completion_tokens": getattr(usage, "completion_tokens", 0),
-                    }
-                )
 
             finished = False
             for tc in tool_calls:
