@@ -16,8 +16,10 @@ TaskDetail 内挂载，7 个 node 测试，`tsc -b` / `eslint` / 170 个 dashboa
 有了 env 开关（`UC_PLANNER_VIEW_BUDGET_BYTES`，Rust `ContextBlock` 硬上限内）。
 指标 harness 新增 `--signatures` 失败签名直方图（把签名粒度校准从「不可见」变成
 「可观测的分布」），并配了可执行的 A/B runbook
-（[runbook-ab-evaluation.md](runbook-ab-evaluation.md)）；页面边界（不进 prompt /
-不同步 Qdrant/TiKV / 不占 Stage）由 D7 定案。
+（[runbook-ab-evaluation.md](runbook-ab-evaluation.md)）；page 边界（不进 prompt /
+不同步 Qdrant/TiKV / 不占 Stage）由 D7 定案。2026-11-15 首轮真实小样本已跑通
+（3 个任务对，usage 上报、配对与签名直方图均工作），但两臂 attempt 0 全成功，
+stage C 未注入，结果不构成判读（runbook §7）。
 仍在 Frontier：真实 A-B 数据集跑数、签名粒度校准（工具与 runbook 均已就绪，缺的是
 数据）、Rust 侧 `cargo test`（本机网络不可达；CI `test (uc-types)` job 已加，待首次绿色）。
 Assessment: [assessment.md](assessment.md)（surveyed 2026-11-15；现状盘点 / 六模块
@@ -177,10 +179,13 @@ P4 — Versioned Knowledge Pages: **implemented**
 ## Frontier (open, unblocked)
 
 - **真实 A-B 数据集**：T15 的测量脚本、判定词表、`--signatures` 直方图与可执行
-  runbook（[runbook-ab-evaluation.md](runbook-ab-evaluation.md)）都已就绪，但还没
-  有在 stage B/C 实际运行集上产出结果；数据出来前不得宣称改善。
-- **签名粒度校准**：T13 已归一化，`--signatures` 已能观测分布；粗细度仍需在 A-B
-  数据里校准（同一根因不应裂成多条、不同根因不应塌成一条）。
+  runbook（[runbook-ab-evaluation.md](runbook-ab-evaluation.md)）都已就绪；
+  2026-11-15 已在真实 worker + Ollama 上跑通一轮小样本（3 个任务 × 2 arm × 1
+  attempt），但该轮 `verdict=inconclusive` / `tokens_worse`、两臂签名均为空，
+  且没有触发 stage C 的恢复视图（attempt 0 全成功，成功结果不重跑）。可判读的
+  B/C 数据仍缺：需要带 attempt 0 失败的任务集，并按 runbook 跑两轮同向。
+- **签名粒度校准**：T13 已归一化，`--signatures` 已能观测分布；首轮真实样本没有
+  失败 attempt，直方图为空，粗细度仍需在带失败样本的 A-B 数据里校准。
 - **Rust 侧构建验证**：`crates/uc-types` 的 planner 预算改动在本机无法 `cargo test`
   （crates.io 网络不可达且无本地 registry 缓存）；已用独立 `rustc` 提取验证
   解析/clamp/打包逻辑。`.github/workflows/ci-rust.yml` 已新增 `test (uc-types)`

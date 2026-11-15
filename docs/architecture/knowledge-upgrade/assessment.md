@@ -122,9 +122,14 @@ Hy-Memory 之上，为什么还需要「补丁链 + 证据账本 + 认知门 + �
   （`knowledge/dashboard.py`）按生命周期聚合页面计数，T18 在 arbiter 的
   canonical 晋升后以 claim + 集成 binding 幂等重建仓库页（投影失败只计
   `pages/errors`，不影响合并）；页面仍未进入 prompt——投影接入检索仍属 Frontier。
-- **端到端 A-B 指标未跑**：`knowledge/metrics.py`（T15）与 CLI 已就绪，
-  真实数据集跑数仍属 Frontier；失败签名已归一化（`knowledge/signatures.py`），
-  粒度仍需在 A-B 数据里校准。
+- **端到端 A-B 指标已跑通首轮真实小样本，但尚不可判读**：
+  `knowledge/metrics.py`（T15）与 CLI 已就绪；2026-11-15 用真实 worker +
+  Ollama 跑了 3 个任务 × 2 arm × 1 attempt，usage 上报、配对指标与
+  `--signatures` 直方图都工作，但该轮 `inconclusive`/`tokens_worse`、签名均为空，
+  且 stage C 的恢复视图未被触发（attempt 0 全成功）。可判读数据仍需带失败
+  attempt 的任务集与两轮同向（见
+  [runbook-ab-evaluation.md](runbook-ab-evaluation.md) §7）；失败签名粒度也仍需
+  在这类数据里校准。
 - **门裁决可观测**：`claims.record_gate_decision` 把 allowed/denied 与理由码写成
   `VALIDATION` 证据，`knowledge/dashboard.py`（T16）聚合成理由直方图；HTTP 读面
   `GET /dashboard/api/knowledge` 已接并有 4 个路由测试，React 面板

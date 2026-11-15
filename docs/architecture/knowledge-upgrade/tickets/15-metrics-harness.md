@@ -8,8 +8,9 @@
 **Spec:** [spec-p0.md](../spec-p0.md#评测协议)
 **Status:** implemented（`python/ultimate_coders/knowledge/metrics.py`；
 CLI `python -m ultimate_coders.knowledge.metrics --state ... [--baseline ... --variant ...]
-[--json] [--signatures]`；`tests/python/test_knowledge_metrics.py` 14 tests；
-跑数步骤见 [../runbook-ab-evaluation.md](../runbook-ab-evaluation.md)）
+[--json] [--signatures]`；`tests/python/test_knowledge_metrics.py` 15 tests；
+跑数步骤见 [../runbook-ab-evaluation.md](../runbook-ab-evaluation.md)；
+2026-11-15 首次真实小样本运行记录见该 runbook §7）
 
 **Implementation**
 
@@ -25,7 +26,8 @@ CLI `python -m ultimate_coders.knowledge.metrics --state ... [--baseline ... --v
    （tokens/subtask 恶化 >5%）、`improved`（attempt 数或重复失败率下降且成功率非劣、
    tokens 不劣）、否则 `non_inferior`。
 4. CLI：单状态输出聚合 JSON（不带 `--json` 时输出人读表格）；`--baseline/--variant`
-   输出比较 JSON；`--state` 接受 SQLite 路径或 `postgres://` URL（后者经
+   输出比较 JSON；`--state` 接受 state 目录（runbook 的 `UC_RUNTIME_STATE_DIR`，
+   解析到 `state.sqlite3`）、SQLite 文件路径或 `postgres://` URL（后者经
    `RuntimeState(database_url=)`）。
 5. `signature_histogram(samples, *, limit=MAX_SIGNATURES)` + CLI `--signatures`：
    只统计失败且上报了签名的 attempt，按 `(-count, signature)` 排序，最多
@@ -40,7 +42,10 @@ CLI `python -m ultimate_coders.knowledge.metrics --state ... [--baseline ... --v
 - [x] 配对只用共同任务；样本不足返回 `insufficient_data`。
 - [x] 判定与理由一致：`regressed` / `improved` / `non_inferior` / `inconclusive` 各有用例。
 - [x] CLI 单状态与配对两种输出都是合法 JSON。
-- [ ] 在真实 A-B 运行集上产出结果（脚本已就绪；数据采集需 stage B/C 实际跑任务）。
+- [ ] 在真实 A-B 运行集上产出**可判读**结果：脚本已就绪，2026-11-15 已用真实
+      worker + Ollama 跑出 3 个任务对的真实数字（`inconclusive`/`tokens_worse`），
+      但该轮 attempt 0 全成功、stage C 恢复视图未注入，属工具链验收而非 B/C 判读；
+      仍需带失败 attempt 的任务集与两轮同向数据。
 
 **Rollout:** 只读聚合，不写权威；可随时跑，默认不影响 worker。
 **Risks:** token 指标依赖 agent 上报 usage；缺失时该维度诚实为 `None`，

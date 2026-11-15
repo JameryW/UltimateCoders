@@ -1,12 +1,12 @@
 # Runbook — A-B 评测：stage B（只采集）对 stage C（恢复视图）
 
-Status: ready-to-run（数据集与结论都还没有；harness 就绪不等于指标改善）
+Status: ready-to-run（已跑一轮本地小样本，见 §7；该样本不构成 stage B/C 判读）
 Owner: 知识层维护者
 Companion: T15（`knowledge/metrics.py`）、T13（签名归一化）、spec-p0 §评测协议
 
 本 runbook 只回答一个问题：**怎么把 stage B/C 的替换跑成一个可判读的配对实验。**
-它不产生数据集，也不替任何人下「改善」的结论；数据出来之前，Frontier 里
-「真实 A-B 数据集」保持 open。
+它不产生决策级数据集，也不替任何人下「改善」的结论；可判读数据出来之前，Frontier
+里「真实 A-B 数据集」保持 open。
 
 ## 1. 前置条件（缺一项结果就不可归因）
 
@@ -81,6 +81,7 @@ python -m ultimate_coders.knowledge.metrics --baseline .uc/ab/b --variant .uc/ab
 | `tokens_per_subtask = null` | 模型路由没有上报 usage，不是 0 消耗 |
 | 签名直方图只有一条 | 归一化过粗（路径/数字已折叠）；对照原始 excerpt 判断是否需要更细的 pattern |
 | 重复失败率不降反升 | Recovery View 预算过大挤掉其它证据，或恢复视图重复了已在 trace 里的信息 |
+| 重发 attempt 1 后没有新 attempt round、也没有 sandbox 日志 | 该 subtask 的 attempt 0 已成功；`_outcome_is_settled` 按设计不再重跑成功结果。要观测 Recovery View，任务集必须先在 attempt 0 失败 |
 
 ## 6. 报告模板（用于往 map/assessment 回填）
 
@@ -94,3 +95,41 @@ run 1 direction=<...>  run 2 direction=<...>  -> 是否进入 stage D/E = <yes/n
 ```
 
 报告里**禁止**放 prompt 正文、diff 正文或任务描述；签名是归一化后的字符串，可以放。
+
+## 7. 首次真实运行记录（2026-11-15，本地小样本，不构成 stage B/C 判读）
+
+这一轮的目的**不是**判优，而是验证「真实 worker + 真实模型」能把证据、usage 与
+配对指标跑通；数据本身样本太小，且没有触发 stage C 的恢复视图。
+
+- 环境：本地 worker（`UC_CODING_AGENT=local-harness`，Ollama
+  `openai/qwen3.8-9b-uc`，`host=127.0.0.1:11434`）通过 SSH 隧道连远端
+  gateway/NATS；项目 `.uc/ab/work`（独立 git 仓库，commit `535711f`）；
+  两臂 state 目录 `.uc/ab/b4`（`shadow`）与 `.uc/ab/c4`（`recovery`）。
+- 任务集：`ab-real-4` / `ab-real-5` / `ab-real-6`，任务 id 与描述两臂一致
+  （分别创建 `ab_a.txt`=`alpha`、`ab_b.txt`=`beta`、`ab_c.txt`=`gamma`），
+  每任务一次 dispatch（attempt 0），`required_capabilities=["code"]`。
+- 结果（`python -m ultimate_coders.knowledge.metrics --baseline .uc/ab/b4
+  --variant .uc/ab/c4 --json --signatures`）：
+
+  ```text
+  paired_tasks = 3
+  arm B: attempts 3, attempts_with_usage 3, success_rate 1.0, avg_attempts 1.0,
+         tokens_per_attempt 997.67 (2993 reported)
+  arm C: attempts 3, attempts_with_usage 3, success_rate 1.0, avg_attempts 1.0,
+         tokens_per_attempt 2188.33 (6565 reported)
+  verdict = inconclusive   reason = tokens_worse
+  signatures: baseline [], variant []   (no failed attempt)
+  ```
+
+- 读法：这一轮只能证明 A/B harness 在真实执行上工作（usage 有上报、配对按
+  `task_id`、`--state` 目录可解析、两个签名直方图同为空），**不能**证明
+  stage C 有优劣。逐任务对比可以看到同样的 attempt 0 任务在两臂间出现
+  >2× 的 token 波动（例如 `ab-real-6` 输入 508 vs 3491），说明单次采样的
+  模型噪声远大于本样本量。
+- 关键限制：三个任务在 attempt 0 **全部成功**，而成功的 subtask 重发会被
+  `_outcome_is_settled` 结算（不重跑），所以 stage C 的 `_recovery_context_block`
+  从未被调用。要测 C，任务集必须包含 attempt 0 失败的重试，并把失败 attempt
+  在两臂配对；然后再跑第二轮验证方向一致。
+- 工具链修复（本轮顺带发现并修）：`harness_local_loop.py` 现在把子进程逐轮
+  `usage` 事件求和为 `TokenUsage`（未上报则 `None`，不伪造 0），
+  `metrics.load_state` 接受 runbook 的 state 目录并解析到 `state.sqlite3`。
