@@ -9,14 +9,20 @@ injector for the dependency block.
 from __future__ import annotations
 
 import random
+from types import SimpleNamespace
 
+import pytest
 from ultimate_coders.agent.context_compiler import (
+    DEFAULT_TOKEN_METER,
     ContextItem,
     Tier,
     compile_context,
     estimate_tokens,
     from_dependency_results,
+    from_gateway_context_block,
     from_search_block,
+    register_token_meter,
+    resolve_token_meter,
 )
 from ultimate_coders.agent.state_sync import ContextInjector
 
@@ -570,3 +576,139 @@ def test_a_poisoned_dependency_summary_cannot_claim_success():
     )
     manifest = compile_context(promoted, budget_tokens=10_000)
     assert manifest.summary()["items_by_tier"] == {"P3 trace": 1}
+
+
+# ── unified gateway injection path ──────────────────────────────────
+#
+# The gateway-composed block used to be string-concatenated outside the
+# compiler, so it had no budget, no manifest and a different header. It is
+# now an ordinary source adapter; these pins keep the historical rendering
+# (so model prompts do not shift) while making the block budgeted.
+
+
+def test_gateway_context_block_becomes_trace_items():
+    block = {
+        "entries": [
+            {"node_id": "n-1", "success": True, "summary": "implemented auth"},
+            {"node_id": "n-2", "success": False, "summary": "tests failed"},
+        ]
+    }
+    items = from_gateway_context_block(block)
+
+    assert [item.tier for item in items] == [Tier.TRACE, Tier.TRACE]
+    assert items[0].item_id == "n-1"
+    assert items[0].content == "Summary: implemented auth"
+    assert items[0].source == "gateway-context"
+    assert items[0].trust_class == "gateway_committed"
+    assert items[0].verified is True
+    assert items[0].source_version == "ok"
+    assert items[0].relevance == 1.0
+    assert items[1].verified is False
+    assert items[1].source_version == "failed"
+    assert items[1].relevance == 0.5
+
+
+def test_gateway_context_block_adapter_is_empty_without_entries():
+    assert from_gateway_context_block(None) == []
+    assert from_gateway_context_block({}) == []
+    assert from_gateway_context_block({"entries": []}) == []
+
+
+def test_gateway_adapter_tolerates_attribute_style_entries():
+    # Envelope/proto payloads may be objects rather than dicts; the adapter
+    # must read both without the caller normalizing first.
+    items = from_gateway_context_block(
+        {"entries": [SimpleNamespace(node_id="n-9", success=True, summary="done")]}
+    )
+    assert [item.item_id for item in items] == ["n-9"]
+    assert items[0].verified is True
+
+
+def test_gateway_render_matches_the_old_gateway_function():
+    block = {"entries": [{"node_id": "n-1", "success": True, "summary": "implemented auth"}]}
+    manifest = compile_context(from_gateway_context_block(block), budget_tokens=10_000)
+
+    rendered = manifest.render_legacy(legacy_style="gateway")
+
+    assert rendered.splitlines() == [
+        "## Context from completed subtasks (gateway-composed)",
+        "",
+        "The following subtasks have completed. Use their results as context:",
+        "",
+        "### Subtask n-1 (✓)",
+        "",
+        "Summary: implemented auth",
+        "",
+    ]
+    assert rendered.endswith("\n\n")
+    assert "truncated" not in rendered
+
+
+def test_gateway_render_surfaces_the_gateway_truncation_marker():
+    block = {"entries": [{"node_id": "n-1", "success": True, "summary": "partial"}]}
+    manifest = compile_context(from_gateway_context_block(block), budget_tokens=10_000)
+
+    rendered = manifest.render_legacy(legacy_style="gateway", gateway_truncated=True)
+
+    assert rendered.endswith("... (context truncated by gateway)")
+
+
+def test_gateway_render_keeps_empty_blocks_empty():
+    # The previous gateway renderer returned "" for an empty entry list, and
+    # the worker treats a present-but-empty block as authoritative.
+    manifest = compile_context([], budget_tokens=10_000)
+
+    assert manifest.render_legacy(legacy_style="gateway", gateway_truncated=True) == ""
+
+
+def test_render_legacy_rejects_an_unknown_style():
+    manifest = compile_context([], budget_tokens=10_000)
+    with pytest.raises(ValueError):
+        manifest.render_legacy(legacy_style="rollup")
+
+
+# ── real token metering ─────────────────────────────────────────────
+
+
+def test_manifest_records_the_token_meter_used():
+    manifest = compile_context([_item("a", Tier.STATE, "abcd")], budget_tokens=100)
+
+    assert manifest.token_meter == DEFAULT_TOKEN_METER
+    assert manifest.summary()["token_meter"] == DEFAULT_TOKEN_METER
+
+
+def test_a_registered_meter_drives_item_costs():
+    register_token_meter("test-chars", lambda text: len(text))
+
+    manifest = compile_context(
+        [_item("a", Tier.STATE, "abcd")], budget_tokens=100, token_meter="test-chars"
+    )
+
+    assert manifest.token_meter == "test-chars"
+    assert manifest.total_tokens == 4
+
+
+def test_an_explicit_token_cost_wins_over_the_meter():
+    register_token_meter("test-chars", lambda text: len(text))
+
+    manifest = compile_context(
+        [_item("a", Tier.STATE, "x" * 400, token_cost=3)],
+        budget_tokens=100,
+        token_meter="test-chars",
+    )
+
+    assert manifest.total_tokens == 3
+
+
+def test_unknown_token_meter_is_rejected():
+    with pytest.raises(ValueError):
+        resolve_token_meter("nope")
+    with pytest.raises(ValueError):
+        compile_context([], budget_tokens=10, token_meter="nope")
+
+
+def test_register_token_meter_rejects_invalid_entries():
+    with pytest.raises(ValueError):
+        register_token_meter("", len)
+    with pytest.raises(TypeError):
+        register_token_meter("broken", None)  # type: ignore[arg-type]

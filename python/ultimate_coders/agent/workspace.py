@@ -53,6 +53,24 @@ def _local_runtime_state_path(project_path: str) -> Path:
     )
 
 
+def _diff_header_path(header: str) -> str:
+    """Extract the destination path from ``diff --git a/x b/x``."""
+    parts = header.split(" b/", 1)
+    if len(parts) != 2:
+        return ""
+    return parts[1].strip()
+
+
+def _porcelain_change_type(code: str) -> str:
+    """Map a porcelain status code to the ledger's change vocabulary."""
+    letters = code.strip()
+    if letters.startswith("A"):
+        return "created"
+    if letters.startswith("D"):
+        return "deleted"
+    return "modified"
+
+
 def subtask_branch(subtask_id: str, *, inference: bool = False) -> str:
     suffix = hashlib.sha256(subtask_id.encode()).hexdigest()[:16] if inference else subtask_id[:12]
     return f"uc/subtask/{suffix}"
@@ -570,6 +588,158 @@ class WorkspaceManager:
         await self._lease_update(handle)
         self._active.pop(handle.workspace_id, None)
         return result_info
+
+    async def head_sha(self, handle: WorkspaceHandle) -> str:
+        """Commit currently checked out in the worktree (``""`` when unreadable)."""
+        if not handle or not handle.worktree_path:
+            return ""
+        result = await self._git(["rev-parse", "HEAD"], cwd=handle.worktree_path)
+        if result.get("exit_code"):
+            return ""
+        return str(result.get("stdout") or "").strip()
+
+    async def capture_diff(
+        self,
+        handle: WorkspaceHandle,
+        *,
+        baseline: str = "",
+        max_files: int = 20,
+        max_diff_chars: int = 20000,
+    ) -> dict[str, Any]:
+        """Snapshot the worktree's change set for the attempt evidence ledger.
+
+        Captured *after* the sandbox returns and *before* ``release()``: the
+        candidate edits are still uncommitted (or committed on the subtask
+        branch), so the only reliable description of what an attempt actually
+        changed is ``HEAD`` plus a diff from the fork point. Read-only -- it
+        never stages, commits or resets, so it cannot alter what release later
+        delivers.
+
+        The diff is taken against the merge-base of ``base_branch`` and HEAD
+        (computed lazily, or the caller-provided ``baseline``), which covers
+        committed and uncommitted edits in one view. Untracked files are not in
+        ``git diff``, so they get a synthesized add-patch; binary/oversized
+        files keep their path but no body.
+
+        Bounded by ``max_files`` / ``max_diff_chars`` so one runaway edit
+        cannot inflate the ledger (or an event). ``truncated`` records that
+        bound was hit, so consumers know the snapshot is partial.
+        """
+        workdir = handle.worktree_path if handle else ""
+        snapshot: dict[str, Any] = {
+            "baseline": "",
+            "head": "",
+            "files": [],
+            "file_count": 0,
+            "truncated": False,
+        }
+        if not workdir or not os.path.isdir(workdir):
+            return snapshot
+        base = str(baseline or "").strip()
+        if not base:
+            merge_base = await self._git(
+                ["merge-base", self._base_branch, "HEAD"], cwd=workdir
+            )
+            if not merge_base.get("exit_code"):
+                base = str(merge_base.get("stdout") or "").strip()
+        snapshot["baseline"] = base
+        snapshot["head"] = await self.head_sha(handle)
+        against = base or "HEAD"
+
+        diff = await self._git(
+            [
+                "-c",
+                "core.quotepath=false",
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                against,
+                "--",
+                ".",
+            ],
+            cwd=workdir,
+        )
+        status = await self._git(
+            [
+                "-c",
+                "core.quotepath=false",
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--",
+                ".",
+            ],
+            cwd=workdir,
+        )
+        sections: dict[str, str] = {}
+        if not diff.get("exit_code"):
+            for section in str(diff.get("stdout") or "").split("diff --git ")[1:]:
+                body = "diff --git " + section
+                header = body.splitlines()[0] if body else ""
+                path = _diff_header_path(header)
+                if path:
+                    sections[path] = body
+        recorded: list[dict[str, str]] = []
+        total_chars = 0
+        entries: list[tuple[str, str]] = []
+        if not status.get("exit_code"):
+            for line in str(status.get("stdout") or "").splitlines():
+                if len(line) < 4:
+                    continue
+                code, raw_path = line[:2], line[3:].strip()
+                if " -> " in raw_path:  # rename: keep the destination
+                    raw_path = raw_path.split(" -> ", 1)[1].strip()
+                path = raw_path
+                if not path:
+                    continue
+                if code.strip() == "??":
+                    entries.append((path, "created"))
+                else:
+                    entries.append((path, _porcelain_change_type(code)))
+        known = {path for path, _ in entries}
+        for path in sections:
+            if path not in known:
+                entries.append((path, "modified"))
+        untracked = {path for path, kind in entries if kind == "created"}
+        for path, change_type in entries:
+            section = sections.get(path, "")
+            if not section and path in untracked:
+                section = self._untracked_patch(workdir, path)
+            remaining = max_diff_chars - total_chars
+            if len(recorded) >= max_files or remaining <= 0:
+                snapshot["truncated"] = True
+                continue
+            if len(section) > remaining:
+                section = section[:remaining]
+                snapshot["truncated"] = True
+            recorded.append(
+                {"path": path, "change_type": change_type, "diff": section}
+            )
+            total_chars += len(section)
+        snapshot["files"] = recorded
+        snapshot["file_count"] = len(entries)
+        return snapshot
+
+    def _untracked_patch(self, workdir: str, path: str) -> str:
+        """Synthesize an add-patch for an untracked file (bounded)."""
+        full = os.path.join(workdir, path)
+        try:
+            if os.path.getsize(full) > 512_000:
+                return f"diff --git a/{path} b/{path}\n(new file too large to capture)\n"
+            with open(full, encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError:
+            return ""
+        lines = text.splitlines()
+        body = [
+            f"diff --git a/{path} b/{path}",
+            "new file mode 100644",
+            "--- /dev/null",
+            f"+++ b/{path}",
+            f"@@ -0,0 +1,{len(lines)} @@",
+        ]
+        body.extend(f"+{line}" for line in lines)
+        return "\n".join(body) + "\n"
 
     async def cleanup(self) -> int:
         """Remove stale worktrees older than 1 hour.

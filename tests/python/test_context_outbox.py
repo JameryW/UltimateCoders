@@ -83,6 +83,7 @@ def test_record_stores_only_the_summary_no_content(state):
         "stable_tokens",
         "risk",
         "over_budget",
+        "token_meter",
         "items_by_tier",
         "dropped",
     }
@@ -489,7 +490,7 @@ async def test_worker_persists_the_manifest_it_compiled(monkeypatch, tmp_path):
     assert rows[0]["summary"]["budget_tokens"] > 0
 
 
-async def test_gateway_context_block_records_no_manifest(monkeypatch, tmp_path):
+async def test_gateway_context_block_compiles_and_records_a_manifest(monkeypatch, tmp_path):
     worker = _make_worker(monkeypatch, tmp_path)
     subtask = Subtask(id="s1", parent_id="t1", description="fix the login bug")
     await worker.execute_subtask(
@@ -497,10 +498,17 @@ async def test_gateway_context_block_records_no_manifest(monkeypatch, tmp_path):
         gateway_context_block={"entries": [{"node_id": "n-1", "summary": "committed"}]},
     )
 
-    # The gateway block path compiles nothing locally, so there is no
-    # manifest to audit -- an empty history, not a fabricated record.
+    # Unification: the gateway-composed block goes through the same budgeted
+    # compiler as the local injector, so it leaves an auditable manifest
+    # instead of riding the dispatch outside the budget.
     state = RuntimeState()
-    assert ContextManifestOutbox(state).history("t1", "s1") == []
+    rows = ContextManifestOutbox(state).history("t1", "s1")
+    assert len(rows) == 1
+    summary = rows[0]["summary"]
+    assert summary["budget_tokens"] > 0
+    assert summary["total_tokens"] > 0
+    assert summary["items_by_tier"] == {"P3 trace": 1}
+    assert summary["over_budget"] is False
 
 
 async def test_persistence_failure_does_not_fail_the_subtask(monkeypatch, tmp_path):

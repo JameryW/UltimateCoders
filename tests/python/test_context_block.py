@@ -1,8 +1,14 @@
 """T10 #652 / D10 #647 — gateway-composed context block.
 
+The envelope's ``context_block`` used to be rendered by a worker-side helper
+outside the context compiler, which gave it its own header and no budget.
+Since the context unification it is an ordinary compiler source adapter
+(``from_gateway_context_block``) rendered by ``render_legacy("gateway")``.
+These tests pin that rendering; the worker-level tests below pin the
+preference/fallback decision, which still belongs to the worker.
+
 Covers:
-- ``_render_gateway_context_block`` (worker-side rendering of the envelope's
-  ``context_block`` — injector-compatible text, truncation marker).
+- Gateway rendering: injector-compatible text, truncation marker, empty block.
 - Worker preference path: a dispatch-carried block is preferred over the
   local ``_context_injector`` (the graph plane's committed outputs are the
   single source of truth; worker-only mode gains dependency context).
@@ -13,11 +19,23 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from ultimate_coders.agent.context_compiler import ContextItem, Tier
+from ultimate_coders.agent.context_compiler import (
+    ContextItem,
+    Tier,
+    compile_context,
+    from_gateway_context_block,
+)
 from ultimate_coders.agent.types import Subtask, SubtaskResult
-from ultimate_coders.agent.worker import Worker, _render_gateway_context_block
+from ultimate_coders.agent.worker import Worker
 
-# ── Renderer ────────────────────────────────────────────────────
+# ── Rendering (compiler adapter + gateway legacy style) ─────────
+
+
+def _render(block: dict) -> str:
+    manifest = compile_context(from_gateway_context_block(block), budget_tokens=10_000)
+    return manifest.render_legacy(
+        legacy_style="gateway", gateway_truncated=bool(block.get("truncated"))
+    )
 
 
 def test_render_formats_entries_like_local_injector():
@@ -28,7 +46,7 @@ def test_render_formats_entries_like_local_injector():
         ],
         "truncated": False,
     }
-    text = _render_gateway_context_block(block)
+    text = _render(block)
     assert "## Context from completed subtasks (gateway-composed)" in text
     assert "### Subtask n-1 (✓)" in text
     assert "Summary: implemented auth" in text
@@ -39,8 +57,8 @@ def test_render_formats_entries_like_local_injector():
 
 
 def test_render_empty_entries_returns_empty_string():
-    assert _render_gateway_context_block({"entries": [], "truncated": False}) == ""
-    assert _render_gateway_context_block({}) == ""
+    assert _render({"entries": [], "truncated": False}) == ""
+    assert _render({}) == ""
 
 
 def test_render_surfaces_truncation_marker():
@@ -48,7 +66,7 @@ def test_render_surfaces_truncation_marker():
         "entries": [{"node_id": "n-1", "success": True, "summary": "s"}],
         "truncated": True,
     }
-    assert "(context truncated by gateway)" in _render_gateway_context_block(block)
+    assert "(context truncated by gateway)" in _render(block)
 
 
 def test_render_caps_individual_summary_and_tolerates_missing_fields():
@@ -59,7 +77,7 @@ def test_render_caps_individual_summary_and_tolerates_missing_fields():
         ],
         "truncated": False,
     }
-    text = _render_gateway_context_block(block)
+    text = _render(block)
     assert "x" * 1000 in text
     assert "x" * 1001 not in text
     # Entry without node_id/summary renders as a bare failed header.

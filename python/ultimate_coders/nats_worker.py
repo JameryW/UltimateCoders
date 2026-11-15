@@ -1510,6 +1510,7 @@ class NatsWorker:
                 from ultimate_coders.effect_ledger import EffectLedger
 
                 repo_base_branch = os.environ.get("UC_REPO_BASE_BRANCH", "main")
+                state_store = await self._state_store()
                 merge_arbiter = MergeArbiter(
                     project_path=self._project_path or os.getcwd(),
                     remote_url=repo_url,
@@ -1518,7 +1519,10 @@ class NatsWorker:
                     # Durable publish record: a dropped push connection is
                     # reconciled against the remote instead of being
                     # retried as if it had not happened.
-                    ledger=EffectLedger(await self._state_store()),
+                    ledger=EffectLedger(state_store),
+                    # Integration receipts: the arbiter is the only observer
+                    # of a branch actually landing on the target ref.
+                    knowledge_state=state_store,
                 )
                 logger.info(
                     "MergeArbiter initialized (remote=%s, base=%s)",

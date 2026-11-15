@@ -35,6 +35,7 @@ import os
 from typing import Any
 
 from ultimate_coders.agent.conflict import ConflictResolver, ResolutionTier
+from ultimate_coders.knowledge.integration import record_integration
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ class MergeArbiter:
         remote_name: str = "origin",
         llm_client: Any = None,
         ledger: Any = None,
+        knowledge_state: Any = None,
     ) -> None:
         self._project_path = project_path or os.getcwd()
         self._remote_url = remote_url
@@ -111,6 +113,12 @@ class MergeArbiter:
         # a dropped connection becomes UNKNOWN and is reconciled against the
         # remote before any retry, instead of being reported as a failure.
         self._ledger = ledger
+        # Optional RuntimeState for the knowledge layer. When present, a
+        # successful publish writes the integration receipts (merge receipt +
+        # push verdict) the worker cannot observe, and stage ``canonical`` may
+        # promote a repository claim through the Epistemic Gate. Best-effort:
+        # knowledge capture never fails or delays arbitration.
+        self._knowledge_state = knowledge_state
         # Serialize concurrent arbitrate() calls on the same clone: two
         # tasks finishing at once would interleave checkout/merge/push on a
         # single working tree and corrupt state. ponytail: per-instance lock,
@@ -414,7 +422,54 @@ class MergeArbiter:
         # lease and silently overwrite that concurrent work. Instead reject
         # safely; the caller re-runs arbitrate (re-fetch + re-merge is
         # idempotent — subtask branches persist on the remote).
-        return await self._push_base_branch(result)
+        final = await self._push_base_branch(result)
+        await self._record_integration(final)
+        return final
+
+    async def _record_integration(self, result: dict[str, Any]) -> None:
+        """Write the knowledge-layer integration receipts for a pushed merge.
+
+        Called only after the base branch publish settled with ``status ==
+        "merged"``: for ``already_pushed`` the remote already had this exact
+        commit (the effect ledger reconciled it), so the receipt is still true.
+        Conflicted/failed publishes land here with a non-merged status and are
+        skipped - nothing landed, so nothing may claim it did.
+
+        Best-effort: a knowledge failure must never change the arbitration
+        result the caller already computed.
+        """
+
+        state = self._knowledge_state
+        if state is None or result.get("status") != "merged":
+            return
+        branches = [
+            str(branch)
+            for branch in (result.get("merged_branches") or [])
+            if str(branch or "").strip()
+        ]
+        if not branches:
+            result["knowledge"] = {"branches": 0, "evidence_records": 0}
+            return
+        try:
+            head = await self._head()
+            summary = await asyncio.to_thread(
+                record_integration,
+                state,
+                branches=branches,
+                base_branch=self._base_branch,
+                remote_name=self._remote_name,
+                integration_sha=head,
+                push_status=str(result.get("push_status") or ""),
+                merged=True,
+            )
+            result["knowledge"] = summary
+            logger.debug(
+                "MergeArbiter: integration receipts for %d branch(es): %s",
+                len(branches),
+                summary,
+            )
+        except Exception:
+            logger.debug("MergeArbiter: integration knowledge capture failed", exc_info=True)
 
     async def _push_base_branch(self, result: dict[str, Any]) -> dict[str, Any]:
         """Publish the merged base branch, optionally through the ledger.

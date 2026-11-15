@@ -422,7 +422,7 @@ async def test_a_redispatch_keeps_the_earlier_attempts_record(monkeypatch, tmp_p
     assert outbox.total("t1") == 2
 
 
-async def test_gateway_context_block_records_start_without_context_digest(
+async def test_gateway_context_block_records_start_with_context_digest(
     monkeypatch, tmp_path
 ):
     worker = _make_worker(monkeypatch, tmp_path)
@@ -432,10 +432,15 @@ async def test_gateway_context_block_records_start_without_context_digest(
         gateway_context_block={"entries": [{"node_id": "n-1", "summary": "committed"}]},
     )
 
-    record = DecisionRecordOutbox(RuntimeState()).history("t1", "s1")[0]
+    state = RuntimeState()
+    record = DecisionRecordOutbox(state).history("t1", "s1")[0]
+    manifest = ContextManifestOutbox(state).history("t1", "s1")[0]
+    # Unification: the gateway block is compiled through the same compiler,
+    # so the start row joins the attempt to a real manifest (digest + key)
+    # exactly like a locally assembled prompt does.
     assert record["worker_id"] == "w-audit"
-    assert "context_digest" not in record
-    assert "context_key" not in record
+    assert record["context_key"] == manifest["key"] == "t1:s1:0"
+    assert record["context_digest"] == context_digest(manifest["summary"])
     assert record["terminal"]["success"] is True
 
 

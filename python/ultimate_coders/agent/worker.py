@@ -27,6 +27,7 @@ from ultimate_coders.agent.conflict import (
 )
 from ultimate_coders.agent.context_compiler import (
     compile_context,
+    from_gateway_context_block,
     from_hy_memory_block,
     from_search_block,
 )
@@ -66,6 +67,43 @@ from ultimate_coders.agent.types import (
     WorkflowStep,
 )
 from ultimate_coders.agent.workspace import WorkspaceHandle, WorkspaceManager
+from ultimate_coders.knowledge import rollout
+from ultimate_coders.knowledge.attempt_chain import (
+    AttemptChainLedger,
+    AttemptRound,
+    locate_symbols,
+)
+from ultimate_coders.knowledge.claims import (
+    ACCEPTED_MERGE_STATUSES,
+    attempt_scope,
+    record_delivery_claim,
+    record_failure_claim,
+    validate_and_promote_delivery,
+)
+from ultimate_coders.knowledge.evidence import EvidenceLedger
+from ultimate_coders.knowledge.model import AttemptRef, EvidenceKind, KnowledgeScope, safe_text
+from ultimate_coders.knowledge.recovery import (
+    RecoveryView,
+    build_recovery_view,
+    recovery_context_items,
+)
+from ultimate_coders.knowledge.retrieval import knowledge_context_items
+from ultimate_coders.knowledge.signatures import normalize_failure_signature
+from ultimate_coders.knowledge.verdicts import VerificationReport, extract_verification
+
+#: Worktree ``git status`` change types mapped onto the patch-ledger vocabulary
+#: (``FilePatch.change_type``): the workspace capture says what happened to the
+#: file, the ledger says how the diff represents it.
+_DIFF_CHANGE_TYPES = {
+    "created": "added",
+    "added": "added",
+    "deleted": "deleted",
+    "removed": "deleted",
+    "modified": "modified",
+    "renamed": "renamed",
+    "copied": "copied",
+}
+
 
 logger = logging.getLogger(__name__)
 
@@ -324,41 +362,6 @@ def _build_friendly_error(e: Exception) -> tuple[str, str]:
     return f"Execution error: {root[:200]}", root[:2000]
 
 
-def _render_gateway_context_block(block: dict) -> str:
-    """Render a gateway-composed context block into prompt text (T10 #652).
-
-    Mirrors the ``ContextInjector.build_context`` style so prompts look the
-    same whichever side composed the context. An empty entry list renders to
-    "" (the caller then effectively has no context); the ``truncated`` marker
-    is surfaced so the model knows the block is partial.
-
-    Args:
-        block: The ``context_block`` dict from the dispatch envelope —
-            ``{"entries": [{node_id, success, summary}, ...],
-            "truncated": bool}``.
-
-    Returns:
-        Formatted context string (possibly empty).
-    """
-    entries = block.get("entries") or []
-    if not entries:
-        return ""
-    parts: list[str] = []
-    parts.append("## Context from completed subtasks (gateway-composed)\n")
-    parts.append("The following subtasks have completed. Use their results as context:\n")
-    for entry in entries:
-        node_id = str(entry.get("node_id", "") or "")
-        success = bool(entry.get("success", False))
-        parts.append(f"### Subtask {node_id[:8]} ({'✓' if success else '✗'})\n")
-        summary = str(entry.get("summary", "") or "")
-        if summary:
-            parts.append(f"Summary: {summary[:1000]}\n")
-        parts.append("")
-    if block.get("truncated"):
-        parts.append("... (context truncated by gateway)\n")
-    return "\n".join(parts)
-
-
 def _step_usage(
     step_index: int,
     parallel_group: str,
@@ -506,6 +509,9 @@ class Worker:
         # Compact description (counts, drops, cost; never content) of the
         # last compiled context manifest, surfaced on subtask_started.
         self._last_context_manifest: dict[str, Any] | None = None
+        # P5 read face: counts-only summary of graph knowledge injected into
+        # this attempt's context (empty unless stage >= graph).
+        self._last_knowledge_summary: dict[str, Any] = {}
 
         # Model routing (agent-os-architecture.md §5). The router answers
         # two questions per attempt: which model/budget this (stage, risk)
@@ -1000,10 +1006,10 @@ class Worker:
                     review=checkpoint_review,
                 )
 
-            # Inject context from completed dependencies. T10 #652: prefer
-            # the gateway-composed block (committed graph outputs) when the
-            # dispatch carried one; fall back to the local injector otherwise
-            # (in-flight envelopes / legacy gateway — behavior unchanged).
+            # Inject context from completed dependencies. The gateway-composed
+            # block (committed graph outputs) is authoritative when the
+            # dispatch carried one; otherwise the local injector supplies the
+            # dependency results (in-flight envelopes / legacy gateway).
             # Route the first attempt before compiling context: the routing
             # decision carries the risk level that sizes the context budget
             # allocation (high risk reserves a share for verified evidence).
@@ -1015,42 +1021,57 @@ class Worker:
                 capabilities=subtask.required_capabilities,
             )
             self._last_context_manifest = None
+            search_block = await self._build_search_context(subtask)
+            # Opt-in Hy-Memory auto-context (T12 / UC_HY_MEMORY_AUTO_CONTEXT).
+            # Soft-skip when flag off, package missing, or recall empty.
+            hy_block = build_hy_memory_context_block(subtask.description or "")
             if gateway_context_block is not None:
-                context_block = _render_gateway_context_block(gateway_context_block)
-                # The gateway block is authoritative for dependencies; the
-                # local search block still needs a bound of its own.
-                search_block = await self._build_search_context(subtask)
-                if search_block:
-                    context_block = (
-                        f"{context_block}\n\n{search_block}" if context_block else search_block
-                    )
-                # Opt-in Hy-Memory auto-context (T12 / UC_HY_MEMORY_AUTO_CONTEXT).
-                # Soft-skip when flag off, package missing, or recall empty.
-                hy_block = build_hy_memory_context_block(subtask.description or "")
-                if hy_block:
-                    context_block = f"{context_block}\n\n{hy_block}" if context_block else hy_block
-            else:
-                # One budget across every local source: dependency results
-                # (P3), search hits (P2), and optional Hy-Memory (P4) compete
-                # for the same tokens instead of truncating independently.
-                # The rendered text matches the legacy injector wording. The
-                # routed risk decides how that budget is allocated between
-                # tiers.
-                search_block = await self._build_search_context(subtask)
-                hy_block = build_hy_memory_context_block(subtask.description or "")
-                manifest = compile_context(
-                    self._context_injector.dependency_items(subtask.depends_on)
-                    + from_search_block(search_block)
-                    + from_hy_memory_block(hy_block),
-                    budget_tokens=self._context_budget_tokens(),
-                    risk=self._last_route.risk,
+                source_items = from_gateway_context_block(gateway_context_block)
+                legacy_style = "gateway"
+                gateway_truncated = bool(
+                    gateway_context_block.get("truncated")
+                    if isinstance(gateway_context_block, dict)
+                    else False
                 )
-                context_block = manifest.render_legacy()
-                self._last_context_manifest = manifest.summary()
-                # Audit trail: the same summary that rides the started
-                # event also lands in the runtime state, so the "why was
-                # the prompt smaller" question outlives the event stream.
-                await self._record_context_manifest(subtask, self._last_context_manifest)
+            else:
+                source_items = self._context_injector.dependency_items(subtask.depends_on)
+                legacy_style = "worker"
+                gateway_truncated = False
+            # One budget across every source: dependency/gateway results (P3),
+            # search hits (P2), and optional Hy-Memory (P4) compete for the
+            # same tokens instead of truncating independently. The rendered
+            # text preserves each path's legacy wording; the routed risk
+            # decides how the budget is allocated between tiers.
+            #
+            # Kept as the attempt's *base* items: a retry appends recovery
+            # evidence to this list and recompiles, so recovery facts obey the
+            # same budget and dedupe instead of being pasted onto a finished
+            # prompt.
+            context_source_items = (
+                list(source_items)
+                + from_search_block(search_block)
+                + from_hy_memory_block(hy_block)
+            )
+            # P5 read face: gate-approved claims shared inside this task graph.
+            # Empty unless stage >= graph; best-effort, counts-only summary.
+            knowledge_items, knowledge_summary = await self._knowledge_context_items(subtask)
+            if knowledge_items:
+                context_source_items = list(context_source_items) + knowledge_items
+            self._last_knowledge_summary = knowledge_summary
+            manifest = compile_context(
+                context_source_items,
+                budget_tokens=self._context_budget_tokens(),
+                risk=self._last_route.risk,
+            )
+            context_block = manifest.render_legacy(
+                legacy_style=legacy_style, gateway_truncated=gateway_truncated
+            )
+            self._last_context_manifest = manifest.summary()
+            # Audit trail: the same summary that rides the started event also
+            # lands in the runtime state, so the "why was the prompt smaller"
+            # question outlives the event stream. The gateway path records one
+            # now too -- a compiled prompt with no manifest is an audit hole.
+            await self._record_context_manifest(subtask, self._last_context_manifest)
 
             # Acquire workspace if this subtask modifies files
             from ultimate_coders.inference.agent import InferenceInfraAgent
@@ -1116,6 +1137,10 @@ class Worker:
                 # model and budget the router chose. Omitted entirely when
                 # no table is configured, so the default event is unchanged.
                 started_data["route"] = self._last_route.to_dict()
+            if self._last_knowledge_summary:
+                # Counts-only: how much graph knowledge the read face injected
+                # (and whether the retrieval budget truncated it).
+                started_data["knowledge"] = self._last_knowledge_summary
             await self._publish_event(
                 "subtask_started",
                 task_id=subtask.parent_id,
@@ -1140,6 +1165,10 @@ class Worker:
             #: a schema failure re-routes at the recovery stage with a
             #: reduced budget instead of repeating the failed request.
             last_failure = ""
+            #: Log-safe summary of the recovery view compiled into the current
+            #: attempt ({} when the rollout stage is disabled or no prior round
+            #: could be read). Rides the retry event, never the prompt.
+            recovery_summary: dict[str, Any] = {}
             progress_tracker = ProgressTracker(stall_limit=self._progress_stall_limit())
             for attempt in range(self.MAX_RETRIES):
                 if attempt > 0:
@@ -1152,6 +1181,20 @@ class Worker:
                         last_failure=last_failure,
                         file_constraints=subtask.file_constraints,
                         capabilities=subtask.required_capabilities,
+                    )
+                    # Recovery view: a retry is not a blind replay of the first
+                    # attempt. When the rollout stage allows it, compile the
+                    # committed patch/failure facts of the prior attempt(s) into
+                    # this attempt's context (same budget, same manifest), so
+                    # the next agent sees what was already tried and why it
+                    # failed instead of only a free-text error line.
+                    context_block, recovery_summary = await self._recovery_context_block(
+                        subtask,
+                        attempt,
+                        context_source_items,
+                        context_block,
+                        legacy_style=legacy_style,
+                        gateway_truncated=gateway_truncated,
                     )
                 # Re-acquire workspace each attempt: prior attempt released it
                 # (or never had one). Without this, retry runs against a freed
@@ -1220,6 +1263,18 @@ class Worker:
                             error=f"Subtask timed out after {timeout_secs}s",
                         )
 
+                    # Attempt diff-chain: snapshot what this attempt actually
+                    # changed while the worktree still holds it. Captured
+                    # before release/merge -- once the workspace is merged the
+                    # candidate diff is no longer inspectable, and a failed
+                    # attempt's patch is exactly what the next retry needs.
+                    await self._record_attempt_round(
+                        subtask, attempt, result, workspace_handle
+                    )
+                    # Conclusions ride the evidence ledger, not the patch round:
+                    # the round never claims a verdict the sandbox did not prove.
+                    await self._record_attempt_evidence(subtask, attempt, result)
+
                     if needs_worktree and result.success:
                         await self._save_checkpoint(subtask, result, delivery="pending")
 
@@ -1253,6 +1308,16 @@ class Worker:
                             await self._record_inference_delivery(
                                 result.domain_result, merge_result
                             )
+                        # Integration receipt: what the target accepted and what
+                        # the remote said about the branch push. Promotion later
+                        # requires this evidence; the worker's success flag is
+                        # not it (principle B).
+                        delivery_evidence = await self._record_delivery_evidence(
+                            subtask, attempt, merge_result
+                        )
+                        await self._record_delivery_claim(
+                            subtask, attempt, result, merge_result, delivery_evidence
+                        )
                         workspace_handle = None  # ponytail: freed; re-acquire next attempt
 
                     # Success is replayable only after code delivery completed.
@@ -1372,6 +1437,16 @@ class Worker:
                             )
                             if not next_route.is_identity:
                                 failure_data["route"] = next_route.to_dict()
+                            # The recovery view for the attempt about to run:
+                            # its prior rounds now include this attempt's
+                            # captured patch, so the retry event can report
+                            # what the next prompt will carry (counts only).
+                            next_view = await self._load_recovery_view(
+                                subtask, attempt + 1
+                            )
+                            recovery_summary = (
+                                next_view.summary if next_view is not None else {}
+                            )
                             await self._publish_event(
                                 "subtask_failed",
                                 task_id=subtask.parent_id,
@@ -1388,6 +1463,10 @@ class Worker:
                                     "delay": delay,
                                     "worker_id": self.worker_id,
                                     "failure_action": failure_action.action,
+                                    # Counts/budget only: what the next attempt's
+                                    # recovery context contains (or that it was
+                                    # empty), for the cost/benefit A-B evaluation.
+                                    **({"recovery": recovery_summary} if recovery_summary else {}),
                                 },
                             )
                             logger.info(
@@ -1572,8 +1651,10 @@ class Worker:
 
         Best-effort by design: the snapshot answers "why was the prompt
         smaller than expected" after the fact, so losing it must never
-        fail the subtask it describes. The gateway-composed context block
-        path compiles nothing locally and records nothing.
+        fail the subtask it describes. Both injection paths compile through
+        the same compiler and record here: the gateway-composed block used to
+        bypass the budget (and the manifest), which left no answer at all for
+        prompts assembled from committed graph outputs.
         """
         try:
             from ultimate_coders.context_outbox import ContextManifestOutbox, manifest_key
@@ -1586,6 +1667,498 @@ class Worker:
             )
         except Exception:
             logger.debug("context manifest persistence failed", exc_info=True)
+
+    def _attempt_ref(self, subtask: Subtask, attempt: int) -> AttemptRef:
+        """Knowledge-layer identity of the in-worker attempt at ``attempt``.
+
+        ``dispatch_attempt`` is the dispatch counter the checkpoint, the
+        context-manifest key and the Decision Record already use, so an
+        in-worker retry and a re-dispatch can never collide in the ledger.
+        """
+        return AttemptRef(
+            task_id=subtask.parent_id,
+            subtask_id=subtask.id,
+            dispatch_attempt=int(getattr(subtask, "dispatch_retry_count", 0) or 0),
+            attempt=int(attempt),
+            worker_id=self.worker_id,
+            # The graph scope makes an attempt's claims eligible for graph-wide
+            # sharing inside its own task graph - and never outside it.
+            graph_id=subtask.parent_id or "",
+        )
+
+    def _verification_report(self, result: SubtaskResult) -> VerificationReport:
+        """Extract the verdicts this attempt actually reported.
+
+        Structured carriers only (``SubtaskResult.review`` and domain-result
+        blocks); missing data stays unknown rather than being guessed.
+        Best-effort: extraction must never fail the attempt it describes.
+        """
+
+        try:
+            return extract_verification(
+                review=result.review, domain_result=result.domain_result
+            )
+        except Exception:
+            logger.debug("verification verdict extraction failed", exc_info=True)
+            return VerificationReport()
+
+    def _verdict_evidence(
+        self, report: VerificationReport
+    ) -> list[tuple[EvidenceKind, dict[str, Any], str]]:
+        """Map a verification report onto (kind, payload, summary) evidence rows.
+
+        Only reported verdicts become rows: recording an "unknown" row would
+        make a later reader believe a check ran when none did.
+        """
+
+        rows: list[tuple[EvidenceKind, dict[str, Any], str]] = []
+        if report.review_verdict:
+            rows.append(
+                (
+                    EvidenceKind.REVIEW_VERDICT,
+                    {
+                        "verdict": report.review_verdict,
+                        "issues": list(report.review_issues),
+                    },
+                    "review verdict",
+                )
+            )
+        if report.oracle_verdict:
+            rows.append(
+                (
+                    EvidenceKind.ORACLE_VERDICT,
+                    {
+                        "verdict": report.oracle_verdict,
+                        "reasons": list(report.oracle_reasons),
+                    },
+                    "oracle verdict",
+                )
+            )
+        if report.test_verdict:
+            rows.append(
+                (
+                    EvidenceKind.TEST_VERDICT,
+                    {
+                        "verdict": report.test_verdict,
+                        "summary": report.test_summary,
+                    },
+                    "test verdict",
+                )
+            )
+        return rows
+
+    def _usage_payload(self, result: SubtaskResult) -> dict[str, int]:
+        """Reported token usage for the A-B metric, or ``{}`` when unreported.
+
+        A missing number must stay missing (``None`` is "unknown", not zero),
+        otherwise the metric would silently treat "not reported" as a
+        suspiciously cheap attempt.
+        """
+
+        usage = getattr(result, "usage", None)
+        payload: dict[str, int] = {}
+        if usage is None:
+            return payload
+        input_tokens = getattr(usage, "input_tokens", None)
+        output_tokens = getattr(usage, "output_tokens", None)
+        if isinstance(input_tokens, int):
+            payload["input_tokens"] = input_tokens
+        if isinstance(output_tokens, int):
+            payload["output_tokens"] = output_tokens
+        return payload
+
+    async def _record_attempt_round(
+        self,
+        subtask: Subtask,
+        attempt: int,
+        result: SubtaskResult,
+        workspace_handle: WorkspaceHandle | None,
+    ) -> None:
+        """Append this attempt's patch round to the diff-chain ledger.
+
+        Captured while the worktree is still allocated (before ``release``):
+        the candidate diff is the only durable record of what an attempt
+        actually changed, and a failed attempt's patch is the primary input of
+        the next retry's recovery view. Round content is bounded by the rollout
+        gates (``UC_KNOWLEDGE_MAX_PATCH_FILES`` / ``UC_KNOWLEDGE_MAX_DIFF_CHARS``)
+        and symbol-located AST-first, with line-level fallback.
+
+        Best-effort by design: evidence capture is audit, not delivery. A
+        ledger failure must never fail (or slow) the subtask it describes, so
+        errors are logged at debug and swallowed. Stage-disabled (the default,
+        ``UC_KNOWLEDGE_STAGE`` unset) returns immediately: Stage A keeps the
+        legacy execution path byte-identical.
+        """
+        stage = rollout.stage_from_env()
+        if not rollout.capture_enabled(stage) or self._workspace_manager is None:
+            return
+        if workspace_handle is None:
+            return
+        try:
+            snapshot = await self._workspace_manager.capture_diff(
+                workspace_handle,
+                max_files=rollout.max_patch_files(),
+                max_diff_chars=rollout.max_patch_diff_chars(),
+            )
+            patches: list[dict[str, Any]] = []
+            for item in snapshot.get("files") or ():
+                if not isinstance(item, dict):
+                    continue
+                path = str(item.get("path") or "")
+                diff = str(item.get("diff") or "")
+                patches.append(
+                    {
+                        "path": path,
+                        "change_type": _DIFF_CHANGE_TYPES.get(
+                            str(item.get("change_type") or "").lower(), "modified"
+                        ),
+                        "diff": diff,
+                        # One snapshot-wide flag: a file whose body was clipped
+                        # must not read as a complete patch.
+                        "truncated": bool(snapshot.get("truncated")),
+                        "symbols": [
+                            symbol.to_dict()
+                            for symbol in locate_symbols(
+                                path,
+                                diff,
+                                source_text=self._worktree_source(workspace_handle, path),
+                            )
+                        ],
+                    }
+                )
+            record = AttemptRound(
+                attempt=self._attempt_ref(subtask, attempt),
+                outcome=(
+                    "completed"
+                    if result.success
+                    else ("cleanup_pending" if result.cleanup_pending else "failed")
+                ),
+                patches=tuple(patches),
+                base_revision=str(snapshot.get("baseline") or ""),
+                head_revision=str(snapshot.get("head") or ""),
+                summary=result.summary or "",
+                failure=result.error or "",
+                # Verified verdicts only: the round label is derived from
+                # structured review/oracle/test carriers, so a round without
+                # evidence still reads "unknown" (principle A).
+                test_verdict=self._verification_report(result).round_verdict(),
+            )
+            state = await self._domain_state()
+            await asyncio.to_thread(AttemptChainLedger(state).record, record)
+        except Exception:
+            logger.debug("attempt patch round persistence failed", exc_info=True)
+
+    def _worktree_source(self, handle: WorkspaceHandle, path: str) -> str:
+        """Post-change source text of one file for AST-first symbol location."""
+        worktree = getattr(handle, "worktree_path", "") or ""
+        if not worktree or not path:
+            return ""
+        full = os.path.join(worktree, path)
+        try:
+            if not os.path.isfile(full) or os.path.getsize(full) > 500_000:
+                return ""
+            with open(full, encoding="utf-8", errors="replace") as source:
+                return source.read()
+        except OSError:
+            return ""
+
+    async def _record_attempt_evidence(
+        self, subtask: Subtask, attempt: int, result: SubtaskResult
+    ) -> None:
+        """Record what this attempt proved as bounded ATTEMPT-visibility evidence.
+
+        Kept separate from the patch round by design: the round says what the
+        candidate changed (git-observed), this says what the attempt concluded
+        (worker-reported). Neither stands in for the other -- a failed
+        attempt's error text is a failure signature, never an oracle verdict
+        (principle A), and an ATTEMPT record is never shared outside its retry
+        chain (the Epistemic Gate owns promotion, with validation and a
+        successful attempt).
+
+        Rollout-gated and best-effort: capture is audit, not delivery.
+        """
+        stage = rollout.stage_from_env()
+        if not rollout.capture_enabled(stage):
+            return
+        try:
+            ref = self._attempt_ref(subtask, attempt)
+            state = await self._domain_state()
+            ledger = EvidenceLedger(state, stage=stage)
+            outcome = await asyncio.to_thread(
+                ledger.record_evidence,
+                attempt=ref,
+                kind=EvidenceKind.ATTEMPT_OUTCOME,
+                payload={
+                    "success": bool(result.success),
+                    "retryable": bool(result.retryable),
+                    "cleanup_pending": bool(result.cleanup_pending),
+                    "attempt": int(attempt),
+                    "retry_count": int(result.retry_count or 0),
+                    "changed_files": len(result.modified_files or ()),
+                    # Reported usage only; a missing number stays missing so the
+                    # A-B metric can say "not reported" instead of inventing 0.
+                    "usage": self._usage_payload(result),
+                },
+                summary=result.summary or "",
+            )
+            evidence_ids = [outcome.evidence_id]
+            for kind, payload, summary in self._verdict_evidence(
+                self._verification_report(result)
+            ):
+                record = await asyncio.to_thread(
+                    ledger.record_evidence,
+                    attempt=ref,
+                    kind=kind,
+                    payload=payload,
+                    summary=summary,
+                )
+                evidence_ids.append(record.evidence_id)
+            if not result.success:
+                raw_failure = result.error or result.summary or ""
+                signature = normalize_failure_signature(raw_failure)
+                failure = await asyncio.to_thread(
+                    ledger.record_evidence,
+                    attempt=ref,
+                    kind=EvidenceKind.FAILURE_SIGNATURE,
+                    payload={
+                        "signature": signature,
+                        # Raw excerpt stays on the evidence for auditing; the
+                        # normalized signature is the comparison key.
+                        "excerpt": safe_text(raw_failure, limit=500),
+                    },
+                    summary="attempt failed",
+                )
+                evidence_ids.append(failure.evidence_id)
+                # Negative experience is a claim, not a fact: the next retry
+                # (and only its gate-controlled readers) may use it.
+                await asyncio.to_thread(
+                    record_failure_claim,
+                    ledger,
+                    attempt=ref,
+                    scope=attempt_scope(ref),
+                    evidence_ids=evidence_ids,
+                    signature=signature,
+                )
+        except Exception:
+            logger.debug("attempt evidence persistence failed", exc_info=True)
+
+    async def _record_delivery_evidence(
+        self, subtask: Subtask, attempt: int, merge_result: dict[str, Any]
+    ) -> list[str]:
+        """Bind the attempt's integration facts after the workspace release.
+
+        A merge receipt is what the *target* accepted (commit sha, branch
+        preservation, conflict status); a push verdict is what the *remote*
+        said. Recording them as evidence -- instead of folding them into the
+        round's ``test_verdict`` -- keeps the "validated vs released" split
+        visible: a later promotion can require an integration receipt rather
+        than trusting the worker's own success claim (principle B,
+        ``push_status == UNKNOWN`` never promotes).
+
+        Returns the recorded evidence ids so the delivery claim can link the
+        exact receipt it was validated with (empty when capture is disabled or
+        the write failed).
+        """
+        stage = rollout.stage_from_env()
+        if not rollout.capture_enabled(stage):
+            return []
+        try:
+            ref = self._attempt_ref(subtask, attempt)
+            state = await self._domain_state()
+            ledger = EvidenceLedger(state, stage=stage)
+            receipt = await asyncio.to_thread(
+                ledger.record_evidence,
+                attempt=ref,
+                kind=EvidenceKind.MERGE_RECEIPT,
+                payload={
+                    "status": str(merge_result.get("status") or ""),
+                    "commit_sha": str(merge_result.get("commit_sha") or ""),
+                    "branch_preserved": str(merge_result.get("branch_preserved") or ""),
+                },
+                summary="workspace release",
+            )
+            evidence_ids = [receipt.evidence_id]
+            push_status = merge_result.get("push_status")
+            if push_status:
+                push = await asyncio.to_thread(
+                    ledger.record_evidence,
+                    attempt=ref,
+                    kind=EvidenceKind.PUSH_VERDICT,
+                    payload={"push_status": str(push_status)},
+                    summary="branch push",
+                )
+                evidence_ids.append(push.evidence_id)
+            return evidence_ids
+        except Exception:
+            logger.debug("delivery evidence persistence failed", exc_info=True)
+            return []
+
+    async def _record_delivery_claim(
+        self,
+        subtask: Subtask,
+        attempt: int,
+        result: SubtaskResult,
+        merge_result: dict[str, Any],
+        evidence_ids: list[str],
+    ) -> None:
+        """Record the delivered claim and (at stage >= graph) promote it.
+
+        The worker is the claim *producer*; the gate is the only thing that can
+        widen its audience. Promotion requires a landed revision so the gate's
+        validation/revision binding is honest - without a commit sha the claim
+        is recorded at ATTEMPT visibility and left alone.
+        """
+
+        stage = rollout.stage_from_env()
+        if not rollout.capture_enabled(stage):
+            return
+        status = str(merge_result.get("status") or "")
+        if status not in ACCEPTED_MERGE_STATUSES:
+            return
+        try:
+            ref = self._attempt_ref(subtask, attempt)
+            state = await self._domain_state()
+            ledger = EvidenceLedger(state, stage=stage)
+            scope = attempt_scope(ref)
+            revision = str(merge_result.get("commit_sha") or "")
+            report = self._verification_report(result)
+            claim = await asyncio.to_thread(
+                record_delivery_claim,
+                ledger,
+                attempt=ref,
+                scope=scope,
+                revision=revision,
+                evidence_ids=evidence_ids,
+                merge_status=status,
+                file_count=len(result.modified_files or ()),
+                verification_label=report.round_verdict(),
+            )
+            if not rollout.graph_sharing_enabled(stage) or not revision:
+                return
+            if not scope.graph_id:
+                return
+            _claim, decision = await asyncio.to_thread(
+                validate_and_promote_delivery,
+                ledger,
+                claim.claim_id,
+                revision=revision,
+                evidence_ids=evidence_ids,
+                push_status=str(merge_result.get("push_status") or ""),
+                # Never assume success: a failed attempt must not promote.
+                attempt_succeeded=bool(result.success),
+            )
+            logger.debug(
+                "knowledge delivery claim %s promoted=%s reasons=%s",
+                claim.claim_id,
+                decision.allowed,
+                list(decision.reasons),
+            )
+        except Exception:
+            logger.debug("delivery claim persistence failed", exc_info=True)
+
+    async def _knowledge_context_items(
+        self, subtask: Subtask
+    ) -> tuple[list[Any], dict[str, Any]]:
+        """Gate-approved graph knowledge for this attempt's context (P5).
+
+        Reads claims the Epistemic Gate already promoted inside this subtask's
+        own task graph and packs them within the retrieval budget. Below stage
+        ``graph`` this returns ``([], {})``: the read face is opt-in, and its
+        summary carries counts/tokens only - never claim statements.
+        """
+
+        stage = rollout.stage_from_env()
+        if not rollout.graph_sharing_enabled(stage):
+            return [], {}
+        if not subtask.parent_id:
+            return [], {}
+        try:
+            state = await self._domain_state()
+            ledger = EvidenceLedger(state, stage=stage)
+            scope = KnowledgeScope(graph_id=subtask.parent_id)
+            return await asyncio.to_thread(
+                knowledge_context_items, ledger, scope=scope
+            )
+        except Exception:
+            logger.debug("graph knowledge read failed", exc_info=True)
+            return [], {}
+
+    async def _load_recovery_view(
+        self, subtask: Subtask, attempt: int
+    ) -> RecoveryView | None:
+        """Read the prior rounds of this subtask and build its recovery view.
+
+        ``None`` means "no recovery evidence": the rollout stage is below
+        recovery, the attempt is the first one, the ledger holds no strictly
+        earlier round, or the read/build failed. Callers treat it as an empty
+        recovery (keep the base prompt, omit the event field), so Stage A/B
+        retries stay byte-identical to the pre-upgrade loop.
+        """
+        stage = rollout.stage_from_env()
+        if not rollout.recovery_enabled(stage) or attempt <= 0:
+            return None
+        try:
+            state = await self._domain_state()
+            current = self._attempt_ref(subtask, attempt)
+            prior = await asyncio.to_thread(
+                lambda: AttemptChainLedger(state).prior_rounds(
+                    current, limit=rollout.chain_max_rounds()
+                )
+            )
+            if not prior:
+                return None
+            return build_recovery_view(
+                attempt=current, rounds=[record.to_dict() for record in prior]
+            )
+        except Exception:
+            logger.debug("recovery chain read failed", exc_info=True)
+            return None
+
+    async def _recovery_context_block(
+        self,
+        subtask: Subtask,
+        attempt: int,
+        base_items: list,
+        current_block: str,
+        *,
+        legacy_style: str,
+        gateway_truncated: bool,
+    ) -> tuple[str, dict[str, Any]]:
+        """Recompile the retry attempt's context with prior-attempt evidence.
+
+        Returns ``(context_block, recovery_summary)``. When the rollout stage
+        is below recovery, or the ledger holds no prior round, the first
+        attempt's prompt is returned unchanged with an empty summary.
+
+        Recompiling (rather than appending a rendered section) keeps one budget
+        across base context and recovery evidence: on a high-risk attempt the
+        P2 reservation now protects the recovery facts, and an over-tight
+        budget surfaces as a manifest drop instead of a prompt that grew past
+        the budget. The manifest summary is refreshed for the attempt's event
+        but not re-recorded under the same dispatch key.
+        """
+        view = await self._load_recovery_view(subtask, attempt)
+        if view is None:
+            return current_block, {}
+        try:
+            items = recovery_context_items(view)
+        except Exception:
+            logger.debug("recovery view render failed", exc_info=True)
+            return current_block, {}
+        if not items:
+            return current_block, view.summary
+        manifest = compile_context(
+            list(base_items) + items,
+            budget_tokens=self._context_budget_tokens(),
+            risk=self._last_route.risk,
+        )
+        self._last_context_manifest = manifest.summary()
+        return (
+            manifest.render_legacy(
+                legacy_style=legacy_style, gateway_truncated=gateway_truncated
+            ),
+            view.summary,
+        )
 
     async def _record_decision_start(self, subtask: Subtask) -> None:
         """Persist this dispatch attempt's Decision Record start facts.

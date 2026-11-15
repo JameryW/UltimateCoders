@@ -21,11 +21,14 @@ worker emitted before, and only adds a truncation marker when the budget
 actually forced a drop. The tier-ordered ``render()`` is the shape new
 sources should target.
 
-Token accounting is an estimate (``len(text) // 4`` rounded up), never a
-tokenizer call: the compiler must stay dependency-free and cheap enough to
-run at every subtask start. Budgets are therefore approximate on purpose --
-they bound the prompt at the right order of magnitude, and the manifest
-reports the estimate rather than pretending to be exact.
+Token accounting defaults to an estimate (``len(text) // 4`` rounded up),
+never a tokenizer call: the compiler must stay dependency-free and cheap
+enough to run at every subtask start. Budgets are therefore approximate on
+purpose -- they bound the prompt at the right order of magnitude, and the
+manifest reports the estimate rather than pretending to be exact. A caller
+that does have a real tokenizer can register it (``register_token_meter``)
+and compile with ``token_meter="name"``; the manifest records which meter
+produced the numbers so two attempts are never compared across meters.
 
 Budget *allocation* can follow the routed risk (``routing.RiskLevel``):
 under a profile in ``RISK_RESERVED_SHARE`` (today: high-risk work), the
@@ -51,7 +54,9 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from enum import IntEnum
-from typing import Any
+from typing import Any, Callable
+
+TokenMeter = Callable[[str], int]
 
 
 class Tier(IntEnum):
@@ -99,6 +104,42 @@ _TIER_TITLES = {
 def estimate_tokens(text: str) -> int:
     """Deterministic, dependency-free token estimate (4 characters/token)."""
     return max(1, (len(text) + 3) // 4)
+
+
+#: Name of the built-in heuristic meter; recorded in every manifest summary.
+DEFAULT_TOKEN_METER = "heuristic"
+
+_TOKEN_METERS: dict[str, TokenMeter] = {DEFAULT_TOKEN_METER: estimate_tokens}
+
+
+def register_token_meter(name: str, meter: TokenMeter) -> None:
+    """Register a token-counting adapter for ``compile_context(token_meter=...)``.
+
+    The compiler never imports a tokenizer itself; a deployment that has one
+    (for example the inference stack's real tokenizer) registers it here.
+    Registration is process-global and idempotent for the same name, so a
+    worker may call this from its startup path.
+    """
+    key = str(name or "").strip().lower()
+    if not key:
+        raise ValueError("token meter name must not be empty")
+    if not callable(meter):
+        raise TypeError("token meter must be callable")
+    _TOKEN_METERS[key] = meter
+
+
+def resolve_token_meter(name: str | None = None) -> tuple[str, TokenMeter]:
+    """Return ``(canonical_name, meter)`` or raise for an unknown meter.
+
+    Raising (rather than silently falling back) is deliberate: a deployment
+    that asks for its real tokenizer must not quietly get the heuristic and
+    then compare budgets that were measured differently.
+    """
+    key = str(name or DEFAULT_TOKEN_METER).strip().lower()
+    try:
+        return key, _TOKEN_METERS[key]
+    except KeyError as exc:
+        raise ValueError(f"unknown context token meter: {name!r}") from exc
 
 
 @dataclass(frozen=True)
@@ -156,6 +197,7 @@ class ContextManifest:
     budget_tokens: int = 0
     risk: str = "normal"
     over_budget: bool = False
+    token_meter: str = DEFAULT_TOKEN_METER
 
     @property
     def total_tokens(self) -> int:
@@ -190,6 +232,7 @@ class ContextManifest:
             "stable_tokens": self.stable_tokens,
             "risk": self.risk,
             "over_budget": self.over_budget,
+            "token_meter": self.token_meter,
             "items_by_tier": tiers,
             # One tier vocabulary: a drop names its tier the way
             # ``items_by_tier`` names the surviving ones. The raw enum value
@@ -220,23 +263,40 @@ class ContextManifest:
         """Tier-ordered rendering with provenance headers."""
         return _render_items(self.items, include_header=True)
 
-    def render_legacy(self) -> str:
-        """Reproduce the pre-compiler worker prompt text.
+    def render_legacy(
+        self, *, legacy_style: str = "worker", gateway_truncated: bool = False
+    ) -> str:
+        """Reproduce the pre-compiler prompt text for one injection path.
 
-        Dependency results keep the injector's wording, order and blank-line
-        rhythm (each line is its own block, exactly as
-        ``ContextInjector.build_context`` emits them); the search block
-        follows after a blank line, as before. Optional Hy-Memory auto-context
-        (P4) appends the same way after evidence. A truncation marker appears
-        only when the budget dropped something -- under a generous budget the
-        output matches the old path line for line.
+        Two callers used to assemble this text independently and therefore
+        disagreed about both budget and header. ``legacy_style`` keeps the two
+        historical renderings while both now come from one manifest:
+
+        * ``"worker"`` -- dependency results keep the injector's wording,
+          order and blank-line rhythm (each line is its own block, exactly as
+          ``ContextInjector.build_context`` emits them); the search block
+          follows after a blank line, as before. Optional Hy-Memory
+          auto-context (P4) appends the same way after evidence.
+        * ``"gateway"`` -- the same items rendered under the header the
+          gateway-composed block used, with the gateway's own truncation
+          marker appended when the upstream block was flagged truncated.
+
+        A budget-truncation marker appears only when the compiler actually
+        dropped something, so under a generous budget both styles match their
+        old path line for line.
         """
+        style = str(legacy_style or "worker").strip().lower()
+        if style not in {"worker", "gateway"}:
+            raise ValueError(f"unknown legacy context style: {legacy_style!r}")
         deps = [i for i in self.items if i.tier == Tier.TRACE]
         evidence = [i for i in self.items if i.tier == Tier.EVIDENCE]
         memory = [i for i in self.items if i.tier == Tier.MEMORY]
         parts: list[str] = []
         if deps:
-            parts.append("## Context from completed subtasks\n")
+            if style == "gateway":
+                parts.append("## Context from completed subtasks (gateway-composed)\n")
+            else:
+                parts.append("## Context from completed subtasks\n")
             parts.append("The following subtasks have completed. Use their results as context:\n")
             for item in deps:
                 node_id = str(item.item_id)
@@ -255,9 +315,19 @@ class ContextManifest:
         for item in memory:
             body = item.content.rstrip("\n")
             block = f"{block}\n\n{body}" if block else body
+        if style == "gateway" and not block:
+            # Old gateway path returned "" for an empty entry list; keep that
+            # exact contract (an empty block means "no context", not a lone
+            # truncation notice).
+            return ""
+        notices: list[str] = []
+        if style == "gateway" and gateway_truncated:
+            notices.append("... (context truncated by gateway)")
         if any(d.reason == "budget" for d in self.dropped):
-            marker = "... (context truncated by budget)"
-            block = f"{block}\n{marker}" if block else marker
+            notices.append("... (context truncated by budget)")
+        if notices:
+            joined = "\n".join(notices)
+            block = f"{block}\n{joined}" if block else joined
         return block
 
 
@@ -267,6 +337,7 @@ def compile_context(
     budget_tokens: int,
     risk: str = "normal",
     now: float | None = None,
+    token_meter: str | None = None,
 ) -> ContextManifest:
     """Select and order items under a token budget, deterministically.
 
@@ -294,9 +365,16 @@ def compile_context(
        as a reusable prefix. Other tiers stay volatile unless the caller
        marks them -- an unmarked caller sees no ordering or rendering
        change.
+
+    Token costs are measured once, up front, by ``token_meter`` (default
+    ``"heuristic"``); items that already carry ``token_cost`` keep it. The
+    chosen meter's name is recorded on the manifest.
     """
     now = time.time() if now is None else now
-    manifest = ContextManifest(budget_tokens=budget_tokens, risk=risk)
+    meter_name, meter = resolve_token_meter(token_meter)
+    manifest = ContextManifest(
+        budget_tokens=budget_tokens, risk=risk, token_meter=meter_name
+    )
 
     # Cache affinity, derived not configured: the policy tier (task
     # contract) does not change between attempts of one compile, so it is
@@ -305,7 +383,15 @@ def compile_context(
     # stays volatile, so callers that never heard of ``stable`` compile
     # exactly as before (the policy tier already sorts first, so the
     # packing order is unchanged too).
-    items = [replace(item, stable=True) if item.tier == Tier.POLICY else item for item in items]
+    normalized: list[ContextItem] = []
+    for item in items:
+        updates: dict[str, Any] = {}
+        if item.tier == Tier.POLICY and not item.stable:
+            updates["stable"] = True
+        if item.token_cost is None:
+            updates["token_cost"] = max(1, int(meter(item.content)))
+        normalized.append(replace(item, **updates) if updates else item)
+    items = normalized
 
     deduped: dict[str, ContextItem] = {}
     for item in items:
@@ -374,6 +460,48 @@ def from_dependency_results(results: Iterable[Any]) -> list[ContextItem]:
                 trust_class="worker_reported",
                 verified=bool(ctx.success),
                 relevance=1.0 if ctx.success else 0.5,
+            )
+        )
+    return items
+
+
+def from_gateway_context_block(
+    block: Any, *, source: str = "gateway-context"
+) -> list[ContextItem]:
+    """Wrap a gateway-composed context block as P3 trace items.
+
+    The gateway envelope carries already-committed subtask outputs as
+    ``{"entries": [{"node_id", "success", "summary"}, ...], "truncated": bool}``.
+    Before unification the worker string-concatenated a rendering of this
+    block outside the budget; this adapter makes the same facts ordinary
+    context items so the one compiler measures and bounds them like every
+    other source. Empty/missing block yields no items (the carried block is
+    still authoritative: no block means the caller must not fall back to the
+    local injector; that decision stays in the worker).
+    """
+    data = block if isinstance(block, dict) else {}
+    entries = data.get("entries") or []
+    items: list[ContextItem] = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            node_id = str(entry.get("node_id") or "")
+            success = bool(entry.get("success"))
+            summary = str(entry.get("summary") or "")
+        else:  # tolerate attribute-style payloads (envelope proto types)
+            node_id = str(getattr(entry, "node_id", "") or "")
+            success = bool(getattr(entry, "success", False))
+            summary = str(getattr(entry, "summary", "") or "")
+        content = f"Summary: {summary[:1000]}" if summary else ""
+        items.append(
+            ContextItem(
+                item_id=node_id,
+                tier=Tier.TRACE,
+                content=content,
+                source=source,
+                source_version="ok" if success else "failed",
+                trust_class="gateway_committed",
+                verified=success,
+                relevance=1.0 if success else 0.5,
             )
         )
     return items
