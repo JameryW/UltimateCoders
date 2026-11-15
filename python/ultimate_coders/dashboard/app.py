@@ -549,6 +549,37 @@ class DashboardApp:
                 }
             )
 
+        @app.get("/dashboard/api/knowledge")
+        async def knowledge_api(request: Request):
+            """Read-only knowledge-layer overview (T16 read face).
+
+            Counts only -- attempts / evidence / claims / pages plus the
+            Epistemic Gate's allowed/denied split and a denial-reason
+            histogram. Claim statements, patch diffs and prompt text never
+            appear here. ``limit`` bounds the scan window (``truncated`` says
+            older rows were skipped); ``task_id`` narrows attempts, evidence,
+            claims and by-graph pages to one task.
+            """
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            try:
+                limit = int(request.query_params.get("limit", "200"))
+                if not 1 <= limit <= 5000:
+                    raise ValueError("limit must be between 1 and 5000")
+                from ultimate_coders.knowledge.dashboard import aggregate_knowledge
+
+                overview = await asyncio.to_thread(
+                    aggregate_knowledge,
+                    await experiment_state(),
+                    task_id=request.query_params.get("task_id", ""),
+                    limit=limit,
+                )
+            except ValueError:
+                return JSONResponse({"error": "Invalid limit"}, status_code=400)
+            except Exception as e:
+                return _unavailable("Knowledge state unavailable", e)
+            return JSONResponse(overview)
+
         @app.get("/dashboard/api/effects")
         async def effects_api(request: Request):
             """Read-only audit surface for EffectLedger receipts (D23 / P13).

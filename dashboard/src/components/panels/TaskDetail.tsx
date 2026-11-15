@@ -4,6 +4,7 @@ import type { TaskSummary, SubtaskSummary, TaskEvent } from "@/types/dashboard";
 import { InteractionLog } from "@/components/panels/InteractionLog";
 import { ContextManifestTrail } from "@/components/panels/ContextManifestPanel";
 import { DecisionRecordTrail } from "@/components/panels/DecisionRecordPanel";
+import { KnowledgeOverviewPanel } from "@/components/panels/KnowledgeOverviewPanel";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { renderMermaid } from "@/lib/mermaid";
 import { clampPercent, isSubtaskDone, isSubtaskRunning, subtaskShortLabel } from "@/lib/taskProgress";
@@ -466,6 +467,9 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId, varia
 
       {/* Decision record trail — verdict, route and local effects per attempt */}
       <DecisionRecordTrail taskId={task.id} />
+
+      {/* Knowledge overview — evidence/claim counts and gate denials per task */}
+      <KnowledgeOverviewPanel taskId={task.id} />
     </div>
   );
 }
