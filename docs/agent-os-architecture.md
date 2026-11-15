@@ -423,8 +423,8 @@ worker 文件合计 **382 passed**）：
   现由 Rust gateway 的 `UC_PLANNER_VIEW_BUDGET_BYTES` 调节
   （`crates/uc-types/src/envelope.rs`：默认 `CONTEXT_BLOCK_MAX_BYTES` 8192，clamp
   512–8192，非法值回默认）；这是环境开关而非第二套常量，A-B 只需改 env。
-  `cargo test -p uc-types envelope` 需在 CI 跑（本沙箱离线，仅用独立 rustc
-  验证了纯函数逻辑），未被 CI 执行前视为未验收。
+  `cargo test -p uc-types` 已加入 `.github/workflows/ci-rust.yml` 的 `test (uc-types)`
+  job（本沙箱离线，仅用独立 rustc 验证了纯函数逻辑）；首次 CI 绿色运行前视为未验收。
 - **Dashboard 读面与前端面板均已接**：`knowledge/dashboard.py`（T16）提供
   有界只读概览与 CLI（门裁决 allowed/denied + 理由直方图、证据/claim/页面计数），
   `GET /dashboard/api/knowledge` 路由已在 `dashboard/app.py` 注册并有 4 个测试
@@ -457,6 +457,6 @@ worker 文件合计 **382 passed**）：
 2026-11-15 复测：`python -m compileall` 干净、`ruff` 干净；24 个相关知识层 / worker
 测试文件 **382 passed**（其中 17 个知识层聚焦文件 254 passed；读面子集 59 passed）；
 Dashboard 侧 `tsc -b` / `eslint` 干净，`node --test tests/*.test.mjs` **170 passed**
-（其中 7 个为知识层读面前端）。Rust 侧 `cargo test -p uc-types envelope` 因离线
-未能执行（见 §9.5 与 T17）。
+（其中 7 个为知识层读面前端）。Rust 侧 `cargo test -p uc-types` 本机因离线未能执行；
+已加入 CI 的 `test (uc-types)` job（见 §9.5 与 T17），待首次绿色。
 

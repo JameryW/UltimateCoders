@@ -19,7 +19,7 @@ TaskDetail 内挂载，7 个 node 测试，`tsc -b` / `eslint` / 170 个 dashboa
 （[runbook-ab-evaluation.md](runbook-ab-evaluation.md)）；页面边界（不进 prompt /
 不同步 Qdrant/TiKV / 不占 Stage）由 D7 定案。
 仍在 Frontier：真实 A-B 数据集跑数、签名粒度校准（工具与 runbook 均已就绪，缺的是
-数据）、Rust 侧 `cargo test`（本机网络不可达，需 CI 执行）。
+数据）、Rust 侧 `cargo test`（本机网络不可达；CI `test (uc-types)` job 已加，待首次绿色）。
 Assessment: [assessment.md](assessment.md)（surveyed 2026-11-15；现状盘点 / 六模块
 差距 / 方案取舍 / 风险）
 Intake: 用户计划的「六模块 / 四原则 / 六阶段 / Stage A–E 放量 / 验收指标 /
@@ -183,7 +183,8 @@ P4 — Versioned Knowledge Pages: **implemented**
   数据里校准（同一根因不应裂成多条、不同根因不应塌成一条）。
 - **Rust 侧构建验证**：`crates/uc-types` 的 planner 预算改动在本机无法 `cargo test`
   （crates.io 网络不可达且无本地 registry 缓存）；已用独立 `rustc` 提取验证
-  解析/clamp/打包逻辑，CI 需跑 `cargo test -p uc-types envelope`。
+  解析/clamp/打包逻辑。`.github/workflows/ci-rust.yml` 已新增 `test (uc-types)`
+  job（`cargo test -p uc-types`），首次绿色运行前仍视为未验收。
 
 已定案、不再列为缺口：知识页与 Qdrant/TiKV 的投影关系、页面是否进 prompt、
 页面是否占 Stage 门 —— 由 [D7](issues/D7-page-projection-boundary.md) 收口

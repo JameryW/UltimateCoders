@@ -320,6 +320,7 @@ Multiple worker processes execute independent ready nodes from one DAG:
 ```bash
 cargo check                    # Check all crates compile
 cargo test                     # Run all tests (in-memory fallbacks)
+cargo test -p uc-types         # Shared types + envelope unit tests (also in CI)
 cargo test --features storage  # Run tests with real storage backends
 cargo test --features indexing # Run tests with AST indexing enabled
 cargo clippy --workspace       # Lint
@@ -569,7 +570,7 @@ Twelve independent workflows are defined. Eleven run on pushes and pull requests
 
 | Workflow | Trigger paths | Checks |
 |----------|--------------|--------|
-| **Rust CI** (`ci-rust.yml`) | `crates/**`, `Cargo.toml`, `Cargo.lock`, `docker/docker-compose.yml` | check, clippy, fmt, test (3 feature combos), postgres integration |
+| **Rust CI** (`ci-rust.yml`) | `crates/**`, `Cargo.toml`, `Cargo.lock`, `docker/docker-compose.yml` | check, clippy, fmt, test (uc-types), test (3 feature combos), postgres integration |
 | **Python CI** (`ci-python.yml`) | `python/**`, `tests/**`, `pyproject.toml`, `dashboard/**`, `crates/uc-python/**`, `crates/uc-types/**`, `crates/uc-engine/**`, `crates/uc-grpc/**`, `Cargo.toml`, `Cargo.lock` | ruff lint, dashboard build, pytest (3.9 + 3.12) |
 | **Dashboard CI** (`ci-dashboard.yml`) | `dashboard/**`, `crates/uc-grpc/proto/**`, `packages/uc-orchestrator/**`, `buf.gen.yaml`, `buf.yaml` | typecheck, build, `node test` (lib + SSR render) |
 | **TypeScript CI** (`ci-typescript.yml`) | `packages/uc-orchestrator/**`, `vendor/oh-my-pi/packages/mnemopi/**`, `vendor/oh-my-pi/packages/coding-agent/**` | `bun test` for each package |

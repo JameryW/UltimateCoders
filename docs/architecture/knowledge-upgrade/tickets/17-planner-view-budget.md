@@ -9,8 +9,9 @@
 **Spec:** [D6-token-budgets.md](../issues/D6-token-budgets.md)、[spec-p0.md](../spec-p0.md)
 **Status:** implemented（`crates/uc-types/src/envelope.rs`：`planner_view_budget_bytes_from`、
 `planner_view_budget_bytes`、`ContextBlock::compose_with_budget`；`compose` 走 env 默认。
-本机 crates.io 不可达、无本地 registry 缓存，`cargo test` 未能执行；已用独立 `rustc`
-提取同逻辑验证解析/clamp/小预算打包；CI 需跑 `cargo test -p uc-types envelope`）
+本机 crates.io 不可达、无本地 registry 缓存，`cargo test` 未能本地执行；已用独立 `rustc`
+提取同逻辑验证解析/clamp/小预算打包；`.github/workflows/ci-rust.yml` 已新增
+`test (uc-types)` job 跑 `cargo test -p uc-types`，首次绿色运行前仍视为未验收）
 
 **Implementation**
 
@@ -34,7 +35,8 @@
 - [x] 合法 mid-range env 值改变打包上限（6144 生效）。
 - [x] 非法/空/超出区间的 env 值 fail-safe：回落默认或 clamp，不会得到 0/无界。
 - [x] 打包永不拆分单个 entry；溢出只丢整 entry 并置 `truncated`。
-- [ ] CI 执行 `cargo test -p uc-types envelope`（本机无网络，未验）。
+- [x] CI 执行 `cargo test -p uc-types`：`ci-rust.yml` 的 `test (uc-types)` job 已加
+  （本机无网络跑不了，等首次 CI 绿色确认）。
 
 **Rollout:** 默认值即现状，无需放量门；A-B 时用 env 调 6144–7200（约 1500–1800
 tokens 的 4 chars/token 估算）即可，两边用同一 `UC_PLANNER_VIEW_BUDGET_BYTES` 之外
