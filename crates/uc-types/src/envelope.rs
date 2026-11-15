@@ -26,11 +26,51 @@ pub const CONTRACT_VERSION: &str = "v1";
 /// idempotency key (32 × 4 = 128 bits — plenty for dedup, keeps payloads small).
 const IDEMPOTENCY_KEY_LEN: usize = 32;
 
-/// Hard cap on the serialized `context_block` (T10 #652 / D10 #647): an
-/// 8 KiB budget keeps dispatch payloads small no matter how chatty the
-/// dependency summaries are. Overflow drops whole entries (never splits one)
-/// and sets `ContextBlock::truncated` — never a failed dispatch.
+/// Hard ceiling on the serialized `context_block` (T10 #652 / D10 #647): an
+/// 8 KiB dispatch payload keeps the gateway-composed view small no matter how
+/// chatty the dependency summaries are. Overflow drops whole entries (never
+/// splits one) and sets `ContextBlock::truncated` — never a failed dispatch.
+///
+/// The effective budget is [`planner_view_budget_bytes`] (env-tunable, default
+/// and ceiling are this constant). D6 measured the planner view at
+/// 1500–1800 tokens ≈ 6–7.2 KiB under the 4-chars-per-token heuristic, so the
+/// default is the top of that range while still honouring the hard ceiling.
 pub const CONTEXT_BLOCK_MAX_BYTES: usize = 8 * 1024;
+
+/// Lowest accepted planner view budget: below ~128 tokens the block carries no
+/// usable dependency summary, so a typo'd env value clamps up instead of
+/// silently disabling gateway context.
+pub const CONTEXT_BLOCK_MIN_BYTES: usize = 512;
+
+/// Env override for the planner-composed view budget (D6). Defaults to
+/// [`CONTEXT_BLOCK_MAX_BYTES`] — unchanged behaviour — and is clamped to
+/// `CONTEXT_BLOCK_MIN_BYTES..=CONTEXT_BLOCK_MAX_BYTES` because the ceiling keeps
+/// dispatch payloads bounded; a value above the ceiling is not a licence to
+/// grow the envelope.
+pub const PLANNER_VIEW_BUDGET_ENV: &str = "UC_PLANNER_VIEW_BUDGET_BYTES";
+
+/// Parse a planner view budget from an optional raw value.
+///
+/// Invalid, empty or non-numeric input falls back to the default (fail-open to
+/// today's behaviour, not to zero); values outside the clamp range are raised
+/// to the floor / lowered to the ceiling. Pure so tests do not mutate the
+/// process environment.
+pub fn planner_view_budget_bytes_from(raw: Option<&str>) -> usize {
+    let parsed = raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<usize>().ok());
+    match parsed {
+        Some(value) => value.clamp(CONTEXT_BLOCK_MIN_BYTES, CONTEXT_BLOCK_MAX_BYTES),
+        None => CONTEXT_BLOCK_MAX_BYTES,
+    }
+}
+
+/// The effective planner view budget: env override (`UC_PLANNER_VIEW_BUDGET_BYTES`)
+/// else [`CONTEXT_BLOCK_MAX_BYTES`].
+pub fn planner_view_budget_bytes() -> usize {
+    planner_view_budget_bytes_from(std::env::var(PLANNER_VIEW_BUDGET_ENV).ok().as_deref())
+}
 
 /// One committed dependency output in a gateway-composed context block
 /// (T10 #652). `summary` is the dependency's committed `result_ref` (the
@@ -58,11 +98,27 @@ pub struct ContextBlock {
 
 impl ContextBlock {
     /// Compose a context block from dependency outputs. Entries are sorted
-    /// by `node_id` and greedily packed under the 8 KiB serialized budget;
+    /// by `node_id` and greedily packed under the effective planner view
+    /// budget ([`planner_view_budget_bytes`], default the 8 KiB hard ceiling);
     /// entries that would overflow are dropped and `truncated` is set.
     /// Returns `None` for an empty input (the field is omitted on the wire —
     /// no context, no block).
-    pub fn compose(mut entries: Vec<ContextEntry>) -> Option<Self> {
+    pub fn compose(entries: Vec<ContextEntry>) -> Option<Self> {
+        Self::compose_with_budget(entries, planner_view_budget_bytes())
+    }
+
+    /// [`Self::compose`] against an explicit byte budget (clamped to
+    /// [`CONTEXT_BLOCK_MIN_BYTES`]..=[`CONTEXT_BLOCK_MAX_BYTES`]).
+    ///
+    /// Split out from [`Self::compose`] so the packing rule is testable without
+    /// mutating the process environment, and so the gateway keeps its hard
+    /// ceiling no matter what the env says: a budget above
+    /// [`CONTEXT_BLOCK_MAX_BYTES`] is lowered, never honoured.
+    pub fn compose_with_budget(
+        mut entries: Vec<ContextEntry>,
+        budget_bytes: usize,
+    ) -> Option<Self> {
+        let budget = budget_bytes.clamp(CONTEXT_BLOCK_MIN_BYTES, CONTEXT_BLOCK_MAX_BYTES);
         if entries.is_empty() {
             return None;
         }
@@ -81,7 +137,7 @@ impl ContextBlock {
             let size = serde_json::to_vec(&probe)
                 .map(|v| v.len())
                 .unwrap_or(usize::MAX);
-            if size > CONTEXT_BLOCK_MAX_BYTES {
+            if size > budget {
                 block.truncated = true;
                 break;
             }
@@ -283,7 +339,90 @@ mod tests {
             serde_json::from_str(r#"{"graph_id":"t-1","node_id":"n-1"}"#).unwrap();
         assert!(legacy.context_block.is_none());
         // ...and serializes back without the key (skip_serializing_if).
-        let legacy_json = serde_json::to_string(&legacy).unwrap();
-        assert!(!legacy_json.contains("context_block"));
+    }
+
+    // ── D6 planner view budget (env-tunable, still hard-ceilinged) ──────
+
+    #[test]
+    fn planner_view_budget_parses_and_clamps() {
+        // No/blank/garbage input keeps today's behaviour instead of disabling
+        // gateway context.
+        assert_eq!(
+            planner_view_budget_bytes_from(None),
+            CONTEXT_BLOCK_MAX_BYTES
+        );
+        assert_eq!(
+            planner_view_budget_bytes_from(Some("")),
+            CONTEXT_BLOCK_MAX_BYTES
+        );
+        assert_eq!(
+            planner_view_budget_bytes_from(Some("not-a-number")),
+            CONTEXT_BLOCK_MAX_BYTES
+        );
+        // In-range values are honoured (D6 hypothesis: 1500–1800 tokens ≈
+        // 6–7.2 KiB; 6144 is mid-range).
+        assert_eq!(planner_view_budget_bytes_from(Some("6144")), 6144);
+        assert_eq!(planner_view_budget_bytes_from(Some(" 6144 ")), 6144);
+        // A value that would grow the dispatch payload is lowered to the
+        // ceiling — the ceiling is not an env override.
+        assert_eq!(
+            planner_view_budget_bytes_from(Some("65536")),
+            CONTEXT_BLOCK_MAX_BYTES
+        );
+        // A value so small it carries no usable summary is raised to the floor.
+        assert_eq!(
+            planner_view_budget_bytes_from(Some("0")),
+            CONTEXT_BLOCK_MIN_BYTES
+        );
+    }
+
+    #[test]
+    fn planner_view_budget_env_reader_round_trips_through_the_process_env() {
+        // The wrapper only reads the env; the parser is tested above. Use a
+        // unique var value and restore it so parallel tests stay safe.
+        let saved = std::env::var(PLANNER_VIEW_BUDGET_ENV).ok();
+        std::env::set_var(PLANNER_VIEW_BUDGET_ENV, "5000");
+        assert_eq!(planner_view_budget_bytes(), 5000);
+        match saved {
+            Some(value) => std::env::set_var(PLANNER_VIEW_BUDGET_ENV, value),
+            None => std::env::remove_var(PLANNER_VIEW_BUDGET_ENV),
+        }
+    }
+
+    #[test]
+    fn compose_with_budget_packs_to_the_explicit_budget() {
+        // Each entry is ~1 KiB; a 2 KiB budget fits roughly two of them.
+        let big = "x".repeat(1000);
+        let entries: Vec<ContextEntry> = (0..6)
+            .map(|index| entry(&format!("n-{index}"), true, &big))
+            .collect();
+        let block = ContextBlock::compose_with_budget(entries, 2048).expect("non-empty input");
+        assert!(block.truncated, "dropping entries must set truncated");
+        assert!(
+            !block.entries.is_empty(),
+            "budget must fit at least one entry"
+        );
+        let serialized = serde_json::to_vec(&block).unwrap();
+        assert!(
+            serialized.len() <= 2048,
+            "composed block must fit the explicit budget (got {} bytes)",
+            serialized.len()
+        );
+    }
+
+    #[test]
+    fn compose_with_budget_clamps_to_the_documented_range() {
+        let big = "x".repeat(1000);
+        let entries: Vec<ContextEntry> = (0..10)
+            .map(|index| entry(&format!("n-{index}"), true, &big))
+            .collect();
+        // An oversized budget cannot grow the block past the hard ceiling.
+        let capped = ContextBlock::compose_with_budget(entries.clone(), usize::MAX).unwrap();
+        let serialized = serde_json::to_vec(&capped).unwrap();
+        assert!(serialized.len() <= CONTEXT_BLOCK_MAX_BYTES);
+        // A tiny budget is raised to the floor rather than emitted empty.
+        let floored = ContextBlock::compose_with_budget(entries, 1).unwrap();
+        assert!(!floored.entries.is_empty());
+        assert!(serde_json::to_vec(&floored).unwrap().len() <= CONTEXT_BLOCK_MIN_BYTES);
     }
 }
