@@ -97,6 +97,52 @@ def _rank(claim: ClaimRecord) -> tuple[int, float, str]:
     )
 
 
+def _bitemporal_project(
+    claims: Sequence[ClaimRecord],
+    reader_revision: str,
+) -> list[ClaimRecord]:
+    """Collapse duplicate statements through the opt-in bitemporal graph.
+
+    The graph is a projection of this read's already permission-filtered
+    claims: it never broadens visibility. Its value here is deterministic
+    duplicate resolution (oracle-verified > unverified > negative pitfall)
+    with the original claim ids preserved. When the feature is off, or the
+    projection fails, the input order is returned unchanged.
+    """
+
+    try:
+        from ultimate_coders.architecture.bitemporal import (
+            BitemporalClaim,
+            BitemporalGraph,
+            EpistemicStatus,
+            bitemporal_enabled,
+        )
+
+        if not bitemporal_enabled() or not claims:
+            return list(claims)
+        graph = BitemporalGraph()
+        for claim in claims:
+            status = _normalized_status(claim)
+            if status is ClaimStatus.RETRACTED:
+                epistemic = EpistemicStatus.NEGATIVE_PITFALL
+            elif status in (ClaimStatus.VALIDATED, ClaimStatus.PROMOTED):
+                epistemic = EpistemicStatus.ORACLE_VERIFIED
+            else:
+                epistemic = EpistemicStatus.UNVERIFIED_CLAIM
+            graph.add(
+                BitemporalClaim(
+                    claim_id=safe_text(getattr(claim, "claim_id", ""), limit=120),
+                    statement=safe_text(getattr(claim, "statement", ""), limit=MAX_STATEMENT_CHARS),
+                    status=epistemic,
+                    confidence=_confidence(claim),
+                )
+            )
+        resolved_ids = {claim.claim_id for claim in graph.resolve(reader_revision)}
+        return [claim for claim in claims if getattr(claim, "claim_id", "") in resolved_ids]
+    except Exception:  # pragma: no cover - projection is best-effort
+        return list(claims)
+
+
 def retrieve_claims(
     ledger: EvidenceLedger,
     *,
@@ -129,7 +175,7 @@ def retrieve_claims(
         )
     except Exception:  # pragma: no cover - defensive: a read must never fail a task
         return []
-    ranked = sorted(claims, key=_rank)
+    ranked = _bitemporal_project(sorted(claims, key=_rank), reader_revision)
     results: list[RetrievedClaim] = []
     for claim in ranked[: max(0, int(limit))]:
         statement = safe_text(getattr(claim, "statement", ""), limit=MAX_STATEMENT_CHARS).strip()

@@ -175,6 +175,27 @@ class TestRunnerTools:
         expected = (tmp_path / "readme.md").read_text(encoding="utf-8")
         assert first["content"] + second["content"] == expected
 
+    def test_read_ledger_blocks_an_unchanged_repeat_but_allows_changed_content(
+        self, tmp_path: Path
+    ) -> None:
+        from ultimate_coders.architecture.context_folding import ReadLedger
+
+        (tmp_path / "a.txt").write_text("alpha", encoding="utf-8")
+        ledger = ReadLedger()
+        first = json.loads(_tool_read_file(tmp_path, {"path": "a.txt"}, ledger=ledger, turn=1))
+        assert first["content"] == "alpha"
+
+        duplicate = json.loads(
+            _tool_read_file(tmp_path, {"path": "a.txt"}, ledger=ledger, turn=2)
+        )
+        assert duplicate["error"] == "duplicate read blocked"
+
+        (tmp_path / "a.txt").write_text("beta", encoding="utf-8")
+        changed = json.loads(
+            _tool_read_file(tmp_path, {"path": "a.txt"}, ledger=ledger, turn=3)
+        )
+        assert changed["content"] == "beta"
+
 
 def _resp(tool_calls: list[tuple[str, dict]], text: str = "") -> SimpleNamespace:
     calls = [
@@ -253,6 +274,49 @@ class TestRunnerLoop:
         final = [ln for ln in lines if ln.get("event") == "final"][-1]
         assert final["success"] is False
         assert "api down" in final["summary"]
+
+    def test_acp_folding_emits_event_and_blocks_duplicate_read(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
+        monkeypatch.setenv("UC_ACP_FOLDING", "1")
+        monkeypatch.setenv("UC_ACP_CONTEXT_TOKENS", "512")
+        monkeypatch.setenv("UC_ACP_FOLD_THRESHOLD", "0.5")
+        monkeypatch.setenv("UC_ACP_KEEP_TAIL", "2")
+        (tmp_path / "large.txt").write_text("x" * 4000, encoding="utf-8")
+        responses = iter(
+            [
+                _resp([("read_file", {"path": "large.txt"})]),
+                _resp([("read_file", {"path": "large.txt"})]),
+                _resp([("done", {"summary": "read it"})]),
+            ]
+        )
+        seen: list[list[dict]] = []
+
+        def completion(messages):
+            seen.append([dict(message) for message in messages])
+            return next(responses)
+
+        with patch.object(hll, "_completion", side_effect=completion):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 10))
+        assert code == 0
+        # The second read was already answered by the first one, so the model
+        # sees an error instead of a duplicate copy of the file.
+        duplicated = [
+            message
+            for call in seen[2:]
+            for message in call
+            if message.get("role") == "tool" and "duplicate read blocked" in str(message)
+        ]
+        assert duplicated
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
+        folds = [ln for ln in lines if ln.get("event") == "context_fold"]
+        assert folds
+        assert folds[0]["saved_tokens"] > 0
+        assert folds[0]["checkpoint_id"]
 
     def test_runner_main_deletes_prompt_file(self, tmp_path: Path) -> None:
         prompt = tmp_path / "p.md"

@@ -24,6 +24,12 @@ All views are generated in English and Chinese by [the architecture generator](.
 | Knowledge | Rust hybrid index and layered Memory; TiKV, Qdrant, PostgreSQL; attempt/evidence claims in RuntimeState (`attempt_chain`, `knowledge_evidence`, `knowledge_claims`) | Text/Semantic/AST retrieval, project context, memory and structured metadata; knowledge-layer records are the authority, retrieval stores are rebuildable projections |
 | Events | NATS controls/results, Gateway EventStore/broadcast, WatchTask, API SSE/metrics | Live updates, ordered history and checkpoint/replay |
 
+The opt-in V9 upgrade components (adaptive adapter routing, MemCredit
+arbitration, bitemporal knowledge projection, ACP context folding, process
+acceptance, credential leases and TITO trajectory export) live in
+`python/ultimate_coders/architecture/`; every flag, integration point and
+boundary is recorded in [the V9 upgrade map](architecture/v9-upgrade/map.md).
+
 The Dashboard root `/` is the product overview; `/dashboard` and `#/dashboard` are operations routes. The overview's workflow replay is a read-only projection of `subtask_progress` step events: `python/ultimate_coders/dashboard/workflows.py` groups them by task/subtask into bounded runs, `GET /dashboard/api/workflows/replays` serves them behind the normal dashboard read auth, and `dashboard/src/pages/HomePage.tsx` plays the step timeline (play/pause, scrub, per-step status, summary and duration). Docker serves the UI on port 8081, the API on 8080 and gRPC/gRPC-Web on 50051. The Compose service named `orchestrator` runs the **Dashboard API**. The separate `nats-worker` service runs the **planning coordinator**; `worker` replicas use `--mode worker` for execution.
 
 ## End-to-end task flow

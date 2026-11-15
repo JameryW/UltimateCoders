@@ -16,6 +16,7 @@ import re
 import shutil
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from ultimate_coders.agent.conflict import (
@@ -106,6 +107,13 @@ _DIFF_CHANGE_TYPES = {
 
 
 logger = logging.getLogger(__name__)
+
+
+def _is_test_file(path: Path) -> bool:
+    """Whether a changed path is a Python test file the process review covers."""
+
+    name = path.name
+    return name.startswith("test_") and name.endswith(".py") or name.endswith("_test.py")
 
 #: Release verdicts that mean the accepted work did not reach the remote.
 _DELIVERY_TERMINAL_FAILURES = ("conflict", "commit_failed")
@@ -747,6 +755,83 @@ class Worker:
             "append_system_prompt": "Write documentation for the described topic.",
         },
     }
+
+    def _adapter_candidates(self) -> list[str]:
+        """Discoverable adapter names for complementary retry routing."""
+
+        from ultimate_coders.agent.registry import registry
+
+        names: set[str] = set()
+        for name in registry.available():
+            spec = registry.get_spec(name)
+            if spec is not None and spec.discoverable:
+                names.add(spec.name)
+        return sorted(names)
+
+    def _route_retry_adapter(
+        self,
+        subtask: Subtask,
+        *,
+        last_failure: str,
+        failure_kind: str,
+    ) -> Any | None:
+        """Select a complementary adapter for the next attempt (opt-in).
+
+        The candidate list comes from the plugin registry and the behavior
+        profiles come from ``UC_ADAPTER_PROFILES_JSON`` (the durable table is
+        the PostgreSQL mirror documented by behavior_router).  Nothing is
+        changed when the flag is off, when there is only one adapter, or when
+        the router cannot find an alternative.
+        """
+
+        from ultimate_coders.architecture.behavior_router import (
+            BehaviorProfileStore,
+            ComplementaryAdapterRouter,
+            behavior_routing_enabled,
+        )
+
+        if not behavior_routing_enabled():
+            return None
+        candidates = self._adapter_candidates()
+        if len(candidates) < 2:
+            return None
+        store = BehaviorProfileStore()
+        raw_profiles = os.environ.get("UC_ADAPTER_PROFILES_JSON", "").strip()
+        if raw_profiles:
+            try:
+                rows = json.loads(raw_profiles)
+            except ValueError:
+                rows = []
+            if isinstance(rows, list):
+                store.load_rows(row for row in rows if isinstance(row, dict))
+            elif isinstance(rows, dict):
+                store.load_rows((rows,))
+        failed = str(
+            getattr(subtask, "_last_agent", "")
+            or (subtask.agent_config or {}).get("agent", "")
+            or ""
+        )
+        choice = ComplementaryAdapterRouter(store).choose(
+            subtask.description,
+            failed_adapter=failed,
+            candidates=candidates,
+            failure_kind=failure_kind,
+            failure_text=last_failure,
+        )
+        if choice is None:
+            return None
+        updated = dict(subtask.agent_config or {})
+        updated["agent"] = choice.adapter
+        subtask.agent_config = updated
+        logger.info(
+            "Subtask %s retry adapter %s -> %s (score %.3f: %s)",
+            subtask.id[:8],
+            failed or "?",
+            choice.adapter,
+            choice.score,
+            choice.reason,
+        )
+        return choice
 
     def _resolve_agent_config(self, subtask: Subtask) -> dict[str, Any]:
         """Derive agent_config for a subtask: explicit > capability match > type template.
@@ -1437,6 +1522,19 @@ class Worker:
                             )
                             if not next_route.is_identity:
                                 failure_data["route"] = next_route.to_dict()
+                            # Complementary adapter routing (opt-in): the
+                            # failed adapter is excluded when the profile store
+                            # knows an alternative, so the retry can change
+                            # implementation strategy instead of repeating the
+                            # same one.  The event carries the decision only —
+                            # prompts and profiles stay out of the stream.
+                            adapter_choice = self._route_retry_adapter(
+                                subtask,
+                                last_failure=last_failure,
+                                failure_kind=failure_action.action,
+                            )
+                            if adapter_choice is not None:
+                                failure_data["adapter"] = adapter_choice.to_dict()
                             # The recovery view for the attempt about to run:
                             # its prior rounds now include this attempt's
                             # captured patch, so the retry event can report
@@ -2147,6 +2245,45 @@ class Worker:
             return current_block, {}
         if not items:
             return current_block, view.summary
+        summary = dict(view.summary)
+        # AST-anchored attempt evolution (opt-in): a compact, symbol-level
+        # ``old -> new`` chain is often more useful on a retry than replaying
+        # whole diffs, and it lets a rescued attempt see what was already
+        # changed and reverted.  It is rendered from the same bounded rounds
+        # the recovery view already selected.
+        try:
+            from ultimate_coders.architecture.evolution import (
+                compact_evolution,
+                evolution_enabled,
+            )
+
+            if evolution_enabled() and view.rounds:
+                chain = compact_evolution(
+                    view.rounds,
+                    task_id=subtask.parent_id,
+                    subtask_id=subtask.id,
+                )
+                rendered = chain.render(max_changes=12)
+                if rendered:
+                    from ultimate_coders.agent.context_compiler import (
+                        ContextItem,
+                        Tier,
+                    )
+
+                    items.append(
+                        ContextItem(
+                            item_id=f"attempt-evolution:{subtask.id}:{attempt}",
+                            tier=Tier.EVIDENCE,
+                            content="Attempt evolution (old -> new):\n" + rendered,
+                            source="attempt-evolution",
+                            relevance=0.85,
+                            stable=True,
+                        )
+                    )
+                    summary["evolution_changes"] = len(chain.changes)
+                    summary["evolution_reverted_rounds"] = len(chain.reverted_rounds)
+        except Exception:
+            logger.debug("attempt evolution render failed", exc_info=True)
         manifest = compile_context(
             list(base_items) + items,
             budget_tokens=self._context_budget_tokens(),
@@ -2157,7 +2294,7 @@ class Worker:
             manifest.render_legacy(
                 legacy_style=legacy_style, gateway_truncated=gateway_truncated
             ),
-            view.summary,
+            summary,
         )
 
     async def _record_decision_start(self, subtask: Subtask) -> None:
@@ -2499,6 +2636,12 @@ class Worker:
                             "_uc_workspace_owner"
                         ] = await self._workspace_manager.runner_owner(working_dir)
 
+                sandbox_config = getattr(self, "_sandbox_config", None)
+                subtask._last_agent = (  # type: ignore[attr-defined]
+                    agent_config.get("agent")
+                    or getattr(sandbox_config, "agent", "")
+                    or ""
+                )
                 output: AgentOutput = await self._sandbox_manager.execute(
                     prompt,
                     working_dir=working_dir,
@@ -2557,6 +2700,15 @@ class Worker:
                     content_type="structured",
                     tags=["inference_infra", "benchmark", "adaptation_graph"],
                 )
+            if success:
+                process_report = await self._verify_output_process(working_dir, output)
+                if process_report is not None and not process_report.passed:
+                    details = "; ".join(
+                        f"{finding.kind}:{finding.path}:{finding.line}"
+                        for finding in process_report.errors[:5]
+                    )
+                    success = False
+                    error = f"Process review rejected: {details}"[:2000]
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
@@ -2604,6 +2756,67 @@ class Worker:
             )
         except Exception:
             logger.debug("step event publish failed", exc_info=True)
+
+    async def _verify_output_process(
+        self,
+        working_dir: str | None,
+        output: AgentOutput,
+    ) -> Any | None:
+        """Run the deterministic process review over changed test files.
+
+        Opt-in via ``UC_PROCESS_VERIFIER_ENFORCE``.  The check compares the
+        test file at the worktree's HEAD with its post-run content, so it
+        catches deleted assertions and test bypasses before the subtask is
+        reported as successful.  The report is returned for observability;
+        callers decide whether to fail the result.
+        """
+
+        from ultimate_coders.architecture.process_verifier import (
+            process_verifier_enabled,
+            verify_process,
+        )
+
+        if not process_verifier_enabled() or not working_dir:
+            return None
+        changed = [
+            fc.file_path
+            for fc in output.file_changes
+            if fc.file_path and _is_test_file(Path(fc.file_path))
+        ]
+        if not changed:
+            return None
+        root = Path(working_dir)
+        before: dict[str, str] = {}
+        after: dict[str, str] = {}
+        for rel in dict.fromkeys(changed):
+            path = Path(rel)
+            if path.is_absolute():
+                try:
+                    path = path.relative_to(root)
+                except ValueError:
+                    continue
+            target = root / path
+            try:
+                after[path.as_posix()] = target.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                after[path.as_posix()] = ""
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "git",
+                    "show",
+                    f"HEAD:{path.as_posix()}",
+                    cwd=str(root),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                stdout, _ = await proc.communicate()
+            except OSError:
+                continue
+            if proc.returncode == 0:
+                before[path.as_posix()] = stdout.decode("utf-8", errors="replace")
+        if not after:
+            return None
+        return verify_process(before, after, test_paths=tuple(after))
 
     async def _execute_steps(
         self,
@@ -3396,11 +3609,60 @@ class Worker:
             items = getattr(result, "items", result) if result else []
             if not items:
                 return None
+            # MemCredit arbitration is opt-in: it turns the raw hit list into a
+            # budget-bounded, de-duplicated selection measured in tokens rather
+            # than a fixed "first eight snippets" cut.  The flag is default-off
+            # so the legacy prompt stays byte-identical until an operator asks
+            # for the upgraded retrieval face.
+            from ultimate_coders.architecture.memcredit import (
+                MemCreditCandidate,
+                memcredit_enabled,
+                select_memcredit,
+            )
+
+            if memcredit_enabled():
+                candidates = []
+                for index, item in enumerate(items):
+                    repo = getattr(item, "repo_id", "?")
+                    path = getattr(item, "file_path", "?")
+                    snippet = getattr(item, "content_snippet", "") or ""
+                    match_type = str(getattr(item, "match_type", "text") or "text")
+                    if match_type not in {"text", "ast", "qdrant"}:
+                        match_type = "text"
+                    candidates.append(
+                        MemCreditCandidate(
+                            identifier=(
+                                f"{repo}:{path}:"
+                                f"{getattr(item, 'start_line', 0)}-"
+                                f"{getattr(item, 'end_line', 0)}:{index}"
+                            ),
+                            content=snippet,
+                            path=str(path),
+                            score=float(getattr(item, "score", 0.0) or 0.0),
+                            stage=match_type,
+                            symbol=str(getattr(item, "symbol_name", "") or ""),
+                            metadata={"repo": str(repo), "path": str(path)},
+                        )
+                    )
+                selection = select_memcredit(
+                    candidates,
+                    attempt=int(getattr(subtask, "dispatch_retry_count", 0) or 0),
+                )
+                chosen = selection.selected
+            else:
+                chosen = items[:8]
+            if not chosen:
+                return None
             lines = ["## Related code from indexed repositories"]
-            for r in items[:8]:
-                repo = getattr(r, "repo_id", "?")
-                path = getattr(r, "file_path", "?")
-                snippet = getattr(r, "content_snippet", "")
+            for r in chosen:
+                if isinstance(r, MemCreditCandidate):
+                    repo = str(r.metadata.get("repo", "?"))
+                    path = str(r.metadata.get("path", r.path or "?"))
+                    snippet = r.content
+                else:
+                    repo = getattr(r, "repo_id", "?")
+                    path = getattr(r, "file_path", "?")
+                    snippet = getattr(r, "content_snippet", "")
                 if snippet:
                     lines.append(f"### [{repo}] {path}")
                     lines.append(f"```\n{snippet[:500]}\n```")

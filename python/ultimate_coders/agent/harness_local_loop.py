@@ -45,6 +45,11 @@ from ultimate_coders.agent.sandbox import (
     SandboxConfig,
     TokenUsage,
 )
+from ultimate_coders.architecture.context_folding import (
+    ACPFolder,
+    ReadLedger,
+    folding_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -334,8 +339,15 @@ def _tool_list_dir(root: Path, args: dict[str, Any]) -> str:
     return json.dumps({"entries": entries[:500]}, ensure_ascii=False)
 
 
-def _tool_read_file(root: Path, args: dict[str, Any]) -> str:
-    target = _safe_resolve(root, str(args.get("path") or ""))
+def _tool_read_file(
+    root: Path,
+    args: dict[str, Any],
+    *,
+    ledger: ReadLedger | None = None,
+    turn: int = 0,
+) -> str:
+    rel = str(args.get("path") or "")
+    target = _safe_resolve(root, rel)
     if not target.is_file():
         return json.dumps({"error": f"not a file: {args.get('path')}"})
     try:
@@ -356,6 +368,18 @@ def _tool_read_file(root: Path, args: dict[str, Any]) -> str:
         # Keep the paging offset on a character boundary.
         data = data[: exc.start]
         text = data.decode("utf-8")
+    if ledger is not None:
+        if ledger.duplicate(rel, offset, text):
+            return json.dumps(
+                {
+                    "error": "duplicate read blocked",
+                    "path": rel,
+                    "offset": offset,
+                    "hint": "this unchanged range is already in context; use the existing content",
+                },
+                ensure_ascii=False,
+            )
+        ledger.record(rel, offset, text, turn=turn)
     return json.dumps(
         {
             "content": text,
@@ -430,6 +454,12 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
     ]
+    # ACP folding is opt-in.  The ledger exists only while folding is enabled,
+    # so the legacy harness path (and its prompts) stays byte-identical by
+    # default; when enabled, duplicate reads and over-budget intervals are
+    # handled in-loop instead of being sent again to the model.
+    folder = ACPFolder() if folding_enabled() else None
+    ledger = ReadLedger() if folder is not None else None
 
     final_summary = ""
     hit_done = False
@@ -489,7 +519,12 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                     if name == "list_dir":
                         result = _tool_list_dir(root, fn_args)
                     elif name == "read_file":
-                        result = _tool_read_file(root, fn_args)
+                        result = _tool_read_file(
+                            root,
+                            fn_args,
+                            ledger=ledger,
+                            turn=stats.turns,
+                        )
                     elif name == "write_file":
                         result = _tool_write_file(root, fn_args, stats)
                     elif name == "run_command":
@@ -504,6 +539,23 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                 except Exception as exc:  # tool bug must not kill the loop
                     result = json.dumps({"error": f"{type(exc).__name__}: {exc}"})
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+            if folder is not None:
+                folded = folder.maybe_fold(
+                    messages,
+                    read_ledger=ledger,
+                    turn=stats.turns,
+                )
+                if folded.folded and folded.checkpoint is not None:
+                    messages = folded.messages
+                    _emit(
+                        {
+                            "event": "context_fold",
+                            "turn": stats.turns,
+                            "folded_messages": folded.folded_messages,
+                            "saved_tokens": folded.saved_tokens,
+                            "checkpoint_id": folded.checkpoint.checkpoint_id,
+                        }
+                    )
             if finished:
                 break
         else:

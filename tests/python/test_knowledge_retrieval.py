@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from ultimate_coders.knowledge.evidence import EvidenceLedger
 from ultimate_coders.knowledge.model import (
     AttemptRef,
+    ClaimStatus,
     EvidenceKind,
     KnowledgeScope,
     RevisionBinding,
@@ -15,6 +17,7 @@ from ultimate_coders.knowledge.model import (
 )
 from ultimate_coders.knowledge.retrieval import (
     RETRIEVAL_SOURCE,
+    _bitemporal_project,
     claims_to_context_items,
     knowledge_context_items,
     retrieve_claims,
@@ -107,6 +110,50 @@ def test_promoted_claim_is_visible_to_a_graph_reader(state):
     assert claim.visibility is Visibility.GRAPH
     assert claim.status.value == "promoted"
     assert claim.confidence == 0.75
+
+
+def test_bitemporal_projection_keeps_the_strongest_duplicate(monkeypatch):
+    monkeypatch.setenv("UC_BITEMPORAL_KNOWLEDGE", "1")
+    weak = SimpleNamespace(
+        claim_id="weak",
+        statement="duplicate claim",
+        visibility=Visibility.GRAPH,
+        status=ClaimStatus.CANDIDATE,
+        confidence=0.3,
+    )
+    strong = SimpleNamespace(
+        claim_id="strong",
+        statement="duplicate claim",
+        visibility=Visibility.GRAPH,
+        status=ClaimStatus.PROMOTED,
+        confidence=0.9,
+    )
+
+    projected = _bitemporal_project([weak, strong], "")
+
+    assert [claim.claim_id for claim in projected] == ["strong"]
+
+
+def test_bitemporal_projection_is_opt_in(monkeypatch):
+    monkeypatch.delenv("UC_BITEMPORAL_KNOWLEDGE", raising=False)
+    weak = SimpleNamespace(
+        claim_id="weak",
+        statement="duplicate claim",
+        visibility=Visibility.GRAPH,
+        status=ClaimStatus.CANDIDATE,
+        confidence=0.3,
+    )
+    strong = SimpleNamespace(
+        claim_id="strong",
+        statement="duplicate claim",
+        visibility=Visibility.GRAPH,
+        status=ClaimStatus.PROMOTED,
+        confidence=0.9,
+    )
+
+    projected = _bitemporal_project([weak, strong], "")
+
+    assert [claim.claim_id for claim in projected] == ["weak", "strong"]
 
 
 def test_attempt_scoped_claim_never_reaches_the_read_face(state):

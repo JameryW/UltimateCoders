@@ -1867,6 +1867,27 @@ class TestNewTemplates:
         result = w._resolve_agent_config(st)
         assert "disallowed_tools" in result
 
+    def test_retry_adapter_selection_is_opt_in(self, monkeypatch):
+        from ultimate_coders.agent.worker import Worker
+
+        monkeypatch.delenv("UC_ADAPTIVE_ADAPTER_ROUTING", raising=False)
+        w = Worker()
+        monkeypatch.setattr(w, "_adapter_candidates", lambda: ["alpha", "beta"])
+        st = Subtask(id="s1", description="fix auth")
+        st.agent_config = {"agent": "alpha"}
+        st._last_agent = "alpha"
+        assert w._route_retry_adapter(
+            st, last_failure="boom", failure_kind="retry_model"
+        ) is None
+
+        monkeypatch.setenv("UC_ADAPTIVE_ADAPTER_ROUTING", "1")
+        choice = w._route_retry_adapter(
+            st, last_failure="boom", failure_kind="retry_model"
+        )
+        assert choice is not None
+        assert choice.adapter == "beta"
+        assert st.agent_config["agent"] == "beta"
+
     def test_docs_capability_profile(self):
         from ultimate_coders.agent.worker import Worker
 
@@ -1915,6 +1936,47 @@ class TestProjectIdPropagation:
         assert ctx is not None
         assert "backend" in ctx
         assert "src/auth.py" in ctx
+
+    @pytest.mark.asyncio
+    async def test_search_context_uses_memcredit_selection_when_enabled(self, monkeypatch):
+        """MemCredit drops an overlapping hit instead of sending both snippets."""
+        from unittest.mock import MagicMock
+
+        from ultimate_coders.agent.worker import Worker
+
+        monkeypatch.setenv("UC_MEMCREDIT", "1")
+        snippets = [
+            ("src/a.py", "def authenticate(user, pwd): return verify(user, pwd)"),
+            ("src/b.py", "def authenticate(user, pwd): return verify(user, pwd)"),
+            ("src/c.py", "def unrelated_helper(): return 42"),
+        ]
+        items = []
+        for path, snippet in snippets:
+            item = MagicMock()
+            item.repo_id = "backend"
+            item.file_path = path
+            item.content_snippet = snippet
+            item.start_line = 1
+            item.end_line = 2
+            item.score = 0.9
+            item.match_type = "text"
+            item.symbol_name = "authenticate"
+            items.append(item)
+        result = MagicMock()
+        result.items = items
+        engine = MagicMock()
+        engine.search.return_value = result
+        repo = MagicMock()
+        repo.repo_id = "backend"
+        engine.list_repos.return_value = [repo]
+
+        w = Worker(engine=engine)
+        st = Subtask(id="s1", description="memcredit unique authentication", project_id="backend")
+        ctx = await w._build_search_context(st)
+        assert ctx is not None
+        assert "src/a.py" in ctx
+        assert "src/b.py" not in ctx
+        assert "src/c.py" in ctx
 
     @pytest.mark.asyncio
     async def test_search_context_enriches_subtask(self):
@@ -3074,3 +3136,45 @@ def test_claude_adapter_stamps_its_own_name_on_both_parse_paths():
     assert legacy.token_usage is not None
     assert legacy.token_usage.input_tokens == 5
     assert legacy.token_usage.source == "claude-code"
+
+class TestProcessReviewIntegration:
+    """The worker's process-review hook consumes the deterministic report."""
+
+    @pytest.mark.asyncio
+    async def test_deleted_assertion_is_rejected(self, tmp_path, monkeypatch):
+        import subprocess
+
+        from ultimate_coders.agent.worker import Worker
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        def git(*args: str) -> None:
+            subprocess.run(
+                ["git", *args],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        git("init", "-q")
+        git("config", "user.email", "test@example.invalid")
+        git("config", "user.name", "test")
+        test_file = repo / "test_sample.py"
+        test_file.write_text("def test_value():\n    assert 1 == 1\n", encoding="utf-8")
+        git("add", "test_sample.py")
+        git("commit", "-q", "-m", "base")
+        test_file.write_text("def test_value():\n    pass\n", encoding="utf-8")
+
+        monkeypatch.setenv("UC_PROCESS_VERIFIER_ENFORCE", "1")
+        output = AgentOutput(
+            file_changes=[
+                FileChange(file_path="test_sample.py", change_type=ChangeType.MODIFIED)
+            ]
+        )
+        report = await Worker()._verify_output_process(str(repo), output)
+
+        assert report is not None
+        assert report.passed is False
+        assert any(finding.kind == "deleted_assertion" for finding in report.errors)
