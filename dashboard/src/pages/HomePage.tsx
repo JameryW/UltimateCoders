@@ -2,6 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getStoredToken } from "@/hooks/useAuth";
 import { useGrpcWeb } from "@/hooks/useGrpcWeb";
 import {
+  fetchWorkflowReplays,
+  formatReplayDuration,
+  WorkflowReplayRequestError,
+  type WorkflowReplayRun,
+} from "@/lib/replays";
+import {
   DASHBOARD_HREF,
   HOME_DOCUMENT_TITLE,
   RUNTIME_POLL_INTERVAL_MS,
@@ -151,8 +157,23 @@ const navSections = [
   { id: "home-overview", label: "Overview" },
   { id: "home-capabilities", label: "Capabilities" },
   { id: "home-workflow", label: "Execution flow" },
+  { id: "home-replay", label: "Replay" },
   { id: "home-scenarios", label: "Use cases" },
 ] as const;
+
+type ReplayState = "idle" | "loading" | "ready" | "empty" | "auth" | "error";
+
+function shortReplayId(value: string): string {
+  if (value.length <= 18) return value;
+  return `${value.slice(0, 9)}…${value.slice(-6)}`;
+}
+
+function replayAge(updatedAt: string | null): string {
+  if (!updatedAt) return "no timestamp";
+  const parsed = Date.parse(updatedAt);
+  if (!Number.isFinite(parsed)) return "no timestamp";
+  return formatSyncAge(parsed, Date.now());
+}
 
 type RuntimeSnapshot = {
   gatewayStatus: string;
@@ -185,6 +206,12 @@ export default function HomePage() {
   const [consecutiveFailures, setConsecutiveFailures] = useState(0);
   const failuresRef = useRef(0);
   const [activeSection, setActiveSection] = useState<string>(navSections[0].id);
+  const [replays, setReplays] = useState<WorkflowReplayRun[]>([]);
+  const [replayState, setReplayState] = useState<ReplayState>("idle");
+  const [activeReplayId, setActiveReplayId] = useState<string | null>(null);
+  const [replayCursor, setReplayCursor] = useState(0);
+  const [replayPlaying, setReplayPlaying] = useState(false);
+  const replayAbortRef = useRef<AbortController | null>(null);
 
   const mode = showcaseRuntimeMode({
     probe,
@@ -224,6 +251,92 @@ export default function HomePage() {
     }));
     return true;
   }, [healthCheck, listTasks]);
+
+  const loadReplays = useCallback(async (signal?: AbortSignal): Promise<void> => {
+    setReplayState("loading");
+    try {
+      const runs = await fetchWorkflowReplays(fetch, getStoredToken(), signal);
+      if (signal?.aborted) return;
+      setReplays(runs);
+      setReplayState(runs.length > 0 ? "ready" : "empty");
+      setActiveReplayId((current) =>
+        current && runs.some((run) => run.id === current) ? current : runs[0]?.id ?? null,
+      );
+      setReplayCursor(0);
+      setReplayPlaying(false);
+    } catch (error) {
+      if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+        return;
+      }
+      if (error instanceof WorkflowReplayRequestError && (error.status === 401 || error.status === 403)) {
+        setReplays([]);
+        setReplayState("auth");
+        setReplayPlaying(false);
+        return;
+      }
+      setReplays([]);
+      setReplayState("error");
+      setReplayPlaying(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (probe !== "reachable") return;
+    const controller = new AbortController();
+    replayAbortRef.current = controller;
+    // Defer the first fetch by a microtask: `loadReplays` flips the state to
+    // "loading" synchronously, and a state update in the effect body would
+    // cascade a render before the fetch even starts.
+    queueMicrotask(() => {
+      if (!controller.signal.aborted) void loadReplays(controller.signal);
+    });
+    return () => {
+      controller.abort();
+      if (replayAbortRef.current === controller) replayAbortRef.current = null;
+    };
+  }, [probe, loadReplays]);
+
+  const activeReplay = replays.find((run) => run.id === activeReplayId) ?? replays[0] ?? null;
+  const replaySteps = activeReplay?.steps ?? [];
+  const replayCursorIndex = replaySteps.length > 0
+    ? Math.min(replayCursor, replaySteps.length - 1)
+    : 0;
+  const currentReplayStep = replaySteps[replayCursorIndex] ?? null;
+
+  useEffect(() => {
+    if (!replayPlaying || !activeReplay || replaySteps.length === 0) return;
+    const timer = window.setTimeout(() => {
+      if (replayCursor >= replaySteps.length - 1) {
+        setReplayPlaying(false);
+        return;
+      }
+      setReplayCursor(replayCursor + 1);
+    }, 1_200);
+    return () => window.clearTimeout(timer);
+  }, [activeReplay, replayCursor, replayPlaying, replaySteps.length]);
+
+  const selectReplay = useCallback((run: WorkflowReplayRun) => {
+    setActiveReplayId(run.id);
+    setReplayCursor(0);
+    setReplayPlaying(false);
+  }, []);
+
+  const toggleReplay = useCallback(() => {
+    if (!activeReplay) return;
+    if (replayPlaying) {
+      setReplayPlaying(false);
+      return;
+    }
+    if (replayCursor >= replaySteps.length - 1) setReplayCursor(0);
+    setReplayPlaying(true);
+  }, [activeReplay, replayCursor, replayPlaying, replaySteps.length]);
+
+  const handleReplayRefresh = useCallback(() => {
+    replayAbortRef.current?.abort();
+    const controller = new AbortController();
+    replayAbortRef.current = controller;
+    void loadReplays(controller.signal);
+  }, [loadReplays]);
 
   const probeOnce = useCallback(async (): Promise<ProbeState> => {
     probeAbortRef.current?.abort();
@@ -496,6 +609,185 @@ export default function HomePage() {
                 <p>{item.detail}</p>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section className="home-section home-replay-section" id="home-replay" aria-labelledby="replay-title">
+          <div className="home-section-heading home-section-heading-tight">
+            <div>
+              <div className="home-section-kicker">EXECUTION REPLAY</div>
+              <h2 id="replay-title">Every step,<br /><em>replayed from evidence.</em></h2>
+            </div>
+            <p>首页直接读取最近的工作流执行：逐步播放每一步的 agent、状态、摘要和耗时，不必先进入调试面板。</p>
+          </div>
+
+          <div className="home-replay-toolbar">
+            <span className={`home-replay-source ${probe === "reachable" ? "home-replay-source-live" : ""}`}>
+              <i aria-hidden="true" /> {probe === "reachable" ? (replayState === "auth" ? "sign-in required" : replayState === "loading" ? "loading runs" : "event-derived") : "gateway offline"}
+            </span>
+            <button
+              className="home-replay-refresh"
+              type="button"
+              onClick={handleReplayRefresh}
+              disabled={!canRefresh || replayState === "loading"}
+            >
+              refresh replay
+            </button>
+          </div>
+
+          <div className="home-replay-shell">
+            <div className="home-replay-runs" aria-label="Recent workflow runs">
+              {probe !== "reachable" ? (
+                <p className="home-replay-hint">连接 Gateway 后，这里会显示最近的工作流执行。静态展品仍可浏览上面的执行循环。</p>
+              ) : replayState === "loading" && replays.length === 0 ? (
+                <p className="home-replay-hint">Reading recent workflow events…</p>
+              ) : replayState === "auth" ? (
+                <div className="home-replay-auth">
+                  <p className="home-replay-hint">回放与其它 Dashboard 读取面使用同一鉴权。登录后可查看真实工作流执行。</p>
+                  <a className="home-replay-auth-link" href="#/dashboard">sign in on the operations dashboard →</a>
+                </div>
+              ) : replayState === "error" ? (
+                <div className="home-replay-error">
+                  <p className="home-replay-hint">回放数据暂时不可用。Gateway 可能已恢复，但 REST 事件读取失败。</p>
+                  <button type="button" onClick={handleReplayRefresh}>try again</button>
+                </div>
+              ) : replays.length === 0 ? (
+                <p className="home-replay-hint">还没有可回放的工作流执行。带 steps 的任务完成后，每一步的进度事件会在这里组成时间线。</p>
+              ) : (
+                replays.map((run) => (
+                  <button
+                    className={`home-replay-run ${activeReplay?.id === run.id ? "home-replay-run-active" : ""}`}
+                    type="button"
+                    key={run.id}
+                    onClick={() => selectReplay(run)}
+                    aria-pressed={activeReplay?.id === run.id}
+                  >
+                    <span className={`home-replay-badge home-replay-badge-${run.status}`}>{run.status}</span>
+                    <strong title={run.taskId}>{shortReplayId(run.taskId || "task")}</strong>
+                    <small>{shortReplayId(run.subtaskId || "subtask")} · {run.completedSteps}/{run.stepTotal} steps</small>
+                    <span className="home-replay-run-age">{replayAge(run.updatedAt)}</span>
+                  </button>
+                ))
+              )}
+            </div>
+
+            <div className="home-replay-stage" aria-live="polite">
+              {activeReplay ? (
+                <>
+                  <div className="home-replay-stage-top">
+                    <div className="home-replay-title">
+                      <span className={`home-replay-badge home-replay-badge-${activeReplay.status}`}>{activeReplay.status}</span>
+                      <strong title={activeReplay.taskId}>{shortReplayId(activeReplay.taskId || "task")}</strong>
+                      <small>{shortReplayId(activeReplay.subtaskId || "subtask")} · updated {replayAge(activeReplay.updatedAt)}</small>
+                    </div>
+                    <span className="home-replay-counter">{replayCursorIndex + 1} / {replaySteps.length}</span>
+                  </div>
+
+                  <input
+                    className="home-replay-scrubber"
+                    type="range"
+                    min={0}
+                    max={Math.max(0, replaySteps.length - 1)}
+                    step={1}
+                    value={replayCursorIndex}
+                    aria-label="Replay step"
+                    onChange={(event) => {
+                      setReplayPlaying(false);
+                      setReplayCursor(Number(event.target.value));
+                    }}
+                  />
+
+                  <ol className="home-replay-timeline">
+                    {replaySteps.map((step, index) => (
+                      <li key={`${step.index}-${index}`}>
+                        <button
+                          className={`home-replay-step ${index === replayCursorIndex ? "home-replay-step-current" : ""} ${index < replayCursorIndex ? "home-replay-step-past" : ""}`}
+                          type="button"
+                          onClick={() => {
+                            setReplayCursor(index);
+                            setReplayPlaying(false);
+                          }}
+                          aria-current={index === replayCursorIndex ? "step" : undefined}
+                        >
+                          <span className={`home-replay-dot home-replay-dot-${step.status}`} aria-hidden="true" />
+                          <span className="home-replay-step-ordinal">{padOrdinal(step.index + 1)}</span>
+                          <span className="home-replay-step-copy">
+                            <strong>{step.agent || "agent"}</strong>
+                            <small>{step.summary || step.status}</small>
+                          </span>
+                          <span className="home-replay-step-meta">
+                            <em className={`home-replay-step-status home-replay-step-status-${step.status}`}>{step.status}</em>
+                            <time>{formatReplayDuration(step.durationMs)}</time>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+
+                  <div className="home-replay-controls">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReplayPlaying(false);
+                        setReplayCursor(Math.max(0, replayCursorIndex - 1));
+                      }}
+                      disabled={replayCursorIndex === 0}
+                      aria-label="Previous step"
+                    >
+                      ←
+                    </button>
+                    <button
+                      className="home-replay-play"
+                      type="button"
+                      onClick={toggleReplay}
+                      aria-pressed={replayPlaying}
+                    >
+                      {replayPlaying ? "❚❚ pause" : "▶ play"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReplayPlaying(false);
+                        setReplayCursor(Math.min(replaySteps.length - 1, replayCursorIndex + 1));
+                      }}
+                      disabled={replayCursorIndex >= replaySteps.length - 1}
+                      aria-label="Next step"
+                    >
+                      →
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReplayPlaying(false);
+                        setReplayCursor(0);
+                      }}
+                      disabled={replayCursorIndex === 0}
+                    >
+                      ↺ reset
+                    </button>
+                    <span className="home-replay-progress-label">
+                      {currentReplayStep
+                        ? `${currentReplayStep.status} · ${formatReplayDuration(currentReplayStep.durationMs)}`
+                        : ""}
+                    </span>
+                  </div>
+
+                  {currentReplayStep ? (
+                    <p className="home-replay-current">
+                      {currentReplayStep.summary || "No summary was recorded for this step."}
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <p className="home-replay-hint home-replay-stage-empty">
+                  {probe === "reachable"
+                    ? replayState === "auth"
+                      ? "登录后可在这里逐步查看真实工作流执行。"
+                      : "最近还没有工作流执行可回放。"
+                    : "连接 Gateway 后可查看实时工作流回放。"}
+                </p>
+              )}
+            </div>
           </div>
         </section>
 

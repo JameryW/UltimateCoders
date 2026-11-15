@@ -248,7 +248,7 @@ UltimateCoders targets large-repository changes, parallel delivery, incident dia
 
 ## Runtime and architecture
 
-The product dashboard (Vite + React) is available at `http://localhost:8081/` in Docker and `http://localhost:5173/` in development. Its root route is the product overview; the operations dashboard is at `/dashboard` or `#/dashboard`.
+The product dashboard (Vite + React) is available at `http://localhost:8081/` in Docker and `http://localhost:5173/` in development. Its root route is the product overview; the operations dashboard is at `/dashboard` or `#/dashboard`. The overview includes a **workflow execution replay** player: recent runs are reconstructed from durable `subtask_progress` step events by `GET /dashboard/api/workflows/replays`, and each step can be scrubbed, played and paused without opening an operations view. The endpoint uses the same dashboard read authentication as the other REST routes and falls back to the in-memory event log when JetStream history is unavailable.
 
 See [docs/architecture.md](docs/architecture.md) for the detailed architecture reference. The runtime can be read in five layers:
 

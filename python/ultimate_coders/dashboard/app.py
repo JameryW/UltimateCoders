@@ -44,6 +44,10 @@ from ultimate_coders.dashboard.event_history import (
     list_event_history,
 )
 from ultimate_coders.dashboard.metrics import MetricsAggregator
+from ultimate_coders.dashboard.workflows import (
+    MAX_REPLAY_RUNS,
+    build_workflow_replays,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1411,6 +1415,51 @@ class DashboardApp:
                     "total": len(all_events),
                     "offset": offset,
                     "limit": limit,
+                }
+            )
+
+        # ── Workflow Replay Endpoint ─────────────────────────────
+
+        @app.get("/dashboard/api/workflows/replays")
+        async def workflow_replays_api(request: Request, limit: int = MAX_REPLAY_RUNS):
+            """Return recent workflow runs reconstructed from step events.
+
+            The product home page replays a run by stepping through this list;
+            the grouping lives in ``dashboard/workflows.py`` so the same shape
+            is testable without a browser. Durable NATS history wins; the
+            in-memory log is the fallback for hosts without an event stream.
+            """
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            limit = max(1, min(int(limit), MAX_REPLAY_RUNS))
+            events: list[dict[str, Any]] = []
+            source = "local"
+            if self._nats_client is not None:
+                try:
+                    history = await list_event_history(
+                        self._nats_client, limit=500, offset=0
+                    )
+                except EventHistoryUnavailableError:
+                    history = None
+                history_events = history.get("events") if isinstance(history, dict) else None
+                if history_events:
+                    events = list(history_events)
+                    source = "nats"
+            if not events:
+                events = list(self._event_log)
+                if self.event_emitter is not None:
+                    events = _merge_event_sources(
+                        self.event_emitter.get_recent_events(limit=500),
+                        events,
+                    )
+                else:
+                    events = _merge_event_sources(events)
+            return JSONResponse(
+                {
+                    "available": True,
+                    "source": source,
+                    "events_scanned": len(events),
+                    "runs": build_workflow_replays(events, max_runs=limit),
                 }
             )
 
