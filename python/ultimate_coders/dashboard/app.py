@@ -22,6 +22,7 @@ NATS integration (optional):
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -65,6 +66,17 @@ def _unavailable(message: str, exc: Exception) -> JSONResponse:
     """
     logger.warning("%s: %s", message, exc, exc_info=True)
     return JSONResponse({"error": message}, status_code=503)
+
+
+def _env_flag(name: str) -> bool:
+    """True when an env var is set to an affirmative value.
+
+    Used for the two dashboard-auth escape hatches. They are deliberately
+    opt-in: a missing ``DASHBOARD_PASSWORD`` must not silently leave task
+    mutations open to anyone who can reach the API.
+    """
+    raw = os.environ.get(name, "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _manifest_sort_key(record: dict) -> tuple[str, int]:
@@ -157,11 +169,19 @@ class DashboardApp:
     the browser via SSE every 5 seconds.
 
     Auth gate:
-        When the ``DASHBOARD_PASSWORD`` environment variable is set,
-        non-localhost requests must include the password as a
-        ``Bearer`` token (Authorization header) or ``?token=`` query
-        parameter.  Localhost (127.0.0.1, ::1) bypasses auth.
-        If the variable is unset, auth is disabled entirely.
+        Task mutations (submit / pause / resume / flush / reconcile /
+        scheduler trigger) fail closed: without a configured secret they
+        return 503 instead of accepting anonymous work. The secret is
+        ``DASHBOARD_PASSWORD`` or ``UC_DASHBOARD_TOKEN`` (whichever is set;
+        the former wins when both are). Reads stay open unless a secret is
+        configured, in which case every non-exempt request needs a
+        ``Bearer`` token or ``?token=``. Localhost is not trusted by
+        default; set ``UC_DASHBOARD_TRUST_LOCALHOST=1`` to restore the
+        legacy bypass, and note that it is ignored when a proxy header is
+        present (a reverse proxy would otherwise launder remote clients
+        into localhost). ``UC_DASHBOARD_ALLOW_OPEN_MUTATIONS=1`` is the
+        explicit, unsafe development escape hatch for running without a
+        secret.
 
     Usage:
         app = DashboardApp(orchestrator)
@@ -220,51 +240,95 @@ class DashboardApp:
         self._stopped = False
         self._event_log: deque[dict[str, Any]] = deque(maxlen=500)
         self._metrics = MetricsAggregator()
-        # Auth configuration
-        self._dashboard_password: str | None = os.environ.get("DASHBOARD_PASSWORD") or None
+        # Auth configuration. DASHBOARD_PASSWORD is the historical name;
+        # UC_DASHBOARD_TOKEN lets a deployment share one secret with the
+        # gateway without also enabling dashboard-only behaviour.
+        self._dashboard_password: str | None = (
+            os.environ.get("DASHBOARD_PASSWORD") or os.environ.get("UC_DASHBOARD_TOKEN") or None
+        )
+        if self._dashboard_password is not None:
+            self._dashboard_password = self._dashboard_password.strip() or None
+        # Localhost is no longer trusted implicitly: any reachable host would
+        # otherwise be a bypass once this app is bound to 0.0.0.0.
+        self._trust_localhost = _env_flag("UC_DASHBOARD_TRUST_LOCALHOST")
+        # Explicit, unsafe escape hatch for local development without a
+        # secret. Mutations still fail closed when this is unset (the default).
+        self._allow_open_mutations = _env_flag("UC_DASHBOARD_ALLOW_OPEN_MUTATIONS")
         # Connect to Orchestrator's event emitter if available
         self.event_emitter = getattr(orchestrator, "event_emitter", None) if orchestrator else None
         self._setup_routes()
 
     # ── Auth ─────────────────────────────────────────────────────────
 
-    def _check_auth(self, request: Request) -> JSONResponse | None:
-        """Return a 401 JSON response if auth is required and fails.
+    def _check_auth(self, request: Request, *, mutating: bool = False) -> JSONResponse | None:
+        """Return a 401/503 JSON response if auth is required and fails.
 
         Auth logic:
-        - If ``DASHBOARD_PASSWORD`` is not set, auth is disabled (returns None).
-        - Localhost requests (127.0.0.1, ::1) bypass auth.
-        - Non-localhost must supply the password via ``Authorization: Bearer <pwd>``
-          header or ``?token=<pwd>`` query parameter.
-        - Returns None on success, or a 401 JSONResponse on failure.
+        - Mutations fail closed when no secret is configured, unless
+          ``UC_DASHBOARD_ALLOW_OPEN_MUTATIONS`` explicitly opts out. Read
+          endpoints stay usable without a secret for monitoring.
+        - With a secret set, checks run before the localhost bypass: a
+          request carrying proxy headers is never treated as local, since
+          the immediate peer is the proxy, not the caller.
+        - ``UC_DASHBOARD_TRUST_LOCALHOST=1`` restores the legacy localhost
+          bypass for non-proxied requests.
+        - Accepted credentials are ``Authorization: Bearer <secret>`` and
+          ``?token=<secret>``; comparisons are constant-time.
+
+        Returns None on success, or a JSONResponse on failure.
         """
         if not self._dashboard_password:
+            if mutating and not self._allow_open_mutations:
+                return JSONResponse(
+                    {
+                        "error": "Dashboard auth is not configured",
+                        "detail": (
+                            "Set DASHBOARD_PASSWORD or UC_DASHBOARD_TOKEN before "
+                            "accepting task mutations"
+                        ),
+                    },
+                    status_code=503,
+                )
             return None
 
-        # Localhost bypass
-        client_host = request.client.host if request.client else ""
-        if client_host in ("127.0.0.1", "::1", "localhost"):
-            return None
-
-        # Check Bearer token
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-            if token == self._dashboard_password:
+        expected = self._dashboard_password
+        if self._trust_localhost and not self._has_proxy_headers(request):
+            client_host = request.client.host if request.client else ""
+            if client_host in ("127.0.0.1", "::1", "localhost"):
                 return None
 
-        # Check query parameter
+        auth_header = request.headers.get("authorization", "")
+        if auth_header[:7].lower() == "bearer ":
+            token = auth_header[7:].strip()
+            if hmac.compare_digest(token.encode("utf-8"), expected.encode("utf-8")):
+                return None
+
         token_param = request.query_params.get("token")
-        if token_param == self._dashboard_password:
+        if token_param is not None and hmac.compare_digest(
+            token_param.encode("utf-8"), expected.encode("utf-8")
+        ):
             return None
 
-        # Auth failed
         return JSONResponse(
             {
                 "error": "Unauthorized",
                 "detail": "Valid Bearer token or token query parameter required",
             },
             status_code=401,
+        )
+
+    @staticmethod
+    def _has_proxy_headers(request: Request) -> bool:
+        """True when a reverse proxy set forwarding headers.
+
+        The peer address is then the proxy's, so treating it as localhost
+        would hand every remote client a bypass when nginx runs on the same
+        host (the normal container deployment). Look at the common headers
+        rather than trusting one vendor's spelling.
+        """
+        return any(
+            request.headers.get(name)
+            for name in ("x-forwarded-for", "x-real-ip", "forwarded", "x-forwarded-host")
         )
 
     def _setup_routes(self) -> None:
@@ -764,7 +828,7 @@ class DashboardApp:
 
         @app.post("/dashboard/api/inference/operations/{operation_id}/reconcile")
         async def inference_reconcile_api(operation_id: str, request: Request):
-            if (resp := self._check_auth(request)) is not None:
+            if (resp := self._check_auth(request, mutating=True)) is not None:
                 return resp
             from ultimate_coders.inference.reconcile import RemoteJobs
             from ultimate_coders.runtime_state import RecordConflictError
@@ -974,7 +1038,7 @@ class DashboardApp:
             - description (required): Task description.
             - project_id (optional): Project/repository context.
             """
-            if (resp := self._check_auth(request)) is not None:
+            if (resp := self._check_auth(request, mutating=True)) is not None:
                 return resp
             try:
                 body = await request.json()
@@ -1115,7 +1179,7 @@ class DashboardApp:
         @app.post("/dashboard/api/tasks/{task_id}/pause")
         async def pause_task_api(task_id: str, request: Request):
             """Pause a running task."""
-            if (resp := self._check_auth(request)) is not None:
+            if (resp := self._check_auth(request, mutating=True)) is not None:
                 return resp
             # NATS path: publish control event for gRPC server / nats_worker
             if self._nats_publisher is not None:
@@ -1176,7 +1240,7 @@ class DashboardApp:
         @app.post("/dashboard/api/tasks/{task_id}/resume")
         async def resume_task_api(task_id: str, request: Request):
             """Resume a paused task."""
-            if (resp := self._check_auth(request)) is not None:
+            if (resp := self._check_auth(request, mutating=True)) is not None:
                 return resp
             # NATS path: publish control event for gRPC server / nats_worker
             if self._nats_publisher is not None:
@@ -1241,7 +1305,7 @@ class DashboardApp:
         @app.post("/dashboard/api/scheduler/jobs/{job_id}/trigger")
         async def trigger_job_api(job_id: str, request: Request):
             """Manually trigger a scheduled job."""
-            if (resp := self._check_auth(request)) is not None:
+            if (resp := self._check_auth(request, mutating=True)) is not None:
                 return resp
             orch = self.orchestrator
             if orch is None or orch.scheduler is None:
@@ -1261,7 +1325,7 @@ class DashboardApp:
         @app.post("/dashboard/api/tasks/flush-pending")
         async def flush_pending_api(request: Request):
             """Flush all tasks queued during the night window."""
-            if (resp := self._check_auth(request)) is not None:
+            if (resp := self._check_auth(request, mutating=True)) is not None:
                 return resp
             orch = self.orchestrator
             if orch is None:

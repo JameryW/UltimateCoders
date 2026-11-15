@@ -20,7 +20,10 @@ from ultimate_coders.dashboard.app import DashboardApp
         {"description": "work", "project_id": []},
     ],
 )
-def test_invalid_submit_fields_return_bad_request_without_publishing(body):
+def test_invalid_submit_fields_return_bad_request_without_publishing(body, monkeypatch):
+    # This test exercises body validation, not auth. The default is fail-closed
+    # for mutations, so opt into the explicit development hatch here.
+    monkeypatch.setenv("UC_DASHBOARD_ALLOW_OPEN_MUTATIONS", "1")
     with patch("ultimate_coders.dashboard.app.MetricsAggregator"):
         dashboard = DashboardApp(None)
     publisher = AsyncMock()

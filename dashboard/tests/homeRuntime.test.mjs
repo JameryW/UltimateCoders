@@ -17,6 +17,7 @@ import {
   nextPollDelay,
   padOrdinal,
   pollingActive,
+  probeGateway,
   runtimeBadge,
   runtimeStatusLabel,
   showcaseMetrics,
@@ -37,6 +38,21 @@ test("only a 2xx JSON answer proves the Gateway is behind this host", () => {
   assert.equal(classifyProbeResponse(502, "text/html"), "absent");
   assert.equal(classifyProbeResponse(401, "application/json"), "absent");
   assert.equal(classifyProbeResponse(0, null), "absent");
+});
+
+test("the runtime probe sends the stored bearer token once the dashboard is gated", async () => {
+  const calls = [];
+  const fetchImpl = async (path, init) => {
+    calls.push({ path, init });
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  assert.equal(await probeGateway(fetchImpl, undefined, "s3cret"), "reachable");
+  assert.equal(calls[0].path, "/dashboard/api/health");
+  assert.equal(calls[0].init.headers.authorization, "Bearer s3cret");
+
+  await probeGateway(fetchImpl, undefined, null);
+  assert.equal(calls[1].init.headers.authorization, undefined);
 });
 
 test("the runtime card can only claim LIVE when the transport is up and nothing fails", () => {

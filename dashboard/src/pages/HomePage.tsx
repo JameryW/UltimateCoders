@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getStoredToken } from "@/hooks/useAuth";
 import { useGrpcWeb } from "@/hooks/useGrpcWeb";
 import {
   DASHBOARD_HREF,
@@ -230,7 +231,7 @@ export default function HomePage() {
     probeAbortRef.current = controller;
     const timer = window.setTimeout(() => controller.abort(), RUNTIME_PROBE_TIMEOUT_MS);
     try {
-      return await probeGateway(fetch, controller.signal);
+      return await probeGateway(fetch, controller.signal, getStoredToken());
     } finally {
       window.clearTimeout(timer);
     }

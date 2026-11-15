@@ -50,11 +50,14 @@ export function classifyProbeResponse(status: number, contentType: string | null
 export async function probeGateway(
   fetchImpl: typeof fetch = fetch,
   signal?: AbortSignal,
+  token?: string | null,
 ): Promise<"reachable" | "absent"> {
   try {
+    const headers: Record<string, string> = { accept: "application/json" };
+    if (token) headers.authorization = `Bearer ${token}`;
     const response = await fetchImpl(RUNTIME_PROBE_PATH, {
       signal,
-      headers: { accept: "application/json" },
+      headers,
       credentials: "same-origin",
     });
     return classifyProbeResponse(response.status, response.headers.get("content-type"));

@@ -438,4 +438,7 @@ async def test_knowledge_route_requires_auth_for_remote_clients(tmp_path, monkey
     assert allowed.status_code == 200
 
     local = await endpoint(_request(host="127.0.0.1"))
-    assert local.status_code == 200
+    # Localhost is no longer an implicit bypass: the dashboard can be bound to
+    # 0.0.0.0 behind a same-host reverse proxy, where every remote caller looks
+    # local. Opting back in requires UC_DASHBOARD_TRUST_LOCALHOST=1.
+    assert local.status_code == 401

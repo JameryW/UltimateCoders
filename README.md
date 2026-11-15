@@ -201,6 +201,39 @@ Local Vite preview: `http://127.0.0.1:4176/`; operations dashboard: `http://127.
 
 The command center shows live Gateway health, dispatch/queue state, the worker swarm, the session log, and deep-linkable views — `#/dashboard/tasks`, `#/dashboard/workers`, `#/dashboard/search`, `#/dashboard/logs`, `#/dashboard/inference` — so any surface can be bookmarked or restored on reload.
 
+### Dashboard authentication
+
+Task mutations fail closed. With no secret configured, the dashboard API rejects submit / pause / resume / flush / reconcile / scheduler-trigger requests with `503` instead of accepting anonymous work; read endpoints stay available for monitoring.
+
+Set one secret (the legacy `DASHBOARD_PASSWORD` wins when both are set):
+
+| Variable | Purpose |
+| --- | --- |
+| `DASHBOARD_PASSWORD` | Dashboard-local password/Bearer secret. |
+| `UC_DASHBOARD_TOKEN` | Shared token: also gates the Rust gateway and governance endpoints when the deployment configures them. |
+
+Clients present the secret as `Authorization: Bearer <secret>` or `?token=<secret>` (the SSE and download routes use the query form). The dashboard UI stores the value in `localStorage` under `uc_dashboard_token` and attaches it to REST and gRPC-Web calls.
+
+Localhost is **not** trusted implicitly: set `UC_DASHBOARD_TRUST_LOCALHOST=1` only for a single-user local deployment; the bypass is ignored for requests carrying `X-Forwarded-For`, `X-Real-IP`, `Forwarded`, or `X-Forwarded-Host`. `UC_DASHBOARD_ALLOW_OPEN_MUTATIONS=1` is an explicit, unsafe development escape hatch — never use it on a reachable host.
+
+The browser submits tasks through **gRPC-Web** (`/ultimate_coders.TaskService/SubmitTask`), which the Python dashboard does not sit in front of. Protect that path at the reverse proxy, for example:
+
+```nginx
+# http { ... } — required for the map below on older nginx builds
+map $http_authorization $uc_dashboard_authorized {
+    default 0;
+    "Bearer <secret>" 1;
+}
+
+location /ultimate_coders. {
+    if ($uc_dashboard_authorized = 0) { return 401; }
+    proxy_pass http://127.0.0.1:15051;
+    # keep the existing proxy headers/timeouts here
+}
+```
+
+Do not expose the gateway or NATS ports directly to the internet: the worker registration and subtask transports are designed for a trusted network (an SSH tunnel or a private network is the supported remote-worker path).
+
 ### Product capabilities
 
 ![UltimateCoders product capabilities](docs/screenshots/product-capabilities.png)

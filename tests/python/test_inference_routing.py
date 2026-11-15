@@ -393,6 +393,9 @@ async def test_dashboard_submit_forwards_domain_config_and_rejects_wrong_shape(
         "ultimate_coders.dashboard.metrics._ALERTS_DB_PATH", str(tmp_path / "metrics.db")
     )
     monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+    # The dashboard's mutation routes fail closed without a secret; this test
+    # is about forwarding agent_config, so use the explicit dev hatch.
+    monkeypatch.setenv("UC_DASHBOARD_ALLOW_OPEN_MUTATIONS", "1")
     publisher = AsyncMock()
     dashboard = DashboardApp(orchestrator=None, nats_publisher=publisher)
     config = {"inference_task": {"task_type": "port_model"}}

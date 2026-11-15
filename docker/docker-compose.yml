@@ -230,6 +230,12 @@ services:
         condition: service_healthy
     environment:
       UC_INFERENCE_ARTIFACT_DIR: /artifacts/inference
+      # Dashboard auth: empty values are ignored by the app. Task mutations
+      # fail closed unless one of the secrets is set (see README).
+      DASHBOARD_PASSWORD: "${DASHBOARD_PASSWORD:-}"
+      UC_DASHBOARD_TOKEN: "${UC_DASHBOARD_TOKEN:-}"
+      UC_DASHBOARD_TRUST_LOCALHOST: "${UC_DASHBOARD_TRUST_LOCALHOST:-0}"
+      UC_DASHBOARD_ALLOW_OPEN_MUTATIONS: "${UC_DASHBOARD_ALLOW_OPEN_MUTATIONS:-0}"
       UC_DATABASE_URL: "${UC_DATABASE_URL:-postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders}"
       UC_RUNTIME_STATE_DIR: /artifacts/runtime
       UC_TIKV_PD_ENDPOINTS: "pd:2379"
