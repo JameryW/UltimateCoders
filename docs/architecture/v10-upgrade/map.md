@@ -12,6 +12,7 @@ mandate store.
 | --- | --- | --- | --- | --- |
 | Boundary contract | `crates/uc-types/src/contract.rs`, `crates/uc-engine/src/lib.rs` | n/a (library type) | planner/engine contract boundary | tested primitive |
 | PerceptionPass | `python/ultimate_coders/agent/planner.py` | `UC_PERCEPTION_PASS` | worker `_apply_perception_pass` | wired |
+| Plan critic | `python/ultimate_coders/agent/planner_critic.py` | `UC_PLANNER_CRITIC` | worker PerceptionPass preflight | wired (partial) |
 | Prefix context assembly | `python/ultimate_coders/search/context_assembler.py` | `UC_PREFIX_CONTEXT_ASSEMBLY` | prompt assembly boundary | tested primitive |
 | Anti-pattern gate | `python/ultimate_coders/acceptance/anti_pattern_gate.py` | `UC_ANTI_PATTERN_GATE` | worker `_verify_output_anti_patterns` | wired |
 | Mutation augmentation | `python/ultimate_coders/acceptance/mutation_augment.py` | `UC_MUTATION_AUGMENT` | acceptance dataset builder | tested primitive |
@@ -46,6 +47,14 @@ static mapping checks. `PerceptionPass.compile(task_id, request, *,
 repo_root=".", file_constraints=())` is read-only. When `UC_PERCEPTION_PASS`
 is on, the worker appends the rendered spec before the task prompt and falls
 back to the original context on any compile error.
+
+When `UC_PLANNER_CRITIC` is also on, the worker runs `PlanCritic` over the
+spec's target boundaries before rendering: each target is an observation with
+evidence only when the path exists in the working directory. A rejected
+critique appends the bounded corrections prompt. This is a partial
+preflight, not a full exploration review: the caller does not yet collect
+independent read/grep observations or a two-hop evidence graph, so the
+precision/recall values describe static target coverage only.
 
 ## Context assembly and failure map
 

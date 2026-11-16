@@ -2851,6 +2851,35 @@ class Worker:
                         f"- {check.get('name', 'check')}: {check.get('status', 'unknown')}"
                         + (f" — {detail}" if detail else "")
                     )
+        if spec.target_files:
+            from ultimate_coders.agent.planner_critic import (
+                PlanCritic,
+                critic_prompt,
+                planner_critic_enabled,
+            )
+
+            if planner_critic_enabled():
+                root = Path(working_dir or ".")
+                observations = [
+                    {
+                        "target": boundary.path,
+                        "evidence": (root / boundary.path).is_file(),
+                    }
+                    for boundary in spec.target_files
+                ]
+                critique = PlanCritic().review(
+                    [boundary.path for boundary in spec.target_files],
+                    observations,
+                )
+                status = "approved" if critique.approved else "not approved"
+                lines.append(
+                    "### Plan critic: "
+                    f"{status} (precision={critique.exploration_precision:.2f}, "
+                    f"recall={critique.exploration_recall:.2f}, "
+                    f"confidence={critique.confidence:.2f})"
+                )
+                if not critique.approved:
+                    lines.append(critic_prompt(critique))
         rendered = "\n".join(lines)[:6000]
         return f"{context_block}\n\n{rendered}".strip()
 

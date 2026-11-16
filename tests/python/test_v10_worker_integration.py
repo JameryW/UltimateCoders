@@ -56,6 +56,29 @@ def test_perception_pass_failure_keeps_original_context(tmp_path: Path, monkeypa
     assert worker._apply_perception_pass(subtask, "unchanged", str(tmp_path)) == "unchanged"
 
 
+def test_plan_critic_flags_missing_target_after_perception(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "core.py").write_text(
+        "def build(value):\n    return value + 1\n",
+        encoding="utf-8",
+    )
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        parent_id="task-1",
+        description="Add a builder in `pkg/core.py` and `missing.py`.",
+        file_constraints=["pkg/core.py", "missing.py"],
+    )
+    monkeypatch.setenv("UC_PERCEPTION_PASS", "1")
+    monkeypatch.setenv("UC_PLANNER_CRITIC", "1")
+
+    rendered = worker._apply_perception_pass(subtask, "base context", str(tmp_path))
+    assert "### Plan critic: not approved" in rendered
+    assert "Collect concrete evidence for `missing.py`" in rendered
+
+
 def test_drift_hints_use_declared_file_constraints() -> None:
     worker = object.__new__(Worker)
     subtask = SimpleNamespace(file_constraints=["src/a.py", "src/b.py"])
