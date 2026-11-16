@@ -20,7 +20,7 @@ mandate store.
 | Failure heatmap | `dashboard/src/lib/failureHeatmap.ts`, `dashboard/src/components/FailureHeatmap.tsx` | n/a (presentation) | dashboard failure-events surface | component ready; not mounted |
 | AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary | tested primitive |
 | ExecCritic | `python/ultimate_coders/acceptance/exec_critic.py` | `UC_EXEC_CRITIC` | acceptance test generation/repair | tested primitive |
-| RETRACE | `python/ultimate_coders/acceptance/retrace_verifier.py` | `UC_RETRACE_VERIFIER` | acceptance review | tested primitive |
+| RETRACE | `python/ultimate_coders/acceptance/retrace_verifier.py` | `UC_RETRACE_VERIFIER` | worker diagnostic | wired (diagnostic) |
 | Drift monitor | `python/ultimate_coders/agent/drift_monitor.py` | `UC_DRIFT_MONITOR` | local-harness loop (`drift_advisor`) | wired (local harness) |
 | Cumulative regression | `crates/uc-engine/src/dag.rs` | n/a (library type) | DAG completion gate | tested primitive |
 | Dockerless verifier | `python/ultimate_coders/acceptance/dockerless_verifier.py` | `UC_DOCKERLESS_VERIFIER` | Oracle fallback / TITO filter | wired (diagnostic) |
@@ -96,7 +96,11 @@ test change raises `ProtectedTestError`.
 `retrace_verifier` builds a forward rationale from the issue and trajectory,
 a blind backward reconstruction from the patch/AST without the issue, and
 arbitrates agreement, contradiction, or mismatch into a bounded repair
-instruction.
+instruction. The worker runs it after a changed patch when
+`UC_RETRACE_VERIFIER` is on, reusing the same `HEAD`↔worktree diff as the
+dockerless verifier, and emits a `subtask_progress` event with the status,
+pass flag, missing/contradictory claims and bounded repair hint. That is a
+diagnostic only; it never turns a run into a pass or failure.
 
 `dockerless_verifier` uses hybrid retrieval and AST call-chain checks as a
 no-container Oracle fallback; it returns bounded pass/fail signals rather

@@ -2769,6 +2769,19 @@ class Worker:
                     dockerless_passed=dockerless.passed,
                     dockerless_missing=list(dockerless.missing_evidence)[:8],
                 )
+            retrace = await self._verify_output_retrace(subtask, working_dir, output)
+            if retrace is not None:
+                await self._emit_step_event(
+                    subtask,
+                    "subtask_progress",
+                    phase="retrace verification",
+                    percent=0,
+                    retrace_status=retrace.status,
+                    retrace_passed=retrace.passed,
+                    retrace_missing=list(retrace.missing)[:8],
+                    retrace_contradictory=list(retrace.contradictory)[:8],
+                    retrace_repair=retrace.repair_instruction[:500],
+                )
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
@@ -3078,28 +3091,18 @@ class Worker:
         }
         return assembled.render(), summary
 
-    async def _verify_output_dockerless(
+    async def _changed_patch(
         self,
-        working_dir: str | None,
+        working_dir: str,
         output: AgentOutput,
-    ) -> Any | None:
-        """Run the deterministic V10 dockerless patch verifier for observability.
+    ) -> str | None:
+        """Return a unified diff for every changed file that still exists.
 
-        Opt-in via ``UC_DOCKERLESS_VERIFIER``. The verifier never executes
-        code: it scores signature compatibility, lock-release paths and
-        boundary conditions from the changed-file diff. The worker currently
-        supplies an empty ``repo_index`` and no call chain, so this is a
-        patch-local signal, not an Oracle replacement; the report rides a
-        ``subtask_progress`` event and never changes the subtask outcome.
+        The before side is read from the worktree's ``HEAD`` so untracked
+        files are skipped rather than described as whole-file additions.
+        This is the shared patch boundary for the deterministic verifiers.
         """
 
-        from ultimate_coders.acceptance.dockerless_verifier import (
-            DockerlessAgenticVerifier,
-            dockerless_verifier_enabled,
-        )
-
-        if not dockerless_verifier_enabled() or not working_dir:
-            return None
         changes = list(output.file_changes) + list(output.failed_file_changes)
         paths = [fc.file_path for fc in changes if fc.file_path]
         if not paths:
@@ -3147,7 +3150,75 @@ class Worker:
                 )
             )
         patch = "".join(patches)
-        if not patch.strip():
+        return patch if patch.strip() else None
+
+    async def _verify_output_retrace(
+        self,
+        subtask: Subtask,
+        working_dir: str | None,
+        output: AgentOutput,
+    ) -> Any | None:
+        """Compare the requirement rationale with a blind patch reconstruction.
+
+        Opt-in via ``UC_RETRACE_VERIFIER``. The verifier is deterministic and
+        never sees model output as ground truth: the backward pass only gets
+        the patch. The result is diagnostic and never changes the outcome.
+        """
+
+        from ultimate_coders.acceptance.retrace_verifier import (
+            RetraceVerifier,
+            retrace_enabled,
+        )
+
+        if not retrace_enabled() or not working_dir or not subtask.description.strip():
+            return None
+        patch = await self._changed_patch(working_dir, output)
+        if patch is None:
+            return None
+        try:
+            verifier = RetraceVerifier()
+            rationale = verifier.forward(
+                subtask.description,
+                {
+                    "summary": output.summary,
+                    "steps": list(output.tool_calls[-20:]),
+                    "notes": list(output.commands_run[-10:]),
+                },
+            )
+            reconstruction = verifier.backward(patch, {})
+            return verifier.arbitrate(rationale, reconstruction)
+        except Exception:
+            logger.debug(
+                "retrace verification failed for %s",
+                output.summary[:80],
+                exc_info=True,
+            )
+            return None
+
+    async def _verify_output_dockerless(
+        self,
+        working_dir: str | None,
+        output: AgentOutput,
+    ) -> Any | None:
+        """Run the deterministic V10 dockerless patch verifier for observability.
+
+        Opt-in via ``UC_DOCKERLESS_VERIFIER``. The verifier never executes
+        code: it scores signature compatibility, lock-release paths and
+        boundary conditions from the changed-file diff. The worker currently
+        supplies an empty ``repo_index`` and no call chain, so this is a
+        patch-local signal, not an Oracle replacement; the report rides a
+        ``subtask_progress`` event and never changes the subtask outcome.
+        """
+
+        from ultimate_coders.acceptance.dockerless_verifier import (
+            DockerlessAgenticVerifier,
+            dockerless_verifier_enabled,
+        )
+
+        if not dockerless_verifier_enabled() or not working_dir:
+            return None
+        patch = await self._changed_patch(working_dir, output)
+        if patch is None:
             return None
         try:
             return DockerlessAgenticVerifier().verify(patch, repo_index={})

@@ -203,6 +203,42 @@ async def test_dockerless_verifier_reports_changed_signature(tmp_path: Path, mon
     assert any("signature mismatch" in item for item in report.missing_evidence)
 
 
+async def test_retrace_verifier_reports_diagnostic(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "calc.py"
+    source.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=tmp_path, check=True)
+
+    source.write_text(
+        "def add(a, b):\n    return a + b\n\n"
+        "def multiply(a, b):\n    return a * b\n",
+        encoding="utf-8",
+    )
+    output = AgentOutput(
+        summary="Added multiply and kept add.",
+        success=True,
+        file_changes=[FileChange(file_path="calc.py")],
+        commands_run=["pytest -q"],
+    )
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        description="Add multiply(a, b) that must return the product.",
+    )
+    worker = object.__new__(Worker)
+
+    monkeypatch.delenv("UC_RETRACE_VERIFIER", raising=False)
+    assert await worker._verify_output_retrace(subtask, str(tmp_path), output) is None
+
+    monkeypatch.setenv("UC_RETRACE_VERIFIER", "1")
+    report = await worker._verify_output_retrace(subtask, str(tmp_path), output)
+    assert report is not None
+    assert report.status in {"agree", "mismatch", "contradictory"}
+    assert isinstance(report.repair_instruction, str)
+
+
 async def test_anti_pattern_gate_rejects_deleted_assertion(tmp_path: Path, monkeypatch) -> None:
     test_file = tmp_path / "tests" / "test_calc.py"
     test_file.parent.mkdir()
