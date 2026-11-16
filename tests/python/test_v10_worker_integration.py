@@ -143,6 +143,30 @@ def test_drift_advisor_line_becomes_task_progress() -> None:
     assert data["drift_prompt"] == "Stop editing and re-read."
 
 
+async def test_dockerless_verifier_reports_changed_signature(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "foo.py"
+    source.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=tmp_path, check=True)
+
+    source.write_text("def add(a, b, c):\n    return a + b + c\n", encoding="utf-8")
+    output = AgentOutput(file_changes=[FileChange(file_path="foo.py")])
+    worker = object.__new__(Worker)
+
+    monkeypatch.delenv("UC_DOCKERLESS_VERIFIER", raising=False)
+    assert await worker._verify_output_dockerless(str(tmp_path), output) is None
+
+    monkeypatch.setenv("UC_DOCKERLESS_VERIFIER", "1")
+    report = await worker._verify_output_dockerless(str(tmp_path), output)
+    assert report is not None
+    assert report.passed is False
+    assert report.score == 67
+    assert any("signature mismatch" in item for item in report.missing_evidence)
+
+
 async def test_anti_pattern_gate_rejects_deleted_assertion(tmp_path: Path, monkeypatch) -> None:
     test_file = tmp_path / "tests" / "test_calc.py"
     test_file.parent.mkdir()

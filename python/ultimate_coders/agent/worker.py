@@ -2754,6 +2754,17 @@ class Worker:
                     )
                     success = False
                     error = f"Anti-pattern gate rejected: {details}"[:2000]
+            dockerless = await self._verify_output_dockerless(working_dir, output)
+            if dockerless is not None:
+                await self._emit_step_event(
+                    subtask,
+                    "subtask_progress",
+                    phase="dockerless verification",
+                    percent=0,
+                    dockerless_score=dockerless.score,
+                    dockerless_passed=dockerless.passed,
+                    dockerless_missing=list(dockerless.missing_evidence)[:8],
+                )
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
@@ -2993,6 +3004,87 @@ class Worker:
             passed=not errors,
             summary=summary or report.summary,
         )
+
+    async def _verify_output_dockerless(
+        self,
+        working_dir: str | None,
+        output: AgentOutput,
+    ) -> Any | None:
+        """Run the deterministic V10 dockerless patch verifier for observability.
+
+        Opt-in via ``UC_DOCKERLESS_VERIFIER``. The verifier never executes
+        code: it scores signature compatibility, lock-release paths and
+        boundary conditions from the changed-file diff. The worker currently
+        supplies an empty ``repo_index`` and no call chain, so this is a
+        patch-local signal, not an Oracle replacement; the report rides a
+        ``subtask_progress`` event and never changes the subtask outcome.
+        """
+
+        from ultimate_coders.acceptance.dockerless_verifier import (
+            DockerlessAgenticVerifier,
+            dockerless_verifier_enabled,
+        )
+
+        if not dockerless_verifier_enabled() or not working_dir:
+            return None
+        changes = list(output.file_changes) + list(output.failed_file_changes)
+        paths = [fc.file_path for fc in changes if fc.file_path]
+        if not paths:
+            return None
+        root = Path(working_dir)
+        patches: list[str] = []
+        import difflib
+
+        for rel in dict.fromkeys(paths):
+            path = Path(rel)
+            if path.is_absolute():
+                try:
+                    path = path.relative_to(root)
+                except ValueError:
+                    continue
+            key = path.as_posix()
+            try:
+                after = (root / path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "git",
+                    "show",
+                    f"HEAD:{key}",
+                    cwd=str(root),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                stdout, _ = await proc.communicate()
+            except OSError:
+                continue
+            if proc.returncode != 0:
+                continue
+            before = stdout.decode("utf-8", errors="replace")
+            patches.append(
+                "".join(
+                    difflib.unified_diff(
+                        before.splitlines(keepends=True),
+                        after.splitlines(keepends=True),
+                        fromfile=f"a/{key}",
+                        tofile=f"b/{key}",
+                        n=0,
+                    )
+                )
+            )
+        patch = "".join(patches)
+        if not patch.strip():
+            return None
+        try:
+            return DockerlessAgenticVerifier().verify(patch, repo_index={})
+        except Exception:
+            logger.debug(
+                "dockerless verification failed for %s",
+                output.summary[:80],
+                exc_info=True,
+            )
+            return None
 
     async def _verify_output_process(
         self,

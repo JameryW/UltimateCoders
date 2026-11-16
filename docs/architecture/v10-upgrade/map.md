@@ -23,7 +23,7 @@ mandate store.
 | RETRACE | `python/ultimate_coders/acceptance/retrace_verifier.py` | `UC_RETRACE_VERIFIER` | acceptance review | tested primitive |
 | Drift monitor | `python/ultimate_coders/agent/drift_monitor.py` | `UC_DRIFT_MONITOR` | local-harness loop (`drift_advisor`) | wired (local harness) |
 | Cumulative regression | `crates/uc-engine/src/dag.rs` | n/a (library type) | DAG completion gate | tested primitive |
-| Dockerless verifier | `python/ultimate_coders/acceptance/dockerless_verifier.py` | `UC_DOCKERLESS_VERIFIER` | Oracle fallback / TITO filter | tested primitive |
+| Dockerless verifier | `python/ultimate_coders/acceptance/dockerless_verifier.py` | `UC_DOCKERLESS_VERIFIER` | Oracle fallback / TITO filter | wired (diagnostic) |
 | ECLoop gate | `python/ultimate_coders/agent/ecloop_gate.py` | `UC_ECLOOP_GATE` | local-harness edit/submit tool boundary | wired (local harness) |
 | TRACE credit | `packages/uc-orchestrator/src/rl/trace_credit.ts` | n/a (library) | RL trajectory scoring | tested primitive |
 | GDPO + skills | `python/ultimate_coders/acceptance/gdpo_scorer.py`, `python/ultimate_coders/knowledge/skill_curriculum.py` | `UC_GDPO_SCORER`, `UC_SKILL_CURRICULUM` | acceptance scoring / skill cards | tested primitive |
@@ -93,7 +93,12 @@ instruction.
 
 `dockerless_verifier` uses hybrid retrieval and AST call-chain checks as a
 no-container Oracle fallback; it returns bounded pass/fail signals rather
-than executing untrusted code.
+than executing untrusted code. The worker calls it for changed files when
+`UC_DOCKERLESS_VERIFIER` is on, synthesizes a unified diff from the `HEAD` and
+worktree snapshots, and emits a `subtask_progress` event with the score,
+pass flag, and bounded missing-evidence list. That path passes an empty
+`repo_index` and no call chain, so it is a patch-local diagnostic today; it
+does not replace an Oracle and never changes the subtask outcome.
 
 ## Coordination, drift, and cumulative regression
 
