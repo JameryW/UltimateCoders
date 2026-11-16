@@ -2419,6 +2419,27 @@ body:has(.terminal-app) {
   white-space: nowrap;
 }
 
+.cc-failure-panel {
+  margin-top: 16px;
+  padding: 8px 10px 10px;
+  border: 1px solid color-mix(in srgb, var(--terminal-border) 80%, transparent);
+  background: color-mix(in srgb, var(--terminal-border) 6%, transparent);
+}
+.cc-failure-panel > summary {
+  cursor: pointer;
+  color: var(--terminal-muted);
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: lowercase;
+}
+.cc-failure-panel[open] > summary {
+  margin-bottom: 8px;
+}
+.cc-failure-panel .failure-heatmap {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
 .cc-session-log {
   margin-top: 16px;
   padding: 10px 0 4px;

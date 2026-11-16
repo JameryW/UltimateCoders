@@ -337,6 +337,92 @@ export function buildFailureHeatmap(
   };
 }
 
+/** Minimal shape of a dashboard event used by the failure feed. */
+export interface DashboardFailureEventLike {
+  type?: unknown;
+  /** Dashboard/gRPC events flatten payload fields here. */
+  details?: unknown;
+  /** Raw NATS event-history records use `data` instead. */
+  data?: unknown;
+}
+
+const CLASSIFIED_EVENT_TYPES = new Set(["subtask_failed", "task_failed"]);
+
+const FAILURE_SIGNATURES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/anti-pattern|deleted assertion|test bypass|authored test never run|internal symbol leak/, "test_failure_ignored"],
+  [/process review rejected|review rejected/, "review_missed_regression"],
+  [/signature mismatch|dockerless/, "edit_regression"],
+  [/syntaxerror|indentationerror/, "edit_partial_patch"],
+  [/assertionerror|assert .*==|pytest|test failed/, "test_failure_ignored"],
+  [/permission denied|not permitted|eacces|eperm/, "tool_permission_denied"],
+  [/timed out|timeout/, "tool_timeout"],
+  [/max redelivery exceeded/, "delivery_broken_artifact"],
+  [/finished without a final envelope/, "delivery_missing_summary"],
+  [/connection error|internalservererror|local harness failed/, "tool_command_failed"],
+  [/max turns/, "plan_missing_step"],
+  [/invalid argument|invalid arguments/, "tool_invalid_arguments"],
+  [/command failed|exit code|non-zero|no such file|filenotfound/, "tool_command_failed"],
+  [/outside.*boundary/, "edit_unrelated_change"],
+];
+
+function detailString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function failureModeFromDetails(details: Record<string, unknown>): FailureMode | null {
+  const explicit = detailString(details.failure_mode ?? details.mode).trim().toLowerCase();
+  const direct = MODE_BY_ID.get(explicit);
+  if (direct !== undefined) return direct;
+  const evidence = [
+    detailString(details.error),
+    detailString(details.reason),
+    detailString(details.summary),
+    detailString(details.message),
+    detailString(details.failure_reason),
+  ]
+    .filter((value) => value.length > 0)
+    .join(" | ")
+    .toLowerCase();
+  if (evidence.length === 0) return null;
+  for (const [pattern, modeId] of FAILURE_SIGNATURES) {
+    if (!pattern.test(evidence)) continue;
+    const mode = MODE_BY_ID.get(modeId);
+    if (mode !== undefined) return mode;
+  }
+  return null;
+}
+
+/**
+ * Project dashboard failure events onto the fixed failure-mode catalogue.
+ *
+ * Only `subtask_failed` / `task_failed` events are considered. A mode is taken
+ * from an explicit `failure_mode`/`mode` field when it is in the catalogue;
+ * otherwise a small, deterministic set of error signatures is matched. Events
+ * without a recognised mode are dropped, never invented.
+ */
+export function failureEventsFromDashboard(
+  events: readonly DashboardFailureEventLike[],
+): FailureEvent[] {
+  if (!Array.isArray(events)) return [];
+  const projected: FailureEvent[] = [];
+  for (const event of events) {
+    if (event === null || typeof event !== "object") continue;
+    const type = detailString(event.type);
+    if (!CLASSIFIED_EVENT_TYPES.has(type)) continue;
+    const details = event.details ?? event.data;
+    if (details === null || typeof details !== "object" || Array.isArray(details)) continue;
+    const mode = failureModeFromDetails(details as Record<string, unknown>);
+    if (mode === null) continue;
+    projected.push({
+      type,
+      phase: mode.phase,
+      mode: mode.id,
+      details: { ...(details as Record<string, unknown>), classified_by: "dashboard-event" },
+    });
+  }
+  return projected;
+}
+
 export interface PtaQualityInput {
   /** The trajectory was explicitly flagged as a lucky pass. */
   luckyPass?: boolean;

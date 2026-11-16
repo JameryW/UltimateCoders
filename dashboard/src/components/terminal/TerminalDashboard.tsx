@@ -1,5 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventLogPanel } from "@/components/panels/EventLogPanel";
+import { FailureHeatmap } from "@/components/FailureHeatmap";
+import { buildFailureHeatmap, failureEventsFromDashboard } from "@/lib/failureHeatmap";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { SearchPanel } from "@/components/panels/SearchPanel";
 import { TaskDetail } from "@/components/panels/TaskDetail";
@@ -799,6 +801,10 @@ function OverviewView({
   const flow = connectorFlowsFor(activeStage);
   const boardHealth = preview?.health ?? health;
   const boardEvents = preview?.advice ?? eventLog;
+  const failureHeatmap = buildFailureHeatmap(
+    failureEventsFromDashboard(boardEvents ?? []),
+    { maxEvents: 2000 },
+  );
   const boardWorkers: WorkersData = preview
     ? {
         available: false,
@@ -1022,6 +1028,16 @@ function OverviewView({
           </button>
         </section>
       </div>
+
+      {failureHeatmap.totalEvents > 0 && (
+        <details className="cc-failure-panel">
+          <summary>
+            failure modes · {failureHeatmap.totalEvents} classified{" "}
+            {failureHeatmap.totalEvents === 1 ? "event" : "events"}
+          </summary>
+          <FailureHeatmap data={failureHeatmap} />
+        </details>
+      )}
 
       <section className="cc-session-log" aria-label="Session log">
         <div className="cc-session-log-head">

@@ -17,7 +17,7 @@ mandate store.
 | Anti-pattern gate | `python/ultimate_coders/acceptance/anti_pattern_gate.py` | `UC_ANTI_PATTERN_GATE` | worker `_verify_output_anti_patterns` | wired |
 | Mutation augmentation | `python/ultimate_coders/acceptance/mutation_augment.py` | `UC_MUTATION_AUGMENT` | acceptance dataset builder | tested primitive |
 | SWE-Prime | `packages/uc-orchestrator/src/rl/swe_prime.ts` | n/a (library) | trajectory distillation caller | tested primitive |
-| Failure heatmap | `dashboard/src/lib/failureHeatmap.ts`, `dashboard/src/components/FailureHeatmap.tsx` | n/a (presentation) | dashboard failure-events surface | component ready; not mounted |
+| Failure heatmap | `dashboard/src/lib/failureHeatmap.ts`, `dashboard/src/components/FailureHeatmap.tsx` | n/a (presentation) | dashboard overview failure panel | wired (overview feed) |
 | AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary | wired (local harness tools) |
 | ExecCritic | `python/ultimate_coders/acceptance/exec_critic.py` | `UC_EXEC_CRITIC` | acceptance test generation/repair | tested primitive |
 | RETRACE | `python/ultimate_coders/acceptance/retrace_verifier.py` | `UC_RETRACE_VERIFIER` | worker diagnostic | wired (diagnostic) |
@@ -72,9 +72,12 @@ prompt/tool schema and adds it outside this block, so slot 0 is not byte-level
 identical to the final provider prefix yet.
 
 `dashboard/src/lib/failureHeatmap.ts` defines the 7 × 24 failure catalogue (18 deterministic
-modes) and `classifyPtaQuality` / `buildFailureHeatmap`. `dashboard/src/components/FailureHeatmap.tsx`
-is a pure presentational table; a future events adapter must supply
-`FailureEvent[]`, and unknown modes are ignored rather than invented.
+modes), `classifyPtaQuality`, `buildFailureHeatmap`, and `failureEventsFromDashboard`. The
+dashboard overview mounts `FailureHeatmap.tsx` in a collapsed failure panel and feeds it the
+bounded live `eventLog`; only `subtask_failed` / `task_failed` events with an explicit
+`failure_mode`/`mode` in the catalogue or a recognised deterministic error signature are
+projected, and unknown events are dropped rather than invented. The overview panel appears only
+when the current window contains at least one classified event.
 
 ## Acceptance and diagnosis
 

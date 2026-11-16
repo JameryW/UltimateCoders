@@ -6,6 +6,7 @@ import {
   FAILURE_PHASES,
   buildFailureHeatmap,
   classifyPtaQuality,
+  failureEventsFromDashboard,
 } from "../src/lib/failureHeatmap.ts";
 
 function cellFor(heatmap, modeId) {
@@ -173,3 +174,104 @@ test("classifyPtaQuality grades lucky, solid and ideal passes", () => {
     "ideal",
   );
 });
+
+test("failureEventsFromDashboard classifies real failed-task signatures", () => {
+  const events = [
+    {
+      type: "subtask_failed",
+      details: { error: "Subtask timed out after 900s" },
+    },
+    {
+      type: "subtask_failed",
+      details: { error: "Traceback: AssertionError: assert 1 == 2" },
+    },
+    {
+      type: "task_failed",
+      details: { reason: "permission denied while writing output" },
+    },
+    {
+      type: "subtask_failed",
+      details: { error: "Anti-pattern gate rejected: deleted_assertion:tests/test_x.py" },
+    },
+    {
+      type: "subtask_failed",
+      details: { error: "Stopped after max turns (4) without done()" },
+    },
+  ];
+  assert.deepEqual(
+    failureEventsFromDashboard(events).map((event) => event.mode),
+    [
+      "tool_timeout",
+      "test_failure_ignored",
+      "tool_permission_denied",
+      "test_failure_ignored",
+      "plan_missing_step",
+    ],
+  );
+});
+
+test("failureEventsFromDashboard prefers an explicit catalogue mode", () => {
+  const projected = failureEventsFromDashboard([
+    {
+      type: "subtask_failed",
+      details: { failure_mode: "edit_regression", error: "Subtask timed out" },
+    },
+    {
+      type: "task_failed",
+      details: { mode: "delivery_broken_artifact" },
+    },
+  ]);
+  assert.deepEqual(
+    projected.map((event) => event.mode),
+    ["edit_regression", "delivery_broken_artifact"],
+  );
+  assert.equal(projected[0].phase, "editing");
+  assert.equal(projected[1].phase, "delivery");
+});
+
+test("failureEventsFromDashboard maps provider and delivery failures", () => {
+  const projected = failureEventsFromDashboard([
+    {
+      type: "subtask_failed",
+      details: { error: "Local harness failed: litellm.InternalServerError: Connection error." },
+    },
+    {
+      type: "subtask_failed",
+      details: { error: "Local harness finished without a final envelope" },
+    },
+    {
+      type: "subtask_failed",
+      details: { error: "max redelivery exceeded (5/5)" },
+    },
+  ]);
+  assert.deepEqual(
+    projected.map((event) => event.mode),
+    ["tool_command_failed", "delivery_missing_summary", "delivery_broken_artifact"],
+  );
+});
+
+test("failureEventsFromDashboard accepts raw event-history data payloads", () => {
+  const projected = failureEventsFromDashboard([
+    {
+      type: "subtask_failed",
+      data: { error: "Subtask timed out after 900s" },
+    },
+  ]);
+  assert.equal(projected.length, 1);
+  assert.equal(projected[0].mode, "tool_timeout");
+});
+
+test("failureEventsFromDashboard drops successful, malformed and unknown events", () => {
+  const projected = failureEventsFromDashboard([
+    { type: "subtask_completed", details: { error: "ignored" } },
+    { type: "subtask_failed", details: { error: "something unexpected happened" } },
+    { type: "subtask_failed", details: { error: 42 } },
+    { type: "subtask_failed", details: null },
+    null,
+    "not-an-event",
+    { type: "subtask_failed", details: { failure_mode: "not-a-real-mode", error: "timeout" } },
+  ]);
+  assert.equal(projected.length, 1);
+  assert.equal(projected[0].mode, "tool_timeout");
+});
+
