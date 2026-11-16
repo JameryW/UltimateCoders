@@ -1020,7 +1020,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # answering (T73/ticket 73 + v8 map line + the new mode, badge, label,
     # polling gate and CTA note cited by the ticket and its tests)
     # (994 -> 998); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1401
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1402
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1087,7 +1087,9 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     gate now imports the shared `push_status` vocabulary (+2 lines). V10 moved
     it 2425 -> 2450: `_drift_hints` and the drift-advisor event parser landed
     above the checkpoint helpers; the cited range 2420-2500 still covers the
-    definition.
+    definition. The ExecCritic test-artifact gate moved it 2450 -> 2486:
+    `_exec_critic_preflight` and its worker integration landed above the
+    checkpoint helpers; the cited range still covers the definition.
     """
     guard = _load_guard()
     want = {
@@ -1109,7 +1111,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            2450,
+            2486,
         ),
     }
     rows = [
