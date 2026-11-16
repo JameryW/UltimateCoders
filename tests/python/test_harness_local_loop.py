@@ -21,10 +21,12 @@ from ultimate_coders.agent import harness_local_loop as hll
 from ultimate_coders.agent.harness_local_loop import (
     LocalLoopHarnessAdapter,
     _final_envelope,
+    _normalise_rel_path,
     _safe_resolve,
     _tool_list_dir,
     _tool_read_file,
     _tool_write_file,
+    _within_boundary,
 )
 from ultimate_coders.agent.registry import ensure_builtin_plugins, registry
 from ultimate_coders.agent.sandbox import ExecResult, SandboxConfig
@@ -61,6 +63,21 @@ class TestAdapterRequest:
         )
         args = request["args"]
         assert args[args.index("--max-turns") + 1] == "7"
+        os.unlink(request["_temp_files"][0])
+
+    def test_drift_task_hints_become_child_env(self, tmp_path: Path) -> None:
+        cfg = SandboxConfig(agent="local-harness", project_path=str(tmp_path))
+        request = LocalLoopHarnessAdapter().build_request(
+            "p",
+            str(tmp_path),
+            cfg,
+            subtask_config={
+                "_uc_drift_boundary": "src/a.py,src/b.py",
+                "_uc_drift_required_files": "src/a.py",
+            },
+        )
+        assert request["env_vars"]["UC_DRIFT_BOUNDARY"] == "src/a.py,src/b.py"
+        assert request["env_vars"]["UC_DRIFT_REQUIRED_FILES"] == "src/a.py"
         os.unlink(request["_temp_files"][0])
 
 
@@ -137,6 +154,13 @@ class TestAdapterParse:
 
 
 class TestRunnerTools:
+    def test_boundary_paths_resolve_parent_segments(self) -> None:
+        assert _normalise_rel_path("./src\\a.py") == "src/a.py"
+        assert _within_boundary("src/sub/a.py", ("src",)) is True
+        assert _within_boundary("src/../other/a.py", ("src",)) is False
+        assert _within_boundary("../outside.py", ("src",)) is False
+        assert _within_boundary("anything.py", ()) is True
+
     def test_safe_resolve_rejects_escape(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="escapes"):
             _safe_resolve(tmp_path, "../x")
@@ -317,6 +341,93 @@ class TestRunnerLoop:
         assert folds
         assert folds[0]["saved_tokens"] > 0
         assert folds[0]["checkpoint_id"]
+
+    def test_drift_monitor_advises_after_repeated_edit_failures(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("UC_DRIFT_MONITOR", "1")
+        responses = iter(
+            [
+                _resp([("write_file", {"path": "../bad-1.txt", "content": "x"})]),
+                _resp([("write_file", {"path": "../bad-2.txt", "content": "x"})]),
+                _resp([("write_file", {"path": "../bad-3.txt", "content": "x"})]),
+                _resp([("done", {"summary": "stopped"})]),
+            ]
+        )
+        seen: list[list[dict]] = []
+
+        def completion(messages):
+            seen.append([dict(message) for message in messages])
+            return next(responses)
+
+        with patch.object(hll, "_completion", side_effect=completion):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 6))
+        assert code == 0
+        assert any(
+            message.get("role") == "system"
+            and str(message.get("content", "")).startswith("Advisor:")
+            for message in seen[3]
+        )
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
+        advisor = [ln for ln in lines if ln.get("event") == "drift_advisor"]
+        assert advisor
+        assert "edit_failures" in advisor[0]["signals"]
+        final = [ln for ln in lines if ln.get("event") == "final"][-1]
+        assert "edit_failures" in final["drift_signals"]
+
+    def test_drift_monitor_reports_outside_boundary_edits(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("UC_DRIFT_MONITOR", "1")
+        monkeypatch.setenv("UC_DRIFT_BOUNDARY", "allowed/")
+        responses = iter(
+            [
+                _resp([("write_file", {"path": "other/a.txt", "content": "a"})]),
+                _resp([("write_file", {"path": "other/b.txt", "content": "b"})]),
+                _resp([("done", {"summary": "done"})]),
+            ]
+        )
+        with patch.object(hll, "_completion", side_effect=lambda m: next(responses)):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 6))
+        assert code == 0
+        assert (tmp_path / "other" / "a.txt").read_text(encoding="utf-8") == "a"
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
+        advisor = [ln for ln in lines if ln.get("event") == "drift_advisor"]
+        assert advisor
+        assert "outside_boundary" in advisor[0]["signals"]
+
+    def test_drift_monitor_injects_budget_advisor_before_last_turn(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("UC_DRIFT_MONITOR", "1")
+        monkeypatch.setenv("UC_DRIFT_REQUIRED_FILES", "required.py")
+        seen: list[list[dict]] = []
+
+        def completion(messages):
+            seen.append([dict(message) for message in messages])
+            return _resp([("done", {"summary": "no coverage"})])
+
+        with patch.object(hll, "_completion", side_effect=completion):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 1))
+        assert code == 0
+        assert any(
+            message.get("role") == "system"
+            and str(message.get("content", "")).startswith("Advisor:")
+            for message in seen[0]
+        )
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
+        advisor = [ln for ln in lines if ln.get("event") == "drift_advisor"]
+        assert advisor
+        assert "budget_zero_coverage" in advisor[0]["signals"]
 
     def test_runner_main_deletes_prompt_file(self, tmp_path: Path) -> None:
         prompt = tmp_path / "p.md"

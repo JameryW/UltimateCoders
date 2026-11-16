@@ -20,7 +20,7 @@ mandate store.
 | AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary | tested primitive |
 | ExecCritic | `python/ultimate_coders/acceptance/exec_critic.py` | `UC_EXEC_CRITIC` | acceptance test generation/repair | tested primitive |
 | RETRACE | `python/ultimate_coders/acceptance/retrace_verifier.py` | `UC_RETRACE_VERIFIER` | acceptance review | tested primitive |
-| Drift monitor | `python/ultimate_coders/agent/drift_monitor.py` | `UC_DRIFT_MONITOR` | supervisor observation | tested primitive |
+| Drift monitor | `python/ultimate_coders/agent/drift_monitor.py` | `UC_DRIFT_MONITOR` | local-harness loop (`drift_advisor`) | wired (local harness) |
 | Cumulative regression | `crates/uc-engine/src/dag.rs` | n/a (library type) | DAG completion gate | tested primitive |
 | Dockerless verifier | `python/ultimate_coders/acceptance/dockerless_verifier.py` | `UC_DOCKERLESS_VERIFIER` | Oracle fallback / TITO filter | tested primitive |
 | ECLoop gate | `python/ultimate_coders/agent/ecloop_gate.py` | `UC_ECLOOP_GATE` | edit/submit tool boundary | tested primitive |
@@ -92,7 +92,14 @@ than executing untrusted code.
 bus for local tests, and a bounded `BackgroundMentionWatcher` that drains at
 tool-step boundaries. `DriftMonitor` records edit failures, boundary
 escapes, repeated test traces, and zero required-file coverage; it emits one
-short advisor prompt per episode, never one per signal.
+short advisor prompt per episode, never one per signal. The local harness
+wires it when `UC_DRIFT_MONITOR` is on: `UC_DRIFT_BOUNDARY` is a
+comma/semicolon path-prefix list, `UC_DRIFT_REQUIRED_FILES` is the required
+coverage list, an advisor is injected once as a system message before the
+next completion, and a `drift_advisor` event (plus final `drift_signals`)
+exposes the deterministic signal. The worker adapter does not yet set these
+two harness-side env hints from `BoundaryContract`; that remains the engine
+integration boundary.
 
 `crates/uc-engine/src/dag.rs` models cumulative regression obligations: a
 node inherits every topological ancestor's required test ids, and an

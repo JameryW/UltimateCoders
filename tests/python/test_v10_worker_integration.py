@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 from ultimate_coders.agent.sandbox import AgentOutput
 from ultimate_coders.agent.types import FileChange
-from ultimate_coders.agent.worker import Worker
+from ultimate_coders.agent.worker import Worker, _parse_sandbox_line
 
 
 def test_perception_pass_appends_read_only_spec(tmp_path: Path, monkeypatch) -> None:
@@ -53,6 +54,36 @@ def test_perception_pass_failure_keeps_original_context(tmp_path: Path, monkeypa
     )
 
     assert worker._apply_perception_pass(subtask, "unchanged", str(tmp_path)) == "unchanged"
+
+
+def test_drift_hints_use_declared_file_constraints() -> None:
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(file_constraints=["src/a.py", "src/b.py"])
+    assert worker._drift_hints(subtask) == {
+        "_uc_drift_boundary": "src/a.py,src/b.py",
+        "_uc_drift_required_files": "src/a.py,src/b.py",
+    }
+
+    subtask = SimpleNamespace(file_constraints=[])
+    assert worker._drift_hints(subtask) == {}
+
+
+def test_drift_advisor_line_becomes_task_progress() -> None:
+    parsed = _parse_sandbox_line(
+        json.dumps(
+            {
+                "event": "drift_advisor",
+                "signals": ["edit_failures"],
+                "prompt": "Stop editing and re-read.",
+            }
+        )
+    )
+    assert parsed is not None
+    event_type, data = parsed
+    assert event_type == "subtask_progress"
+    assert data["phase"] == "drift advisor"
+    assert data["drift_signals"] == ["edit_failures"]
+    assert data["drift_prompt"] == "Stop editing and re-read."
 
 
 async def test_anti_pattern_gate_rejects_deleted_assertion(tmp_path: Path, monkeypatch) -> None:

@@ -1084,8 +1084,10 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     P8 (D18) moved it 1655 -> 1685: `confirmed_effect_ids_for` landed above the
     checkpoint helpers (+30 lines). T68 moved it 1685 -> 1713: `_delivery_verdict`
     landed above them too (+28 lines). T69 moved it 1713 -> 1715: the delivery
-    gate now imports the shared `push_status` vocabulary (+2 lines); the cited
-    range 1678-1731 still covers the definition.
+    gate now imports the shared `push_status` vocabulary (+2 lines). V10 moved
+    it 2425 -> 2450: `_drift_hints` and the drift-advisor event parser landed
+    above the checkpoint helpers; the cited range 2420-2500 still covers the
+    definition.
     """
     guard = _load_guard()
     want = {
@@ -1107,7 +1109,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            2425,
+            2450,
         ),
     }
     rows = [

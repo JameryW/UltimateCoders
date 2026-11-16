@@ -19,6 +19,7 @@ uniform timeout/streaming/git-baseline contract of every other adapter.
 
 Runner protocol (stdout):
 - NDJSON progress events: {"event": "tool_call"|"assistant"|"usage", ...}
+- Optional drift event: {"event": "drift_advisor", "signals": [...], "prompt": ...}
 - Final envelope (last line): {"event": "final", "success": bool, ...}
 
 Selection:
@@ -32,12 +33,14 @@ import asyncio
 import json
 import logging
 import os
+import posixpath
 import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ultimate_coders.agent.drift_monitor import DriftMonitor, drift_monitor_enabled
 from ultimate_coders.agent.sandbox import (
     AgentAdapter,
     AgentOutput,
@@ -60,6 +63,8 @@ RUN_COMMAND_TIMEOUT_SECS = 120
 MAX_READ_BYTES = 256 * 1024
 DEFAULT_READ_BYTES = 8 * 1024
 MAX_WRITE_BYTES = 256 * 1024
+DRIFT_BOUNDARY_ENV = "UC_DRIFT_BOUNDARY"
+DRIFT_REQUIRED_FILES_ENV = "UC_DRIFT_REQUIRED_FILES"
 
 # Deliberately SHORT — large instruction blobs are what break small models.
 _SYSTEM_PROMPT = """\
@@ -186,6 +191,15 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             prompt_file.write(prompt)
 
         max_turns = (subtask_config or {}).get("max_turns") or DEFAULT_MAX_TURNS
+        env_vars = dict(config._build_env_vars())
+        task_config = subtask_config or {}
+        for config_key, env_name in (
+            ("_uc_drift_boundary", DRIFT_BOUNDARY_ENV),
+            ("_uc_drift_required_files", DRIFT_REQUIRED_FILES_ENV),
+        ):
+            value = task_config.get(config_key)
+            if value:
+                env_vars[env_name] = str(value)
         return {
             "command": sys.executable,
             "args": [
@@ -200,7 +214,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             ],
             "timeout_secs": config.max_cpu_seconds,
             "working_dir": working_dir,
-            "env_vars": config._build_env_vars(),
+            "env_vars": env_vars,
             "_temp_files": [prompt_file.name],
         }
 
@@ -339,6 +353,82 @@ def _safe_resolve(root: Path, rel: str) -> Path:
     return candidate
 
 
+def _normalise_rel_path(value: str) -> str:
+    """Normalize a task-relative path and resolve parent segments lexically."""
+
+    path = str(value or "").strip().replace("\\", "/")
+    if not path:
+        return ""
+    normalized = posixpath.normpath(path)
+    return "" if normalized == "." else normalized
+
+
+def _env_path_list(name: str) -> tuple[str, ...]:
+    """Read a comma/semicolon separated path list from the environment."""
+
+    raw = os.environ.get(name, "").replace(";", ",")
+    paths: list[str] = []
+    for item in raw.split(","):
+        normalized = _normalise_rel_path(item)
+        if normalized:
+            paths.append(normalized)
+    return tuple(paths)
+
+
+def _within_boundary(rel: str, boundary: tuple[str, ...]) -> bool:
+    """Whether a task-relative path is inside any configured boundary prefix."""
+
+    if not boundary:
+        return True
+    normalized = _normalise_rel_path(rel)
+    if not normalized:
+        return False
+    return any(
+        normalized == prefix or normalized.startswith(prefix + "/") for prefix in boundary
+    )
+
+
+def _result_is_error(result: str) -> bool:
+    """Best-effort detection of an error tool payload."""
+
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return True
+    return not isinstance(payload, dict) or "error" in payload
+
+
+def _observe_drift_command(drift: DriftMonitor, result: str) -> None:
+    """Feed a failed command's output to the repeated-trace detector."""
+
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return
+    if not isinstance(payload, dict) or payload.get("exit_code") == 0:
+        return
+    output = payload.get("output")
+    if isinstance(output, str) and output.strip():
+        drift.observe_test(output, net_diff_lines=0)
+
+
+def _inject_drift_advisor(messages: list[dict[str, Any]], drift: DriftMonitor) -> bool:
+    """Append the one-shot advisor prompt once a deterministic signal is live."""
+
+    prompt = drift.advisor_prompt(max_words=150)
+    if not prompt:
+        return False
+    messages.append({"role": "system", "content": f"Advisor: {prompt}"})
+    _emit(
+        {
+            "event": "drift_advisor",
+            "signals": [signal.value for signal in drift.triggered()],
+            "prompt": prompt,
+        }
+    )
+    return True
+
+
 def _tool_list_dir(root: Path, args: dict[str, Any]) -> str:
     target = _safe_resolve(root, str(args.get("path") or "."))
     if not target.is_dir():
@@ -468,12 +558,26 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
     # handled in-loop instead of being sent again to the model.
     folder = ACPFolder() if folding_enabled() else None
     ledger = ReadLedger() if folder is not None else None
+    # Drift supervision is also opt-in; without the flag the loop below runs
+    # exactly the legacy path.  Boundary and required-file hints are explicit
+    # env inputs because the harness has no planner contract of its own.
+    drift = DriftMonitor() if drift_monitor_enabled() else None
+    drift_boundary = _env_path_list(DRIFT_BOUNDARY_ENV)
+    drift_required = _env_path_list(DRIFT_REQUIRED_FILES_ENV)
 
     final_summary = ""
     hit_done = False
     try:
         while stats.turns < max_turns:
             stats.turns += 1
+            if drift is not None and drift_required:
+                drift.observe_budget(
+                    stats.turns,
+                    max_turns,
+                    drift_required,
+                    stats.files_written,
+                )
+                _inject_drift_advisor(messages, drift)
             response = await asyncio.to_thread(_completion, messages)
             message = response.choices[0].message
             assistant_text = (getattr(message, "content", None) or "").strip()
@@ -534,6 +638,13 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                             turn=stats.turns,
                         )
                     elif name == "write_file":
+                        rel = str(fn_args.get("path") or "")
+                        if drift is not None:
+                            drift.observe_step(
+                                "write",
+                                _within_boundary(rel, drift_boundary),
+                                within_two_hop=False,
+                            )
                         result = _tool_write_file(root, fn_args, stats)
                     elif name == "run_command":
                         command = str(fn_args.get("command") or "")
@@ -541,6 +652,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                             stats.commands_run.append(command)
                             _emit({"event": "command", "turn": stats.turns, "command": command})
                         result = await _tool_run_command(root, fn_args)
+                        if drift is not None:
+                            _observe_drift_command(drift, result)
                     elif name == "done":
                         final_summary = str(fn_args.get("summary") or "Task completed")
                         finished = True
@@ -550,6 +663,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                         result = json.dumps({"error": f"unknown tool: {name}"})
                 except Exception as exc:  # tool bug must not kill the loop
                     result = json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                if drift is not None and name == "write_file":
+                    drift.observe_edit(not _result_is_error(result))
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
             if folder is not None:
                 folded = folder.maybe_fold(
@@ -568,6 +683,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                             "checkpoint_id": folded.checkpoint.checkpoint_id,
                         }
                     )
+            if drift is not None and not finished:
+                _inject_drift_advisor(messages, drift)
             if finished:
                 break
         else:
@@ -586,17 +703,18 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         )
         return 1
 
-    _emit(
-        {
-            "event": "final",
-            "success": hit_done,
-            "summary": final_summary,
-            "turns": stats.turns,
-            "tool_calls": stats.tool_calls,
-            "files_written": stats.files_written,
-            "commands": stats.commands_run,
-        }
-    )
+    envelope: dict[str, Any] = {
+        "event": "final",
+        "success": hit_done,
+        "summary": final_summary,
+        "turns": stats.turns,
+        "tool_calls": stats.tool_calls,
+        "files_written": stats.files_written,
+        "commands": stats.commands_run,
+    }
+    if drift is not None:
+        envelope["drift_signals"] = [signal.value for signal in drift.triggered()]
+    _emit(envelope)
     return 0 if hit_done else 1
 
 

@@ -270,6 +270,13 @@ def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
                     "experiment_id": obj.get("experiment_id"),
                     "cleanup_pending": obj.get("cleanup_pending", False),
                 }
+            if obj.get("event") == "drift_advisor":
+                return "subtask_progress", {
+                    "phase": "drift advisor",
+                    "percent": 0,
+                    "drift_signals": obj.get("signals", []),
+                    "drift_prompt": str(obj.get("prompt") or "")[:500],
+                }
             if evt_type == "tool_use":
                 return (
                     "tool_call",
@@ -832,6 +839,24 @@ class Worker:
             choice.reason,
         )
         return choice
+
+    def _drift_hints(self, subtask: Subtask) -> dict[str, str]:
+        """Task-scoped boundary/coverage hints for the local harness monitor.
+
+        ``file_constraints`` is the worker's declared edit scope; the harness
+        normally has no planner contract, so these env hints make the drift
+        monitor observe the same boundary instead of treating every path as
+        in-scope.  They matter only for ``local-harness``/``local-llm``.
+        """
+
+        files = [str(path) for path in (subtask.file_constraints or []) if str(path).strip()]
+        if not files:
+            return {}
+        joined = ",".join(files)
+        return {
+            "_uc_drift_boundary": joined,
+            "_uc_drift_required_files": joined,
+        }
 
     def _resolve_agent_config(self, subtask: Subtask) -> dict[str, Any]:
         """Derive agent_config for a subtask: explicit > capability match > type template.
@@ -2648,6 +2673,8 @@ class Worker:
                     or getattr(sandbox_config, "agent", "")
                     or ""
                 )
+                if str(subtask._last_agent) in ("local-harness", "local-llm"):
+                    agent_config.update(self._drift_hints(subtask))
                 output: AgentOutput = await self._sandbox_manager.execute(
                     prompt,
                     working_dir=working_dir,
@@ -3332,6 +3359,8 @@ class Worker:
         # the subtask-level resolved config (step wins on conflict).
         base_cfg = self._resolve_agent_config(subtask) or {}
         merged_cfg = {**base_cfg, **step.agent_config} or None
+        if step.agent in ("local-harness", "local-llm"):
+            merged_cfg = {**(merged_cfg or {}), **self._drift_hints(subtask)}
         if step.agent in ("metainfer", "inference-infra"):
             merged_cfg = {
                 **(merged_cfg or {}),
