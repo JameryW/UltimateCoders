@@ -144,6 +144,57 @@ def test_drift_advisor_line_becomes_task_progress() -> None:
     assert data["drift_prompt"] == "Stop editing and re-read."
 
 
+def test_radio_hints_are_opt_in_and_task_scoped(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(id="node-1", parent_id="graph-1")
+
+    monkeypatch.delenv("UC_AGENT_RADIO", raising=False)
+    assert worker._radio_hints(subtask) == {}
+
+    monkeypatch.setenv("UC_AGENT_RADIO", "1")
+    assert worker._radio_hints(subtask) == {
+        "_uc_radio_graph_id": "graph-1",
+        "_uc_radio_node_id": "node-1",
+    }
+
+    orphan = SimpleNamespace(id="node-2", parent_id="")
+    assert worker._radio_hints(orphan) == {
+        "_uc_radio_graph_id": "node-2",
+        "_uc_radio_node_id": "node-2",
+    }
+
+
+def test_radio_events_become_task_progress() -> None:
+    post = _parse_sandbox_line(
+        json.dumps(
+            {
+                "event": "radio_post",
+                "message": {
+                    "message_id": "m-1",
+                    "kind": "worklog",
+                    "node_id": "node-1",
+                    "text": "working",
+                },
+            }
+        )
+    )
+    assert post is not None
+    event_type, data = post
+    assert event_type == "subtask_progress"
+    assert data["phase"] == "agent radio"
+    assert data["radio_message_id"] == "m-1"
+    assert data["radio_text"] == "working"
+
+    update = _parse_sandbox_line(
+        json.dumps({"event": "teammate_radio_update", "text": "Radio updates:\n- [mention] n2: hi"})
+    )
+    assert update is not None
+    event_type, data = update
+    assert event_type == "subtask_progress"
+    assert data["phase"] == "teammate radio update"
+    assert "mention" in data["radio_update"]
+
+
 def test_prefix_context_assembly_projects_manifest_slots(monkeypatch) -> None:
     worker = object.__new__(Worker)
     monkeypatch.setattr(worker, "_context_budget_tokens", lambda: 2000)

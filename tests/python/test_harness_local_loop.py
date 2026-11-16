@@ -457,6 +457,96 @@ class TestRunnerLoop:
         final = [ln for ln in lines if ln.get("event") == "final"][-1]
         assert final["ecloop_blocks"] == {"out.txt": 1}
 
+    def test_agent_radio_tools_and_mentions_are_drained_at_boundaries(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("UC_AGENT_RADIO", "1")
+        monkeypatch.setenv("UC_RADIO_GRAPH_ID", "graph-1")
+        monkeypatch.setenv("UC_RADIO_NODE_ID", "node-1")
+        monkeypatch.setenv(
+            "UC_RADIO_INBOX_JSON",
+            json.dumps(
+                [
+                    {
+                        "message_id": "seed-1",
+                        "graph_id": "graph-1",
+                        "node_id": "node-1",
+                        "kind": "mention",
+                        "text": "peer update",
+                        "created_at": 0,
+                        "metadata": {},
+                    }
+                ]
+            ),
+        )
+        seen: list[list[dict]] = []
+
+        def completion(messages):
+            seen.append([dict(message) for message in messages])
+            return next(responses)
+
+        responses = iter(
+            [
+                _resp([("uc_radio_post", {"text": "working on it"})]),
+                _resp(
+                    [
+                        (
+                            "uc_radio_create_thread",
+                            {"text": "acknowledged", "parent_id": "seed-1"},
+                        )
+                    ]
+                ),
+                _resp([("done", {"summary": "done"})]),
+            ]
+        )
+        with patch.object(hll, "_completion", side_effect=completion):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 5))
+        assert code == 0
+        assert any(
+            "peer update" in str(message.get("content", ""))
+            for message in seen[0]
+            if message.get("role") == "system"
+        )
+        assert any(
+            "acknowledged" in str(message.get("content", ""))
+            for message in seen[2]
+            if message.get("role") == "system"
+        )
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
+        assert len([ln for ln in lines if ln.get("event") == "radio_post"]) == 2
+        assert any(ln.get("event") == "teammate_radio_update" for ln in lines)
+
+    def test_agent_radio_tools_fail_closed_when_not_configured(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        seen: list[list[dict]] = []
+
+        def completion(messages):
+            seen.append([dict(message) for message in messages])
+            return next(responses)
+
+        responses = iter(
+            [
+                _resp([("uc_radio_post", {"text": "hello"})]),
+                _resp([("done", {"summary": "done"})]),
+            ]
+        )
+        with patch.object(hll, "_completion", side_effect=completion):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 3))
+        assert code == 0
+        assert any(
+            "agent radio is not configured" in str(message.get("content", ""))
+            for message in seen[1]
+            if message.get("role") == "tool"
+        )
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
+        assert not [ln for ln in lines if ln.get("event") == "radio_post"]
+
     def test_failed_command_output_is_reported_for_runtime_diagnosis(
         self,
         tmp_path: Path,

@@ -277,6 +277,22 @@ def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
                     "drift_signals": obj.get("signals", []),
                     "drift_prompt": str(obj.get("prompt") or "")[:500],
                 }
+            if obj.get("event") == "radio_post":
+                message = obj.get("message") or {}
+                return "subtask_progress", {
+                    "phase": "agent radio",
+                    "percent": 0,
+                    "radio_message_id": str(message.get("message_id") or "")[:64],
+                    "radio_kind": str(message.get("kind") or ""),
+                    "radio_node": str(message.get("node_id") or "")[:64],
+                    "radio_text": str(message.get("text") or "")[:300],
+                }
+            if obj.get("event") == "teammate_radio_update":
+                return "subtask_progress", {
+                    "phase": "teammate radio update",
+                    "percent": 0,
+                    "radio_update": str(obj.get("text") or "")[:500],
+                }
             if evt_type == "tool_use":
                 return (
                     "tool_call",
@@ -856,6 +872,22 @@ class Worker:
         return {
             "_uc_drift_boundary": joined,
             "_uc_drift_required_files": joined,
+        }
+
+    def _radio_hints(self, subtask: Subtask) -> dict[str, str]:
+        """Graph/node hints for the opt-in local AgentRadio tools."""
+
+        from ultimate_coders.agent.radio import radio_enabled
+
+        if not radio_enabled():
+            return {}
+        graph_id = str(getattr(subtask, "parent_id", "") or subtask.id or "").strip()
+        node_id = str(subtask.id or "").strip()
+        if not graph_id or not node_id:
+            return {}
+        return {
+            "_uc_radio_graph_id": graph_id,
+            "_uc_radio_node_id": node_id,
         }
 
     def _resolve_agent_config(self, subtask: Subtask) -> dict[str, Any]:
@@ -2679,6 +2711,7 @@ class Worker:
                 )
                 if str(subtask._last_agent) in ("local-harness", "local-llm"):
                     agent_config.update(self._drift_hints(subtask))
+                    agent_config.update(self._radio_hints(subtask))
                 output: AgentOutput = await self._sandbox_manager.execute(
                     prompt,
                     working_dir=working_dir,
@@ -3659,7 +3692,11 @@ class Worker:
         base_cfg = self._resolve_agent_config(subtask) or {}
         merged_cfg = {**base_cfg, **step.agent_config} or None
         if step.agent in ("local-harness", "local-llm"):
-            merged_cfg = {**(merged_cfg or {}), **self._drift_hints(subtask)}
+            merged_cfg = {
+                **(merged_cfg or {}),
+                **self._drift_hints(subtask),
+                **self._radio_hints(subtask),
+            }
         if step.agent in ("metainfer", "inference-infra"):
             merged_cfg = {
                 **(merged_cfg or {}),

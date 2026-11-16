@@ -18,7 +18,7 @@ mandate store.
 | Mutation augmentation | `python/ultimate_coders/acceptance/mutation_augment.py` | `UC_MUTATION_AUGMENT` | acceptance dataset builder | tested primitive |
 | SWE-Prime | `packages/uc-orchestrator/src/rl/swe_prime.ts` | n/a (library) | trajectory distillation caller | tested primitive |
 | Failure heatmap | `dashboard/src/lib/failureHeatmap.ts`, `dashboard/src/components/FailureHeatmap.tsx` | n/a (presentation) | dashboard failure-events surface | component ready; not mounted |
-| AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary | tested primitive |
+| AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary | wired (local harness tools) |
 | ExecCritic | `python/ultimate_coders/acceptance/exec_critic.py` | `UC_EXEC_CRITIC` | acceptance test generation/repair | tested primitive |
 | RETRACE | `python/ultimate_coders/acceptance/retrace_verifier.py` | `UC_RETRACE_VERIFIER` | worker diagnostic | wired (diagnostic) |
 | Drift monitor | `python/ultimate_coders/agent/drift_monitor.py` | `UC_DRIFT_MONITOR` | local-harness loop (`drift_advisor`) | wired (local harness) |
@@ -115,7 +115,18 @@ does not replace an Oracle and never changes the subtask outcome.
 
 `radio` defines NATS-compatible worklog and mention subjects, an in-memory
 bus for local tests, and a bounded `BackgroundMentionWatcher` that drains at
-tool-step boundaries. `DriftMonitor` records edit failures, boundary
+tool-step boundaries. The local harness wires the local half of AgentRadio
+when `UC_AGENT_RADIO` is on and both `UC_RADIO_GRAPH_ID` and
+`UC_RADIO_NODE_ID` are present: `uc_radio_post` and
+`uc_radio_create_thread` publish worklog/thread messages, an optional
+`UC_RADIO_INBOX_JSON` seeds incoming mentions for the run, and pending
+mentions are injected as a `Radio updates:` system block at each turn and
+tool boundary (`teammate_radio_update` event). The worker fills the graph and
+node hints for `local-harness`/`local-llm` steps. There is no NATS transport
+inside the harness yet; the in-process bus is a bounded test/development
+bridge, not a durable event store.
+
+`DriftMonitor` records edit failures, boundary
 escapes, repeated test traces, and zero required-file coverage; it emits one
 short advisor prompt per episode, never one per signal. The local harness
 wires it when `UC_DRIFT_MONITOR` is on: `UC_DRIFT_BOUNDARY` is a

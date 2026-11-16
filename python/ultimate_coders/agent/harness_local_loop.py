@@ -42,6 +42,12 @@ from typing import Any
 
 from ultimate_coders.agent.drift_monitor import DriftMonitor, drift_monitor_enabled
 from ultimate_coders.agent.ecloop_gate import ECLoopGate, ecloop_gate_enabled
+from ultimate_coders.agent.radio import (
+    BackgroundMentionWatcher,
+    InMemoryRadioBus,
+    RadioMessage,
+    radio_enabled,
+)
 from ultimate_coders.agent.sandbox import (
     AgentAdapter,
     AgentOutput,
@@ -66,6 +72,9 @@ DEFAULT_READ_BYTES = 8 * 1024
 MAX_WRITE_BYTES = 256 * 1024
 DRIFT_BOUNDARY_ENV = "UC_DRIFT_BOUNDARY"
 DRIFT_REQUIRED_FILES_ENV = "UC_DRIFT_REQUIRED_FILES"
+RADIO_GRAPH_ENV = "UC_RADIO_GRAPH_ID"
+RADIO_NODE_ENV = "UC_RADIO_NODE_ID"
+RADIO_INBOX_ENV = "UC_RADIO_INBOX_JSON"
 
 # Deliberately SHORT — large instruction blobs are what break small models.
 _SYSTEM_PROMPT = """\
@@ -138,6 +147,34 @@ _TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "uc_radio_post",
+            "description": "Post a short worklog update for teammate agents.",
+            "parameters": {
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "uc_radio_create_thread",
+            "description": "Create a short teammate thread reply, optionally to another node.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "parent_id": {"type": "string"},
+                    "target_node_id": {"type": "string"},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "done",
             "description": "Finish with a one-paragraph summary.",
             "parameters": {
@@ -197,6 +234,9 @@ class LocalLoopHarnessAdapter(AgentAdapter):
         for config_key, env_name in (
             ("_uc_drift_boundary", DRIFT_BOUNDARY_ENV),
             ("_uc_drift_required_files", DRIFT_REQUIRED_FILES_ENV),
+            ("_uc_radio_graph_id", RADIO_GRAPH_ENV),
+            ("_uc_radio_node_id", RADIO_NODE_ENV),
+            ("_uc_radio_inbox_json", RADIO_INBOX_ENV),
         ):
             value = task_config.get(config_key)
             if value:
@@ -446,6 +486,89 @@ def _inject_drift_advisor(messages: list[dict[str, Any]], drift: DriftMonitor) -
     return True
 
 
+def _radio_watcher_from_env() -> BackgroundMentionWatcher | None:
+    """Build the opt-in in-process radio watcher, if all hints are present.
+
+    This is deliberately the local-only half of AgentRadio: the harness can
+    post worklog/thread messages and receive mentions seeded into the bus, but
+    it does not own a NATS subscription.  A worker/orchestrator process is the
+    production transport and can pass a seed inbox for this run.
+    """
+
+    if not radio_enabled():
+        return None
+    graph_id = os.environ.get(RADIO_GRAPH_ENV, "").strip()
+    node_id = os.environ.get(RADIO_NODE_ENV, "").strip()
+    if not graph_id or not node_id:
+        return None
+    bus = InMemoryRadioBus()
+    try:
+        watcher = BackgroundMentionWatcher(bus, graph_id=graph_id, node_id=node_id)
+    except ValueError:
+        return None
+    raw = os.environ.get(RADIO_INBOX_ENV, "").strip()
+    if raw:
+        try:
+            seed = json.loads(raw)
+        except (TypeError, ValueError):
+            seed = None
+        if isinstance(seed, list):
+            for item in seed:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    bus.publish(RadioMessage.from_dict(item))
+                except (TypeError, ValueError):
+                    continue
+    return watcher
+
+
+def _drain_radio_updates(
+    messages: list[dict[str, Any]],
+    watcher: BackgroundMentionWatcher | None,
+) -> bool:
+    """Inject drained teammate mentions at a prompt boundary."""
+
+    if watcher is None:
+        return False
+    update = watcher.drain_for_prompt()
+    if not update:
+        return False
+    messages.append({"role": "system", "content": update})
+    _emit({"event": "teammate_radio_update", "text": update})
+    return True
+
+
+def _radio_post_result(
+    watcher: BackgroundMentionWatcher | None,
+    fn_args: dict[str, Any],
+    *,
+    thread: bool,
+) -> str:
+    """Handle the two radio tools; disabled/empty input becomes a tool error."""
+
+    if watcher is None:
+        return json.dumps({"error": "agent radio is not configured for this run"})
+    text = str(fn_args.get("text") or "").strip()
+    if not text:
+        return json.dumps({"error": "radio text must not be empty"})
+    try:
+        if thread:
+            message = watcher.create_thread(
+                text[:2000],
+                parent_id=str(fn_args.get("parent_id") or ""),
+                target_node_id=str(fn_args.get("target_node_id") or "") or None,
+            )
+        else:
+            message = watcher.post(text[:2000], metadata={"source": "local-harness"})
+    except (TypeError, ValueError) as exc:
+        return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+    _emit({"event": "radio_post", "message": message.to_dict()})
+    return json.dumps(
+        {"ok": True, "message_id": message.message_id, "kind": message.kind}
+    )
+
+
 def _ecloop_blocked_result(decision: Any) -> str:
     """Render an ECLoop denial as a tool error the model can act on."""
 
@@ -617,12 +740,14 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
     drift_boundary = _env_path_list(DRIFT_BOUNDARY_ENV)
     drift_required = _env_path_list(DRIFT_REQUIRED_FILES_ENV)
     ecloop = ECLoopGate() if ecloop_gate_enabled() else None
+    radio_watcher = _radio_watcher_from_env()
 
     final_summary = ""
     hit_done = False
     try:
         while stats.turns < max_turns:
             stats.turns += 1
+            _drain_radio_updates(messages, radio_watcher)
             if drift is not None and drift_required:
                 drift.observe_budget(
                     stats.turns,
@@ -724,6 +849,10 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                             stats.last_failed_output = failed_output
                         if drift is not None:
                             _observe_drift_command(drift, result)
+                    elif name == "uc_radio_post":
+                        result = _radio_post_result(radio_watcher, fn_args, thread=False)
+                    elif name == "uc_radio_create_thread":
+                        result = _radio_post_result(radio_watcher, fn_args, thread=True)
                     elif name == "done":
                         blocked = None
                         if ecloop is not None:
@@ -755,6 +884,7 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                 if drift is not None and name == "write_file":
                     drift.observe_edit(not _result_is_error(result))
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+            _drain_radio_updates(messages, radio_watcher)
             if folder is not None:
                 folded = folder.maybe_fold(
                     messages,
