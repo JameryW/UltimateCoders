@@ -429,6 +429,34 @@ class TestRunnerLoop:
         assert advisor
         assert "budget_zero_coverage" in advisor[0]["signals"]
 
+    def test_ecloop_gate_blocks_unread_edit_then_allows_after_read(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("UC_ECLOOP_GATE", "1")
+        (tmp_path / "notes.txt").write_text("context", encoding="utf-8")
+        responses = iter(
+            [
+                _resp([("write_file", {"path": "out.txt", "content": "value"})]),
+                _resp([("read_file", {"path": "notes.txt"})]),
+                _resp([("write_file", {"path": "out.txt", "content": "value"})]),
+                _resp([("done", {"summary": "done"})]),
+            ]
+        )
+        with patch.object(hll, "_completion", side_effect=lambda m: next(responses)):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 6))
+        assert code == 0
+        assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "value"
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
+        blocked = [ln for ln in lines if ln.get("event") == "ecloop_blocked"]
+        assert blocked
+        assert blocked[0]["action"] == "edit"
+        assert "Missing:" in blocked[0]["prompt"]
+        final = [ln for ln in lines if ln.get("event") == "final"][-1]
+        assert final["ecloop_blocks"] == {"out.txt": 1}
+
     def test_runner_main_deletes_prompt_file(self, tmp_path: Path) -> None:
         prompt = tmp_path / "p.md"
         prompt.write_text("hello", encoding="utf-8")

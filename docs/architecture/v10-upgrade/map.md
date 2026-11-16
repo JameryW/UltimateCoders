@@ -23,7 +23,7 @@ mandate store.
 | Drift monitor | `python/ultimate_coders/agent/drift_monitor.py` | `UC_DRIFT_MONITOR` | local-harness loop (`drift_advisor`) | wired (local harness) |
 | Cumulative regression | `crates/uc-engine/src/dag.rs` | n/a (library type) | DAG completion gate | tested primitive |
 | Dockerless verifier | `python/ultimate_coders/acceptance/dockerless_verifier.py` | `UC_DOCKERLESS_VERIFIER` | Oracle fallback / TITO filter | tested primitive |
-| ECLoop gate | `python/ultimate_coders/agent/ecloop_gate.py` | `UC_ECLOOP_GATE` | edit/submit tool boundary | tested primitive |
+| ECLoop gate | `python/ultimate_coders/agent/ecloop_gate.py` | `UC_ECLOOP_GATE` | local-harness edit/submit tool boundary | wired (local harness) |
 | TRACE credit | `packages/uc-orchestrator/src/rl/trace_credit.ts` | n/a (library) | RL trajectory scoring | tested primitive |
 | GDPO + skills | `python/ultimate_coders/acceptance/gdpo_scorer.py`, `python/ultimate_coders/knowledge/skill_curriculum.py` | `UC_GDPO_SCORER`, `UC_SKILL_CURRICULUM` | acceptance scoring / skill cards | tested primitive |
 | SWE-Doctor | `python/ultimate_coders/acceptance/swe_doctor_diag.py` | `UC_SWE_DOCTOR` | failure diagnosis | tested primitive |
@@ -109,7 +109,16 @@ ancestor regression is a blocking completion condition.
 
 `ecloop_gate` computes a bounded evidence gap over one-hop callers,
 overrides, and tests; it blocks edit/submit at most three times per target
-and returns a structured missing-evidence prompt.
+and returns a structured missing-evidence prompt. The local harness wires it
+when `UC_ECLOOP_GATE` is on: a successful `read_file` adds its normalized
+path to the evidence set, and a `write_file` or `done` whose target has no
+recorded read evidence is rejected with an `ecloop_blocked` event and the
+structured gap in the tool result. A warning from an allowed decision emits
+`ecloop_warning`. The final envelope carries `ecloop_blocks`. This is a
+partial evidence boundary: the harness currently treats any successfully
+read file as evidence and does not build the one-hop caller/override/test
+graph; the AST-backed evidence source remains a future integration. The
+worker does not yet feed a target contract into the harness.
 
 `packages/uc-orchestrator/src/rl/trace_credit.ts` implements the log-ratio turn credit with a three-turn
 truncated horizon, gamma 0.8, lambda 2.0, and slow/fast learning rates

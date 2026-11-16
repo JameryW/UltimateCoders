@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from ultimate_coders.agent.drift_monitor import DriftMonitor, drift_monitor_enabled
+from ultimate_coders.agent.ecloop_gate import ECLoopGate, ecloop_gate_enabled
 from ultimate_coders.agent.sandbox import (
     AgentAdapter,
     AgentOutput,
@@ -336,6 +337,7 @@ class _RunStats:
     tool_calls: int = 0
     files_written: list[str] = field(default_factory=list)
     commands_run: list[str] = field(default_factory=list)
+    reads: list[str] = field(default_factory=list)
 
 
 def _emit(payload: dict[str, Any]) -> None:
@@ -427,6 +429,41 @@ def _inject_drift_advisor(messages: list[dict[str, Any]], drift: DriftMonitor) -
         }
     )
     return True
+
+
+def _ecloop_blocked_result(decision: Any) -> str:
+    """Render an ECLoop denial as a tool error the model can act on."""
+
+    payload: dict[str, Any] = {"error": decision.to_tool_error()}
+    if decision.gap is not None:
+        payload["ecloop"] = decision.gap.to_dict()
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _emit_ecloop_block(action: str, target: str, decision: Any) -> None:
+    _emit(
+        {
+            "event": "ecloop_blocked",
+            "action": action,
+            "target": target,
+            "attempts": decision.attempts,
+            "warning": decision.warning,
+            "prompt": decision.prompt[:500],
+        }
+    )
+
+
+def _emit_ecloop_warning(action: str, target: str, decision: Any) -> None:
+    _emit(
+        {
+            "event": "ecloop_warning",
+            "action": action,
+            "target": target,
+            "attempts": decision.attempts,
+            "warning": decision.warning,
+            "prompt": decision.prompt[:500],
+        }
+    )
 
 
 def _tool_list_dir(root: Path, args: dict[str, Any]) -> str:
@@ -564,6 +601,7 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
     drift = DriftMonitor() if drift_monitor_enabled() else None
     drift_boundary = _env_path_list(DRIFT_BOUNDARY_ENV)
     drift_required = _env_path_list(DRIFT_REQUIRED_FILES_ENV)
+    ecloop = ECLoopGate() if ecloop_gate_enabled() else None
 
     final_summary = ""
     hit_done = False
@@ -637,6 +675,10 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                             ledger=ledger,
                             turn=stats.turns,
                         )
+                        if not _result_is_error(result):
+                            read_path = _normalise_rel_path(str(fn_args.get("path") or ""))
+                            if read_path:
+                                stats.reads.append(read_path)
                     elif name == "write_file":
                         rel = str(fn_args.get("path") or "")
                         if drift is not None:
@@ -645,7 +687,17 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                                 _within_boundary(rel, drift_boundary),
                                 within_two_hop=False,
                             )
-                        result = _tool_write_file(root, fn_args, stats)
+                        if ecloop is not None:
+                            decision = ecloop.evaluate(rel, "", "edit", stats.reads)
+                            if decision.allowed:
+                                result = _tool_write_file(root, fn_args, stats)
+                                if decision.warning:
+                                    _emit_ecloop_warning("edit", rel, decision)
+                            else:
+                                _emit_ecloop_block("edit", rel, decision)
+                                result = _ecloop_blocked_result(decision)
+                        else:
+                            result = _tool_write_file(root, fn_args, stats)
                     elif name == "run_command":
                         command = str(fn_args.get("command") or "")
                         if command:
@@ -655,10 +707,29 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                         if drift is not None:
                             _observe_drift_command(drift, result)
                     elif name == "done":
-                        final_summary = str(fn_args.get("summary") or "Task completed")
-                        finished = True
-                        hit_done = True
-                        result = json.dumps({"ok": True})
+                        blocked = None
+                        if ecloop is not None:
+                            for target in dict.fromkeys(stats.files_written):
+                                candidate = ecloop.evaluate(
+                                    target, "", "submit", stats.reads
+                                )
+                                if not candidate.allowed:
+                                    blocked = candidate
+                                    break
+                                if candidate.warning:
+                                    _emit_ecloop_warning("submit", target, candidate)
+                        if blocked is not None:
+                            _emit_ecloop_block(
+                                "submit",
+                                str(blocked.gap.target if blocked.gap else ""),
+                                blocked,
+                            )
+                            result = _ecloop_blocked_result(blocked)
+                        else:
+                            final_summary = str(fn_args.get("summary") or "Task completed")
+                            finished = True
+                            hit_done = True
+                            result = json.dumps({"ok": True})
                     else:
                         result = json.dumps({"error": f"unknown tool: {name}"})
                 except Exception as exc:  # tool bug must not kill the loop
@@ -714,6 +785,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
     }
     if drift is not None:
         envelope["drift_signals"] = [signal.value for signal in drift.triggered()]
+    if ecloop is not None:
+        envelope["ecloop_blocks"] = dict(ecloop.blocks)
     _emit(envelope)
     return 0 if hit_done else 1
 
