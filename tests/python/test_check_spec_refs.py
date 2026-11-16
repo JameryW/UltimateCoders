@@ -1089,7 +1089,10 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     above the checkpoint helpers; the cited range 2420-2500 still covers the
     definition. The ExecCritic test-artifact gate moved it 2450 -> 2486:
     `_exec_critic_preflight` and its worker integration landed above the
-    checkpoint helpers; the cited range still covers the definition.
+    checkpoint helpers; the cited range still covers the definition. The
+    mandate-envelope preflight moved it 2486 -> 2492: the fail-closed worker
+    entry check landed above the checkpoint helpers; the cited range still
+    covers the definition.
     """
     guard = _load_guard()
     want = {
@@ -1111,7 +1114,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            2486,
+            2492,
         ),
     }
     rows = [

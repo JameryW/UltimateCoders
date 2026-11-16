@@ -9,7 +9,7 @@ a second knowledge authority, or a second mandate store.
 
 | Area | Modules | Flag | Wired at | State |
 | --- | --- | --- | --- | --- |
-| Adaptive retry routing | `behavior_router`, `mandate`, `sync_async_promotion` | `UC_ADAPTIVE_ADAPTER_ROUTING`, `UC_MANDATE_ENVELOPE`, `UC_SYNC_ASYNC_PROMOTION` | worker retry path | modules tested; adapter routing wired; mandate and promotion are opt-in primitives |
+| Adaptive retry routing | `behavior_router`, `mandate`, `sync_async_promotion` | `UC_ADAPTIVE_ADAPTER_ROUTING`, `UC_MANDATE_ENVELOPE`, `UC_SYNC_ASYNC_PROMOTION` | worker retry path and preflight | modules tested; adapter routing and mandate consumption wired; promotion is an opt-in primitive |
 | Retrieval arbitration | `memcredit` | `UC_MEMCREDIT` | worker search context | wired |
 | Bitemporal knowledge | `bitemporal` | `UC_BITEMPORAL_KNOWLEDGE` | knowledge read face and recovery view | projection wired |
 | Attempt evolution | `evolution` | `UC_AST_EVOLUTION` | recovery context | wired |
@@ -32,6 +32,14 @@ profile text never enter the event stream.
 `mandate` is an immutable narrowing envelope over the existing governance
 authority. It validates expiry and scope and can only narrow; it does not mint
 authority and is not a replacement for the Rust governance store.
+
+The worker consumes an optional `agent_config["mandate"]` envelope before it
+acquires a worktree. `UC_MANDATE_ENVELOPE` gates the check; a malformed envelope
+is always rejected, while `"enforce": true` turns an expired subject, missing
+required capability, ungranted resource, or exceeded attempt ceiling into a
+non-retryable failure. Without `enforce`, the same violations are reported on a
+`mandate envelope` progress event. The event carries the envelope id and digest
+but no capability payload beyond the bounded violation list.
 
 `sync_async_promotion` records a pending decision, promotes it after the sync
 budget, and emits bounded convergence notices. It is a clock-injected primitive

@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import shutil
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,6 +69,11 @@ from ultimate_coders.agent.types import (
     WorkflowStep,
 )
 from ultimate_coders.agent.workspace import WorkspaceHandle, WorkspaceManager
+from ultimate_coders.architecture.mandate import (
+    Mandate,
+    MandateError,
+    mandate_envelope_enabled,
+)
 from ultimate_coders.knowledge import rollout
 from ultimate_coders.knowledge.attempt_chain import (
     AttemptChainLedger,
@@ -2608,6 +2614,23 @@ class Worker:
         is_review = "review" in subtask.required_capabilities
         if is_review:
             context_block = f"{context_block}\n\n{REVIEW_INSTRUCTIONS}".strip()
+
+        # Optional narrowing Mandate envelope. It is checked before the
+        # worktree/conflict machinery so an expired or over-broad attempt does
+        # not acquire resources it is not authorized to use.
+        mandate_event, mandate_error = self._apply_mandate(subtask)
+        if mandate_event is not None:
+            await self._emit_step_event(subtask, "subtask_progress", **mandate_event)
+        if mandate_error:
+            return SubtaskResult(
+                subtask_id=subtask.id,
+                worker_id=self.worker_id,
+                summary="Mandate envelope rejected",
+                success=False,
+                retryable=False,
+                error=mandate_error,
+            )
+
         # Declare edit intent for conflict tracking
         declared_files: list[str] = []
         if subtask.file_constraints:
@@ -3002,6 +3025,94 @@ class Worker:
                     lines.append(critic_prompt(critique))
         rendered = "\n".join(lines)[:6000]
         return f"{context_block}\n\n{rendered}".strip()
+
+    def _apply_mandate(self, subtask: Subtask) -> tuple[dict[str, Any] | None, str | None]:
+        """Consume an optional narrowing mandate before the attempt starts.
+
+        ``UC_MANDATE_ENVELOPE`` gates the caller, not the dataclass. The task
+        carries the envelope in ``agent_config["mandate"]``; ``"enforce": true``
+        turns a violation into a non-retryable failure. A malformed or empty
+        envelope is always rejected: silently ignoring it would widen authority.
+
+        This is deliberately a consumer of the existing governance mandate, not
+        a second mandate store. The Python envelope mirrors only the dimensions
+        the worker can check before a sandbox starts: expiry, subject, required
+        capabilities, declared resources and attempt ceiling.
+        """
+
+        if not mandate_envelope_enabled():
+            return None, None
+        config = subtask.agent_config if isinstance(subtask.agent_config, dict) else {}
+        raw = config.get("mandate")
+        if not isinstance(raw, dict):
+            return None, None
+        enforce = bool(raw.get("enforce", False))
+        try:
+            mandate = Mandate.from_dict(raw)
+        except (MandateError, TypeError, ValueError) as exc:
+            return (
+                {
+                    "phase": "mandate envelope",
+                    "percent": 0,
+                    "mandate_enforced": enforce,
+                    "mandate_error": str(exc)[:300],
+                },
+                f"Mandate envelope rejected: {exc}",
+            )
+
+        violations: list[str] = []
+        if not mandate.mandate_id:
+            violations.append("mandate_id is empty")
+        if not mandate.subject:
+            violations.append("subject is empty")
+        allowed_subjects = {
+            str(value).strip()
+            for value in (subtask.parent_id, subtask.id)
+            if str(value).strip()
+        }
+        if mandate.subject and allowed_subjects and mandate.subject not in allowed_subjects:
+            violations.append(f"subject {mandate.subject!r} does not match this task")
+        if mandate.is_expired(time.time()):
+            violations.append("mandate is expired")
+        required = [str(value).strip() for value in (subtask.required_capabilities or [])]
+        missing_capabilities = [
+            capability for capability in required if capability not in mandate.capabilities
+        ]
+        if missing_capabilities:
+            violations.append(
+                "capabilities are not granted: " + ", ".join(missing_capabilities)
+            )
+        constraints = [str(value).strip() for value in (subtask.file_constraints or [])]
+        if constraints:
+            if not mandate.resources:
+                violations.append("resources allow-list is empty")
+            else:
+                missing_resources = [
+                    path for path in constraints if path not in mandate.resources
+                ]
+                if missing_resources:
+                    violations.append(
+                        "resources are not granted: " + ", ".join(missing_resources)
+                    )
+        attempt_number = int(getattr(subtask, "dispatch_retry_count", 0) or 0) + 1
+        if attempt_number > mandate.max_attempts:
+            violations.append(
+                f"attempt {attempt_number} exceeds max_attempts {mandate.max_attempts}"
+            )
+
+        subtask._mandate = mandate  # type: ignore[attr-defined]
+        event: dict[str, Any] = {
+            "phase": "mandate envelope",
+            "percent": 0,
+            "mandate_id": mandate.mandate_id,
+            "mandate_digest": mandate.digest(),
+            "mandate_enforced": enforce,
+            "mandate_expired": mandate.is_expired(time.time()),
+            "mandate_violations": violations[:8],
+        }
+        if enforce and violations:
+            return event, "Mandate envelope rejected: " + "; ".join(violations[:5])
+        return event, None
 
     def _runtime_diagnosis(self, output: AgentOutput) -> dict[str, Any] | None:
         """Return a SWE-Doctor diagnosis for a failed command output.

@@ -429,3 +429,132 @@ async def test_anti_pattern_gate_rejects_deleted_assertion(tmp_path: Path, monke
     assert report is not None
     assert not report.passed
     assert any(item.kind == "test_file_tampering" for item in report.errors)
+
+
+def _mandate_subtask(**overrides):
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        parent_id="task-1",
+        required_capabilities=["code"],
+        file_constraints=["src/app.py"],
+        dispatch_retry_count=0,
+        agent_config={},
+    )
+    for key, value in overrides.items():
+        setattr(subtask, key, value)
+    return subtask
+
+
+def _valid_mandate(**overrides):
+    mandate = {
+        "mandate_id": "mandate-1",
+        "subject": "task-1",
+        "capabilities": ["code"],
+        "resources": ["src/app.py"],
+        "max_attempts": 2,
+        "budget_tokens": 1000,
+        "expires_at": 0.0,
+    }
+    mandate.update(overrides)
+    return mandate
+
+
+def test_mandate_gate_is_opt_in(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = _mandate_subtask(agent_config={"mandate": _valid_mandate()})
+    monkeypatch.delenv("UC_MANDATE_ENVELOPE", raising=False)
+
+    assert worker._apply_mandate(subtask) == (None, None)
+
+
+def test_mandate_gate_accepts_a_valid_envelope(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = _mandate_subtask(agent_config={"mandate": _valid_mandate()})
+    monkeypatch.setenv("UC_MANDATE_ENVELOPE", "1")
+
+    event, error = worker._apply_mandate(subtask)
+    assert error is None
+    assert event is not None
+    assert event["mandate_id"] == "mandate-1"
+    assert len(event["mandate_digest"]) == 64
+    assert event["mandate_violations"] == []
+    assert subtask._mandate.mandate_id == "mandate-1"
+
+
+def test_mandate_gate_reports_capabilities_resources_and_attempt_ceiling(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = _mandate_subtask(
+        dispatch_retry_count=1,
+        agent_config={
+            "mandate": _valid_mandate(
+                capabilities=["review"],
+                resources=["other.py"],
+                max_attempts=1,
+            )
+        },
+    )
+    monkeypatch.setenv("UC_MANDATE_ENVELOPE", "1")
+
+    event, error = worker._apply_mandate(subtask)
+    assert error is None
+    assert event is not None
+    violations = event["mandate_violations"]
+    assert any("capabilities" in item for item in violations)
+    assert any("resources" in item for item in violations)
+    assert any("max_attempts" in item for item in violations)
+
+
+def test_mandate_gate_enforces_violations(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = _mandate_subtask(
+        agent_config={
+            "mandate": _valid_mandate(
+                capabilities=[],
+                resources=[],
+                enforce=True,
+            )
+        },
+    )
+    monkeypatch.setenv("UC_MANDATE_ENVELOPE", "1")
+
+    event, error = worker._apply_mandate(subtask)
+    assert event is not None
+    assert event["mandate_enforced"] is True
+    assert error is not None
+    assert error.startswith("Mandate envelope rejected:")
+
+
+def test_mandate_gate_rejects_expired_and_foreign_subjects(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = _mandate_subtask(
+        agent_config={
+            "mandate": _valid_mandate(
+                subject="another-task",
+                expires_at=1.0,
+                enforce=True,
+            )
+        },
+    )
+    monkeypatch.setenv("UC_MANDATE_ENVELOPE", "1")
+
+    event, error = worker._apply_mandate(subtask)
+    assert event is not None
+    assert event["mandate_expired"] is True
+    assert error is not None
+    assert "does not match this task" in error
+    assert "expired" in error
+
+
+def test_mandate_gate_always_rejects_malformed_envelopes(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = _mandate_subtask(
+        agent_config={"mandate": _valid_mandate(expires_at="not-a-number")},
+    )
+    monkeypatch.setenv("UC_MANDATE_ENVELOPE", "1")
+
+    event, error = worker._apply_mandate(subtask)
+    assert event is not None
+    assert "mandate_error" in event
+    assert error is not None
+    assert error.startswith("Mandate envelope rejected:")
+
