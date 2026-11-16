@@ -270,7 +270,7 @@ first, then the workers.** Enforcement:
   procedure in `docs/architecture/knowledge-upgrade/runbook-ab-evaluation.md`), `dashboard.py` (bounded,
   log-safe overview: attempts/evidence/claims/pages counts plus gate allowed/denied and a
   denial-reason histogram; `python -m ultimate_coders.knowledge.dashboard --state <url>`,
-  `GET /dashboard/api/knowledge` in `dashboard/app.py`, and the TaskDetail React panel
+  `GET /dashboard/api/knowledge` in `python/ultimate_coders/dashboard/app.py`, and the TaskDetail React panel
   `dashboard/src/components/panels/KnowledgeOverviewPanel.tsx` + `dashboard/src/lib/knowledge.ts`),
   plus P4 observations
   `survey.py` (AST survey), `deepen.py` (bounded read-only git deepening) and

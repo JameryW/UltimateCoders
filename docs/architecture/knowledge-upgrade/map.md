@@ -201,7 +201,7 @@ P4 — Versioned Knowledge Pages: **implemented**
   真实 2 步工作流语料（doc/report）跑通 B/C：真实 worktree/commit/attempt_chain、
   确定性产物检查和 `paired_tasks=2` / `non_inferior` 可用，但两条配对任务的
   attempt 0 都成功，恢复视图未注入，token 差异是模型波动；且同一路径
-  `brief.md` 会跨任务覆盖，需按任务分目录或在完成时立即验收（runbook §10）。
+  “brief.md” 会跨任务覆盖，需按任务分目录或在完成时立即验收（runbook §10）。
   可判读的 B/C 数据仍缺：需要正常 `max_turns`、成功/失败混合、失败 attempt
   两臂配对，并按 runbook 跑两轮同向。
 - **签名粒度校准**：T13 已归一化，`--signatures` 已能观测分布；首批真实样本

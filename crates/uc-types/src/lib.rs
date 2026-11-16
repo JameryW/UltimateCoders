@@ -4,6 +4,7 @@
 //! No I/O, no framework dependencies — just data types and the EngineApi trait.
 
 pub mod agent;
+pub mod contract;
 pub mod engine;
 pub mod envelope;
 pub mod error;
@@ -22,6 +23,11 @@ pub use agent::{
     TaskId, TaskSnapshot, TaskStatus, WorkerId, WorkerInfo, WorkflowStep,
 };
 pub use async_trait::async_trait;
+pub use contract::{
+    BoundaryChallengeDecision, BoundaryChallengeOutcome, BoundaryChallengeRequest,
+    BoundaryChallengeState, BoundaryContract, BoundaryContractError, BoundaryContractValidation,
+    BoundaryRole,
+};
 pub use engine::{ComponentHealth, EngineApi, HealthStatus, RepoIndexState, SearchStream};
 pub use envelope::{
     ContextBlock, ContextEntry, ExecutionEnvelope, CONTEXT_BLOCK_MAX_BYTES, CONTRACT_VERSION,

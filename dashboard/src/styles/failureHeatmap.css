@@ -1,0 +1,127 @@
+/* Failure-mode heatmap (#12). Scoped to the component; no global edits. */
+
+.failure-heatmap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  color: var(--text-primary);
+  font-size: 0.75rem;
+}
+
+.failure-heatmap__summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
+
+.failure-heatmap__scroller {
+  overflow-x: auto;
+}
+
+.failure-heatmap__table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: separate;
+  border-spacing: 2px;
+  font-size: 0.68rem;
+}
+
+.failure-heatmap__table caption {
+  caption-side: top;
+  padding: 0 0 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  text-align: left;
+}
+
+.failure-heatmap__mode-heading,
+.failure-heatmap__phase-heading {
+  padding: 0.25rem 0.35rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.failure-heatmap__mode-heading {
+  text-align: left;
+}
+
+.failure-heatmap__mode {
+  max-width: 15rem;
+  padding: 0.2rem 0.4rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.failure-heatmap__severity {
+  margin-left: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.failure-heatmap__cell {
+  min-width: 2.6rem;
+  padding: 0.2rem 0.3rem;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: center;
+  transition: filter 120ms ease;
+}
+
+.failure-heatmap__cell:hover {
+  filter: brightness(1.12);
+}
+
+.failure-heatmap .heat-0 {
+  background: var(--bg-surface-alt);
+  color: var(--text-muted);
+}
+
+.failure-heatmap .heat-1 {
+  background: color-mix(in srgb, var(--terminal-green, #22c55e) 18%, var(--bg-surface));
+  color: var(--text-primary);
+}
+
+.failure-heatmap .heat-2 {
+  background: color-mix(in srgb, #eab308 30%, var(--bg-surface));
+  color: var(--text-primary);
+}
+
+.failure-heatmap .heat-3 {
+  background: color-mix(in srgb, #f97316 42%, var(--bg-surface));
+  color: var(--text-primary);
+}
+
+.failure-heatmap .heat-4 {
+  background: color-mix(in srgb, #ef4444 52%, var(--bg-surface));
+  color: #fff;
+}
+
+.failure-heatmap__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+}
+
+.failure-heatmap__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.failure-heatmap__legend-swatch {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 3px;
+}

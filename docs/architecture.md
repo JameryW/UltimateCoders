@@ -30,6 +30,15 @@ acceptance, credential leases and TITO trajectory export) live in
 `python/ultimate_coders/architecture/`; every flag, integration point and
 boundary is recorded in [the V9 upgrade map](architecture/v9-upgrade/map.md).
 
+The V10 upgrade adds planning, context-assembly, acceptance, coordination,
+drift, cumulative-regression, execution-gate and RL-hardening modules across
+`python/ultimate_coders/agent/`, `python/ultimate_coders/search/`,
+`python/ultimate_coders/acceptance/`, `python/ultimate_coders/knowledge/`,
+`packages/uc-orchestrator/src/rl/`, `crates/uc-types/src/contract.rs`,
+`crates/uc-engine/src/dag.rs` and `crates/uc-engine/src/rl_hardening.rs`.
+Flags, wiring points and explicit non-goals are recorded in [the V10 upgrade
+map](architecture/v10-upgrade/map.md).
+
 The Dashboard root `/` is the product overview; `/dashboard` and `#/dashboard` are operations routes. The overview's workflow replay is a read-only projection of `subtask_progress` step events: `python/ultimate_coders/dashboard/workflows.py` groups them by task/subtask into bounded runs, `GET /dashboard/api/workflows/replays` serves them behind the normal dashboard read auth, and `dashboard/src/pages/HomePage.tsx` plays the step timeline (play/pause, scrub, per-step status, summary and duration). Docker serves the UI on port 8081, the API on 8080 and gRPC/gRPC-Web on 50051. The Compose service named `orchestrator` runs the **Dashboard API**. The separate `nats-worker` service runs the **planning coordinator**; `worker` replicas use `--mode worker` for execution.
 
 ## End-to-end task flow

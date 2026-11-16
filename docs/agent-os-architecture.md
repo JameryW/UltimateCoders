@@ -390,7 +390,7 @@ Authority 不在 MVP 内，未来若上移也只是把同一组语义搬到网�
 | `knowledge.metrics::main` | 事后离线（非运行期） | 从 `attempt_chain` + `knowledge_evidence` 采集样本，算 success_rate / avg_attempts / repeated_failure_rate / tokens，并按 task 配对比较 baseline/variant；`--signatures` 额外输出归一化失败签名直方图（校准粒度用，不是判优依据）；CLI：`python -m ultimate_coders.knowledge.metrics --state <sqlite-or-pg-url> [--baseline f.json --variant g.json] [--json] [--signatures]`；跑数步骤见 [knowledge-upgrade/runbook-ab-evaluation.md](architecture/knowledge-upgrade/runbook-ab-evaluation.md) |
 | `claims.record_gate_decision`（门裁决落证据） | 每次 `validate_and_promote_delivery` / `promote_failure_claim` / arbiter 晋升之后 | `VALIDATION` 证据：`allowed` / 有界 `reasons` / `target` / `claim_id` / `strategy`，**不含 claim statement**；证据 id 由 payload 派生，重放同一裁决不虚增 |
 | `knowledge.dashboard::main` | 事后只读（非运行期） | 有界概览：attempt 结局、证据 by kind/visibility、claim by status、门裁决 allowed/denied + 理由直方图、知识页生命周期计数；CLI：`python -m ultimate_coders.knowledge.dashboard --state <sqlite-or-pg-url> [--task-id T] [--json]` |
-| `dashboard/app.py::knowledge_api` | 请求时只读（Dashboard 读面） | `GET /dashboard/api/knowledge?task_id=&limit=`：与 manifests / decisions 同一 `_check_auth`（远程需 token，localhost 直通）；`limit` 1..5000，非法 400；委托 `aggregate_knowledge`，状态不可用时 503 |
+| `python/ultimate_coders/dashboard/app.py::knowledge_api` | 请求时只读（Dashboard 读面） | `GET /dashboard/api/knowledge?task_id=&limit=`：与 manifests / decisions 同一 `_check_auth`（远程需 token，localhost 直通）；`limit` 1..5000，非法 400；委托 `aggregate_knowledge`，状态不可用时 503 |
 | `uc-types/src/envelope.rs` planner 预算 | gateway 组 `ContextBlock` 时（运行期，非知识采集） | `UC_PLANNER_VIEW_BUDGET_BYTES`（默认 `CONTEXT_BLOCK_MAX_BYTES` 8192，clamp 512–8192）经 `planner_view_budget_bytes()` 进 `compose_with_budget`；非法/空缺回默认，超上限被降回硬上限；溢出只丢整 entry 并置 `truncated`（T17） |
 | `dashboard/src/components/panels/KnowledgeOverviewPanel.tsx` | 页面渲染时只读（前端读面） | TaskDetail 内挂载；`dashboard/src/lib/knowledge.ts` 只读已知计数字段（attempts/evidence/claims/pages、门 allowed/denied + 前 3 条理由、`truncated`），空数据显式说明「本任务未采集」；**不渲染 claim statement / diff / page body**；7 个 node 测试 |
 
@@ -427,7 +427,7 @@ worker 文件合计 **382 passed**）：
   job（本沙箱离线，仅用独立 rustc 验证了纯函数逻辑）；首次 CI 绿色运行前视为未验收。
 - **Dashboard 读面与前端面板均已接**：`knowledge/dashboard.py`（T16）提供
   有界只读概览与 CLI（门裁决 allowed/denied + 理由直方图、证据/claim/页面计数），
-  `GET /dashboard/api/knowledge` 路由已在 `dashboard/app.py` 注册并有 4 个测试
+  `GET /dashboard/api/knowledge` 路由已在 `python/ultimate_coders/dashboard/app.py` 注册并有 4 个测试
   （鉴权、limit 校验、schema、内容不外泄）；`dashboard/src/lib/knowledge.ts` +
   `components/panels/KnowledgeOverviewPanel.tsx` 在 TaskDetail 内渲染该概览
   （counts-only，空状态显式说明，7 个 node 测试，`tsc -b` / `eslint` 干净）。

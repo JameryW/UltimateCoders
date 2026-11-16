@@ -2574,6 +2574,12 @@ class Worker:
             if workspace_handle and hasattr(workspace_handle, "worktree_path"):
                 working_dir = workspace_handle.worktree_path or None
 
+            # Optional zero-edit PerceptionPass: compile a grounded
+            # implementation spec from the worktree before the agent starts.
+            # It is read-only and flag-gated; failure to compile must never
+            # block the existing prompt path.
+            context_block = self._apply_perception_pass(subtask, context_block, working_dir)
+
             # Streaming callback: parse each stdout line and emit events
             async def _on_stdout_line(line: str) -> None:
                 """Parse sandbox stdout line and emit real-time events."""
@@ -2709,6 +2715,15 @@ class Worker:
                     )
                     success = False
                     error = f"Process review rejected: {details}"[:2000]
+            if success:
+                anti_report = await self._verify_output_anti_patterns(working_dir, output)
+                if anti_report is not None and not anti_report.passed:
+                    details = "; ".join(
+                        f"{finding.kind}:{finding.path}:{finding.line}"
+                        for finding in anti_report.errors[:5]
+                    )
+                    success = False
+                    error = f"Anti-pattern gate rejected: {details}"[:2000]
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
@@ -2756,6 +2771,138 @@ class Worker:
             )
         except Exception:
             logger.debug("step event publish failed", exc_info=True)
+
+    def _apply_perception_pass(
+        self,
+        subtask: Subtask,
+        context_block: str,
+        working_dir: str | None,
+    ) -> str:
+        """Append a grounded ``ImplementationSpec`` to the prompt context.
+
+        Opt-in via ``UC_PERCEPTION_PASS``. The compiler is read-only and never
+        invokes a model; any failure leaves the original context untouched.
+        """
+
+        from ultimate_coders.agent.planner import PerceptionPass, perception_pass_enabled
+
+        if not perception_pass_enabled() or not subtask.description.strip():
+            return context_block
+        try:
+            spec = PerceptionPass().compile(
+                subtask.parent_id or subtask.id,
+                subtask.description,
+                repo_root=working_dir or ".",
+                file_constraints=subtask.file_constraints,
+            )
+        except Exception:
+            logger.debug("perception pass failed for %s", subtask.id[:8], exc_info=True)
+            return context_block
+
+        lines = [
+            "## Implementation spec (PerceptionPass)",
+            f"Confidence: {spec.confidence:.2f}",
+        ]
+        if spec.target_files:
+            lines.append("### Target boundaries")
+            for boundary in spec.target_files[:20]:
+                suffix = f" — {boundary.reason}" if boundary.reason else ""
+                lines.append(f"- {boundary.role}: `{boundary.path}`{suffix}")
+        if spec.public_api:
+            lines.append("### Public API to preserve")
+            lines.extend(f"- `{item}`" for item in spec.public_api[:12])
+        if spec.dependency_closure:
+            lines.append("### Read-only dependency closure")
+            lines.extend(f"- `{path}`" for path in spec.dependency_closure[:16])
+        if spec.checks:
+            passed = sum(1 for check in spec.checks if check.get("status") == "pass")
+            lines.append(f"### Static mapping checks: {passed}/{len(spec.checks)} pass")
+            for check in spec.checks:
+                if check.get("status") != "pass":
+                    detail = check.get("detail") or check.get("message") or ""
+                    lines.append(
+                        f"- {check.get('name', 'check')}: {check.get('status', 'unknown')}"
+                        + (f" — {detail}" if detail else "")
+                    )
+        rendered = "\n".join(lines)[:6000]
+        return f"{context_block}\n\n{rendered}".strip()
+
+    async def _verify_output_anti_patterns(
+        self,
+        working_dir: str | None,
+        output: AgentOutput,
+    ) -> Any | None:
+        """Run the deterministic V10 acceptance anti-pattern gate.
+
+        Opt-in via ``UC_ANTI_PATTERN_GATE``. ``before`` is the worktree's
+        ``HEAD`` snapshot of every changed file and ``after`` is the current
+        file. The local harness reports exact commands through
+        ``AgentOutput.commands_run``; adapters that cannot report commands
+        leave it empty, so the gate skips only the unverifiable
+        ``authored_test_never_run`` finding rather than inventing evidence.
+        """
+
+        from ultimate_coders.acceptance.anti_pattern_gate import (
+            AntiPatternReport,
+            anti_pattern_gate_enabled,
+            scan_anti_patterns,
+        )
+
+        if not anti_pattern_gate_enabled() or not working_dir:
+            return None
+        changes = list(output.file_changes) + list(output.failed_file_changes)
+        paths = [fc.file_path for fc in changes if fc.file_path]
+        if not paths:
+            return None
+        root = Path(working_dir)
+        before: dict[str, str] = {}
+        after: dict[str, str] = {}
+        for rel in dict.fromkeys(paths):
+            path = Path(rel)
+            if path.is_absolute():
+                try:
+                    path = path.relative_to(root)
+                except ValueError:
+                    continue
+            key = path.as_posix()
+            target = root / path
+            try:
+                after[key] = target.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                after[key] = ""
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "git",
+                    "show",
+                    f"HEAD:{key}",
+                    cwd=str(root),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                stdout, _ = await proc.communicate()
+            except OSError:
+                continue
+            if proc.returncode == 0:
+                before[key] = stdout.decode("utf-8", errors="replace")
+        if not after:
+            return None
+        commands = tuple(getattr(output, "commands_run", ()) or ())
+        report = scan_anti_patterns(before, after, run_commands=commands)
+        if commands:
+            return report
+        kept = tuple(item for item in report.findings if item.kind != "authored_test_never_run")
+        if len(kept) == len(report.findings):
+            return report
+        errors = tuple(item for item in kept if item.severity == "error")
+        summary = "\n".join(
+            f"{item.path or '<patch>'}:{item.line}: {item.kind} — {item.detail}"
+            for item in errors[:8]
+        )
+        return AntiPatternReport(
+            findings=kept,
+            passed=not errors,
+            summary=summary or report.summary,
+        )
 
     async def _verify_output_process(
         self,

@@ -20,7 +20,7 @@ Hy-Memory 之上，为什么还需要「补丁链 + 证据账本 + 认知门 + �
 | 副作用账本 | `effect_ledger.py`：PREPARED→IN_FLIGHT→{CONFIRMED,FAILED,UNKNOWN}，push/merge 收据 | `test_merge_arbiter_effects.py`、`test_workspace_push_effects.py`、`test_metainfer_effects.py` | 证明「事实来自系统而不是模型自述」的先例；其 UNKNOWN≠FAILED 纪律被知识层继承 |
 | 记录基座 | `runtime_state.py`：namespace + 版本 CAS，SQLite/PostgreSQL 同构 | `test_runtime_state.py` | 知识层权威的唯一载体（D1） |
 | 工作区 / 补丁 | `agent/workspace.py`：worktree 租约、merge-base 与推送；本波次新增 `capture_diff()` | `test_workspace.py`、`test_workspace_patch_capture.py`（新） | 模块②的采集端；此前补丁只作为 git 事实存在，没有结构化的 attempt 记录 |
-| 失败信号 | `progress.py`、`stall_redispatch.py`、`completion_conditions.py` | `test_progress*.py`、`test_stall_redispatch.py` | 失败「有没有发生」已知；失败「是不是同一个」没有签名可算 |
+| 失败信号 | `progress.py`、`stall_redispatch.py`、`completion_conditions.py` | `test_progress*.py`、`test_stall_agent_redispatch.py` | 失败「有没有发生」已知；失败「是不是同一个」没有签名可算 |
 | 长期记忆 | `agent/hy_memory.py`（`CodingMemory.remember/recall`、`UC_HY_MEMORY_AUTO_CONTEXT`） | `test_hy_memory_*.py` | 已是「可写的长期事实」，但**写入无证据门**；只做了 supersede，没有声明层 |
 | 分层 Memory | `memory/memory.py`（ShortTerm/LongTerm，经 engine → TiKV/Qdrant）、`search/query.py`、`agent/search_cache.py` | `test_memory_*.py`、`test_search_*.py` | 检索投影，非权威（D1）；检索命中≠可注入 |
 | 预算 | `budget.py`（`UC_TASK_TOKEN_BUDGET` / `_COST_` / `_TIME_` 准入） | `test_budget_ledger.py` | 任务级准入预算，与 prompt 编译预算是两层（D6） |
@@ -137,7 +137,7 @@ Hy-Memory 之上，为什么还需要「补丁链 + 证据账本 + 认知门 + �
   AwesomeWorkflows 裁剪的真实 2 步工作流任务（doc/report）跑 B/C：真实
   worktree/commit/attempt_chain、确定性产物检查、`paired_tasks=2` 与
   `non_inferior` 均工作；但配对任务的 attempt 0 都成功，恢复视图未注入，
-  token 差异只是模型波动，且共享 `brief.md` 会跨任务覆盖（§10）。可判读数据
+  token 差异只是模型波动，且共享 “brief.md” 会跨任务覆盖（§10）。可判读数据
   仍需正常任务语义下成功/失败混合、失败 attempt 两臂配对与两轮同向（§7–§10）；
   失败签名粒度也仍需在这类数据里校准。
 - **门裁决可观测**：`claims.record_gate_decision` 把 allowed/denied 与理由码写成

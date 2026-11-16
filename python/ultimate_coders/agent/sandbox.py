@@ -441,6 +441,11 @@ class AgentOutput:
     stderr_tail: str = ""  # last ~10 lines of stderr (for diagnostics)
     # List of tool call names extracted from the agent output
     tool_calls: list[str] = field(default_factory=list)
+    # Exact shell commands reported by an adapter that can observe them (the
+    # local harness does).  Acceptance gates use this to distinguish "a test
+    # was authored" from "a test command actually ran"; other adapters leave
+    # it empty rather than guessing.
+    commands_run: list[str] = field(default_factory=list)
     had_failed_step: bool = False
     failed_file_changes: list[FileChange] = field(default_factory=list)
     # Per-step usage records for a multi-agent workflow (T18 #668).

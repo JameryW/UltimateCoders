@@ -9,7 +9,7 @@ log-safe 的概览：attempt 结局、证据种类、claim 状态、**门裁决�
 **Blocked by:** T04（补丁链）、T07/T08（证据与门）、T12（集成收据）、T14（读面）
 **Spec:** [spec-p0.md](../spec-p0.md)（验收指标里的「误注入 / 未授权提升 = 0」需要可观测证据）
 **Status:** implemented（`python/ultimate_coders/knowledge/dashboard.py`；
-HTTP `GET /dashboard/api/knowledge`（`dashboard/app.py`，与其它读面同鉴权、`limit` 1..5000）；
+HTTP `GET /dashboard/api/knowledge`（`python/ultimate_coders/dashboard/app.py`，与其它读面同鉴权、`limit` 1..5000）；
 React 面板 `dashboard/src/lib/knowledge.ts` + `components/panels/KnowledgeOverviewPanel.tsx`
 （TaskDetail 内挂载，counts-only，7 个 node 测试，`tsc -b` / `eslint` 干净）；
 CLI `python -m ultimate_coders.knowledge.dashboard --state ... [--task-id ...] [--json]`；

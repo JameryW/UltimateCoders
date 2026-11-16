@@ -220,7 +220,7 @@ run 1 direction=<...>  run 2 direction=<...>  -> 是否进入 stage D/E = <yes/n
   - 测试仓库默认分支是 `master`，而 `WorkspaceManager.base_branch` 默认 `main`，
     导致 release 后 `main..HEAD` 为空、产物被当作 `no_changes` 丢掉。三个测试
     仓库改名为 `main` 并快进后，doc 任务首次 7/7。
-  - 三个任务都写根目录 `brief.md`，后跑的任务会覆盖前一个任务在 base branch
+  - 三个任务都写根目录 “brief.md”，后跑的任务会覆盖前一个任务在 base branch
     上的 brief；因此验收必须在每个任务完成的当下做，或按任务分目录。
   - `max_turns=4` 的 report 任务在 593s 后触发
     `[step <n> (local-harness) failed] Stopped after max turns (<n>) without done()`；

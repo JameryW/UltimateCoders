@@ -223,6 +223,11 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             for line in result.stdout.splitlines()
             if _is_event(line, "tool_call")
         ]
+        commands_run = [
+            str(json.loads(line).get("command") or "")
+            for line in result.stdout.splitlines()
+            if _is_event(line, "command")
+        ]
         if envelope is None:
             last_text = ""
             for line in reversed(result.stdout.splitlines()):
@@ -238,6 +243,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
                 success=result.exit_code == 0,
                 stderr_tail=stderr_tail,
                 tool_calls=tool_calls,
+                commands_run=commands_run,
                 token_usage=token_usage,
             )
 
@@ -246,6 +252,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             success=bool(envelope.get("success", result.exit_code == 0)),
             stderr_tail=stderr_tail,
             tool_calls=tool_calls,
+            commands_run=commands_run,
             token_usage=token_usage,
         )
 
@@ -314,6 +321,7 @@ class _RunStats:
     turns: int = 0
     tool_calls: int = 0
     files_written: list[str] = field(default_factory=list)
+    commands_run: list[str] = field(default_factory=list)
 
 
 def _emit(payload: dict[str, Any]) -> None:
@@ -528,6 +536,10 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                     elif name == "write_file":
                         result = _tool_write_file(root, fn_args, stats)
                     elif name == "run_command":
+                        command = str(fn_args.get("command") or "")
+                        if command:
+                            stats.commands_run.append(command)
+                            _emit({"event": "command", "turn": stats.turns, "command": command})
                         result = await _tool_run_command(root, fn_args)
                     elif name == "done":
                         final_summary = str(fn_args.get("summary") or "Task completed")
@@ -582,6 +594,7 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
             "turns": stats.turns,
             "tool_calls": stats.tool_calls,
             "files_written": stats.files_written,
+            "commands": stats.commands_run,
         }
     )
     return 0 if hit_done else 1

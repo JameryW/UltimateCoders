@@ -6,6 +6,7 @@
 pub mod checkpoint;
 pub mod config;
 pub mod conflict;
+pub mod dag;
 pub mod events;
 pub mod git;
 pub mod governance;
@@ -17,6 +18,7 @@ pub mod metadata;
 pub mod migration_lock;
 pub mod rate_limiter;
 pub mod repos_config;
+pub mod rl_hardening;
 pub mod runtime_metrics;
 pub mod sandbox;
 pub mod scheduler;
@@ -30,6 +32,7 @@ pub use conflict::{
     ConflictDetector, ConflictMarker, ConflictResult, EditIntent, EditType, MergeResult,
     ResolutionTier,
 };
+pub use dag::{CumulativeRegressionPlan, RegressionObligation, RegressionPlanError};
 /// NATS JetStream-backed `EventStore` (feature-gated on `messaging`).
 #[cfg(feature = "messaging")]
 pub use events::NatsEventStore;
@@ -49,6 +52,10 @@ pub use rate_limiter::{
 pub use repos_config::{
     build_index_requests, discover_scan_dirs, load_repos_config, parse_repos_yaml,
     resolve_config_path, RepoConfig, RepoEntry,
+};
+pub use rl_hardening::{
+    EnvironmentAnomaly, ProcessGroupCleanupPlan, ProcessGroupCommand, ProcessGroupPlan,
+    ProcessGroupSpec, RlHardening, RlHardeningError, StateHashReceipt, HASH_ALGORITHM,
 };
 pub use search::HybridSearchEngine;
 pub use search::SemanticSearchEngine;
