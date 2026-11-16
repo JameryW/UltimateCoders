@@ -32,7 +32,8 @@ import { CommandPalette, type PaletteCommand } from "@/components/terminal/Comma
 const FileBrowser = lazy(() =>
   import("@/components/panels/FileBrowser").then((module) => ({ default: module.FileBrowser })),
 );
-import { latestDashboardEvents } from "@/lib/dashboardEvents";
+import { latestDashboardEvents, fetchDashboardEvents, mergeDashboardEvents } from "@/lib/dashboardEvents";
+import { getStoredToken } from "@/hooks/useAuth";
 import { aggregateSubtaskProgress, subtaskShortLabel } from "@/lib/taskProgress";
 import { statusBadgeClass } from "@/lib/utils";
 import type {
@@ -712,6 +713,7 @@ function OverviewView({
   const wasPreviewRef = useRef(previewMode);
   const knownSessionKeysRef = useRef<Set<string> | null>(null);
   const [enteringSessionKeys, setEnteringSessionKeys] = useState<Set<string>>(() => new Set());
+  const [historicalDashboardEvents, setHistoricalDashboardEvents] = useState<DashboardEvent[]>([]);
 
   useEffect(() => {
     if (!previewMode || typeof window === "undefined") return;
@@ -801,8 +803,11 @@ function OverviewView({
   const flow = connectorFlowsFor(activeStage);
   const boardHealth = preview?.health ?? health;
   const boardEvents = preview?.advice ?? eventLog;
+  const failureEventSource = preview
+    ? (boardEvents ?? [])
+    : mergeDashboardEvents(historicalDashboardEvents, boardEvents ?? []);
   const failureHeatmap = buildFailureHeatmap(
-    failureEventsFromDashboard(boardEvents ?? []),
+    failureEventsFromDashboard(failureEventSource),
     { maxEvents: 2000 },
   );
   const boardWorkers: WorkersData = preview
@@ -835,6 +840,20 @@ function OverviewView({
 
   const sessionKeys = sessionEvents.map((event) => sessionLogEventKey(event));
   const sessionKeySignature = sessionKeys.join("|");
+
+  useEffect(() => {
+    // The overview heatmap needs history as well as the live stream. The
+    // gRPC event log is live-only, so load the durable REST snapshot once.
+    const controller = new AbortController();
+    fetchDashboardEvents(fetch, getStoredToken(), controller.signal)
+      .then((events) => {
+        if (!controller.signal.aborted) setHistoricalDashboardEvents(events);
+      })
+      .catch(() => {
+        // Auth/offline failures leave the live-only heatmap available.
+      });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     // Defer setState into timers so we never sync-setState in the effect body
