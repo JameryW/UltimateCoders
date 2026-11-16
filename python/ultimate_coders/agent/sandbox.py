@@ -439,6 +439,10 @@ class AgentOutput:
     domain_result: dict[str, Any] | None = None
     # Failure context
     stderr_tail: str = ""  # last ~10 lines of stderr (for diagnostics)
+    # Bounded output of the most recent failed shell command. Only adapters
+    # that execute commands themselves (the local harness) can report this;
+    # the SWE-Doctor diagnosis parser consumes it on a failed run.
+    test_output: str = ""
     # List of tool call names extracted from the agent output
     tool_calls: list[str] = field(default_factory=list)
     # Exact shell commands reported by an adapter that can observe them (the

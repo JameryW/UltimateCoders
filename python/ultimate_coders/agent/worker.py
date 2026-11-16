@@ -2683,6 +2683,9 @@ class Worker:
                     agent=agent_config.get("agent"),
                     cancel_key=cancel_key,
                 )
+            diagnosis = self._runtime_diagnosis(output)
+            if diagnosis is not None:
+                await self._emit_step_event(subtask, "subtask_progress", **diagnosis)
             # T18 #668: the workflow path collected one record per executed step
             # as it went; the legacy single-agent path declares no step yet still
             # executed exactly one unit. Record that unit at index 0, so a
@@ -2882,6 +2885,37 @@ class Worker:
                     lines.append(critic_prompt(critique))
         rendered = "\n".join(lines)[:6000]
         return f"{context_block}\n\n{rendered}".strip()
+
+    def _runtime_diagnosis(self, output: AgentOutput) -> dict[str, Any] | None:
+        """Return a SWE-Doctor diagnosis for a failed command output.
+
+        Opt-in via ``UC_SWE_DOCTOR``.  The local harness reports the bounded
+        output of the most recent failed command; adapters that cannot observe
+        command output leave ``test_output`` empty and this is a no-op.
+        """
+
+        from ultimate_coders.acceptance.swe_doctor_diag import (
+            diagnose_runtime,
+            swe_doctor_enabled,
+        )
+
+        if not swe_doctor_enabled() or output.success:
+            return None
+        text = output.test_output.strip()
+        if not text:
+            return None
+        report = diagnose_runtime(text)
+        payload: dict[str, Any] = {
+            "phase": "runtime diagnosis",
+            "percent": 0,
+            "runtime_summary": report.summary,
+            "divergence_frame": report.divergence_frame,
+            "expected": [item.to_dict() for item in report.expected[:8]],
+            "snapshots": [item.to_dict() for item in report.snapshots[:8]],
+        }
+        if not report.summary and not report.divergence_frame and not report.snapshots:
+            return None
+        return payload
 
     async def _verify_output_anti_patterns(
         self,

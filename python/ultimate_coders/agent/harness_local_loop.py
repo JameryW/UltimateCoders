@@ -266,6 +266,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             summary=str(envelope.get("summary") or "Local harness completed"),
             success=bool(envelope.get("success", result.exit_code == 0)),
             stderr_tail=stderr_tail,
+            test_output=str(envelope.get("test_output") or ""),
             tool_calls=tool_calls,
             commands_run=commands_run,
             token_usage=token_usage,
@@ -338,6 +339,7 @@ class _RunStats:
     files_written: list[str] = field(default_factory=list)
     commands_run: list[str] = field(default_factory=list)
     reads: list[str] = field(default_factory=list)
+    last_failed_output: str = ""
 
 
 def _emit(payload: dict[str, Any]) -> None:
@@ -412,6 +414,19 @@ def _observe_drift_command(drift: DriftMonitor, result: str) -> None:
     output = payload.get("output")
     if isinstance(output, str) and output.strip():
         drift.observe_test(output, net_diff_lines=0)
+
+
+def _failed_command_output(result: str) -> str:
+    """Return bounded output for a failed command, or ``""`` on success."""
+
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(payload, dict) or payload.get("exit_code") in (None, 0):
+        return ""
+    output = payload.get("output")
+    return output[-12000:] if isinstance(output, str) and output.strip() else ""
 
 
 def _inject_drift_advisor(messages: list[dict[str, Any]], drift: DriftMonitor) -> bool:
@@ -704,6 +719,9 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                             stats.commands_run.append(command)
                             _emit({"event": "command", "turn": stats.turns, "command": command})
                         result = await _tool_run_command(root, fn_args)
+                        failed_output = _failed_command_output(result)
+                        if failed_output:
+                            stats.last_failed_output = failed_output
                         if drift is not None:
                             _observe_drift_command(drift, result)
                     elif name == "done":
@@ -770,6 +788,7 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                 "summary": f"Local harness failed: {type(exc).__name__}: {exc}",
                 "turns": stats.turns,
                 "tool_calls": stats.tool_calls,
+                "test_output": stats.last_failed_output,
             }
         )
         return 1
@@ -787,6 +806,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         envelope["drift_signals"] = [signal.value for signal in drift.triggered()]
     if ecloop is not None:
         envelope["ecloop_blocks"] = dict(ecloop.blocks)
+    if stats.last_failed_output:
+        envelope["test_output"] = stats.last_failed_output
     _emit(envelope)
     return 0 if hit_done else 1
 

@@ -27,7 +27,7 @@ mandate store.
 | ECLoop gate | `python/ultimate_coders/agent/ecloop_gate.py` | `UC_ECLOOP_GATE` | local-harness edit/submit tool boundary | wired (local harness) |
 | TRACE credit | `packages/uc-orchestrator/src/rl/trace_credit.ts` | n/a (library) | RL trajectory scoring | tested primitive |
 | GDPO + skills | `python/ultimate_coders/acceptance/gdpo_scorer.py`, `python/ultimate_coders/knowledge/skill_curriculum.py` | `UC_GDPO_SCORER`, `UC_SKILL_CURRICULUM` | acceptance scoring / skill cards | tested primitive |
-| SWE-Doctor | `python/ultimate_coders/acceptance/swe_doctor_diag.py` | `UC_SWE_DOCTOR` | failure diagnosis | tested primitive |
+| SWE-Doctor | `python/ultimate_coders/acceptance/swe_doctor_diag.py` | `UC_SWE_DOCTOR` | worker failed-run diagnosis | wired (partial) |
 | RL hardening | `crates/uc-engine/src/rl_hardening.rs` | n/a (library type) | test-evaluation process boundary | tested primitive |
 
 ## Boundary contract and planning
@@ -141,7 +141,14 @@ four-field skill card and four-stage validation/curriculum.
 
 `python/ultimate_coders/acceptance/swe_doctor_diag.py` produces a `RuntimeDiagnosisReport`: expected behaviour
 clauses, bounded local-variable snapshots, and the first state-divergence
-frame from pytest `--tb=short --showlocals` or `sys.monitoring` input.
+frame from pytest `--tb=short --showlocals` or `sys.monitoring` input. The
+local harness reports the bounded output of its most recent failed
+`run_command` as `AgentOutput.test_output`; when `UC_SWE_DOCTOR` is on, a
+failed worker run publishes a `subtask_progress` event with
+`phase: "runtime diagnosis"` plus the bounded expected clauses, snapshots,
+and divergence frame. This is a partial diagnosis boundary: only pytest-like
+text the harness actually observed is parsed, adapters that cannot observe
+command output report nothing, and the report is never used to pass a run.
 
 ## Sandbox/RL boundary
 

@@ -457,6 +457,33 @@ class TestRunnerLoop:
         final = [ln for ln in lines if ln.get("event") == "final"][-1]
         assert final["ecloop_blocks"] == {"out.txt": 1}
 
+    def test_failed_command_output_is_reported_for_runtime_diagnosis(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        (tmp_path / "bad.py").write_text(
+            "print('_' * 3 + ' test_add ' + '_' * 3)\n"
+            "print('bad.py:3: in test_add')\n"
+            "print('    assert 1 == 2')\n"
+            "print('E   assert 1 == 2')\n"
+            "raise SystemExit(1)\n",
+            encoding="utf-8",
+        )
+        responses = iter(
+            [
+                _resp([("run_command", {"command": f'"{sys.executable}" bad.py'})]),
+                _resp([("done", {"summary": "ran the test"})]),
+            ]
+        )
+        with patch.object(hll, "_completion", side_effect=lambda m: next(responses)):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 4))
+        assert code == 0
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
+        final = [ln for ln in lines if ln.get("event") == "final"][-1]
+        assert "test_add" in final["test_output"]
+        assert "E   assert 1 == 2" in final["test_output"]
+
     def test_runner_main_deletes_prompt_file(self, tmp_path: Path) -> None:
         prompt = tmp_path / "p.md"
         prompt.write_text("hello", encoding="utf-8")

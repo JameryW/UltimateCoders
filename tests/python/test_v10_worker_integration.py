@@ -79,6 +79,40 @@ def test_plan_critic_flags_missing_target_after_perception(
     assert "Collect concrete evidence for `missing.py`" in rendered
 
 
+def test_runtime_diagnosis_reads_failed_command_output(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    output = AgentOutput(
+        summary="test failed",
+        success=False,
+        test_output=(
+            "_____________________________ test_calculate _____________________________\n"
+            "test_probe.py:17: in test_calculate\n"
+            "    assert result == expected\n"
+            "E   assert 3 == 4\n"
+            "        expected   = 4\n"
+            "        result     = 3\n"
+        ),
+    )
+
+    monkeypatch.delenv("UC_SWE_DOCTOR", raising=False)
+    assert worker._runtime_diagnosis(output) is None
+
+    monkeypatch.setenv("UC_SWE_DOCTOR", "1")
+    payload = worker._runtime_diagnosis(output)
+    assert payload is not None
+    assert payload["phase"] == "runtime diagnosis"
+    assert payload["divergence_frame"] == "test_probe.py:17: in test_calculate"
+    assert any(item["name"] == "result" for item in payload["snapshots"])
+    assert "[snapshots]" not in payload["runtime_summary"]
+
+
+def test_runtime_diagnosis_skips_successful_or_empty_runs(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    monkeypatch.setenv("UC_SWE_DOCTOR", "1")
+    assert worker._runtime_diagnosis(AgentOutput(success=True, test_output="E assert 1")) is None
+    assert worker._runtime_diagnosis(AgentOutput(success=False, test_output="")) is None
+
+
 def test_drift_hints_use_declared_file_constraints() -> None:
     worker = object.__new__(Worker)
     subtask = SimpleNamespace(file_constraints=["src/a.py", "src/b.py"])
