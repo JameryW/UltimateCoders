@@ -10,7 +10,7 @@ mandate store.
 
 | Area | Modules | Flag | Wired at | State |
 | --- | --- | --- | --- | --- |
-| Boundary contract | `crates/uc-types/src/contract.rs`, `crates/uc-engine/src/lib.rs` | n/a (library type) | planner/engine contract boundary | tested primitive |
+| Boundary contract | `crates/uc-types/src/contract.rs`, `crates/uc-engine/src/lib.rs`, `python/ultimate_coders/agent/boundary_contract.py` | `UC_BOUNDARY_CONTRACT`, `UC_BOUNDARY_CONTRACT_ENFORCE` | worker `_apply_perception_pass` / `_verify_output_boundary` | wired (partial) |
 | PerceptionPass | `python/ultimate_coders/agent/planner.py` | `UC_PERCEPTION_PASS` | worker `_apply_perception_pass` | wired |
 | Plan critic | `python/ultimate_coders/agent/planner_critic.py` | `UC_PLANNER_CRITIC` | worker PerceptionPass preflight | wired (partial) |
 | Prefix context assembly | `python/ultimate_coders/search/context_assembler.py` | `UC_PREFIX_CONTEXT_ASSEMBLY` | worker prompt assembly | wired (partial) |
@@ -38,6 +38,17 @@ file, AST symbol, evidence line, and reason. The engine exposes the challenge
 state (`BoundaryChallengeState`) and outcome; approval can update the contract
 in place. The type is deliberately independent of the existing task-identity
 `agent/contract.py`.
+
+The worker now consumes the same four roles through
+`python/ultimate_coders/agent/boundary_contract.py`: `target_files` from the
+PerceptionPass spec become `editable`, the dependency closure becomes
+`inspect_only`, and unlisted paths fail closed as `inspect_only`. When
+`UC_BOUNDARY_CONTRACT` is on, `_verify_output_boundary` reports changed paths
+that are not editable as a `boundary contract` progress event; with
+`UC_BOUNDARY_CONTRACT_ENFORCE` a violation fails the attempt. This is a Python
+read-model boundary, not the Rust engine hot-update path: `required` and
+`protected` entries are accepted but not inferred automatically, and
+`BoundaryChallengeRequest` adjudication remains unimplemented here.
 
 `PerceptionPass` is a zero-edit proposal-to-spec compiler. It uses the
 Python AST and, where available, Tree-sitter-style call/import metadata to

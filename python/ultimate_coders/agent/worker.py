@@ -2841,6 +2841,15 @@ class Worker:
             if critic_error:
                 success = False
                 error = critic_error
+            boundary_event, boundary_error = self._verify_output_boundary(
+                subtask,
+                output,
+            )
+            if boundary_event is not None:
+                await self._emit_step_event(subtask, "subtask_progress", **boundary_event)
+            if success and boundary_error:
+                success = False
+                error = boundary_error
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
@@ -2901,9 +2910,15 @@ class Worker:
         invokes a model; any failure leaves the original context untouched.
         """
 
+        from ultimate_coders.agent.boundary_contract import (
+            BoundaryContract,
+            boundary_contract_enabled,
+        )
         from ultimate_coders.agent.planner import PerceptionPass, perception_pass_enabled
 
-        if not perception_pass_enabled() or not subtask.description.strip():
+        perception_enabled = perception_pass_enabled()
+        boundary_enabled = boundary_contract_enabled()
+        if not (perception_enabled or boundary_enabled) or not subtask.description.strip():
             return context_block
         try:
             spec = PerceptionPass().compile(
@@ -2914,6 +2929,21 @@ class Worker:
             )
         except Exception:
             logger.debug("perception pass failed for %s", subtask.id[:8], exc_info=True)
+            return context_block
+
+        if boundary_enabled:
+            try:
+                subtask._boundary_contract = BoundaryContract.from_implementation_spec(
+                    spec,
+                    file_constraints=subtask.file_constraints,
+                )
+            except Exception:
+                logger.debug(
+                    "boundary contract build failed for %s",
+                    subtask.id[:8],
+                    exc_info=True,
+                )
+        if not perception_enabled:
             return context_block
 
         lines = [
@@ -3388,6 +3418,57 @@ class Worker:
             "exec_critic_enforced": enforce,
             "exec_critic_reason": result.reason[:500],
         }, error
+
+    def _verify_output_boundary(
+        self,
+        subtask: Subtask,
+        output: AgentOutput,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Check changed files against the worker-side BoundaryContract (#7).
+
+        Opt-in via ``UC_BOUNDARY_CONTRACT``. The contract is built from the
+        PerceptionPass ``ImplementationSpec`` before execution; any changed
+        path that is not ``editable`` is a violation. With
+        ``UC_BOUNDARY_CONTRACT_ENFORCE`` the attempt fails; otherwise the
+        result rides a ``subtask_progress`` event only. Unlisted paths are
+        ``inspect_only`` (fail closed).
+        """
+
+        from ultimate_coders.agent.boundary_contract import (
+            boundary_contract_enforce_enabled,
+        )
+
+        contract = getattr(subtask, "_boundary_contract", None)
+        if contract is None:
+            return None, None
+        changed = [
+            change.file_path
+            for change in (
+                list(output.file_changes) + list(output.failed_file_changes)
+            )
+            if getattr(change, "file_path", "")
+        ]
+        if not changed:
+            return None, None
+        violations = contract.violations(changed)
+        enforce = boundary_contract_enforce_enabled()
+        event: dict[str, Any] = {
+            "phase": "boundary contract",
+            "percent": 0,
+            "boundary_version": int(contract.version),
+            "boundary_editable": list(contract.editable_paths())[:12],
+            "boundary_violations": [item.to_dict() for item in violations[:8]],
+            "boundary_enforced": enforce,
+        }
+        if not violations:
+            return event, None
+        details = "; ".join(
+            f"{item.path}:{item.role.value}" for item in violations[:5]
+        )
+        error = (
+            f"Boundary contract rejected: {details}"[:2000] if enforce else None
+        )
+        return event, error
 
     async def _verify_output_dockerless(
         self,

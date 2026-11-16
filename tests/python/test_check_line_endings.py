@@ -341,7 +341,7 @@ def test_real_repo_is_reconciled() -> None:
         (2593, 2584),  # T72 showcase counts follow the data (ticket only)
         (2594, 2585),  # T73 stalled runtime card (ticket only)
         (2692, 2683),  # V9 architecture modules, tests and map (22 new text files).
-        (2734, 2725),  # V10 phases 2–4 modules, tests, docs and dashboard assets (42 text files).
+        (2736, 2727),  # V10 phases 2–4 modules, tests, docs and dashboard assets (44 text files).
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 
