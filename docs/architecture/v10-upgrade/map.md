@@ -13,7 +13,7 @@ mandate store.
 | Boundary contract | `crates/uc-types/src/contract.rs`, `crates/uc-engine/src/lib.rs` | n/a (library type) | planner/engine contract boundary | tested primitive |
 | PerceptionPass | `python/ultimate_coders/agent/planner.py` | `UC_PERCEPTION_PASS` | worker `_apply_perception_pass` | wired |
 | Plan critic | `python/ultimate_coders/agent/planner_critic.py` | `UC_PLANNER_CRITIC` | worker PerceptionPass preflight | wired (partial) |
-| Prefix context assembly | `python/ultimate_coders/search/context_assembler.py` | `UC_PREFIX_CONTEXT_ASSEMBLY` | prompt assembly boundary | tested primitive |
+| Prefix context assembly | `python/ultimate_coders/search/context_assembler.py` | `UC_PREFIX_CONTEXT_ASSEMBLY` | worker prompt assembly | wired (partial) |
 | Anti-pattern gate | `python/ultimate_coders/acceptance/anti_pattern_gate.py` | `UC_ANTI_PATTERN_GATE` | worker `_verify_output_anti_patterns` | wired |
 | Mutation augmentation | `python/ultimate_coders/acceptance/mutation_augment.py` | `UC_MUTATION_AUGMENT` | acceptance dataset builder | tested primitive |
 | SWE-Prime | `packages/uc-orchestrator/src/rl/swe_prime.ts` | n/a (library) | trajectory distillation caller | tested primitive |
@@ -62,7 +62,14 @@ precision/recall values describe static target coverage only.
 order: immutable system/tool schema, declarative pages and BoundaryContract,
 procedural attempt diffs and verified skills, compacted ACP checkpoints, and
 the working observation tail plus MemCredit snippets. Each `ContextBlock`
-carries a deterministic SHA-256; only a changed suffix is recomputed.
+carries a deterministic SHA-256; only a changed suffix is recomputed. The
+worker projects the already-compiled `ContextManifest` into those slots when
+`UC_PREFIX_CONTEXT_ASSEMBLY` is on, preserving every item exactly once and
+recording `full_sha256`, `prefix_cache_hint`, slot names and token counts on
+the started context summary. Slot stability is monotonic: once a slot has a
+volatile item, later slots are volatile too. The harness still owns the system
+prompt/tool schema and adds it outside this block, so slot 0 is not byte-level
+identical to the final provider prefix yet.
 
 `dashboard/src/lib/failureHeatmap.ts` defines the 7 × 24 failure catalogue (18 deterministic
 modes) and `classifyPtaQuality` / `buildFailureHeatmap`. `dashboard/src/components/FailureHeatmap.tsx`

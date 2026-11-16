@@ -1177,6 +1177,10 @@ class Worker:
                 legacy_style=legacy_style, gateway_truncated=gateway_truncated
             )
             self._last_context_manifest = manifest.summary()
+            assembled_context = self._assembled_context_block(manifest)
+            if assembled_context is not None:
+                context_block, assembly_summary = assembled_context
+                self._last_context_manifest["assembly"] = assembly_summary
             # Audit trail: the same summary that rides the started event also
             # lands in the runtime state, so the "why was the prompt smaller"
             # question outlives the event stream. The gateway path records one
@@ -3004,6 +3008,75 @@ class Worker:
             passed=not errors,
             summary=summary or report.summary,
         )
+
+    def _assembled_context_block(
+        self, manifest: Any
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Project a compiled manifest into the five fixed-prefix slots.
+
+        Opt-in via ``UC_PREFIX_CONTEXT_ASSEMBLY``. This does not fetch or
+        drop content: every manifest item is placed in exactly one slot, and
+        the existing context compiler still owns budgeting and tier priority.
+        A slot is marked stable only when every item in it is stable, and the
+        stable flag is monotonic across slot order so a volatile search hit
+        cannot sit inside a cached prefix.
+        """
+
+        from ultimate_coders.agent.context_compiler import Tier
+        from ultimate_coders.search.context_assembler import (
+            CHECKPOINT,
+            DECLARATIVE,
+            OBSERVATION,
+            PROCEDURAL,
+            SYSTEM_SCHEMA,
+            ContextAssembler,
+            ContextSlot,
+            context_assembler_enabled,
+        )
+
+        if not context_assembler_enabled():
+            return None
+        groups: tuple[tuple[str, tuple[Any, ...]], ...] = (
+            (SYSTEM_SCHEMA, (Tier.POLICY,)),
+            (DECLARATIVE, (Tier.EVIDENCE,)),
+            (PROCEDURAL, (Tier.TRACE,)),
+            (CHECKPOINT, (Tier.MEMORY,)),
+            (OBSERVATION, (Tier.STATE, Tier.BACKGROUND)),
+        )
+        items = list(getattr(manifest, "items", ()) or ())
+        slots: list[Any] = []
+        stable_allowed = True
+        for slot_name, tiers in groups:
+            group = [item for item in items if getattr(item, "tier", None) in tiers]
+            if not group:
+                continue
+            content = "\n\n".join(
+                str(getattr(item, "content", "") or "").strip() for item in group
+            ).strip()
+            if not content:
+                continue
+            stable = stable_allowed and all(
+                bool(getattr(item, "stable", False)) for item in group
+            )
+            if not stable:
+                stable_allowed = False
+            slots.append(ContextSlot(slot_name, content, stable=stable))
+        if not slots:
+            return None
+        assembled = ContextAssembler().assemble(
+            slots,
+            budget_tokens=self._context_budget_tokens(),
+        )
+        summary = {
+            "slots": [block.slot for block in assembled.blocks],
+            "full_sha256": assembled.full_sha256,
+            "prefix_cache_hint": assembled.prefix_cache_hint,
+            "stable_tokens": assembled.stable_tokens,
+            "total_tokens": assembled.total_tokens,
+            "truncated": assembled.truncated,
+            "over_budget": assembled.over_budget,
+        }
+        return assembled.render(), summary
 
     async def _verify_output_dockerless(
         self,

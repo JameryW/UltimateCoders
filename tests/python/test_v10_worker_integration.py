@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+from ultimate_coders.agent.context_compiler import ContextItem, ContextManifest, Tier
 from ultimate_coders.agent.sandbox import AgentOutput
 from ultimate_coders.agent.types import FileChange
 from ultimate_coders.agent.worker import Worker, _parse_sandbox_line
@@ -141,6 +142,41 @@ def test_drift_advisor_line_becomes_task_progress() -> None:
     assert data["phase"] == "drift advisor"
     assert data["drift_signals"] == ["edit_failures"]
     assert data["drift_prompt"] == "Stop editing and re-read."
+
+
+def test_prefix_context_assembly_projects_manifest_slots(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    monkeypatch.setattr(worker, "_context_budget_tokens", lambda: 2000)
+    manifest = ContextManifest(
+        items=[
+            ContextItem("policy-1", Tier.POLICY, "policy text", stable=True),
+            ContextItem("evidence-1", Tier.EVIDENCE, "evidence text"),
+            ContextItem("trace-1", Tier.TRACE, "trace text"),
+            ContextItem("state-1", Tier.STATE, "state text"),
+        ],
+        budget_tokens=2000,
+    )
+
+    monkeypatch.delenv("UC_PREFIX_CONTEXT_ASSEMBLY", raising=False)
+    assert worker._assembled_context_block(manifest) is None
+
+    monkeypatch.setenv("UC_PREFIX_CONTEXT_ASSEMBLY", "1")
+    rendered, summary = worker._assembled_context_block(manifest)
+    assert summary["slots"] == [
+        "system_schema",
+        "declarative",
+        "procedural",
+        "observation",
+    ]
+    assert summary["prefix_cache_hint"]
+    assert summary["stable_tokens"] > 0
+    assert rendered.index("policy text") < rendered.index("evidence text")
+    assert rendered.index("evidence text") < rendered.index("trace text")
+    assert rendered.index("trace text") < rendered.index("state text")
+    assert all(
+        text in rendered
+        for text in ("policy text", "evidence text", "trace text", "state text")
+    )
 
 
 async def test_dockerless_verifier_reports_changed_signature(tmp_path: Path, monkeypatch) -> None:
