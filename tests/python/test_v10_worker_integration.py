@@ -290,6 +290,120 @@ async def test_retrace_verifier_reports_diagnostic(tmp_path: Path, monkeypatch) 
     assert isinstance(report.repair_instruction, str)
 
 
+def test_exec_critic_artifact_gate_is_opt_in_and_enforced(monkeypatch) -> None:
+    valid = {
+        "test_patch": (
+            "diff --git a/tests/test_calc.py b/tests/test_calc.py\n"
+            "--- a/tests/test_calc.py\n"
+            "+++ b/tests/test_calc.py\n"
+            "@@ -1 +1 @@\n"
+            "-assert add(1, 2) == 3\n"
+            "+assert add(1, 2) == 4\n"
+        ),
+        "test_command": "pytest -q tests/test_calc.py",
+        "test_contract": {"target": "calc.py"},
+        "base_clean_fail": True,
+        "hidden": True,
+        "frozen": True,
+    }
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        agent_config={"test_artifact": {**valid, "enforce": True}},
+    )
+
+    monkeypatch.delenv("UC_EXEC_CRITIC", raising=False)
+    assert worker._exec_critic_preflight(subtask) == (None, None)
+
+    monkeypatch.setenv("UC_EXEC_CRITIC", "1")
+    event, error = worker._exec_critic_preflight(subtask)
+    assert error is None
+    assert event is not None
+    assert event["exec_critic_status"] == "ok"
+    assert event["exec_critic_passed"] is True
+    assert subtask._exec_critic_artifact is not None
+
+
+def test_exec_critic_artifact_rejects_invalid_artifact_when_enforced(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        agent_config={"test_artifact": {"test_patch": "", "enforce": True}},
+    )
+    monkeypatch.setenv("UC_EXEC_CRITIC", "1")
+
+    event, error = worker._exec_critic_preflight(subtask)
+    assert event is not None
+    assert event["exec_critic_status"] == "hard_fail"
+    assert error is not None
+    assert "test artifact rejected" in error.lower()
+
+
+async def test_exec_critic_protects_declared_tests(tmp_path: Path, monkeypatch) -> None:
+    test_file = tmp_path / "tests" / "test_calc.py"
+    test_file.parent.mkdir()
+    test_file.write_text("def test_add():\n    assert 1 + 1 == 2\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=tmp_path, check=True)
+
+    test_file.write_text("def test_add():\n    pass\n", encoding="utf-8")
+    output = AgentOutput(file_changes=[FileChange(file_path="tests/test_calc.py")])
+    worker = object.__new__(Worker)
+    monkeypatch.setenv("UC_EXEC_CRITIC", "1")
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        agent_config={},
+        _exec_critic_artifact=SimpleNamespace(
+            test_patch=(
+                "diff --git a/tests/test_calc.py b/tests/test_calc.py\n"
+                "--- a/tests/test_calc.py\n"
+                "+++ b/tests/test_calc.py\n"
+            )
+        ),
+        _exec_critic_enforce=True,
+    )
+
+    event, error = await worker._verify_output_exec_critic(subtask, str(tmp_path), output)
+    assert event is not None
+    assert event["exec_critic_passed"] is False
+    assert event["exec_critic_status"] == "hard_fail"
+    assert error is not None
+    assert "may not modify protected test files" in error
+
+
+async def test_exec_critic_allows_source_only_patch(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "calc.py"
+    source.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    test_file = tmp_path / "tests" / "test_calc.py"
+    test_file.parent.mkdir()
+    test_file.write_text("def test_add():\n    assert 1 + 1 == 2\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=tmp_path, check=True)
+
+    source.write_text("def add(a, b):\n    return b + a\n", encoding="utf-8")
+    output = AgentOutput(file_changes=[FileChange(file_path="calc.py")])
+    worker = object.__new__(Worker)
+    monkeypatch.setenv("UC_EXEC_CRITIC", "1")
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        agent_config={},
+        _exec_critic_artifact=SimpleNamespace(test_patch=""),
+        _exec_critic_enforce=True,
+    )
+
+    event, error = await worker._verify_output_exec_critic(subtask, str(tmp_path), output)
+    assert event is not None
+    assert event["exec_critic_passed"] is True
+    assert event["exec_critic_status"] == "ok"
+    assert error is None
+
+
 async def test_anti_pattern_gate_rejects_deleted_assertion(tmp_path: Path, monkeypatch) -> None:
     test_file = tmp_path / "tests" / "test_calc.py"
     test_file.parent.mkdir()

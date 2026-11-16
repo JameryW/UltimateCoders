@@ -19,7 +19,7 @@ mandate store.
 | SWE-Prime | `packages/uc-orchestrator/src/rl/swe_prime.ts` | n/a (library) | trajectory distillation caller | tested primitive |
 | Failure heatmap | `dashboard/src/lib/failureHeatmap.ts`, `dashboard/src/components/FailureHeatmap.tsx` | n/a (presentation) | dashboard overview failure panel | wired (overview feed) |
 | AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary | wired (local harness tools) |
-| ExecCritic | `python/ultimate_coders/acceptance/exec_critic.py` | `UC_EXEC_CRITIC` | acceptance test generation/repair | tested primitive |
+| ExecCritic | `python/ultimate_coders/acceptance/exec_critic.py` | `UC_EXEC_CRITIC` | worker test-artifact gate | wired (partial) |
 | RETRACE | `python/ultimate_coders/acceptance/retrace_verifier.py` | `UC_RETRACE_VERIFIER` | worker diagnostic | wired (diagnostic) |
 | Drift monitor | `python/ultimate_coders/agent/drift_monitor.py` | `UC_DRIFT_MONITOR` | local-harness loop (`drift_advisor`) | wired (local harness) |
 | Cumulative regression | `crates/uc-engine/src/dag.rs` | n/a (library type) | DAG completion gate | tested primitive |
@@ -94,7 +94,16 @@ semantic-mutation candidates and computes killed-mutant percentage.
 `exec_critic` separates `TestGenNode` from `SourceRepairNode`: generated
 tests are Gold-free, must clean-fail on the base tree, and are frozen before
 source repair; repair feedback is capped at 6,000 characters and a protected
-test change raises `ProtectedTestError`.
+test change raises `ProtectedTestError`. The worker consumes an optional
+`agent_config["test_artifact"]` when `UC_EXEC_CRITIC` is on: `TestGenNode`
+validates the declared test patch, command, JSON contract, hidden/frozen flags,
+and clean-base evidence before any source edit. An invalid artifact is a
+diagnostic by default; `"enforce": true` fails the subtask before it starts.
+A valid artifact is retained and `SourceRepairNode` rejects any changed source
+patch that touches the artifact's protected test files. This is a
+declared-artifact boundary, not test generation and not an Oracle: no runner is
+invented here, and `retryable` is false only for an enforced preflight
+rejection.
 
 `retrace_verifier` builds a forward rationale from the issue and trajectory,
 a blind backward reconstruction from the patch/AST without the issue, and

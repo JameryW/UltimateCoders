@@ -44,6 +44,7 @@ __all__ = [
     "TestArtifact",
     "TestGenNode",
     "exec_critic_enabled",
+    "is_protected_test_path",
 ]
 
 EXEC_CRITIC_ENV = "UC_EXEC_CRITIC"
@@ -440,3 +441,9 @@ def _protected_paths_in_patch(patch: str) -> set[str]:
 def _is_protected_test_path(path: str) -> bool:
     normalized = path.replace("\\", "/").lstrip("./")
     return any(pattern.search(normalized) for pattern in PROTECTED_TEST_PATTERNS)
+
+
+def is_protected_test_path(path: str) -> bool:
+    """Return whether *path* is part of the protected test surface."""
+
+    return _is_protected_test_path(path)

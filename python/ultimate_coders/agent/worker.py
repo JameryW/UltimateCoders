@@ -2641,6 +2641,22 @@ class Worker:
             # block the existing prompt path.
             context_block = self._apply_perception_pass(subtask, context_block, working_dir)
 
+            # Optional ExecCritic acceptance contract. Validation happens
+            # before any source edit; an enforced invalid artifact fails the
+            # subtask without launching the agent.
+            critic_event, critic_error = self._exec_critic_preflight(subtask)
+            if critic_event is not None:
+                await self._emit_step_event(subtask, "subtask_progress", **critic_event)
+            if critic_error:
+                return SubtaskResult(
+                    subtask_id=subtask.id,
+                    worker_id=self.worker_id,
+                    summary="ExecCritic rejected the issued test artifact",
+                    success=False,
+                    retryable=False,
+                    error=critic_error,
+                )
+
             # Streaming callback: parse each stdout line and emit events
             async def _on_stdout_line(line: str) -> None:
                 """Parse sandbox stdout line and emit real-time events."""
@@ -2815,6 +2831,16 @@ class Worker:
                     retrace_contradictory=list(retrace.contradictory)[:8],
                     retrace_repair=retrace.repair_instruction[:500],
                 )
+            critic_event, critic_error = await self._verify_output_exec_critic(
+                subtask,
+                working_dir,
+                output,
+            )
+            if critic_event is not None:
+                await self._emit_step_event(subtask, "subtask_progress", **critic_event)
+            if critic_error:
+                success = False
+                error = critic_error
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
@@ -3227,6 +3253,141 @@ class Worker:
                 exc_info=True,
             )
             return None
+
+    def _exec_critic_preflight(
+        self,
+        subtask: Subtask,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Validate an optional ExecCritic test artifact declared on the task.
+
+        Opt-in via ``UC_EXEC_CRITIC``. A task may carry
+        ``agent_config["test_artifact"]`` with the same fields TestGenNode
+        consumes (``test_patch``, ``test_command``, ``test_contract``,
+        ``base_clean_fail``, ``hidden``, ``frozen``). An invalid artifact is
+        diagnostic by default; ``"enforce": true`` makes it fail the subtask
+        before any source edit. A valid artifact is retained for the
+        source-repair protection check after the run.
+        """
+
+        from ultimate_coders.acceptance.exec_critic import (
+            STATUS_OK,
+            TestGenNode,
+            exec_critic_enabled,
+        )
+
+        subtask._exec_critic_artifact = None  # type: ignore[attr-defined]
+        subtask._exec_critic_enforce = False  # type: ignore[attr-defined]
+        if not exec_critic_enabled():
+            return None, None
+        config = subtask.agent_config if isinstance(subtask.agent_config, dict) else {}
+        raw = config.get("test_artifact")
+        if not isinstance(raw, dict):
+            return None, None
+        enforce = bool(raw.get("enforce", False))
+        artifact = TestGenNode().generate(subtask.id, {}, raw)
+        event = {
+            "phase": "exec critic",
+            "percent": 0,
+            "exec_critic_status": artifact.status,
+            "exec_critic_passed": artifact.status == STATUS_OK,
+            "exec_critic_enforced": enforce,
+            "exec_critic_reason": artifact.reason[:500],
+        }
+        if artifact.status != STATUS_OK:
+            if enforce:
+                reason = f"ExecCritic test artifact rejected ({artifact.status}): {artifact.reason}"
+                return event, reason[:2000]
+            return event, None
+        subtask._exec_critic_artifact = artifact  # type: ignore[attr-defined]
+        subtask._exec_critic_enforce = enforce  # type: ignore[attr-defined]
+        return event, None
+
+    async def _verify_output_exec_critic(
+        self,
+        subtask: Subtask,
+        working_dir: str | None,
+        output: AgentOutput,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Keep a declared ExecCritic artifact's tests protected.
+
+        A declared, valid test artifact belongs to the acceptance contract.
+        The source repair path may not modify those test files: the changed
+        worktree patch is checked through ``SourceRepairNode.repair``.
+        Diagnostic unless the task set ``"enforce": true``.
+        """
+
+        from ultimate_coders.acceptance.exec_critic import (
+            ProtectedTestError,
+            SourceRepairNode,
+            is_protected_test_path,
+        )
+
+        artifact = getattr(subtask, "_exec_critic_artifact", None)
+        enforce = bool(getattr(subtask, "_exec_critic_enforce", False))
+        if artifact is None or not working_dir:
+            return None, None
+        changed_paths = [
+            fc.file_path
+            for fc in list(output.file_changes) + list(output.failed_file_changes)
+            if fc.file_path
+        ]
+        protected = sorted({path for path in changed_paths if is_protected_test_path(path)})
+        if protected:
+            reason = "source repair may not modify protected test files: " + ", ".join(protected)
+            error = f"ExecCritic test protection rejected: {reason}"[:2000] if enforce else None
+            return {
+                "phase": "exec critic",
+                "percent": 0,
+                "exec_critic_status": "hard_fail",
+                "exec_critic_passed": False,
+                "exec_critic_enforced": enforce,
+                "exec_critic_reason": reason[:500],
+            }, error
+        try:
+            patch = await self._changed_patch(working_dir, output)
+        except Exception:
+            logger.debug("exec-critic patch read failed", exc_info=True)
+            return None, None
+        if patch is None:
+            return {
+                "phase": "exec critic",
+                "percent": 0,
+                "exec_critic_status": "ok",
+                "exec_critic_passed": True,
+                "exec_critic_enforced": enforce,
+                "exec_critic_reason": "no changed source patch",
+            }, None
+        try:
+            result = SourceRepairNode().repair(
+                subtask.id,
+                patch,
+                test_patch=artifact.test_patch,
+            )
+        except ProtectedTestError as exc:
+            reason = str(exc)[:500]
+            error = f"ExecCritic test protection rejected: {reason}"[:2000] if enforce else None
+            return {
+                "phase": "exec critic",
+                "percent": 0,
+                "exec_critic_status": "hard_fail",
+                "exec_critic_passed": False,
+                "exec_critic_enforced": enforce,
+                "exec_critic_reason": reason,
+            }, error
+        except Exception:
+            logger.debug("exec-critic source repair failed", exc_info=True)
+            return None, None
+        error = None
+        if enforce and not result.ok:
+            error = f"ExecCritic source repair rejected: {result.reason}"[:2000]
+        return {
+            "phase": "exec critic",
+            "percent": 0,
+            "exec_critic_status": result.status,
+            "exec_critic_passed": result.ok,
+            "exec_critic_enforced": enforce,
+            "exec_critic_reason": result.reason[:500],
+        }, error
 
     async def _verify_output_dockerless(
         self,
