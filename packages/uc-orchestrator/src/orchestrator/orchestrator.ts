@@ -25,6 +25,7 @@ import { TaskStore, type PersistedTask } from "./task-store";
 import { ControlSignalSubscriber, type ControlSignalHandler } from "./control-signal-subscriber";
 import { OrchestratorEventEmitter } from "./events";
 import type { OrchestratorEvents } from "./events";
+import { TaskTrajectoryCollector, swePrimeEnabled } from "../rl/task_trajectory";
 import { sleepBackoff } from "./backoff";
 
 /** Delay before starting a fresh WatchTask recovery cycle after exhaustion. */
@@ -278,6 +279,8 @@ export class UCOrchestrator {
 	private watchTaskRecoveryTimer?: ReturnType<typeof setTimeout>;
 	/** Internal event emitter — decouples orchestration from presentation */
 	readonly events = new OrchestratorEventEmitter();
+	/** Bounded SWE-Prime diagnostic buffer fed by the live progress stream. */
+	private readonly trajectoryCollector = new TaskTrajectoryCollector();
 	// ── Claim loop state (T6 #642 C4) ──
 	/** Interval driving claim ticks; started lazily, self-stops when idle. */
 	private claimLoopTimer?: ReturnType<typeof setInterval>;
@@ -326,6 +329,12 @@ export class UCOrchestrator {
 		this.store = new TaskStore(typeof ws === "string" ? ws : process.cwd());
 		// ponytail: subscribe to NATS control events (pause/resume/cancel from TUI/Dashboard)
 		this.controlSubscriber = new ControlSignalSubscriber(this as ControlSignalHandler, this.bridge);
+		// SWE-Prime #11: collect the same progress stream the UI sees so task
+		// completion can distil a real segment/loss-mask summary. This is
+		// diagnostic only; it never changes execution.
+		this.events.on("subtask_progress", (event) => {
+			if (swePrimeEnabled()) this.trajectoryCollector.record(event);
+		});
 	}
 
 	/**
@@ -1037,6 +1046,18 @@ export class UCOrchestrator {
 			const failed = task.subtasks.filter((s) => s.status === "failed");
 			task.error = `${failed.length} subtask(s) failed: ${failed.map((f) => f.id).join(", ")}`;
 		}
+		if (swePrimeEnabled()) {
+			const trajectory = this.trajectoryCollector.distill(task.id, {
+				keepPositiveOnly: terminal === "completed",
+			});
+			if (trajectory !== null) {
+				this.pi.logger.info(
+					`Task ${task.id} SWE-Prime trajectory: ${trajectory.keptSegments}/${trajectory.segments} segments kept ` +
+						`(${Math.round(trajectory.keptRatio * 100)}%), kinds=${trajectory.kinds.join(",")}`,
+				);
+			}
+		}
+		this.trajectoryCollector.clear(task.id);
 		// ponytail: F11 — widget teardown is owned by extension.ts's task_complete
 		// handler (setWidget(key, undefined)); the orchestrator never writes the
 		// extension-owned widget key.
