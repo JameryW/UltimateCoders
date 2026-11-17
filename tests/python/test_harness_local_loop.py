@@ -81,6 +81,21 @@ class TestAdapterRequest:
         assert request["env_vars"]["UC_DRIFT_REQUIRED_FILES"] == "src/a.py"
         os.unlink(request["_temp_files"][0])
 
+    def test_credential_lease_becomes_child_env(self, tmp_path: Path) -> None:
+        cfg = SandboxConfig(agent="local-harness", project_path=str(tmp_path))
+        request = LocalLoopHarnessAdapter().build_request(
+            "p",
+            str(tmp_path),
+            cfg,
+            subtask_config={
+                "_uc_credential_lease": "lease-token",
+                "_uc_credential_broker": "https://broker.internal",
+            },
+        )
+        assert request["env_vars"]["UC_CREDENTIAL_LEASE"] == "lease-token"
+        assert request["env_vars"]["UC_CREDENTIAL_BROKER"] == "https://broker.internal"
+        os.unlink(request["_temp_files"][0])
+
 
 class TestAdapterParse:
     def _parse(self, stdout: str, **kw: object) -> object:

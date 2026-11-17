@@ -768,3 +768,38 @@ def test_test_execution_enforce_fails_closed_on_runner_error(monkeypatch, tmp_pa
     assert "Test execution gate rejected" in error
     assert "pytest missing" in error
 
+
+def test_credential_preflight_consumes_a_preissued_lease(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        required_capabilities=["code"],
+    )
+    monkeypatch.delenv("UC_CREDENTIAL_BROKER", raising=False)
+    assert worker._credential_preflight(subtask) == ({}, None, None)
+
+    monkeypatch.setenv("UC_CREDENTIAL_BROKER", "https://broker.internal")
+    monkeypatch.setenv("UC_CREDENTIAL_LEASE", "lease-token")
+    env, event, error = worker._credential_preflight(subtask)
+    assert error is None
+    assert env == {
+        "_uc_credential_lease": "lease-token",
+        "_uc_credential_broker": "https://broker.internal",
+    }
+    assert event is not None
+    assert event["credential_status"] == "leased"
+    assert event["credential_lease_present"] is True
+    assert "lease-token" not in json.dumps(event)
+
+
+def test_credential_preflight_fails_closed_when_lease_is_missing(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(id="subtask-1", required_capabilities=["code"])
+    monkeypatch.setenv("UC_CREDENTIAL_BROKER", "https://broker.internal")
+    monkeypatch.delenv("UC_CREDENTIAL_LEASE", raising=False)
+
+    env, event, error = worker._credential_preflight(subtask)
+    assert env == {}
+    assert error is not None and "UC_CREDENTIAL_LEASE" in error
+    assert event is not None and event["credential_status"] == "invalid"
+    assert event["credential_lease_present"] is False

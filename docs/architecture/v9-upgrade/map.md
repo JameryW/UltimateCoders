@@ -15,7 +15,7 @@ a second knowledge authority, or a second mandate store.
 | Attempt evolution | `evolution` | `UC_AST_EVOLUTION` | recovery context | wired |
 | Worker context folding | `context_folding` | `UC_ACP_FOLDING` | local harness loop | wired |
 | Process acceptance | `process_verifier` | `UC_PROCESS_VERIFIER_ENFORCE` | worker success path | wired |
-| Sandbox credentials | `credential_broker` | `UC_CREDENTIAL_BROKER` | sandbox environment contract | primitive + tests |
+| Sandbox credentials | `credential_broker` | `UC_CREDENTIAL_BROKER` | worker preflight → local-harness child env | wired (pre-issued lease consumer; external broker required) |
 | Trajectory export | `trajectory_export` | `UC_TRAJECTORY_EXPORT` + `UC_TRAJECTORY_EXPORT_DIR` | caller-owned exporter | primitive + tests |
 
 ## Scheduling and retry
@@ -97,6 +97,16 @@ a `SandboxNetworkPolicy` that defaults to no egress and no connect-back. The
 policy's `to_env()` form is the contract a sandbox launcher consumes; host-side
 secret injection must stay at the broker, never in the child environment.
 
+The worker now consumes a **pre-issued** lease: when
+`UC_CREDENTIAL_BROKER` is enabled it requires
+`UC_CREDENTIAL_LEASE` and a broker URL, forwards both to a `local-harness` /
+`local-llm` child through `_uc_credential_lease` / `_uc_credential_broker`, and
+fails closed if either is absent. It does not mint or verify leases, never sees
+the broker's signing secret, and emits a `credential lease` progress event that
+reports only presence/capability metadata, never the token. This is an
+environment contract, not kernel isolation; the external broker/proxy must
+enforce it.
+
 `trajectory_export` writes redacted TITO JSONL records
 (`token_id`, `logprob`, `loss_mask`) with bounded rotation, and pairs failed and
 rescued attempts. Token ids and logprobs are only available from the inference
@@ -121,6 +131,9 @@ Verification:
 
 - No kernel-level network isolation is claimed by `SandboxNetworkPolicy`; it is
   an explicit environment contract for the sandbox launcher.
+- The worker does not run a credential broker; it only forwards a pre-issued
+  lease. Lease issuance, signing-key custody and network enforcement belong to
+  the external broker/proxy.
 - No new knowledge database, entity merge, or authority service.
 - No timer thread or event bus in the promotion primitive.
 - No synthetic token ids or logprobs in trajectory records.

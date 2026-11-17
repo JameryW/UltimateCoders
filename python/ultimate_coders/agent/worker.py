@@ -69,6 +69,7 @@ from ultimate_coders.agent.types import (
     WorkflowStep,
 )
 from ultimate_coders.agent.workspace import WorkspaceHandle, WorkspaceManager
+from ultimate_coders.architecture.credential_broker import credential_broker_enabled
 from ultimate_coders.architecture.mandate import (
     Mandate,
     MandateError,
@@ -895,6 +896,46 @@ class Worker:
             "_uc_radio_graph_id": graph_id,
             "_uc_radio_node_id": node_id,
         }
+
+    def _credential_preflight(
+        self, subtask: Subtask
+    ) -> tuple[dict[str, str], dict[str, Any] | None, str | None]:
+        """Consume a pre-issued sandbox credential lease, never mint one.
+
+        The broker owns issuance and verification. This worker only forwards a
+        short-lived lease and broker URL to a local-harness child when the
+        operator explicitly enabled the contract; missing inputs fail closed.
+        """
+
+        if not credential_broker_enabled():
+            return {}, None, None
+
+        lease = os.environ.get("UC_CREDENTIAL_LEASE", "").strip()
+        broker = os.environ.get("UC_CREDENTIAL_BROKER", "").strip()
+        capabilities = [
+            str(cap) for cap in (subtask.required_capabilities or []) if str(cap).strip()
+        ]
+        event: dict[str, Any] = {
+            "phase": "credential lease",
+            "percent": 0,
+            "credential_status": "leased" if lease and broker else "invalid",
+            "credential_lease_present": bool(lease),
+            "credential_broker": broker[:200],
+            "credential_capabilities": capabilities[:8],
+        }
+        if not lease:
+            return {}, event, "Credential broker enabled but UC_CREDENTIAL_LEASE is not set"
+        if not broker or broker.lower() in {"1", "true", "yes", "on"}:
+            return (
+                {},
+                event,
+                "Credential broker enabled but UC_CREDENTIAL_BROKER is not a broker URL",
+            )
+        env = {
+            "_uc_credential_lease": lease,
+            "_uc_credential_broker": broker,
+        }
+        return env, event, None
 
     def _resolve_agent_config(self, subtask: Subtask) -> dict[str, Any]:
         """Derive agent_config for a subtask: explicit > capability match > type template.
@@ -2631,6 +2672,22 @@ class Worker:
                 error=mandate_error,
             )
 
+        # Optional pre-issued sandbox credential lease. The broker is the
+        # issuer/verifier; this hop only forwards its short-lived contract.
+        credential_env, credential_event, credential_error = self._credential_preflight(subtask)
+        if credential_event is not None:
+            await self._emit_step_event(subtask, "subtask_progress", **credential_event)
+        if credential_error:
+            return SubtaskResult(
+                subtask_id=subtask.id,
+                worker_id=self.worker_id,
+                summary="Credential lease preflight failed",
+                success=False,
+                retryable=False,
+                error=credential_error,
+            )
+        subtask._credential_env = credential_env  # type: ignore[attr-defined]
+
         # Declare edit intent for conflict tracking
         declared_files: list[str] = []
         if subtask.file_constraints:
@@ -2758,6 +2815,7 @@ class Worker:
                 if str(subtask._last_agent) in ("local-harness", "local-llm"):
                     agent_config.update(self._drift_hints(subtask))
                     agent_config.update(self._radio_hints(subtask))
+                    agent_config.update(getattr(subtask, "_credential_env", {}) or {})
                 output: AgentOutput = await self._sandbox_manager.execute(
                     prompt,
                     working_dir=working_dir,
@@ -4267,6 +4325,7 @@ class Worker:
                 **(merged_cfg or {}),
                 **self._drift_hints(subtask),
                 **self._radio_hints(subtask),
+                **(getattr(subtask, "_credential_env", {}) or {}),
             }
         if step.agent in ("metainfer", "inference-infra"):
             merged_cfg = {

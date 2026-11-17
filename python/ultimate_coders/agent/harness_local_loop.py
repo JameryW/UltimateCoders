@@ -76,6 +76,8 @@ DRIFT_REQUIRED_FILES_ENV = "UC_DRIFT_REQUIRED_FILES"
 RADIO_GRAPH_ENV = "UC_RADIO_GRAPH_ID"
 RADIO_NODE_ENV = "UC_RADIO_NODE_ID"
 RADIO_INBOX_ENV = "UC_RADIO_INBOX_JSON"
+CREDENTIAL_LEASE_ENV = "UC_CREDENTIAL_LEASE"
+CREDENTIAL_BROKER_ENV = "UC_CREDENTIAL_BROKER"
 TRACE_LOGPROBS_ENV = "UC_TRACE_LOGPROBS"
 MAX_TURN_LIKELIHOODS = 64
 
@@ -240,6 +242,8 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             ("_uc_radio_graph_id", RADIO_GRAPH_ENV),
             ("_uc_radio_node_id", RADIO_NODE_ENV),
             ("_uc_radio_inbox_json", RADIO_INBOX_ENV),
+            ("_uc_credential_lease", CREDENTIAL_LEASE_ENV),
+            ("_uc_credential_broker", CREDENTIAL_BROKER_ENV),
         ):
             value = task_config.get(config_key)
             if value:

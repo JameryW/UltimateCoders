@@ -267,6 +267,8 @@ def test_network_policy_egress_without_allowlist_and_connect_back() -> None:
         ("true", True),
         (" YES ", True),
         ("on", True),
+        ("https://broker.test", True),
+        ("http://broker.local:8080", True),
         ("0", False),
         ("false", False),
         ("", False),

@@ -255,9 +255,15 @@ class SandboxNetworkPolicy:
 
 
 def credential_broker_enabled() -> bool:
-    """Return whether credential brokering is enabled via ``UC_CREDENTIAL_BROKER``."""
+    """Return whether credential brokering is enabled via ``UC_CREDENTIAL_BROKER``.
 
-    return os.environ.get(_BROKER_ENABLED_ENV, "").strip().lower() in _TRUTHY
+    ``CredentialLease.to_env()`` puts the broker URL in this variable, so a URL
+    is itself an enabling value; the boolean forms stay supported for launchers
+    that only toggle the contract.
+    """
+
+    value = os.environ.get(_BROKER_ENABLED_ENV, "").strip()
+    return value.lower() in _TRUTHY or value.startswith(("http://", "https://"))
 
 
 def _is_secret_env_key(key: str) -> bool:
