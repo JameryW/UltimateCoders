@@ -2872,6 +2872,9 @@ class Worker:
                     retrace_contradictory=list(retrace.contradictory)[:8],
                     retrace_repair=retrace.repair_instruction[:500],
                 )
+            test_event = await self._test_execution_event(working_dir, subtask)
+            if test_event is not None:
+                await self._emit_step_event(subtask, "subtask_progress", **test_event)
             acceptance_event = self._acceptance_scores_event(subtask)
             if acceptance_event is not None:
                 await self._emit_step_event(
@@ -3754,6 +3757,54 @@ class Worker:
                 exc_info=True,
             )
             return None
+
+    async def _test_execution_event(
+        self,
+        working_dir: str | None,
+        subtask: Subtask,
+    ) -> dict[str, Any] | None:
+        """Run a declared pytest command on HEAD and the working tree.
+
+        Opt-in via ``UC_TEST_EXECUTION``. This is the observed counterpart to
+        the declared acceptance scores: it reports real F2P/P2P data parsed
+        from JUnit XML, never inferred values. A missing runner, non-pytest
+        command, or timeout produces a diagnostic event, not a task failure.
+        """
+
+        from ultimate_coders.acceptance.test_execution import (
+            run_test_delta,
+            test_execution_enabled,
+        )
+
+        if not test_execution_enabled() or not working_dir:
+            return None
+        raw = subtask.agent_config.get("test_execution")
+        if not isinstance(raw, dict):
+            return None
+        command = raw.get("command")
+        if not command:
+            return None
+        timeout = raw.get("timeout_seconds", 120)
+        try:
+            delta = await asyncio.to_thread(
+                run_test_delta,
+                working_dir,
+                command,
+                timeout_seconds=float(timeout),
+            )
+        except Exception as exc:  # noqa: BLE001 - diagnostic, never fail the subtask
+            return {
+                "phase": "test execution",
+                "percent": 0,
+                "test_execution_status": "error",
+                "test_execution_reason": f"{type(exc).__name__}: {exc}"[:500],
+            }
+        return {
+            "phase": "test execution",
+            "percent": 0,
+            "test_execution_status": "ok",
+            **delta.to_dict(),
+        }
 
     async def _verify_output_process(
         self,

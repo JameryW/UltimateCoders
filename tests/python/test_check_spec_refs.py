@@ -1020,7 +1020,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # answering (T73/ticket 73 + v8 map line + the new mode, badge, label,
     # polling gate and CTA note cited by the ticket and its tests)
     # (994 -> 998); unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1408
+    # 2026-11-17 observed test execution diagnostic names
+    # acceptance/test_execution.py in the v10 map row and paragraph
+    # (1408 -> 1410); all resolved, unclassified stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1410
 
 
 def test_real_corpus_has_no_false_content_mismatch():

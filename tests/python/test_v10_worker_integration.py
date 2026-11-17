@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
@@ -647,4 +648,53 @@ def test_skill_card_requires_stage_evidence(monkeypatch) -> None:
     assert event is not None
     assert event["skill_passed"] is False
     assert event["skill_failed_stage"] == "replay"
+
+
+def test_test_execution_event_reports_observed_delta(monkeypatch, tmp_path: Path) -> None:
+    from ultimate_coders.acceptance import test_execution
+
+    class FakeDelta:
+        def to_dict(self):
+            return {
+                "pass_rate": 0.75,
+                "f2p_rate": 0.5,
+                "p2p_rate": 1.0,
+                "f2p": ["test_mod::test_fix"],
+                "p2p": ["test_mod::test_stable"],
+            }
+
+    monkeypatch.setattr(test_execution, "test_execution_enabled", lambda: True)
+    monkeypatch.setattr(test_execution, "run_test_delta", lambda *args, **kwargs: FakeDelta())
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        parent_id="task-1",
+        agent_config={"test_execution": {"command": ["pytest", "-q"]}},
+    )
+
+    event = asyncio.run(worker._test_execution_event(str(tmp_path), subtask))
+    assert event is not None
+    assert event["phase"] == "test execution"
+    assert event["test_execution_status"] == "ok"
+    assert event["pass_rate"] == 0.75
+    assert event["f2p_rate"] == 0.5
+
+    monkeypatch.setattr(
+        test_execution,
+        "run_test_delta",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("no junit")),
+    )
+    failed = asyncio.run(worker._test_execution_event(str(tmp_path), subtask))
+    assert failed is not None
+    assert failed["test_execution_status"] == "error"
+    assert "no junit" in failed["test_execution_reason"]
+
+
+def test_test_execution_is_opt_in(monkeypatch, tmp_path: Path) -> None:
+    from ultimate_coders.acceptance import test_execution
+
+    monkeypatch.setattr(test_execution, "test_execution_enabled", lambda: False)
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(agent_config={"test_execution": {"command": ["pytest"]}})
+    assert asyncio.run(worker._test_execution_event(str(tmp_path), subtask)) is None
 

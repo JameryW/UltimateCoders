@@ -26,6 +26,7 @@ mandate store.
 | Dockerless verifier | `python/ultimate_coders/acceptance/dockerless_verifier.py` | `UC_DOCKERLESS_VERIFIER` | Oracle fallback / TITO filter | wired (diagnostic) |
 | ECLoop gate | `python/ultimate_coders/agent/ecloop_gate.py` | `UC_ECLOOP_GATE` | local-harness edit/submit tool boundary | wired (local harness) |
 | TRACE credit | `packages/uc-orchestrator/src/rl/trace_credit.ts`, `packages/uc-orchestrator/src/rl/trace_runtime.ts` | `UC_TRACE_LOGPROBS` | worker turn likelihoods → orchestrator collector | wired (partial) |
+| Observed test execution | `python/ultimate_coders/acceptance/test_execution.py` | `UC_TEST_EXECUTION` | worker test-execution diagnostic | wired (diagnostic) |
 | GDPO + skills | `python/ultimate_coders/acceptance/gdpo_scorer.py`, `python/ultimate_coders/knowledge/skill_curriculum.py` | `UC_GDPO_SCORER`, `UC_SKILL_CURRICULUM` | worker declared acceptance-score diagnostic and validated skill-card injection | wired (partial) |
 | SWE-Doctor | `python/ultimate_coders/acceptance/swe_doctor_diag.py` | `UC_SWE_DOCTOR` | worker failed-run diagnosis | wired (partial) |
 | RL hardening | `crates/uc-engine/src/rl_hardening.rs` | n/a (library type) | test-evaluation process boundary | tested primitive |
@@ -212,6 +213,15 @@ does not execute tests or invent F2P/P2P rates. `python/ultimate_coders/knowledg
 declared four-field skill card with its declared replay/transfer/safety evidence; when `UC_SKILL_CURRICULUM` is on,
 only a fully validated card is appended to the worker context, and evidence is never inferred from the card itself.
 The curriculum ordering remains a tested primitive, not an automatic skill-selection loop.
+
+`python/ultimate_coders/acceptance/test_execution.py` is the observed counterpart to those declared scores:
+when `UC_TEST_EXECUTION` is on and `agent_config["test_execution"]` names a `command`, the worker runs that
+pytest command once against the `HEAD` snapshot and once against the working tree, parses JUnit XML, and
+publishes a bounded `test execution` event with pass/F2P/P2P rates and the affected test ids. A non-pytest
+command, missing report, or timeout is reported as a diagnostic error rather than a pass, and no acceptance
+gate consumes these rates yet; this remains a data producer, not an Oracle. The command is a worker-host
+subprocess, not a coding-sandbox command: enable this only on disposable/containerized workers and only for
+task sources whose commands are trusted.
 
 `python/ultimate_coders/acceptance/swe_doctor_diag.py` produces a `RuntimeDiagnosisReport`: expected behaviour
 clauses, bounded local-variable snapshots, and the first state-divergence
