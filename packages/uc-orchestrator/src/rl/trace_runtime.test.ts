@@ -43,7 +43,20 @@ describe("TraceRuntimeCollector", () => {
 		assert.equal(collector.credits("task-2").length, 0);
 	});
 
-	it("caps per-task observations and clears completed tasks", () => {
+	it("keeps subtask trajectories separate", () => {
+		const collector = new TraceRuntimeCollector();
+		collector.record("task-1", [0.8, 0.4], "sub-a");
+		collector.record("task-1", [0.2, 0.9], "sub-b");
+
+		assert.deepEqual(collector.likelihoods("task-1", "sub-a"), [0.8, 0.4]);
+		assert.deepEqual(collector.likelihoods("task-1"), [0.8, 0.4, 0.2, 0.9]);
+		const rows = collector.creditsBySubtask("task-1");
+		assert.deepEqual(rows.map((row) => row.subtaskId), ["sub-a", "sub-b"]);
+		assert.deepEqual(rows.map((row) => row.credits.length), [1, 1]);
+		assert.deepEqual(collector.credits("task-1").map((credit) => credit.turn), [0, 0]);
+	});
+
+	it("caps per-subtask observations and clears completed tasks", () => {
 		const collector = new TraceRuntimeCollector();
 		const values = Array.from({ length: 70 }, (_, index) => 0.5 + index / 1000);
 		collector.record("task-1", values);

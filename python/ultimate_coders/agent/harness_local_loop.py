@@ -804,7 +804,28 @@ def _completion(
         kwargs["logprobs"] = True
     if os.environ.get("OPENAI_API_KEY"):
         kwargs["api_key"] = os.environ["OPENAI_API_KEY"]
-    return litellm.completion(**kwargs)
+    try:
+        return litellm.completion(**kwargs)
+    except Exception as exc:
+        if not request_logprobs:
+            raise
+        # Some providers reject the optional ``logprobs`` request parameter
+        # outright.  TRACE is diagnostic, so keep the run alive by making one
+        # retry without the parameter instead of failing the whole subtask.
+        rejected = isinstance(exc, litellm.UnsupportedParamsError) or (
+            isinstance(exc, litellm.BadRequestError)
+            and "logprob" in str(exc).lower()
+        )
+        if not rejected:
+            raise
+        _emit(
+            {
+                "event": "logprobs_unavailable",
+                "error": f"{type(exc).__name__}: {exc}"[:300],
+            }
+        )
+        kwargs.pop("logprobs", None)
+        return litellm.completion(**kwargs)
 
 
 async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:

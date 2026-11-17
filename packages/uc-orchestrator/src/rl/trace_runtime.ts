@@ -15,8 +15,21 @@ import { computeTurnCredits, type TurnCredit } from "./trace_credit";
 /** Environment flag shared with the worker's logprob-producing adapter. */
 export const TRACE_LOGPROBS_ENV = "UC_TRACE_LOGPROBS";
 
-const MAX_LIKELIHOODS_PER_TASK = 64;
+const MAX_LIKELIHOODS_PER_SUBTASK = 64;
+const MAX_SUBTASKS_PER_TASK = 16;
 const MAX_TASKS = 64;
+
+/** One subtask's observed likelihoods and derived credits. */
+export interface SubtaskTrace {
+	subtaskId: string;
+	likelihoods: number[];
+	credits: TurnCredit[];
+}
+
+interface SubtaskBuffer {
+	order: string[];
+	values: Map<string, number[]>;
+}
 
 /** Return whether runtime TRACE collection is enabled. */
 export function traceLogprobsEnabled(): boolean {
@@ -52,40 +65,71 @@ export function normaliseTurnLikelihoods(value: unknown): number[] | undefined {
 	return values.length > 0 ? values : undefined;
 }
 
-/** Bounded per-task likelihood buffer owned by the orchestrator. */
+/** Bounded per-task, per-subtask likelihood buffer owned by the orchestrator. */
 export class TraceRuntimeCollector {
-	private readonly byTask = new Map<string, number[]>();
+	private readonly byTask = new Map<string, SubtaskBuffer>();
 	private readonly taskOrder: string[] = [];
 
-	/** Record one progress payload, ignoring malformed or disabled input. */
-	record(taskId: string, value: unknown): void {
+	/**
+	 * Record one progress payload.
+	 *
+	 * A task is a DAG: likelihoods from different subtasks belong to different
+	 * trajectories, so they are kept in separate buckets. Concatenating them
+	 * would compute credits across an artificial turn boundary.
+	 */
+	record(taskId: string, value: unknown, subtaskId = ""): void {
 		const id = String(taskId ?? "").trim();
 		if (!id) return;
 		const values = normaliseTurnLikelihoods(value);
 		if (values === undefined) return;
 
-		let stored = this.byTask.get(id);
-		if (stored === undefined) {
-			stored = [];
-			this.byTask.set(id, stored);
+		let task = this.byTask.get(id);
+		if (task === undefined) {
+			task = { order: [], values: new Map() };
+			this.byTask.set(id, task);
 			this.taskOrder.push(id);
 			this.evictOldestTasks();
 		}
+		const key = String(subtaskId ?? "").trim() || "__task__";
+		let stored = task.values.get(key);
+		if (stored === undefined) {
+			stored = [];
+			task.values.set(key, stored);
+			task.order.push(key);
+			this.evictOldestSubtasks(task);
+		}
 		for (const likelihood of values) {
-			if (stored.length >= MAX_LIKELIHOODS_PER_TASK) break;
+			if (stored.length >= MAX_LIKELIHOODS_PER_SUBTASK) break;
 			stored.push(likelihood);
 		}
 	}
 
-	/** Copy of the observed likelihoods for a task. */
-	likelihoods(taskId: string): number[] {
-		return [...(this.byTask.get(taskId) ?? [])];
+	/** Copy the observed likelihoods for one subtask, or all subtasks (default). */
+	likelihoods(taskId: string, subtaskId = ""): number[] {
+		const task = this.byTask.get(taskId);
+		if (task === undefined) return [];
+		const key = String(subtaskId ?? "").trim() || "__task__";
+		if (subtaskId) return [...(task.values.get(key) ?? [])];
+		return task.order.flatMap((id) => [...(task.values.get(id) ?? [])]);
 	}
 
-	/** Compute TRACE turn credits from the observed likelihoods. */
+	/** Per-subtask copies with credits computed independently. */
+	creditsBySubtask(taskId: string): SubtaskTrace[] {
+		const task = this.byTask.get(taskId);
+		if (task === undefined) return [];
+		return task.order.map((subtaskId) => {
+			const likelihoods = [...(task.values.get(subtaskId) ?? [])];
+			return {
+				subtaskId,
+				likelihoods,
+				credits: likelihoods.length >= 2 ? computeTurnCredits(likelihoods) : [],
+			};
+		});
+	}
+
+	/** Compute TRACE turn credits per subtask and flatten in arrival order. */
 	credits(taskId: string): TurnCredit[] {
-		const likelihoods = this.likelihoods(taskId);
-		return likelihoods.length >= 2 ? computeTurnCredits(likelihoods) : [];
+		return this.creditsBySubtask(taskId).flatMap((row) => row.credits);
 	}
 
 	/** Release a completed task's buffer. */
@@ -104,6 +148,13 @@ export class TraceRuntimeCollector {
 		while (this.taskOrder.length > MAX_TASKS) {
 			const oldest = this.taskOrder.shift();
 			if (oldest !== undefined) this.byTask.delete(oldest);
+		}
+	}
+
+	private evictOldestSubtasks(task: SubtaskBuffer): void {
+		while (task.order.length > MAX_SUBTASKS_PER_TASK) {
+			const oldest = task.order.shift();
+			if (oldest !== undefined) task.values.delete(oldest);
 		}
 	}
 }

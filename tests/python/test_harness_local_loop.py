@@ -336,6 +336,36 @@ class TestRunnerLoop:
         final = [ln for ln in lines if ln.get("event") == "final"][-1]
         assert final["turn_likelihoods"] == pytest.approx([math.exp(-0.3), math.exp(-1.0)])
 
+    def test_rejected_logprobs_retry_without_the_parameter(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        import litellm
+
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
+        calls: list[dict[str, object]] = []
+
+        def completion(**kwargs: object) -> str:
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise litellm.BadRequestError(
+                    "logprobs unsupported",
+                    model="test-model",
+                    llm_provider="test-provider",
+                )
+            return "ok"
+
+        monkeypatch.setattr(litellm, "completion", completion)
+        assert hll._completion([], request_logprobs=True) == "ok"
+        assert len(calls) == 2
+        assert "logprobs" in calls[0]
+        assert "logprobs" not in calls[1]
+        events = [
+            json.loads(line) for line in capsys.readouterr().out.strip().splitlines()
+        ]
+        assert any(event["event"] == "logprobs_unavailable" for event in events)
+
     def test_trace_logprobs_are_not_requested_by_default(
         self,
         tmp_path: Path,

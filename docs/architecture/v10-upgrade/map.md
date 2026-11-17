@@ -188,8 +188,12 @@ invalid values instead of substituting a default, and computes turn credits at
 `finishTask` when `UC_TRACE_LOGPROBS` is on. The local harness requests token
 logprobs only under that flag and averages them into one geometric-mean answer
 likelihood per turn; a provider that returns no logprobs produces no sample, so
-the collector still cannot invent a likelihood. Other adapters leave
-`AgentOutput.turn_likelihoods` empty.
+the collector still cannot invent a likelihood. If a provider rejects the
+`logprobs` request parameter (`BadRequestError`/`UnsupportedParamsError`), the
+harness emits `logprobs_unavailable` and retries the completion once without it
+rather than failing the subtask. Likelihoods are bucketed per subtask, so a
+task DAG never computes credits across an artificial subtask boundary; other
+adapters leave `AgentOutput.turn_likelihoods` empty.
 `packages/uc-orchestrator/src/rl/swe_prime.ts` labels exploration, localization, editing,
 verification, and repair segments, masks reverted or repeated-ineffective
 segments, and keeps at most 10% high-value trajectories.

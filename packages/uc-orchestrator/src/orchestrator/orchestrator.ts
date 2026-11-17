@@ -346,7 +346,11 @@ export class UCOrchestrator {
 		// so an empty task buffer means "not observed", never "probability 1".
 		this.events.on("subtask_progress", (event) => {
 			if (traceLogprobsEnabled()) {
-				this.traceCollector.record(event.taskId, event.turnLikelihoods);
+				this.traceCollector.record(
+					event.taskId,
+					event.turnLikelihoods,
+					event.subtaskId,
+				);
 			}
 		});
 	}
@@ -1073,11 +1077,15 @@ export class UCOrchestrator {
 			}
 		}
 		if (traceLogprobsEnabled()) {
-			const credits = this.traceCollector.credits(task.id);
+			const subtasks = this.traceCollector
+				.creditsBySubtask(task.id)
+				.filter((row) => row.credits.length > 0);
+			const credits = subtasks.flatMap((row) => row.credits);
 			if (credits.length > 0) {
 				const total = credits.reduce((sum, credit) => sum + credit.credit, 0);
 				this.pi.logger.info(
-					`Task ${task.id} TRACE: ${credits.length} turn credits, total=${total.toFixed(4)}`,
+					`Task ${task.id} TRACE: ${subtasks.length} subtask(s), ` +
+						`${credits.length} turn credits, total=${total.toFixed(4)}`,
 				);
 			}
 			this.traceCollector.clear(task.id);
