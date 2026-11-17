@@ -18,7 +18,7 @@ mandate store.
 | Mutation augmentation | `python/ultimate_coders/acceptance/mutation_augment.py` | `UC_MUTATION_AUGMENT` | acceptance dataset builder | tested primitive |
 | SWE-Prime | `packages/uc-orchestrator/src/rl/swe_prime.ts`, `packages/uc-orchestrator/src/rl/task_trajectory.ts` | `UC_SWE_PRIME` | orchestrator progress collector → task completion | wired (orchestrator diagnostic) |
 | Failure heatmap | `dashboard/src/lib/failureHeatmap.ts`, `dashboard/src/components/FailureHeatmap.tsx` | n/a (presentation) | dashboard overview failure panel | wired (overview feed) |
-| AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary | wired (local harness tools) |
+| AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary + NATS worklog publish | wired (local harness + outbound NATS) |
 | ExecCritic | `python/ultimate_coders/acceptance/exec_critic.py` | `UC_EXEC_CRITIC` | worker test-artifact gate | wired (partial) |
 | RETRACE | `python/ultimate_coders/acceptance/retrace_verifier.py` | `UC_RETRACE_VERIFIER` | worker diagnostic | wired (diagnostic) |
 | Drift monitor | `python/ultimate_coders/agent/drift_monitor.py` | `UC_DRIFT_MONITOR` | local-harness loop (`drift_advisor`) | wired (local harness) |
@@ -146,9 +146,14 @@ when `UC_AGENT_RADIO` is on and both `UC_RADIO_GRAPH_ID` and
 `UC_RADIO_INBOX_JSON` seeds incoming mentions for the run, and pending
 mentions are injected as a `Radio updates:` system block at each turn and
 tool boundary (`teammate_radio_update` event). The worker fills the graph and
-node hints for `local-harness`/`local-llm` steps. There is no NATS transport
-inside the harness yet; the in-process bus is a bounded test/development
-bridge, not a durable event store.
+node hints for `local-harness`/`local-llm` steps. The harness itself has no
+NATS client; instead, the worker mirrors each parsed `radio_post` onto the
+message's graph-scoped worklog/mention subject when its injected
+`NatsPublisher` implements `publish_radio`. This is an outbound,
+best-effort transport only: delivery failure never fails the subtask, and
+the in-process bus remains a bounded test/development bridge, not a durable
+event store. Inbound remote mentions still require the declared
+`UC_RADIO_INBOX_JSON` seed or a future subscriber.
 
 `DriftMonitor` records edit failures, boundary
 escapes, repeated test traces, and zero required-file coverage; it emits one

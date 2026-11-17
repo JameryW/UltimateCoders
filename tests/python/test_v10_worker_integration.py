@@ -172,6 +172,7 @@ def test_radio_events_become_task_progress() -> None:
                 "event": "radio_post",
                 "message": {
                     "message_id": "m-1",
+                    "graph_id": "graph-1",
                     "kind": "worklog",
                     "node_id": "node-1",
                     "text": "working",
@@ -185,6 +186,9 @@ def test_radio_events_become_task_progress() -> None:
     assert data["phase"] == "agent radio"
     assert data["radio_message_id"] == "m-1"
     assert data["radio_text"] == "working"
+    assert data["radio_subject"] == "uc.radio.graph-1.worklog"
+    assert data["radio_payload"]["graph_id"] == "graph-1"
+    assert data["radio_payload"]["kind"] == "worklog"
 
     update = _parse_sandbox_line(
         json.dumps({"event": "teammate_radio_update", "text": "Radio updates:\n- [mention] n2: hi"})
@@ -194,6 +198,32 @@ def test_radio_events_become_task_progress() -> None:
     assert event_type == "subtask_progress"
     assert data["phase"] == "teammate radio update"
     assert "mention" in data["radio_update"]
+
+
+def test_radio_posts_are_mirrored_to_the_nats_transport() -> None:
+    class _Publisher:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        async def publish_radio(self, subject: str, payload: dict) -> None:
+            self.calls.append((subject, payload))
+
+    worker = object.__new__(Worker)
+    worker.nats_publisher = _Publisher()
+
+    asyncio.run(
+        worker._publish_radio(
+            "uc.radio.graph-1.worklog",
+            {"message_id": "m-1", "kind": "worklog"},
+        )
+    )
+
+    assert worker.nats_publisher.calls == [
+        (
+            "uc.radio.graph-1.worklog",
+            {"message_id": "m-1", "kind": "worklog"},
+        )
+    ]
 
 
 def test_prefix_context_assembly_projects_manifest_slots(monkeypatch) -> None:

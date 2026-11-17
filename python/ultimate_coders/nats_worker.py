@@ -461,6 +461,21 @@ class NatsPublisher:
         payload["v"] = 1
         return await self._publish(NATS_SUBJECT_TASK_EVENT, payload)
 
+    async def publish_radio(self, subject: str, payload: dict[str, Any]) -> bool:
+        """Publish one AgentRadio message to its graph-scoped subject.
+
+        The worker only asks the transport to deliver an already-formed radio
+        message; it never invents routing or mutates the payload. Invalid
+        subjects and non-mapping payloads are rejected without publishing.
+        """
+        if not isinstance(subject, str) or not subject.startswith("uc.radio."):
+            logger.warning("Refusing AgentRadio publish to invalid subject")
+            return False
+        if not isinstance(payload, dict):
+            logger.warning("Refusing AgentRadio publish with a non-mapping payload")
+            return False
+        return await self._publish(subject, payload)
+
     async def publish_submit(
         self,
         task_id: str,

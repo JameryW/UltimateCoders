@@ -293,7 +293,7 @@ def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
                 }
             if obj.get("event") == "radio_post":
                 message = obj.get("message") or {}
-                return "subtask_progress", {
+                data = {
                     "phase": "agent radio",
                     "percent": 0,
                     "radio_message_id": str(message.get("message_id") or "")[:64],
@@ -301,6 +301,16 @@ def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
                     "radio_node": str(message.get("node_id") or "")[:64],
                     "radio_text": str(message.get("text") or "")[:300],
                 }
+                from ultimate_coders.agent.radio import RadioMessage, subject_for
+
+                try:
+                    radio = RadioMessage.from_dict(message)
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    data["radio_subject"] = subject_for(radio)
+                    data["radio_payload"] = radio.to_dict()
+                return "subtask_progress", data
             if obj.get("event") == "teammate_radio_update":
                 return "subtask_progress", {
                     "phase": "teammate radio update",
@@ -1100,6 +1110,24 @@ class Worker:
                 task_id=task_id,
                 subtask_id=subtask_id,
                 data=data,
+            )
+
+    async def _publish_radio(self, subject: str, payload: dict[str, Any]) -> None:
+        """Best-effort AgentRadio transport publication, separate from task events.
+
+        Local harnesses emit ``radio_post`` events on stdout; when the worker
+        has a NATS publisher that implements ``publish_radio``, the same
+        message is mirrored onto its graph-scoped NATS subject. A transport
+        failure must never fail the subtask.
+        """
+        publish_radio = getattr(self.nats_publisher, "publish_radio", None)
+        if publish_radio is None:
+            return
+        try:
+            await publish_radio(subject, payload)
+        except Exception:
+            logger.warning(
+                "AgentRadio publish failed for subject=%s", subject, exc_info=True
             )
 
     MAX_RETRIES: int = 3
@@ -2780,6 +2808,12 @@ class Worker:
                         subtask_id=subtask.id,
                         data=data,
                     )
+                    radio_subject = data.get("radio_subject")
+                    radio_payload = data.get("radio_payload")
+                    if isinstance(radio_subject, str) and isinstance(
+                        radio_payload, dict
+                    ):
+                        await self._publish_radio(radio_subject, radio_payload)
 
             # Multi-agent workflow: run ordered steps, threading each step's
             # output into the next step's prompt template. Empty steps = the

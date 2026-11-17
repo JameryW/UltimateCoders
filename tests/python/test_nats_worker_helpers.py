@@ -44,6 +44,46 @@ def _make_worker() -> _NatsWorker:
     return _NatsWorker(project_path="/tmp/test", mode="default")
 
 
+async def test_publish_radio_uses_the_graph_scoped_subject():
+    class _Client:
+        def __init__(self) -> None:
+            self.published: list[tuple[str, dict]] = []
+
+        async def publish(self, subject: str, data: bytes) -> None:
+            self.published.append((subject, json.loads(data)))
+
+    client = _Client()
+    publisher = NatsPublisher(client)  # type: ignore[arg-type]
+
+    accepted = await publisher.publish_radio(
+        "uc.radio.graph-1.worklog",
+        {"message_id": "m-1", "kind": "worklog", "text": "working"},
+    )
+
+    assert accepted is True
+    assert client.published == [
+        (
+            "uc.radio.graph-1.worklog",
+            {"message_id": "m-1", "kind": "worklog", "text": "working"},
+        )
+    ]
+
+
+def test_publish_radio_rejects_non_radio_subjects():
+    class _Client:
+        def __init__(self) -> None:
+            self.published: list[tuple[str, dict]] = []
+
+        async def publish(self, subject: str, data: bytes) -> None:
+            self.published.append((subject, json.loads(data)))
+
+    client = _Client()
+    publisher = NatsPublisher(client)  # type: ignore[arg-type]
+
+    assert asyncio.run(publisher.publish_radio("uc.task.event", {"x": 1})) is False
+    assert client.published == []
+
+
 def test_task_update_message_id_changes_with_snapshot_state():
     """Distinct snapshots in one dedup window must not collapse."""
     task = Task(id="t-update", description="d", project_id="p", status=TaskStatus.IN_PROGRESS)
