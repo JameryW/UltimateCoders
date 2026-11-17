@@ -1027,7 +1027,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # the map row/paragraph (1410 -> 1413); all resolved, unclassified 0.
     # V10 #9 prefix-cache measurement names harness_local_loop.py in the map
     # row (1413 -> 1414); resolved, unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1414
+    # The mutation-augmentation CLI adds its module path to the v10 map row
+    # (1414 -> 1415); resolved, unclassified 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1415
 
 
 def test_real_corpus_has_no_false_content_mismatch():

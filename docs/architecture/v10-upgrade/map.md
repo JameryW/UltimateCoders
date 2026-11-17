@@ -15,7 +15,7 @@ mandate store.
 | Plan critic | `python/ultimate_coders/agent/planner_critic.py` | `UC_PLANNER_CRITIC` | worker PerceptionPass preflight | wired (partial) |
 | Prefix context assembly | `python/ultimate_coders/search/context_assembler.py`, `python/ultimate_coders/agent/harness_local_loop.py` | `UC_PREFIX_CONTEXT_ASSEMBLY` | worker prompt assembly + provider cache samples | wired (partial) |
 | Anti-pattern gate | `python/ultimate_coders/acceptance/anti_pattern_gate.py` | `UC_ANTI_PATTERN_GATE` | worker `_verify_output_anti_patterns` | wired |
-| Mutation augmentation | `python/ultimate_coders/acceptance/mutation_augment.py` | `UC_MUTATION_AUGMENT` | acceptance dataset builder | tested primitive |
+| Mutation augmentation | `python/ultimate_coders/acceptance/mutation_augment.py`, `python/ultimate_coders/acceptance/mutation_cli.py` | `UC_MUTATION_AUGMENT` | acceptance dataset CLI (`python -m ultimate_coders.acceptance.mutation_cli`) | wired (CLI dataset builder) |
 | SWE-Prime | `packages/uc-orchestrator/src/rl/swe_prime.ts`, `packages/uc-orchestrator/src/rl/task_trajectory.ts` | `UC_SWE_PRIME`, `UC_SWE_PRIME_EXPORT_DIR` | orchestrator progress collector → task completion → optional JSONL export | wired (orchestrator diagnostic + segment export) |
 | Failure heatmap | `dashboard/src/lib/failureHeatmap.ts`, `dashboard/src/components/FailureHeatmap.tsx` | n/a (presentation) | dashboard overview failure panel | wired (overview feed) |
 | AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary + outbound NATS + inbound JSONL spool | wired (local harness + outbound/inbound NATS spool) |
@@ -106,6 +106,11 @@ exact commands.
 
 `mutation_augment` generates section-revert, requirement-mismatch, and
 semantic-mutation candidates and computes killed-mutant percentage.
+`mutation_cli` is its explicit acceptance-dataset caller:
+`python -m ultimate_coders.acceptance.mutation_cli --before DIR --after DIR`
+reads two text trees and emits a bounded JSON candidate batch (count and
+kinds). It does not execute mutants, so it never claims a kill rate; running
+mutants remains an acceptance-runner concern.
 
 `exec_critic` separates `TestGenNode` from `SourceRepairNode`: generated
 tests are Gold-free, must clean-fail on the base tree, and are frozen before
