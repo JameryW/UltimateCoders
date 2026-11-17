@@ -21,6 +21,8 @@
 //! ```
 
 pub mod agents;
+#[cfg(target_os = "linux")]
+pub mod cgroup;
 pub mod file_tracker;
 pub mod pool;
 pub mod subprocess;

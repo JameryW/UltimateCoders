@@ -1023,7 +1023,7 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-17 observed test execution diagnostic names
     # acceptance/test_execution.py in the v10 map row and paragraph
     # (1408 -> 1410); all resolved, unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1410
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1412
 
 
 def test_real_corpus_has_no_false_content_mismatch():

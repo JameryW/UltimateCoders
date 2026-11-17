@@ -136,6 +136,26 @@ impl Sandbox for SubprocessSandbox {
             }
         };
 
+        // On Linux the opt-in cgroup guard attaches the child to a dedicated
+        // cgroup v2 subtree; dropping it kills descendants that escaped the
+        // direct child, not just the direct process.
+        #[cfg(target_os = "linux")]
+        let cgroup_guard = match super::cgroup::CgroupGuard::create("sandbox") {
+            Ok(guard) if guard.is_active() => {
+                if let Some(pid) = child.id() {
+                    if let Err(error) = guard.attach(pid) {
+                        tracing::warn!(%error, "could not attach subprocess to cgroup");
+                    }
+                }
+                Some(guard)
+            }
+            Ok(_) => None,
+            Err(error) => {
+                tracing::warn!(%error, "could not create subprocess cgroup guard");
+                None
+            }
+        };
+
         // Optionally provide stdin
         if let Some(stdin_data) = &request.stdin {
             if let Some(mut stdin_pipe) = child.stdin.take() {
@@ -218,6 +238,12 @@ impl Sandbox for SubprocessSandbox {
                     job.terminate();
                 } else if let Some(pid) = child.id() {
                     Self::kill_process_tree(pid).await;
+                }
+                #[cfg(target_os = "linux")]
+                if let Some(guard) = &cgroup_guard {
+                    if let Err(error) = guard.kill() {
+                        tracing::warn!(%error, "could not kill subprocess cgroup");
+                    }
                 }
                 // `Child::kill()` waits for process exit. On Windows a shell
                 // can remain blocked while descendants release inherited pipe

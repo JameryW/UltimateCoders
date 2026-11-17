@@ -29,7 +29,7 @@ mandate store.
 | Observed test execution | `python/ultimate_coders/acceptance/test_execution.py` | `UC_TEST_EXECUTION` | worker test-execution diagnostic + opt-in P2P gate | wired (partial) |
 | GDPO + skills | `python/ultimate_coders/acceptance/gdpo_scorer.py`, `python/ultimate_coders/knowledge/skill_curriculum.py` | `UC_GDPO_SCORER`, `UC_SKILL_CURRICULUM` | worker declared acceptance-score diagnostic and validated skill-card injection | wired (partial) |
 | SWE-Doctor | `python/ultimate_coders/acceptance/swe_doctor_diag.py` | `UC_SWE_DOCTOR` | worker failed-run diagnosis | wired (partial) |
-| RL hardening | `crates/uc-engine/src/rl_hardening.rs` | n/a (library type) | test-evaluation process boundary | tested primitive |
+| RL hardening | `crates/uc-engine/src/rl_hardening.rs`, `crates/uc-engine/src/sandbox/cgroup.rs` | `UC_RL_CGROUP` | Linux subprocess sandbox cgroup guard | wired (Linux, default-off) |
 
 ## Boundary contract and planning
 
@@ -240,9 +240,17 @@ command output report nothing, and the report is never used to pass a run.
 
 `crates/uc-engine/src/rl_hardening.rs` models cgroup v2/PID-namespace process-group cleanup,
 BLAKE3 state-hash receipts before and after test evaluation, and an
-environment anomaly when the receipt changes. It is a library contract for
-the Rust executor; it does not claim that an unprivileged process can create
-cgroups or namespaces by itself.
+environment anomaly when the receipt changes. It is a declarative library
+contract for the Rust executor.
+
+On Linux, `crates/uc-engine/src/sandbox/cgroup.rs` supplies the first runtime
+half: with `UC_RL_CGROUP=1` the subprocess sandbox creates a dedicated cgroup
+v2 subtree (default `/sys/fs/cgroup/uc-rl`, override `UC_RL_CGROUP_ROOT`),
+attaches the spawned child PID, and uses `cgroup.kill` on timeout and drop so
+descendants cannot escape the rollout. It requires a writable cgroup v2 host
+and root/host permission; without that it logs and runs without the guard.
+PID namespace creation and privileged host setup remain outside the executor;
+the guard does not claim kernel isolation by itself.
 
 ## Rollout
 
@@ -259,13 +267,13 @@ cd packages/uc-orchestrator && bun test src/rl
 cd dashboard && node --test tests/*.test.mjs && node_modules/.bin/tsc -b
 ```
 
-The Rust modules are rustfmt-clean. A full workspace `cargo check` requires
-crates.io access, which is unavailable in the development sandbox and whose
-offline registry is incomplete. The `uc-types` crate was checked from a
-standalone copy against the repository cache, and the three new Rust modules
-were compiled as standalone test harnesses: 23/23 new Rust tests passed. The
-`uc-engine` crate as a whole remains compile-unverified in this environment;
-CI is the authority for the workspace build.
+The Rust modules are rustfmt-clean. On 2026-11-17 the Ubuntu-24.04 WSL
+toolchain (rustc 1.100.0, rsproxy sparse index) ran
+`cargo check -p uc-types -p uc-engine` successfully, and
+`cargo test -p uc-engine --lib` passed **580/580** tests, including 2 cgroup
+tests (one performs an actual cgroup.kill as root). Full workspace tests for
+the remaining crates and Windows cgroup behavior remain CI-owned; Windows
+cannot run the Linux cgroup module.
 
 ## Non-goals
 
@@ -274,5 +282,6 @@ CI is the authority for the workspace build.
 - `FailureHeatmap` does not synthesize failure events; callers supply the
   bounded event window.
 - AgentRadio's in-memory bus is not a durable event store.
-- RL hardening types do not perform privileged host setup; the executor owns
-  cgroup/namespace creation.
+- The Linux cgroup guard requires a writable cgroup v2 host with root/host
+  permission; PID-namespace creation and privileged host setup remain outside
+  the executor.
