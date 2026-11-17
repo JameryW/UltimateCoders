@@ -29,6 +29,7 @@ from ultimate_coders.agent.harness_local_loop import (
     _tool_write_file,
     _within_boundary,
 )
+from ultimate_coders.agent.radio import RadioFileInbox, RadioMessage
 from ultimate_coders.agent.registry import ensure_builtin_plugins, registry
 from ultimate_coders.agent.sandbox import ExecResult, SandboxConfig
 
@@ -79,6 +80,23 @@ class TestAdapterRequest:
         )
         assert request["env_vars"]["UC_DRIFT_BOUNDARY"] == "src/a.py,src/b.py"
         assert request["env_vars"]["UC_DRIFT_REQUIRED_FILES"] == "src/a.py"
+        os.unlink(request["_temp_files"][0])
+
+    def test_radio_inbox_dir_becomes_child_env(self, tmp_path: Path) -> None:
+        cfg = SandboxConfig(agent="local-harness", project_path=str(tmp_path))
+        request = LocalLoopHarnessAdapter().build_request(
+            "p",
+            str(tmp_path),
+            cfg,
+            subtask_config={
+                "_uc_radio_graph_id": "graph-1",
+                "_uc_radio_node_id": "node-1",
+                "_uc_radio_inbox_dir": str(tmp_path / "radio"),
+            },
+        )
+        assert request["env_vars"]["UC_RADIO_GRAPH_ID"] == "graph-1"
+        assert request["env_vars"]["UC_RADIO_NODE_ID"] == "node-1"
+        assert request["env_vars"]["UC_RADIO_INBOX_DIR"] == str(tmp_path / "radio")
         os.unlink(request["_temp_files"][0])
 
     def test_credential_lease_becomes_child_env(self, tmp_path: Path) -> None:
@@ -790,6 +808,41 @@ class TestRunnerLoop:
         lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
         assert len([ln for ln in lines if ln.get("event") == "radio_post"]) == 2
         assert any(ln.get("event") == "teammate_radio_update" for ln in lines)
+
+    def test_agent_radio_file_inbox_is_polled_for_cross_process_mentions(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("UC_AGENT_RADIO", "1")
+        monkeypatch.setenv("UC_RADIO_GRAPH_ID", "graph-1")
+        monkeypatch.setenv("UC_RADIO_NODE_ID", "node-1")
+        inbox_dir = tmp_path / "radio-inbox"
+        monkeypatch.setenv("UC_RADIO_INBOX_DIR", str(inbox_dir))
+        inbox = RadioFileInbox(inbox_dir, "graph-1", "node-1")
+        inbox.append(
+            RadioMessage(
+                message_id="m-remote",
+                graph_id="graph-1",
+                node_id="node-1",
+                kind="mention",
+                text="cross-process ping",
+            )
+        )
+        seen: list[list[dict]] = []
+
+        def completion(messages):
+            seen.append([dict(message) for message in messages])
+            return _resp([("done", {"summary": "done"})])
+
+        with patch.object(hll, "_completion", side_effect=completion):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 3))
+        assert code == 0
+        assert any(
+            "cross-process ping" in str(message.get("content", ""))
+            for message in seen[0]
+            if message.get("role") == "system"
+        )
 
     def test_agent_radio_tools_fail_closed_when_not_configured(
         self,

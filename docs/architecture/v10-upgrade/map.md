@@ -18,7 +18,7 @@ mandate store.
 | Mutation augmentation | `python/ultimate_coders/acceptance/mutation_augment.py` | `UC_MUTATION_AUGMENT` | acceptance dataset builder | tested primitive |
 | SWE-Prime | `packages/uc-orchestrator/src/rl/swe_prime.ts`, `packages/uc-orchestrator/src/rl/task_trajectory.ts` | `UC_SWE_PRIME`, `UC_SWE_PRIME_EXPORT_DIR` | orchestrator progress collector → task completion → optional JSONL export | wired (orchestrator diagnostic + segment export) |
 | Failure heatmap | `dashboard/src/lib/failureHeatmap.ts`, `dashboard/src/components/FailureHeatmap.tsx` | n/a (presentation) | dashboard overview failure panel | wired (overview feed) |
-| AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary + NATS worklog publish | wired (local harness + outbound NATS) |
+| AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary + outbound NATS + inbound JSONL spool | wired (local harness + outbound/inbound NATS spool) |
 | ExecCritic | `python/ultimate_coders/acceptance/exec_critic.py` | `UC_EXEC_CRITIC` | worker test-artifact gate | wired (partial) |
 | RETRACE | `python/ultimate_coders/acceptance/retrace_verifier.py` | `UC_RETRACE_VERIFIER` | worker diagnostic | wired (diagnostic) |
 | Drift monitor | `python/ultimate_coders/agent/drift_monitor.py` | `UC_DRIFT_MONITOR` | local-harness loop (`drift_advisor`) | wired (local harness) |
@@ -153,9 +153,15 @@ tool boundary (`teammate_radio_update` event). The worker fills the graph and
 node hints for `local-harness`/`local-llm` steps. The harness itself has no
 NATS client; instead, the worker mirrors each parsed `radio_post` onto the
 message's graph-scoped worklog/mention subject when its injected
-`NatsPublisher` implements `publish_radio`. This is an outbound,
-best-effort transport only: delivery failure never fails the subtask, and
-the in-process bus remains a bounded test/development bridge, not a durable
+`NatsPublisher` implements `publish_radio`. Inbound messages are spooled by
+the worker when `UC_RADIO_INBOX_DIR` is set: the worker subscribes to
+`uc.radio.>` and appends each valid message to a per-graph/node JSONL
+`RadioFileInbox`; the local harness polls that file at each turn/tool
+boundary and feeds accepted mentions into its watcher. The spool is a
+bounded local file for cross-process delivery, not a durable queue; malformed
+messages and unset directories are ignored. Delivery is best-effort: neither
+direction can fail the subtask, and the in-process bus remains a bounded
+test/development bridge, not a durable
 event store. Inbound remote mentions still require the declared
 `UC_RADIO_INBOX_JSON` seed or a future subscriber.
 

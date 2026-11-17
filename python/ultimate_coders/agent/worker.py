@@ -909,10 +909,16 @@ class Worker:
         node_id = str(subtask.id or "").strip()
         if not graph_id or not node_id:
             return {}
-        return {
+        hints = {
             "_uc_radio_graph_id": graph_id,
             "_uc_radio_node_id": node_id,
         }
+        from ultimate_coders.agent.radio import RADIO_INBOX_DIR_ENV
+
+        inbox_dir = str(os.environ.get(RADIO_INBOX_DIR_ENV, "")).strip()
+        if inbox_dir:
+            hints["_uc_radio_inbox_dir"] = inbox_dir
+        return hints
 
     def _trajectory_hints(self) -> dict[str, str]:
         """Tell the local harness to request provider token ids for TITO export."""

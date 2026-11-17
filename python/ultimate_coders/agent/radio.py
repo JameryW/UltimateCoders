@@ -23,12 +23,15 @@ Everything here is opt-in and safe to import while ``UC_AGENT_RADIO`` is unset.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
@@ -38,9 +41,11 @@ __all__ = [
     "KIND_THREAD",
     "KIND_WORKLOG",
     "RADIO_ENABLED_ENV",
+    "RADIO_INBOX_DIR_ENV",
     "BackgroundMentionWatcher",
     "InMemoryRadioBus",
     "RadioBus",
+    "RadioFileInbox",
     "RadioMessage",
     "mention_subject",
     "radio_enabled",
@@ -49,6 +54,7 @@ __all__ = [
 ]
 
 RADIO_ENABLED_ENV = "UC_AGENT_RADIO"
+RADIO_INBOX_DIR_ENV = "UC_RADIO_INBOX_DIR"
 
 KIND_WORKLOG = "worklog"
 KIND_MENTION = "mention"
@@ -254,6 +260,72 @@ class InMemoryRadioBus:
             self._subscribers.clear()
 
 
+class RadioFileInbox:
+    """Append-only JSONL inbox for cross-process radio delivery.
+
+    NATS runs in the worker process while the coding harness runs in a child
+    process, so an in-memory bus cannot reach the running harness.  The worker
+    appends inbound radio messages here; the harness polls the file at its next
+    safe turn boundary and feeds them into its ``BackgroundMentionWatcher``.
+    This is a local spool, not a durable queue: callers bound what they write.
+    """
+
+    MAX_LINE_BYTES = 32_000
+
+    def __init__(self, directory: str | os.PathLike[str], graph_id: str, node_id: str) -> None:
+        root = str(directory or "").strip()
+        if not root:
+            raise ValueError("directory must be a non-empty string")
+        self.graph_id = _subject_token(graph_id, "graph_id")
+        self.node_id = _subject_token(node_id, "node_id")
+        digest = hashlib.sha256(f"{self.graph_id}\0{self.node_id}".encode()).hexdigest()[:20]
+        self._path = Path(root) / f"radio-{digest}.jsonl"
+        self._lock = threading.Lock()
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def append(self, message: RadioMessage) -> bool:
+        """Append one message; returns False when it targets another graph/node."""
+        if not isinstance(message, RadioMessage):
+            raise TypeError("append expects a RadioMessage")
+        if message.graph_id != self.graph_id or message.node_id != self.node_id:
+            return False
+        line = json.dumps(message.to_dict(), ensure_ascii=False, separators=(",", ":"))
+        if len(line.encode("utf-8")) > self.MAX_LINE_BYTES:
+            raise ValueError("radio message exceeds the inbox line budget")
+        with self._lock:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            with self._path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(line + "\n")
+        return True
+
+    def read(self) -> list[RadioMessage]:
+        """Read every valid message addressed to this graph/node (bounded parse)."""
+        try:
+            text = self._path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return []
+        messages: list[RadioMessage] = []
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, Mapping):
+                continue
+            try:
+                message = RadioMessage.from_dict(payload)
+            except (TypeError, ValueError):
+                continue
+            if message.graph_id == self.graph_id and message.node_id == self.node_id:
+                messages.append(message)
+        return messages
+
+
 class BackgroundMentionWatcher:
     """Collect mentions for one node and render them at prompt boundaries.
 
@@ -310,6 +382,15 @@ class BackgroundMentionWatcher:
                 dropped = self._inbox[:overflow]
                 del self._inbox[:overflow]
                 self._dropped += len(dropped)
+
+    def ingest(self, message: RadioMessage) -> bool:
+        """Feed one externally-delivered message into this watcher's inbox."""
+        if not isinstance(message, RadioMessage):
+            raise TypeError("ingest expects a RadioMessage")
+        if message.graph_id != self.graph_id or message.node_id != self.node_id:
+            return False
+        self._on_message(message)
+        return True
 
     def pending(self) -> list[RadioMessage]:
         """Return undrained mentions in arrival order (bounded by ``max_pending``)."""

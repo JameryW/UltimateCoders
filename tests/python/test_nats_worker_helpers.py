@@ -17,10 +17,12 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from ultimate_coders.agent.orchestrator import Orchestrator
+from ultimate_coders.agent.radio import RADIO_INBOX_DIR_ENV, RadioFileInbox
 from ultimate_coders.agent.types import (
     StepUsage,
     Subtask,
@@ -82,6 +84,31 @@ def test_publish_radio_rejects_non_radio_subjects():
 
     assert asyncio.run(publisher.publish_radio("uc.task.event", {"x": 1})) is False
     assert client.published == []
+
+
+async def test_handle_radio_spools_message_for_the_local_harness(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv(RADIO_INBOX_DIR_ENV, str(tmp_path))
+    worker = _make_worker()
+    msg = SimpleNamespace(
+        data=json.dumps(
+            {
+                "message_id": "m-remote",
+                "graph_id": "graph-1",
+                "node_id": "node-1",
+                "kind": "mention",
+                "text": "cross-process ping",
+            }
+        ).encode()
+    )
+
+    await worker._handle_radio(msg)
+
+    inbox = RadioFileInbox(tmp_path, "graph-1", "node-1")
+    messages = inbox.read()
+    assert [message.message_id for message in messages] == ["m-remote"]
+    assert messages[0].text == "cross-process ping"
 
 
 def test_task_update_message_id_changes_with_snapshot_state():

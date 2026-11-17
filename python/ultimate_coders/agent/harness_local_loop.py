@@ -44,8 +44,10 @@ from typing import Any
 from ultimate_coders.agent.drift_monitor import DriftMonitor, drift_monitor_enabled
 from ultimate_coders.agent.ecloop_gate import ECLoopGate, ecloop_gate_enabled
 from ultimate_coders.agent.radio import (
+    RADIO_INBOX_DIR_ENV,
     BackgroundMentionWatcher,
     InMemoryRadioBus,
+    RadioFileInbox,
     RadioMessage,
     radio_enabled,
 )
@@ -246,6 +248,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             ("_uc_radio_graph_id", RADIO_GRAPH_ENV),
             ("_uc_radio_node_id", RADIO_NODE_ENV),
             ("_uc_radio_inbox_json", RADIO_INBOX_ENV),
+            ("_uc_radio_inbox_dir", RADIO_INBOX_DIR_ENV),
             ("_uc_credential_lease", CREDENTIAL_LEASE_ENV),
             ("_uc_credential_broker", CREDENTIAL_BROKER_ENV),
             ("_uc_trajectory_export", TRAJECTORY_EXPORT_ENV),
@@ -819,7 +822,28 @@ def _radio_watcher_from_env() -> BackgroundMentionWatcher | None:
                     bus.publish(RadioMessage.from_dict(item))
                 except (TypeError, ValueError):
                     continue
+    inbox_dir = os.environ.get(RADIO_INBOX_DIR_ENV, "").strip()
+    if inbox_dir:
+        try:
+            setattr(watcher, "_radio_file_inbox", RadioFileInbox(inbox_dir, graph_id, node_id))
+        except ValueError:
+            pass
     return watcher
+
+
+def _poll_radio_inbox(watcher: BackgroundMentionWatcher | None) -> int:
+    """Pull cross-process messages from the worker's JSONL spool into the watcher."""
+
+    if watcher is None:
+        return 0
+    inbox = getattr(watcher, "_radio_file_inbox", None)
+    if not isinstance(inbox, RadioFileInbox):
+        return 0
+    accepted = 0
+    for message in inbox.read():
+        if watcher.ingest(message):
+            accepted += 1
+    return accepted
 
 
 def _drain_radio_updates(
@@ -830,6 +854,7 @@ def _drain_radio_updates(
 
     if watcher is None:
         return False
+    _poll_radio_inbox(watcher)
     update = watcher.drain_for_prompt()
     if not update:
         return False

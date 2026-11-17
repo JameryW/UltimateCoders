@@ -145,11 +145,12 @@ def test_drift_advisor_line_becomes_task_progress() -> None:
     assert data["drift_prompt"] == "Stop editing and re-read."
 
 
-def test_radio_hints_are_opt_in_and_task_scoped(monkeypatch) -> None:
+def test_radio_hints_are_opt_in_and_task_scoped(monkeypatch, tmp_path) -> None:
     worker = object.__new__(Worker)
     subtask = SimpleNamespace(id="node-1", parent_id="graph-1")
 
     monkeypatch.delenv("UC_AGENT_RADIO", raising=False)
+    monkeypatch.delenv("UC_RADIO_INBOX_DIR", raising=False)
     assert worker._radio_hints(subtask) == {}
 
     monkeypatch.setenv("UC_AGENT_RADIO", "1")
@@ -158,11 +159,16 @@ def test_radio_hints_are_opt_in_and_task_scoped(monkeypatch) -> None:
         "_uc_radio_node_id": "node-1",
     }
 
-    orphan = SimpleNamespace(id="node-2", parent_id="")
-    assert worker._radio_hints(orphan) == {
-        "_uc_radio_graph_id": "node-2",
-        "_uc_radio_node_id": "node-2",
+    monkeypatch.setenv("UC_RADIO_INBOX_DIR", str(tmp_path / "radio"))
+    assert worker._radio_hints(subtask) == {
+        "_uc_radio_graph_id": "graph-1",
+        "_uc_radio_node_id": "node-1",
+        "_uc_radio_inbox_dir": str(tmp_path / "radio"),
     }
+
+    orphan = SimpleNamespace(id="node-2", parent_id="")
+    assert worker._radio_hints(orphan)["_uc_radio_inbox_dir"] == str(tmp_path / "radio")
+    assert worker._radio_hints(orphan)["_uc_radio_graph_id"] == "node-2"
 
 
 def test_radio_events_become_task_progress() -> None:

@@ -1107,7 +1107,9 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     citation and pin were re-measured to 2557-2611. The AgentRadio NATS
     outbound publish moved it 2557 -> 2585: `_publish_radio` landed above the
     checkpoint helper; the spec citation and pin were re-measured to
-    2585-2639.
+    2585-2639. The inbound AgentRadio spool moved it 2585 -> 2591: the spool
+    routing landed above the checkpoint helper; the citation and pin were
+    re-measured to 2591-2645.
     """
     guard = _load_guard()
     want = {
@@ -1129,7 +1131,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            2585,
+            2591,
         ),
     }
     rows = [

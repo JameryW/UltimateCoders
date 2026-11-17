@@ -38,6 +38,11 @@ from nats.aio.client import Client as NatsClient
 from nats.aio.subscription import Subscription
 
 from ultimate_coders.agent.orchestrator import Orchestrator
+from ultimate_coders.agent.radio import (
+    RADIO_INBOX_DIR_ENV,
+    RadioFileInbox,
+    RadioMessage,
+)
 from ultimate_coders.agent.types import (
     DispatchMode,
     StepUsage,
@@ -784,6 +789,14 @@ class NatsWorker:
             )
             self._subscriptions.append(event_sub)
             logger.info("Subscribed to %s (cancellation control)", NATS_SUBJECT_TASK_EVENT)
+
+            # Worker mode: spool inbound AgentRadio traffic for the running
+            # local harness.  The harness is a child process, so it cannot
+            # share the in-memory bus; the worker appends to a per-node JSONL
+            # file that the harness polls at safe turn boundaries.
+            radio_sub = await self._nc.subscribe("uc.radio.>", cb=self._handle_radio)
+            self._subscriptions.append(radio_sub)
+            logger.info("Subscribed to uc.radio.> (agent radio inbox spool)")
 
             # Worker mode: subscribe to file change events for distributed conflict tracking
             file_change_sub = await self._nc.subscribe(
@@ -3965,6 +3978,30 @@ class NatsWorker:
             len([t for t in executed if t.subtasks]),
             len(executed),
         )
+
+    async def _handle_radio(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
+        """Spool one inbound ``uc.radio.>`` message for the local harness.
+
+        Delivery is best-effort and process-local: the harness reads the JSONL
+        file at its next tool boundary.  A malformed message or an unset
+        ``UC_RADIO_INBOX_DIR`` is ignored, never fatal to the worker.
+        """
+        inbox_dir = os.environ.get(RADIO_INBOX_DIR_ENV, "").strip()
+        if not inbox_dir:
+            return
+        try:
+            payload = json.loads(msg.data.decode())
+        except Exception:
+            logger.debug("Failed to parse agent radio message", exc_info=True)
+            return
+        if not isinstance(payload, dict):
+            return
+        try:
+            message = RadioMessage.from_dict(payload)
+            inbox = RadioFileInbox(inbox_dir, message.graph_id, message.node_id)
+            inbox.append(message)
+        except (TypeError, ValueError, OSError):
+            logger.debug("Dropped invalid agent radio message", exc_info=True)
 
     async def _handle_file_changed(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
         """Handle ``uc.file.changed`` messages for distributed state sync.

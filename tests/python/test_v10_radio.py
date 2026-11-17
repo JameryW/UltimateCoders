@@ -8,8 +8,10 @@ from ultimate_coders.agent.radio import (
     KIND_THREAD,
     KIND_WORKLOG,
     RADIO_ENABLED_ENV,
+    RADIO_INBOX_DIR_ENV,
     BackgroundMentionWatcher,
     InMemoryRadioBus,
+    RadioFileInbox,
     RadioMessage,
     mention_subject,
     radio_enabled,
@@ -177,3 +179,40 @@ def test_radio_flag_falsey(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
 def test_radio_flag_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(RADIO_ENABLED_ENV, raising=False)
     assert radio_enabled() is False
+
+
+def test_file_inbox_round_trips_only_matching_messages(tmp_path) -> None:
+    inbox = RadioFileInbox(tmp_path, "graph-1", "node-a")
+    message = RadioMessage(
+        message_id="m-1",
+        graph_id="graph-1",
+        node_id="node-a",
+        kind=KIND_MENTION,
+        text="check the lock",
+    )
+    other = RadioMessage(
+        message_id="m-2",
+        graph_id="graph-1",
+        node_id="node-b",
+        kind=KIND_MENTION,
+        text="not mine",
+    )
+    assert inbox.append(message) is True
+    assert inbox.append(other) is False
+    assert inbox.path.exists()
+    assert [item.message_id for item in inbox.read()] == ["m-1"]
+
+
+def test_file_inbox_skips_malformed_lines(tmp_path) -> None:
+    inbox = RadioFileInbox(tmp_path, "graph-1", "node-a")
+    inbox.path.parent.mkdir(parents=True, exist_ok=True)
+    inbox.path.write_text(
+        'not-json\n{"message_id": "m-1", "graph_id": "graph-1", '
+        '"node_id": "node-a", "kind": "mention", "text": "ok"}\n',
+        encoding="utf-8",
+    )
+    assert [item.message_id for item in inbox.read()] == ["m-1"]
+
+
+def test_file_inbox_env_name_is_stable() -> None:
+    assert RADIO_INBOX_DIR_ENV == "UC_RADIO_INBOX_DIR"
