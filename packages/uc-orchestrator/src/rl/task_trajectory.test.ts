@@ -3,14 +3,20 @@
  */
 
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import {
 	distillTaskTrajectory,
+	exportTaskTrajectory,
 	phaseKind,
 	segmentsFromProgress,
 	SWE_PRIME_ENV,
+	SWE_PRIME_EXPORT_DIR_ENV,
 	swePrimeEnabled,
+	swePrimeExportDir,
 	TaskTrajectoryCollector,
 	type TrajectoryProgressEvent,
 } from "./task_trajectory";
@@ -125,6 +131,61 @@ describe("TaskTrajectoryCollector", () => {
 		const summary = collector.distill("task-1");
 		assert.ok(summary !== null);
 		assert.equal(summary.segments, 800);
+	});
+});
+
+describe("SWE-Prime export", () => {
+	it("writes segment-level JSONL with a loss mask", () => {
+		const directory = mkdtempSync(join(tmpdir(), "swe-prime-"));
+		try {
+			const events = [
+				progress("exploration pass"),
+				progress("edit src/app.ts", { stepStatus: "completed", stepSummary: "changed app" }),
+				progress("run tests", { stepStatus: "completed" }),
+			];
+			const path = exportTaskTrajectory("task-1", events, {}, directory);
+			assert.ok(path !== null);
+			const lines = readFileSync(path, "utf8").trim().split("\n");
+			assert.equal(lines.length, 1);
+			const record = JSON.parse(lines[0] ?? "{}") as {
+				task_id?: string;
+				loss_mask?: number[];
+				segments?: unknown[];
+				kept_ratio?: number;
+			};
+			assert.equal(record.task_id, "task-1");
+			assert.equal(record.segments?.length, 3);
+			assert.equal(record.loss_mask?.length, 3);
+			assert.equal(record.kept_ratio, 1);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("returns null for an empty trajectory and exposes the configured dir", () => {
+		const previous = process.env[SWE_PRIME_EXPORT_DIR_ENV];
+		try {
+			process.env[SWE_PRIME_EXPORT_DIR_ENV] = "  ";
+			assert.equal(swePrimeExportDir(), null);
+			process.env[SWE_PRIME_EXPORT_DIR_ENV] = "/tmp/swe-prime";
+			assert.equal(swePrimeExportDir(), "/tmp/swe-prime");
+			assert.equal(exportTaskTrajectory("task-1", [], {}, "/tmp/swe-prime"), null);
+		} finally {
+			if (previous === undefined) delete process.env[SWE_PRIME_EXPORT_DIR_ENV];
+			else process.env[SWE_PRIME_EXPORT_DIR_ENV] = previous;
+		}
+	});
+
+	it("lets the collector export before clearing", () => {
+		const directory = mkdtempSync(join(tmpdir(), "swe-prime-collector-"));
+		try {
+			const collector = new TaskTrajectoryCollector();
+			collector.record(progress("edit src/app.ts", { stepStatus: "completed" }));
+			assert.equal(collector.export("task-1", directory), collector.export("task-1", directory));
+			assert.ok(collector.distill("task-1") !== null);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
 	});
 });
 

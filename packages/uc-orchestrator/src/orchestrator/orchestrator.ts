@@ -25,7 +25,11 @@ import { TaskStore, type PersistedTask } from "./task-store";
 import { ControlSignalSubscriber, type ControlSignalHandler } from "./control-signal-subscriber";
 import { OrchestratorEventEmitter } from "./events";
 import type { OrchestratorEvents } from "./events";
-import { TaskTrajectoryCollector, swePrimeEnabled } from "../rl/task_trajectory";
+import {
+	TaskTrajectoryCollector,
+	swePrimeEnabled,
+	swePrimeExportDir,
+} from "../rl/task_trajectory";
 import {
 	normaliseTurnLikelihoods,
 	TraceRuntimeCollector,
@@ -1074,6 +1078,15 @@ export class UCOrchestrator {
 					`Task ${task.id} SWE-Prime trajectory: ${trajectory.keptSegments}/${trajectory.segments} segments kept ` +
 						`(${Math.round(trajectory.keptRatio * 100)}%), kinds=${trajectory.kinds.join(",")}`,
 				);
+				const exportDir = swePrimeExportDir();
+				if (exportDir !== null) {
+					const exported = this.trajectoryCollector.export(task.id, exportDir, {
+						keepPositiveOnly: terminal === "completed",
+					});
+					if (exported !== null) {
+						this.pi.logger.info(`Task ${task.id} SWE-Prime segments exported to ${exported}`);
+					}
+				}
 			}
 		}
 		if (traceLogprobsEnabled()) {

@@ -16,7 +16,7 @@ mandate store.
 | Prefix context assembly | `python/ultimate_coders/search/context_assembler.py`, `python/ultimate_coders/agent/harness_local_loop.py` | `UC_PREFIX_CONTEXT_ASSEMBLY` | worker prompt assembly + provider cache samples | wired (partial) |
 | Anti-pattern gate | `python/ultimate_coders/acceptance/anti_pattern_gate.py` | `UC_ANTI_PATTERN_GATE` | worker `_verify_output_anti_patterns` | wired |
 | Mutation augmentation | `python/ultimate_coders/acceptance/mutation_augment.py` | `UC_MUTATION_AUGMENT` | acceptance dataset builder | tested primitive |
-| SWE-Prime | `packages/uc-orchestrator/src/rl/swe_prime.ts`, `packages/uc-orchestrator/src/rl/task_trajectory.ts` | `UC_SWE_PRIME` | orchestrator progress collector → task completion | wired (orchestrator diagnostic) |
+| SWE-Prime | `packages/uc-orchestrator/src/rl/swe_prime.ts`, `packages/uc-orchestrator/src/rl/task_trajectory.ts` | `UC_SWE_PRIME`, `UC_SWE_PRIME_EXPORT_DIR` | orchestrator progress collector → task completion → optional JSONL export | wired (orchestrator diagnostic + segment export) |
 | Failure heatmap | `dashboard/src/lib/failureHeatmap.ts`, `dashboard/src/components/FailureHeatmap.tsx` | n/a (presentation) | dashboard overview failure panel | wired (overview feed) |
 | AgentRadio | `python/ultimate_coders/agent/radio.py` | `UC_AGENT_RADIO` | worker tool/step boundary + NATS worklog publish | wired (local harness + outbound NATS) |
 | ExecCritic | `python/ultimate_coders/acceptance/exec_critic.py` | `UC_EXEC_CRITIC` | worker test-artifact gate | wired (partial) |
@@ -216,8 +216,10 @@ segments, and keeps at most 10% high-value trajectories.
 `packages/uc-orchestrator/src/rl/task_trajectory.ts` projects the orchestrator's
 real `subtask_progress` stream into those segments and distils one loss mask at
 `finishTask` when `UC_SWE_PRIME` is on, logging a bounded kept-segment summary.
-This is a diagnostic/data-collection boundary: no token likelihoods are
-invented and no training or export pipeline runs here.
+When `UC_SWE_PRIME_EXPORT_DIR` is also set, the same distilled segments and
+loss mask are appended to a JSONL file before the task buffer is cleared. This
+is a segment-level data boundary: no token likelihoods are invented and no
+token-level training pipeline runs here.
 
 `python/ultimate_coders/acceptance/gdpo_scorer.py` normalizes pass, F2P, and P2P components (weights 0.5/0.3/0.2)
 within a group and then across the batch. When `UC_GDPO_SCORER` is on, the worker consumes an optional

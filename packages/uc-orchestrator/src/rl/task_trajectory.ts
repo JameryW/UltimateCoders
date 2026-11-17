@@ -12,6 +12,9 @@
  * collection signal, not a training run.
  */
 
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+
 import {
 	distillSegments,
 	type DistillOptions,
@@ -23,6 +26,10 @@ import {
 /** Environment flag for runtime trajectory distillation. */
 export const SWE_PRIME_ENV = "UC_SWE_PRIME";
 
+/** Optional directory for segment-level SWE-Prime export. */
+export const SWE_PRIME_EXPORT_DIR_ENV = "UC_SWE_PRIME_EXPORT_DIR";
+const EXPORT_FILE = "swe-prime-trajectories.jsonl";
+
 const MAX_EVENTS_PER_TASK = 800;
 const MAX_TASKS = 64;
 const MAX_PHASE_CHARS = 200;
@@ -32,6 +39,48 @@ const MAX_SUMMARY_CHARS = 300;
 export function swePrimeEnabled(): boolean {
 	const value = process.env[SWE_PRIME_ENV];
 	return value !== undefined && ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+/** Return the configured segment-export directory, or null when disabled. */
+export function swePrimeExportDir(): string | null {
+	const value = process.env[SWE_PRIME_EXPORT_DIR_ENV];
+	const directory = (value ?? "").trim();
+	return directory.length > 0 ? directory : null;
+}
+
+/**
+ * Append one distilled task to the segment-level SWE-Prime JSONL export.
+ *
+ * This is deliberately *not* token-level TITO: it exports the semantic
+ * segments and loss mask the orchestrator can observe. Providers that do not
+ * expose token logprobs still produce a usable segment record. Returns the
+ * file path written, or null when there are no events.
+ */
+export function exportTaskTrajectory(
+	taskId: string,
+	events: readonly TrajectoryProgressEvent[],
+	options: DistillOptions,
+	directory: string,
+): string | null {
+	const task = taskId.trim();
+	if (!task) throw new TypeError("taskId must be a non-empty string");
+	const root = directory.trim();
+	if (!root) throw new TypeError("directory must be a non-empty string");
+	const segments = segmentsFromProgress(events);
+	if (segments.length === 0) return null;
+	const distilled = distillSegments(segments, options);
+	const record = {
+		v: 1,
+		task_id: task,
+		exported_at: new Date().toISOString(),
+		kept_ratio: distilled.keptRatio,
+		loss_mask: distilled.lossMask,
+		segments: distilled.segments,
+	};
+	mkdirSync(root, { recursive: true });
+	const path = join(root, EXPORT_FILE);
+	appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
+	return path;
 }
 
 /** Minimal progress event shape emitted by the orchestrator. */
@@ -196,6 +245,17 @@ export class TaskTrajectoryCollector {
 		const events = this.eventsByTask.get(taskId);
 		if (events === undefined || events.length === 0) return null;
 		return distillTaskTrajectory(taskId, events, options);
+	}
+
+	/** Export one task's semantic trajectory without clearing the buffer. */
+	export(
+		taskId: string,
+		directory: string,
+		options: DistillOptions = {},
+	): string | null {
+		const events = this.eventsByTask.get(taskId);
+		if (events === undefined || events.length === 0) return null;
+		return exportTaskTrajectory(taskId, events, options, directory);
 	}
 
 	/** Release a completed task's buffer. */
