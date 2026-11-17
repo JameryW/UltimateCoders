@@ -83,6 +83,7 @@ CREDENTIAL_LEASE_ENV = "UC_CREDENTIAL_LEASE"
 CREDENTIAL_BROKER_ENV = "UC_CREDENTIAL_BROKER"
 TRACE_LOGPROBS_ENV = "UC_TRACE_LOGPROBS"
 MAX_TURN_LIKELIHOODS = 64
+MAX_PREFIX_CACHE_SAMPLES = 64
 
 # Deliberately SHORT — large instruction blobs are what break small models.
 _SYSTEM_PROMPT = """\
@@ -287,8 +288,11 @@ class LocalLoopHarnessAdapter(AgentAdapter):
         token_usage = _usage_from_events(result.stdout)
         turn_likelihoods = _turn_likelihoods_from_events(result.stdout)
         turn_tokens = _turn_tokens_from_events(result.stdout)
+        prefix_cache = _prefix_cache_from_events(result.stdout)
         if not turn_tokens and envelope is not None:
             turn_tokens = _normalise_turn_tokens(envelope.get("turn_tokens"))
+        if not prefix_cache and envelope is not None:
+            prefix_cache = _normalise_prefix_cache(envelope.get("prefix_cache"))
         if not turn_likelihoods and envelope is not None:
             raw_likelihoods = envelope.get("turn_likelihoods")
             if isinstance(raw_likelihoods, list):
@@ -328,6 +332,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
                 token_usage=token_usage,
                 turn_likelihoods=turn_likelihoods,
                 turn_tokens=turn_tokens,
+                prefix_cache=prefix_cache,
             )
 
         return AgentOutput(
@@ -340,6 +345,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             token_usage=token_usage,
             turn_likelihoods=turn_likelihoods,
             turn_tokens=turn_tokens,
+            prefix_cache=prefix_cache,
         )
 
 
@@ -473,6 +479,59 @@ def _normalise_turn_tokens(value: Any) -> list[list[dict[str, Any]]]:
     return turns
 
 
+def _normalise_prefix_cache_sample(value: Any) -> dict[str, Any] | None:
+    """Validate one provider cache sample; return None when it is not measurable."""
+
+    if not isinstance(value, dict):
+        return None
+    try:
+        prompt_tokens = int(value.get("prompt_tokens"))
+    except (TypeError, ValueError):
+        return None
+    try:
+        cached_tokens = int(value.get("cached_tokens"))
+    except (TypeError, ValueError):
+        return None
+    if prompt_tokens <= 0 or cached_tokens < 0:
+        return None
+    cached_tokens = min(cached_tokens, prompt_tokens)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "cached_tokens": cached_tokens,
+        "cache_hit_ratio": round(cached_tokens / prompt_tokens, 4),
+    }
+
+
+def _prefix_cache_from_events(stdout: str) -> list[dict[str, Any]]:
+    """Collect provider-reported prefix-cache samples from the child stream."""
+
+    values: list[dict[str, Any]] = []
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("event") != "prefix_cache":
+            continue
+        sample = _normalise_prefix_cache_sample(event)
+        if sample is not None:
+            values.append(sample)
+    return values
+
+
+def _normalise_prefix_cache(value: Any) -> list[dict[str, Any]]:
+    """Validate a decoded prefix-cache payload; drop malformed samples."""
+
+    if not isinstance(value, list):
+        return []
+    samples: list[dict[str, Any]] = []
+    for item in value:
+        sample = _normalise_prefix_cache_sample(item)
+        if sample is not None:
+            samples.append(sample)
+    return samples
+
+
 def trace_logprobs_enabled() -> bool:
     """Whether the local harness should request token logprobs."""
 
@@ -554,6 +613,58 @@ def _token_logprobs(response: Any) -> list[dict[str, Any]]:
         return []
 
 
+def _prefix_cache_usage(response: Any) -> dict[str, Any] | None:
+    """Provider-reported prompt-cache usage for one completion.
+
+    Reads the OpenAI-style ``usage.prompt_tokens_details.cached_tokens`` and
+    the Anthropic-style ``usage.cache_read_input_tokens`` fallback.  Returns
+    ``None`` when the provider does not report cached prompt tokens, so the
+    recording stays a measurement instead of an invented zero.
+    """
+
+    try:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+
+        def field(name: str) -> Any:
+            if isinstance(usage, dict):
+                return usage.get(name)
+            return getattr(usage, name, None)
+
+        prompt_tokens = field("prompt_tokens")
+        try:
+            prompt_tokens = int(prompt_tokens)
+        except (TypeError, ValueError):
+            return None
+        if prompt_tokens <= 0:
+            return None
+
+        details = field("prompt_tokens_details")
+        cached_tokens: Any = None
+        if details is not None:
+            if isinstance(details, dict):
+                cached_tokens = details.get("cached_tokens")
+            else:
+                cached_tokens = getattr(details, "cached_tokens", None)
+        if cached_tokens is None:
+            cached_tokens = field("cache_read_input_tokens")
+        try:
+            cached_tokens = int(cached_tokens)
+        except (TypeError, ValueError):
+            return None
+        if cached_tokens < 0:
+            return None
+        cached_tokens = min(cached_tokens, prompt_tokens)
+        return {
+            "prompt_tokens": prompt_tokens,
+            "cached_tokens": cached_tokens,
+            "cache_hit_ratio": round(cached_tokens / prompt_tokens, 4),
+        }
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 # ── Runner (child-process side) ──────────────────────────────────────
 
 
@@ -567,6 +678,7 @@ class _RunStats:
     last_failed_output: str = ""
     turn_likelihoods: list[float] = field(default_factory=list)
     turn_tokens: list[list[dict[str, Any]]] = field(default_factory=list)
+    prefix_cache: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _emit(payload: dict[str, Any]) -> None:
@@ -1018,6 +1130,16 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                         "completion_tokens": getattr(usage, "completion_tokens", 0),
                     }
                 )
+            cache = _prefix_cache_usage(response)
+            if cache is not None and len(stats.prefix_cache) < MAX_PREFIX_CACHE_SAMPLES:
+                stats.prefix_cache.append(cache)
+                _emit(
+                    {
+                        "event": "prefix_cache",
+                        "turn": stats.turns,
+                        **cache,
+                    }
+                )
             if not tool_calls:
                 final_summary = assistant_text or "Local harness finished"
                 hit_done = True
@@ -1165,6 +1287,7 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                 "tool_calls": stats.tool_calls,
                 "test_output": stats.last_failed_output,
                 "turn_tokens": stats.turn_tokens,
+                "prefix_cache": stats.prefix_cache,
             }
         )
         return 1
@@ -1186,6 +1309,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         envelope["turn_likelihoods"] = list(stats.turn_likelihoods)
     if stats.turn_tokens:
         envelope["turn_tokens"] = stats.turn_tokens
+    if stats.prefix_cache:
+        envelope["prefix_cache"] = stats.prefix_cache
     if stats.last_failed_output:
         envelope["test_output"] = stats.last_failed_output
     _emit(envelope)

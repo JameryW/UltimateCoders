@@ -461,6 +461,10 @@ class AgentOutput:
     # string alone is not enough: re-tokenizing it with a different tokenizer
     # would fabricate ids.  Adapters that cannot observe ids leave this empty.
     turn_tokens: list[list[dict[str, Any]]] = field(default_factory=list)
+    # Provider-reported prompt-cache samples (one per completion) when the
+    # provider exposes cached prompt tokens.  These are measurements, not
+    # estimates: an empty list means the provider did not report cache usage.
+    prefix_cache: list[dict[str, Any]] = field(default_factory=list)
     had_failed_step: bool = False
     failed_file_changes: list[FileChange] = field(default_factory=list)
     # Per-step usage records for a multi-agent workflow (T18 #668).

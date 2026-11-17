@@ -1016,3 +1016,30 @@ def test_trajectory_export_is_off_by_default(tmp_path: Path) -> None:
         turn_tokens=[[{"token_id": 10, "logprob": -0.1}]],
     )
     assert worker._export_trajectory(subtask, output, success=True, error="") is None
+
+
+def test_prefix_cache_event_uses_latest_provider_sample() -> None:
+    worker = object.__new__(Worker)
+    output = AgentOutput(
+        success=True,
+        prefix_cache=[
+            {"prompt_tokens": 100, "cached_tokens": 80, "cache_hit_ratio": 0.8},
+            {"prompt_tokens": 120, "cached_tokens": 60, "cache_hit_ratio": 0.5},
+        ],
+    )
+
+    event = worker._prefix_cache_event(output)
+
+    assert event == {
+        "phase": "prefix cache",
+        "percent": 0,
+        "prefix_cache_samples": 2,
+        "prefix_cache_prompt_tokens": 120,
+        "prefix_cache_cached_tokens": 60,
+        "prefix_cache_hit_ratio": 0.5,
+    }
+
+
+def test_prefix_cache_event_is_omitted_when_provider_did_not_report() -> None:
+    worker = object.__new__(Worker)
+    assert worker._prefix_cache_event(AgentOutput(success=True)) is None

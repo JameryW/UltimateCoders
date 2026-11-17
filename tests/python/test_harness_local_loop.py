@@ -134,6 +134,34 @@ class TestAdapterParse:
         out = self._parse(stdout)
         assert out.turn_likelihoods == [0.8, 0.25]
 
+    def test_prefix_cache_samples_are_forwarded(self) -> None:
+        stdout = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "event": "prefix_cache",
+                        "turn": 1,
+                        "prompt_tokens": 100,
+                        "cached_tokens": 80,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "final",
+                        "success": True,
+                        "summary": "done",
+                        "prefix_cache": [
+                            {"prompt_tokens": 200, "cached_tokens": 50}
+                        ],
+                    }
+                ),
+            ]
+        )
+        out = self._parse(stdout)
+        assert out.prefix_cache == [
+            {"prompt_tokens": 100, "cached_tokens": 80, "cache_hit_ratio": 0.8}
+        ]
+
     def test_answer_likelihood_averages_token_logprobs(self) -> None:
         out = _resp([("done", {"summary": "ok"})], logprobs=[-0.2, -0.4])
         assert hll._answer_likelihood(out) == pytest.approx(math.exp(-0.3))
@@ -265,6 +293,9 @@ def _resp(
     text: str = "",
     logprobs: list[float] | None = None,
     token_ids: list[int] | None = None,
+    prompt_tokens: int = 1,
+    completion_tokens: int = 1,
+    cached_tokens: int | None = None,
 ) -> SimpleNamespace:
     calls = [
         SimpleNamespace(
@@ -282,10 +313,13 @@ def _resp(
                 item.token_id = token_ids[index]
             content.append(item)
         choice.logprobs = SimpleNamespace(content=content)
-    return SimpleNamespace(
-        choices=[choice],
-        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    usage = SimpleNamespace(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
     )
+    if cached_tokens is not None:
+        usage.prompt_tokens_details = SimpleNamespace(cached_tokens=cached_tokens)
+    return SimpleNamespace(choices=[choice], usage=usage)
 
 
 class TestRunnerLoop:
@@ -355,6 +389,57 @@ class TestRunnerLoop:
         )
         final = [ln for ln in lines if ln.get("event") == "final"][-1]
         assert final["turn_likelihoods"] == pytest.approx([math.exp(-0.3), math.exp(-1.0)])
+
+    def test_prefix_cache_usage_is_reported(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
+        responses = iter(
+            [
+                _resp(
+                    [("write_file", {"path": "out.txt", "content": "hi"})],
+                    prompt_tokens=100,
+                    completion_tokens=5,
+                    cached_tokens=80,
+                ),
+                _resp(
+                    [("done", {"summary": "wrote out.txt"})],
+                    prompt_tokens=120,
+                    completion_tokens=5,
+                    cached_tokens=0,
+                ),
+            ]
+        )
+        with patch.object(hll, "_completion", side_effect=lambda m: next(responses)):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 10))
+        assert code == 0
+
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
+        samples = [ln for ln in lines if ln.get("event") == "prefix_cache"]
+        assert samples == [
+            {
+                "event": "prefix_cache",
+                "turn": 1,
+                "prompt_tokens": 100,
+                "cached_tokens": 80,
+                "cache_hit_ratio": 0.8,
+            },
+            {
+                "event": "prefix_cache",
+                "turn": 2,
+                "prompt_tokens": 120,
+                "cached_tokens": 0,
+                "cache_hit_ratio": 0.0,
+            },
+        ]
+        final = [ln for ln in lines if ln.get("event") == "final"][-1]
+        assert final["prefix_cache"] == [
+            {"prompt_tokens": 100, "cached_tokens": 80, "cache_hit_ratio": 0.8},
+            {"prompt_tokens": 120, "cached_tokens": 0, "cache_hit_ratio": 0.0},
+        ]
 
     def test_rejected_logprobs_retry_without_the_parameter(
         self,

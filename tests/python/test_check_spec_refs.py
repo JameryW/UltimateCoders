@@ -1025,7 +1025,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # (1408 -> 1410); all resolved, unclassified stays 0.
     # V10 #17 cumulative regression names orchestrator.py and worker.py in
     # the map row/paragraph (1410 -> 1413); all resolved, unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1413
+    # V10 #9 prefix-cache measurement names harness_local_loop.py in the map
+    # row (1413 -> 1414); resolved, unclassified 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1414
 
 
 def test_real_corpus_has_no_false_content_mismatch():

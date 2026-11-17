@@ -2894,6 +2894,14 @@ class Worker:
                     percent=0,
                     turn_likelihoods=list(output.turn_likelihoods)[:64],
                 )
+            # V10 #9: provider-reported prompt-cache samples increase the
+            # confidence that the stable prefix is actually reused. Absence of
+            # the field means the provider did not report it, never 0% hit rate.
+            prefix_cache_event = self._prefix_cache_event(output)
+            if prefix_cache_event is not None:
+                await self._emit_step_event(
+                    subtask, "subtask_progress", **prefix_cache_event
+                )
             diagnosis = self._runtime_diagnosis(output)
             if diagnosis is not None:
                 await self._emit_step_event(subtask, "subtask_progress", **diagnosis)
@@ -3540,6 +3548,26 @@ class Worker:
             "gdpo_group_size": summary["count"],
             "gdpo_rewards": list(summary["rewards"])[:16],
             "gdpo_source": "declared",
+        }
+
+    def _prefix_cache_event(self, output: AgentOutput) -> dict[str, Any] | None:
+        """Report provider prompt-cache samples for the #9 prefix measurement.
+
+        Only a provider-reported sample is emitted; an absent field stays
+        "not reported", never a synthetic 0% hit rate.
+        """
+
+        samples = list(output.prefix_cache)
+        if not samples:
+            return None
+        latest = samples[-1]
+        return {
+            "phase": "prefix cache",
+            "percent": 0,
+            "prefix_cache_samples": len(samples),
+            "prefix_cache_prompt_tokens": latest["prompt_tokens"],
+            "prefix_cache_cached_tokens": latest["cached_tokens"],
+            "prefix_cache_hit_ratio": latest["cache_hit_ratio"],
         }
 
     def _runtime_diagnosis(self, output: AgentOutput) -> dict[str, Any] | None:

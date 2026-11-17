@@ -13,7 +13,7 @@ mandate store.
 | Boundary contract | `crates/uc-types/src/contract.rs`, `crates/uc-engine/src/lib.rs`, `python/ultimate_coders/agent/boundary_contract.py` | `UC_BOUNDARY_CONTRACT`, `UC_BOUNDARY_CONTRACT_ENFORCE` | worker `_apply_perception_pass` / `_verify_output_boundary` | wired (partial) |
 | PerceptionPass | `python/ultimate_coders/agent/planner.py` | `UC_PERCEPTION_PASS` | worker `_apply_perception_pass` | wired |
 | Plan critic | `python/ultimate_coders/agent/planner_critic.py` | `UC_PLANNER_CRITIC` | worker PerceptionPass preflight | wired (partial) |
-| Prefix context assembly | `python/ultimate_coders/search/context_assembler.py` | `UC_PREFIX_CONTEXT_ASSEMBLY` | worker prompt assembly | wired (partial) |
+| Prefix context assembly | `python/ultimate_coders/search/context_assembler.py`, `python/ultimate_coders/agent/harness_local_loop.py` | `UC_PREFIX_CONTEXT_ASSEMBLY` | worker prompt assembly + provider cache samples | wired (partial) |
 | Anti-pattern gate | `python/ultimate_coders/acceptance/anti_pattern_gate.py` | `UC_ANTI_PATTERN_GATE` | worker `_verify_output_anti_patterns` | wired |
 | Mutation augmentation | `python/ultimate_coders/acceptance/mutation_augment.py` | `UC_MUTATION_AUGMENT` | acceptance dataset builder | tested primitive |
 | SWE-Prime | `packages/uc-orchestrator/src/rl/swe_prime.ts`, `packages/uc-orchestrator/src/rl/task_trajectory.ts` | `UC_SWE_PRIME` | orchestrator progress collector → task completion | wired (orchestrator diagnostic) |
@@ -81,7 +81,11 @@ recording `full_sha256`, `prefix_cache_hint`, slot names and token counts on
 the started context summary. Slot stability is monotonic: once a slot has a
 volatile item, later slots are volatile too. The harness still owns the system
 prompt/tool schema and adds it outside this block, so slot 0 is not byte-level
-identical to the final provider prefix yet.
+identical to the final provider prefix yet. When the provider reports
+prompt-cache usage, the local harness forwards `prompt_tokens`,
+`cached_tokens`, and `cache_hit_ratio` per turn, and the worker emits a
+bounded `prefix cache` progress event; a provider that reports nothing stays
+“not reported”, never a synthetic 0% hit rate.
 
 `dashboard/src/lib/failureHeatmap.ts` defines the 7 × 24 failure catalogue (18 deterministic
 modes), `classifyPtaQuality`, `buildFailureHeatmap`, and `failureEventsFromDashboard`. The
