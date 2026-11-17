@@ -2663,6 +2663,13 @@ class Worker:
             # It is read-only and flag-gated; failure to compile must never
             # block the existing prompt path.
             context_block = self._apply_perception_pass(subtask, context_block, working_dir)
+            context_block, skill_event = self._apply_skill_card(subtask, context_block)
+            if skill_event is not None:
+                await self._emit_step_event(
+                    subtask,
+                    "subtask_progress",
+                    **skill_event,
+                )
 
             # Optional ExecCritic acceptance contract. Validation happens
             # before any source edit; an enforced invalid artifact fails the
@@ -3131,6 +3138,57 @@ class Worker:
         if enforce and violations:
             return event, "Mandate envelope rejected: " + "; ".join(violations[:5])
         return event, None
+
+    def _apply_skill_card(
+        self,
+        subtask: Subtask,
+        context_block: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Inject one declared skill card only after four-stage validation.
+
+        Opt-in via ``UC_SKILL_CURRICULUM``. The card and its evidence come
+        from the task payload; the worker does not manufacture replay,
+        transfer, or safety evidence. A failed validation is diagnostic and
+        never changes the prompt.
+        """
+
+        from ultimate_coders.knowledge.skill_curriculum import (
+            SkillCard,
+            four_stage_validate,
+            skill_curriculum_enabled,
+        )
+
+        if not skill_curriculum_enabled():
+            return context_block, None
+        config = subtask.agent_config if isinstance(subtask.agent_config, dict) else {}
+        raw = config.get("skill_card")
+        if not isinstance(raw, dict):
+            return context_block, None
+        card = SkillCard(
+            skill_id=str(raw.get("skill_id") or ""),
+            trigger=str(raw.get("trigger") or ""),
+            procedure=str(raw.get("procedure") or ""),
+            verification=str(raw.get("verification") or ""),
+        )
+        evidence = config.get("skill_evidence")
+        report = four_stage_validate(card, evidence if isinstance(evidence, dict) else {})
+        event = {
+            "phase": "skill card",
+            "percent": 0,
+            "skill_id": card.skill_id,
+            "skill_status": report.stage,
+            "skill_passed": report.passed,
+        }
+        if report.failed_stage is not None:
+            event["skill_failed_stage"] = report.failed_stage
+            return context_block, event
+        section = (
+            f"\n\n### Validated skill card: {card.skill_id}\n"
+            f"Trigger: {card.trigger}\n"
+            f"Procedure: {card.procedure}\n"
+            f"Verification: {card.verification}\n"
+        )
+        return (context_block + section)[:20000], event
 
     def _acceptance_scores_event(self, subtask: Subtask) -> dict[str, Any] | None:
         """Report a declared GDPO rollout group, never invent component rates.

@@ -599,3 +599,52 @@ def test_acceptance_scores_require_a_group_and_valid_entries(monkeypatch) -> Non
     assert event["gdpo_status"] == "invalid"
     assert "pass_rate" in event["gdpo_reason"]
 
+
+def test_skill_card_is_injected_only_after_validation(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        agent_config={
+            "skill_card": {
+                "skill_id": "retry-after-timeout",
+                "trigger": "a command timed out",
+                "procedure": "re-run with a smaller scope",
+                "verification": "the narrowed command succeeds",
+            },
+            "skill_evidence": {"replay": True, "transfer": True, "safety": True},
+        }
+    )
+
+    monkeypatch.delenv("UC_SKILL_CURRICULUM", raising=False)
+    block, event = worker._apply_skill_card(subtask, "base")
+    assert block == "base"
+    assert event is None
+
+    monkeypatch.setenv("UC_SKILL_CURRICULUM", "1")
+    block, event = worker._apply_skill_card(subtask, "base")
+    assert "### Validated skill card: retry-after-timeout" in block
+    assert "Procedure: re-run with a smaller scope" in block
+    assert event is not None
+    assert event["skill_passed"] is True
+
+
+def test_skill_card_requires_stage_evidence(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        agent_config={
+            "skill_card": {
+                "skill_id": "retry-after-timeout",
+                "trigger": "a command timed out",
+                "procedure": "re-run with a smaller scope",
+                "verification": "the narrowed command succeeds",
+            },
+            "skill_evidence": {"schema": True},
+        }
+    )
+    monkeypatch.setenv("UC_SKILL_CURRICULUM", "1")
+
+    block, event = worker._apply_skill_card(subtask, "base")
+    assert block == "base"
+    assert event is not None
+    assert event["skill_passed"] is False
+    assert event["skill_failed_stage"] == "replay"
+
