@@ -2759,6 +2759,17 @@ class Worker:
                     agent=agent_config.get("agent"),
                     cancel_key=cancel_key,
                 )
+            # TRACE (#20) consumes one real answer likelihood per model turn.
+            # Only adapters that requested token logprobs populate this list;
+            # the event is omitted entirely when the provider reported none.
+            if output.turn_likelihoods:
+                await self._emit_step_event(
+                    subtask,
+                    "subtask_progress",
+                    phase="trace likelihoods",
+                    percent=0,
+                    turn_likelihoods=list(output.turn_likelihoods)[:64],
+                )
             diagnosis = self._runtime_diagnosis(output)
             if diagnosis is not None:
                 await self._emit_step_event(subtask, "subtask_progress", **diagnosis)

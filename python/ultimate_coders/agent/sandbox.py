@@ -450,6 +450,12 @@ class AgentOutput:
     # was authored" from "a test command actually ran"; other adapters leave
     # it empty rather than guessing.
     commands_run: list[str] = field(default_factory=list)
+    # Per-turn answer likelihoods (geometric mean token probability) for
+    # adapters whose provider returns token logprobs.  Only the local harness
+    # can populate this today; every other adapter leaves it empty rather than
+    # fabricating likelihoods.  TRACE turn credit (#20) consumes it after the
+    # worker forwards it as a progress event.
+    turn_likelihoods: list[float] = field(default_factory=list)
     had_failed_step: bool = False
     failed_file_changes: list[FileChange] = field(default_factory=list)
     # Per-step usage records for a multi-agent workflow (T18 #668).

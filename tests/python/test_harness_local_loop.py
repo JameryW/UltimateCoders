@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -99,6 +100,29 @@ class TestAdapterParse:
         assert out.success is True
         assert out.summary == "all done"
         assert out.tool_calls == ["read_file", "write_file"]
+
+    def test_turn_likelihoods_are_forwarded(self) -> None:
+        stdout = "\n".join(
+            [
+                json.dumps({"event": "turn_likelihood", "turn": 1, "likelihood": 0.8}),
+                json.dumps({"event": "turn_likelihood", "turn": 2, "likelihood": 0.25}),
+                json.dumps(
+                    {
+                        "event": "final",
+                        "success": True,
+                        "summary": "done",
+                        "turn_likelihoods": [0.9],
+                    }
+                ),
+            ]
+        )
+        out = self._parse(stdout)
+        assert out.turn_likelihoods == [0.8, 0.25]
+
+    def test_answer_likelihood_averages_token_logprobs(self) -> None:
+        out = _resp([("done", {"summary": "ok"})], logprobs=[-0.2, -0.4])
+        assert hll._answer_likelihood(out) == pytest.approx(math.exp(-0.3))
+        assert hll._answer_likelihood(_resp([("done", {"summary": "ok"})])) is None
 
     def test_final_envelope_failure(self) -> None:
         stdout = json.dumps({"event": "final", "success": False, "summary": "boom"})
@@ -221,7 +245,11 @@ class TestRunnerTools:
         assert changed["content"] == "beta"
 
 
-def _resp(tool_calls: list[tuple[str, dict]], text: str = "") -> SimpleNamespace:
+def _resp(
+    tool_calls: list[tuple[str, dict]],
+    text: str = "",
+    logprobs: list[float] | None = None,
+) -> SimpleNamespace:
     calls = [
         SimpleNamespace(
             id=f"c{i}",
@@ -229,8 +257,13 @@ def _resp(tool_calls: list[tuple[str, dict]], text: str = "") -> SimpleNamespace
         )
         for i, (n, a) in enumerate(tool_calls)
     ]
+    choice = SimpleNamespace(message=SimpleNamespace(content=text, tool_calls=calls))
+    if logprobs is not None:
+        choice.logprobs = SimpleNamespace(
+            content=[SimpleNamespace(logprob=value) for value in logprobs]
+        )
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=text, tool_calls=calls))],
+        choices=[choice],
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
     )
 
@@ -266,6 +299,60 @@ class TestRunnerLoop:
         assert final["success"] is True
         assert final["files_written"] == ["out.txt"]
         assert final["turns"] == 3
+
+    def test_trace_logprobs_are_opt_in_and_forwarded(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
+        monkeypatch.setenv("UC_TRACE_LOGPROBS", "1")
+        responses = iter(
+            [
+                _resp(
+                    [("write_file", {"path": "out.txt", "content": "hi"})],
+                    logprobs=[-0.2, -0.4],
+                ),
+                _resp([("done", {"summary": "wrote out.txt"})], logprobs=[-1.0]),
+            ]
+        )
+        requests: list[bool] = []
+
+        def completion(messages, *, request_logprobs=False):
+            requests.append(request_logprobs)
+            return next(responses)
+
+        with patch.object(hll, "_completion", side_effect=completion):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 10))
+        assert code == 0
+        assert requests == [True, True]
+
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
+        likelihoods = [ln for ln in lines if ln.get("event") == "turn_likelihood"]
+        assert [row["likelihood"] for row in likelihoods] == pytest.approx(
+            [math.exp(-0.3), math.exp(-1.0)]
+        )
+        final = [ln for ln in lines if ln.get("event") == "final"][-1]
+        assert final["turn_likelihoods"] == pytest.approx([math.exp(-0.3), math.exp(-1.0)])
+
+    def test_trace_logprobs_are_not_requested_by_default(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
+        monkeypatch.delenv("UC_TRACE_LOGPROBS", raising=False)
+        requests: list[bool] = []
+
+        def completion(messages, *, request_logprobs=False):
+            requests.append(request_logprobs)
+            return _resp([("done", {"summary": "ok"})])
+
+        with patch.object(hll, "_completion", side_effect=completion):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 2))
+        assert code == 0
+        assert requests == [False]
 
     def test_max_turns_exhaustion(
         self,

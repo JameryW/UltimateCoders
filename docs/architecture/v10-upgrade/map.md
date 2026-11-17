@@ -25,7 +25,7 @@ mandate store.
 | Cumulative regression | `crates/uc-engine/src/dag.rs` | n/a (library type) | DAG completion gate | tested primitive |
 | Dockerless verifier | `python/ultimate_coders/acceptance/dockerless_verifier.py` | `UC_DOCKERLESS_VERIFIER` | Oracle fallback / TITO filter | wired (diagnostic) |
 | ECLoop gate | `python/ultimate_coders/agent/ecloop_gate.py` | `UC_ECLOOP_GATE` | local-harness edit/submit tool boundary | wired (local harness) |
-| TRACE credit | `packages/uc-orchestrator/src/rl/trace_credit.ts` | n/a (library) | RL trajectory scoring | tested primitive |
+| TRACE credit | `packages/uc-orchestrator/src/rl/trace_credit.ts`, `packages/uc-orchestrator/src/rl/trace_runtime.ts` | `UC_TRACE_LOGPROBS` | worker turn likelihoods → orchestrator collector | wired (partial) |
 | GDPO + skills | `python/ultimate_coders/acceptance/gdpo_scorer.py`, `python/ultimate_coders/knowledge/skill_curriculum.py` | `UC_GDPO_SCORER`, `UC_SKILL_CURRICULUM` | acceptance scoring / skill cards | tested primitive |
 | SWE-Doctor | `python/ultimate_coders/acceptance/swe_doctor_diag.py` | `UC_SWE_DOCTOR` | worker failed-run diagnosis | wired (partial) |
 | RL hardening | `crates/uc-engine/src/rl_hardening.rs` | n/a (library type) | test-evaluation process boundary | tested primitive |
@@ -181,7 +181,16 @@ worker does not yet feed a target contract into the harness.
 
 `packages/uc-orchestrator/src/rl/trace_credit.ts` implements the log-ratio turn credit with a three-turn
 truncated horizon, gamma 0.8, lambda 2.0, and slow/fast learning rates
-0.2/1.0. `packages/uc-orchestrator/src/rl/swe_prime.ts` labels exploration, localization, editing,
+0.2/1.0. `packages/uc-orchestrator/src/rl/trace_runtime.ts` is the bounded
+runtime collector: it accepts `turn_likelihoods` from a worker
+`subtask_progress` event, normalises JSON-encoded or decoded arrays, drops
+invalid values instead of substituting a default, and computes turn credits at
+`finishTask` when `UC_TRACE_LOGPROBS` is on. The local harness requests token
+logprobs only under that flag and averages them into one geometric-mean answer
+likelihood per turn; a provider that returns no logprobs produces no sample, so
+the collector still cannot invent a likelihood. Other adapters leave
+`AgentOutput.turn_likelihoods` empty.
+`packages/uc-orchestrator/src/rl/swe_prime.ts` labels exploration, localization, editing,
 verification, and repair segments, masks reverted or repeated-ineffective
 segments, and keeps at most 10% high-value trajectories.
 `packages/uc-orchestrator/src/rl/task_trajectory.ts` projects the orchestrator's

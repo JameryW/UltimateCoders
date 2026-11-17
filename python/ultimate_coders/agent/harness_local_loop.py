@@ -32,6 +32,7 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import os
 import posixpath
 import sys
@@ -75,6 +76,8 @@ DRIFT_REQUIRED_FILES_ENV = "UC_DRIFT_REQUIRED_FILES"
 RADIO_GRAPH_ENV = "UC_RADIO_GRAPH_ID"
 RADIO_NODE_ENV = "UC_RADIO_NODE_ID"
 RADIO_INBOX_ENV = "UC_RADIO_INBOX_JSON"
+TRACE_LOGPROBS_ENV = "UC_TRACE_LOGPROBS"
+MAX_TURN_LIKELIHOODS = 64
 
 # Deliberately SHORT — large instruction blobs are what break small models.
 _SYSTEM_PROMPT = """\
@@ -273,6 +276,17 @@ class LocalLoopHarnessAdapter(AgentAdapter):
 
         envelope = _final_envelope(result.stdout)
         token_usage = _usage_from_events(result.stdout)
+        turn_likelihoods = _turn_likelihoods_from_events(result.stdout)
+        if not turn_likelihoods and envelope is not None:
+            raw_likelihoods = envelope.get("turn_likelihoods")
+            if isinstance(raw_likelihoods, list):
+                turn_likelihoods = [
+                    float(value)
+                    for value in raw_likelihoods
+                    if isinstance(value, (int, float))
+                    and math.isfinite(float(value))
+                    and 0.0 < float(value) <= 1.0
+                ]
         tool_calls = [
             json.loads(line)["tool"]
             for line in result.stdout.splitlines()
@@ -300,6 +314,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
                 tool_calls=tool_calls,
                 commands_run=commands_run,
                 token_usage=token_usage,
+                turn_likelihoods=turn_likelihoods,
             )
 
         return AgentOutput(
@@ -310,6 +325,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             tool_calls=tool_calls,
             commands_run=commands_run,
             token_usage=token_usage,
+            turn_likelihoods=turn_likelihoods,
         )
 
 
@@ -369,6 +385,69 @@ def _usage_from_events(stdout: str) -> TokenUsage | None:
     )
 
 
+def _turn_likelihoods_from_events(stdout: str) -> list[float]:
+    """Collect the per-turn answer likelihoods emitted by the child loop."""
+
+    values: list[float] = []
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("event") != "turn_likelihood":
+            continue
+        value = event.get("likelihood")
+        if isinstance(value, (int, float)) and math.isfinite(float(value)):
+            likelihood = float(value)
+            if 0.0 < likelihood <= 1.0:
+                values.append(likelihood)
+    return values
+
+
+def trace_logprobs_enabled() -> bool:
+    """Whether the local harness should request token logprobs."""
+
+    return os.environ.get(TRACE_LOGPROBS_ENV, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _answer_likelihood(response: Any) -> float | None:
+    """Geometric-mean answer likelihood from one completion's token logprobs.
+
+    Returns ``None`` when the provider returned no token logprobs.  The value is
+    a real observation, never a placeholder: a provider that ignores the
+    ``logprobs`` request produces no sample at all.
+    """
+
+    try:
+        choice = response.choices[0]
+        logprobs = getattr(choice, "logprobs", None)
+        if logprobs is None:
+            return None
+        content = getattr(logprobs, "content", None)
+        if content is None and isinstance(logprobs, dict):
+            content = logprobs.get("content")
+        if not content:
+            return None
+        values: list[float] = []
+        for item in content:
+            value = getattr(item, "logprob", None)
+            if value is None and isinstance(item, dict):
+                value = item.get("logprob")
+            if isinstance(value, (int, float)) and math.isfinite(float(value)):
+                values.append(float(value))
+        if not values:
+            return None
+        likelihood = math.exp(sum(values) / len(values))
+        return min(1.0, max(1e-300, likelihood))
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
+
+
 # ── Runner (child-process side) ──────────────────────────────────────
 
 
@@ -380,6 +459,7 @@ class _RunStats:
     commands_run: list[str] = field(default_factory=list)
     reads: list[str] = field(default_factory=list)
     last_failed_output: str = ""
+    turn_likelihoods: list[float] = field(default_factory=list)
 
 
 def _emit(payload: dict[str, Any]) -> None:
@@ -703,7 +783,11 @@ async def _tool_run_command(root: Path, args: dict[str, Any]) -> str:
     )
 
 
-def _completion(messages: list[dict[str, Any]]) -> Any:
+def _completion(
+    messages: list[dict[str, Any]],
+    *,
+    request_logprobs: bool = False,
+) -> Any:
     """One litellm completion using the env-configured provider route."""
     import litellm
 
@@ -714,6 +798,10 @@ def _completion(messages: list[dict[str, Any]]) -> Any:
         "tools": _TOOLS,
         "timeout": float(os.environ.get("UC_LLM_TIMEOUT", "600")),
     }
+    if request_logprobs:
+        # The provider may ignore this; only a response that actually carries
+        # token logprobs contributes a sample.
+        kwargs["logprobs"] = True
     if os.environ.get("OPENAI_API_KEY"):
         kwargs["api_key"] = os.environ["OPENAI_API_KEY"]
     return litellm.completion(**kwargs)
@@ -741,6 +829,7 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
     drift_required = _env_path_list(DRIFT_REQUIRED_FILES_ENV)
     ecloop = ECLoopGate() if ecloop_gate_enabled() else None
     radio_watcher = _radio_watcher_from_env()
+    request_logprobs = trace_logprobs_enabled()
 
     final_summary = ""
     hit_done = False
@@ -756,11 +845,29 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                     stats.files_written,
                 )
                 _inject_drift_advisor(messages, drift)
-            response = await asyncio.to_thread(_completion, messages)
+            if request_logprobs:
+                response = await asyncio.to_thread(
+                    _completion,
+                    messages,
+                    request_logprobs=True,
+                )
+            else:
+                response = await asyncio.to_thread(_completion, messages)
             message = response.choices[0].message
             assistant_text = (getattr(message, "content", None) or "").strip()
             if assistant_text:
                 _emit({"event": "assistant", "text": assistant_text[:400]})
+            if request_logprobs:
+                likelihood = _answer_likelihood(response)
+                if likelihood is not None and len(stats.turn_likelihoods) < MAX_TURN_LIKELIHOODS:
+                    stats.turn_likelihoods.append(likelihood)
+                    _emit(
+                        {
+                            "event": "turn_likelihood",
+                            "turn": stats.turns,
+                            "likelihood": likelihood,
+                        }
+                    )
 
             tool_calls = list(getattr(message, "tool_calls", None) or [])
             usage = getattr(response, "usage", None)
@@ -936,6 +1043,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         envelope["drift_signals"] = [signal.value for signal in drift.triggered()]
     if ecloop is not None:
         envelope["ecloop_blocks"] = dict(ecloop.blocks)
+    if stats.turn_likelihoods:
+        envelope["turn_likelihoods"] = list(stats.turn_likelihoods)
     if stats.last_failed_output:
         envelope["test_output"] = stats.last_failed_output
     _emit(envelope)

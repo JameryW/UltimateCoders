@@ -26,6 +26,11 @@ import { ControlSignalSubscriber, type ControlSignalHandler } from "./control-si
 import { OrchestratorEventEmitter } from "./events";
 import type { OrchestratorEvents } from "./events";
 import { TaskTrajectoryCollector, swePrimeEnabled } from "../rl/task_trajectory";
+import {
+	normaliseTurnLikelihoods,
+	TraceRuntimeCollector,
+	traceLogprobsEnabled,
+} from "../rl/trace_runtime";
 import { sleepBackoff } from "./backoff";
 
 /** Delay before starting a fresh WatchTask recovery cycle after exhaustion. */
@@ -281,6 +286,7 @@ export class UCOrchestrator {
 	readonly events = new OrchestratorEventEmitter();
 	/** Bounded SWE-Prime diagnostic buffer fed by the live progress stream. */
 	private readonly trajectoryCollector = new TaskTrajectoryCollector();
+	private readonly traceCollector = new TraceRuntimeCollector();
 	// ── Claim loop state (T6 #642 C4) ──
 	/** Interval driving claim ticks; started lazily, self-stops when idle. */
 	private claimLoopTimer?: ReturnType<typeof setInterval>;
@@ -334,6 +340,14 @@ export class UCOrchestrator {
 		// diagnostic only; it never changes execution.
 		this.events.on("subtask_progress", (event) => {
 			if (swePrimeEnabled()) this.trajectoryCollector.record(event);
+		});
+		// TRACE #20: collect only real per-turn answer likelihoods. The worker
+		// omits the field when its adapter/provider returned no token logprobs,
+		// so an empty task buffer means "not observed", never "probability 1".
+		this.events.on("subtask_progress", (event) => {
+			if (traceLogprobsEnabled()) {
+				this.traceCollector.record(event.taskId, event.turnLikelihoods);
+			}
 		});
 	}
 
@@ -506,6 +520,7 @@ export class UCOrchestrator {
 				parallelStepCountStr !== undefined && parallelStepCountStr !== ""
 					? Number(parallelStepCountStr)
 					: undefined,
+			turnLikelihoods: normaliseTurnLikelihoods(d.turn_likelihoods),
 		});
 	}
 
@@ -1056,6 +1071,16 @@ export class UCOrchestrator {
 						`(${Math.round(trajectory.keptRatio * 100)}%), kinds=${trajectory.kinds.join(",")}`,
 				);
 			}
+		}
+		if (traceLogprobsEnabled()) {
+			const credits = this.traceCollector.credits(task.id);
+			if (credits.length > 0) {
+				const total = credits.reduce((sum, credit) => sum + credit.credit, 0);
+				this.pi.logger.info(
+					`Task ${task.id} TRACE: ${credits.length} turn credits, total=${total.toFixed(4)}`,
+				);
+			}
+			this.traceCollector.clear(task.id);
 		}
 		this.trajectoryCollector.clear(task.id);
 		// ponytail: F11 — widget teardown is owned by extension.ts's task_complete

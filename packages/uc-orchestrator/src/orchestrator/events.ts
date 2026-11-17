@@ -42,6 +42,8 @@ export interface OrchestratorEvents {
 		stepSummary?: string;
 		parallelGroup?: string;
 		parallelStepCount?: number;
+		/** Real per-turn answer likelihoods from an adapter with token logprobs. */
+		turnLikelihoods?: number[];
 	};
 
 	/** Task reached terminal state */
