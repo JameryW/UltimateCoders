@@ -2865,6 +2865,13 @@ class Worker:
                     retrace_contradictory=list(retrace.contradictory)[:8],
                     retrace_repair=retrace.repair_instruction[:500],
                 )
+            acceptance_event = self._acceptance_scores_event(subtask)
+            if acceptance_event is not None:
+                await self._emit_step_event(
+                    subtask,
+                    "subtask_progress",
+                    **acceptance_event,
+                )
             critic_event, critic_error = await self._verify_output_exec_critic(
                 subtask,
                 working_dir,
@@ -3124,6 +3131,69 @@ class Worker:
         if enforce and violations:
             return event, "Mandate envelope rejected: " + "; ".join(violations[:5])
         return event, None
+
+    def _acceptance_scores_event(self, subtask: Subtask) -> dict[str, Any] | None:
+        """Report a declared GDPO rollout group, never invent component rates.
+
+        Opt-in via ``UC_GDPO_SCORER``. An external acceptance runner may put
+        ``agent_config["acceptance_scores"]`` (a list of rollouts or a
+        ``{"rollouts": [...]}`` mapping) on the task. The worker only
+        normalises those declared values; it does not execute tests or derive
+        F2P/P2P rates from its own run.
+        """
+
+        from ultimate_coders.acceptance.gdpo_scorer import (
+            ComponentScores,
+            GDPOGroup,
+            gdpo_scorer_enabled,
+        )
+
+        if not gdpo_scorer_enabled():
+            return None
+        config = subtask.agent_config if isinstance(subtask.agent_config, dict) else {}
+        raw = config.get("acceptance_scores")
+        entries: list[Any]
+        if isinstance(raw, dict):
+            nested = raw.get("rollouts", raw.get("group", raw.get("scores")))
+            entries = list(nested) if isinstance(nested, (list, tuple)) else [raw]
+        elif isinstance(raw, (list, tuple)):
+            entries = list(raw)
+        else:
+            return None
+        scores: list[ComponentScores] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return {
+                    "phase": "acceptance scores",
+                    "percent": 0,
+                    "gdpo_status": "invalid",
+                    "gdpo_reason": "rollout entries must be JSON objects",
+                }
+            try:
+                scores.append(ComponentScores.from_mapping(entry))
+            except (TypeError, ValueError) as exc:
+                return {
+                    "phase": "acceptance scores",
+                    "percent": 0,
+                    "gdpo_status": "invalid",
+                    "gdpo_reason": str(exc)[:300],
+                }
+        if len(scores) < 2:
+            return {
+                "phase": "acceptance scores",
+                "percent": 0,
+                "gdpo_status": "insufficient_group",
+                "gdpo_group_size": len(scores),
+                "gdpo_reason": "at least two rollout scores are required",
+            }
+        summary = GDPOGroup(scores).summary()
+        return {
+            "phase": "acceptance scores",
+            "percent": 0,
+            "gdpo_status": "ok",
+            "gdpo_group_size": summary["count"],
+            "gdpo_rewards": list(summary["rewards"])[:16],
+        }
 
     def _runtime_diagnosis(self, output: AgentOutput) -> dict[str, Any] | None:
         """Return a SWE-Doctor diagnosis for a failed command output.

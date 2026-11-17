@@ -26,7 +26,7 @@ mandate store.
 | Dockerless verifier | `python/ultimate_coders/acceptance/dockerless_verifier.py` | `UC_DOCKERLESS_VERIFIER` | Oracle fallback / TITO filter | wired (diagnostic) |
 | ECLoop gate | `python/ultimate_coders/agent/ecloop_gate.py` | `UC_ECLOOP_GATE` | local-harness edit/submit tool boundary | wired (local harness) |
 | TRACE credit | `packages/uc-orchestrator/src/rl/trace_credit.ts`, `packages/uc-orchestrator/src/rl/trace_runtime.ts` | `UC_TRACE_LOGPROBS` | worker turn likelihoods → orchestrator collector | wired (partial) |
-| GDPO + skills | `python/ultimate_coders/acceptance/gdpo_scorer.py`, `python/ultimate_coders/knowledge/skill_curriculum.py` | `UC_GDPO_SCORER`, `UC_SKILL_CURRICULUM` | acceptance scoring / skill cards | tested primitive |
+| GDPO + skills | `python/ultimate_coders/acceptance/gdpo_scorer.py`, `python/ultimate_coders/knowledge/skill_curriculum.py` | `UC_GDPO_SCORER`, `UC_SKILL_CURRICULUM` | worker declared acceptance-score diagnostic (GDPO); skill curriculum still primitive | wired (partial) |
 | SWE-Doctor | `python/ultimate_coders/acceptance/swe_doctor_diag.py` | `UC_SWE_DOCTOR` | worker failed-run diagnosis | wired (partial) |
 | RL hardening | `crates/uc-engine/src/rl_hardening.rs` | n/a (library type) | test-evaluation process boundary | tested primitive |
 
@@ -204,8 +204,12 @@ This is a diagnostic/data-collection boundary: no token likelihoods are
 invented and no training or export pipeline runs here.
 
 `python/ultimate_coders/acceptance/gdpo_scorer.py` normalizes pass, F2P, and P2P components (weights 0.5/0.3/0.2)
-within a group and then across the batch. `python/ultimate_coders/knowledge/skill_curriculum.py` defines the
-four-field skill card and four-stage validation/curriculum.
+within a group and then across the batch. When `UC_GDPO_SCORER` is on, the worker consumes an optional
+`agent_config["acceptance_scores"]` rollout group (a list or `{"rollouts": [...]}`) and publishes a bounded
+`acceptance scores` progress event. At least two rollout mappings are required for group normalisation; invalid
+entries and undersized groups are reported without failing the run. This is a declared-data boundary: the worker
+does not execute tests or invent F2P/P2P rates. `python/ultimate_coders/knowledge/skill_curriculum.py` still
+defines the four-field skill card and four-stage validation/curriculum as a tested primitive.
 
 `python/ultimate_coders/acceptance/swe_doctor_diag.py` produces a `RuntimeDiagnosisReport`: expected behaviour
 clauses, bounded local-variable snapshots, and the first state-divergence

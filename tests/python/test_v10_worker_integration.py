@@ -558,3 +558,44 @@ def test_mandate_gate_always_rejects_malformed_envelopes(monkeypatch) -> None:
     assert error is not None
     assert error.startswith("Mandate envelope rejected:")
 
+
+def test_acceptance_scores_report_a_declared_gdpo_group(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        agent_config={
+            "acceptance_scores": [
+                {"pass_rate": 0.0, "f2p_rate": 0.0, "p2p_rate": 0.0},
+                {"pass_rate": 1.0, "f2p_rate": 1.0, "p2p_rate": 1.0},
+            ]
+        }
+    )
+
+    monkeypatch.delenv("UC_GDPO_SCORER", raising=False)
+    assert worker._acceptance_scores_event(subtask) is None
+
+    monkeypatch.setenv("UC_GDPO_SCORER", "1")
+    event = worker._acceptance_scores_event(subtask)
+    assert event is not None
+    assert event["gdpo_status"] == "ok"
+    assert event["gdpo_group_size"] == 2
+    assert len(event["gdpo_rewards"]) == 2
+    assert event["gdpo_rewards"][0] < event["gdpo_rewards"][1]
+
+
+def test_acceptance_scores_require_a_group_and_valid_entries(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    monkeypatch.setenv("UC_GDPO_SCORER", "1")
+
+    single = SimpleNamespace(
+        agent_config={"acceptance_scores": [{"pass_rate": 1.0}]}
+    )
+    event = worker._acceptance_scores_event(single)
+    assert event is not None
+    assert event["gdpo_status"] == "insufficient_group"
+
+    malformed = SimpleNamespace(agent_config={"acceptance_scores": [{"pass_rate": "x"}, {}]})
+    event = worker._acceptance_scores_event(malformed)
+    assert event is not None
+    assert event["gdpo_status"] == "invalid"
+    assert "pass_rate" in event["gdpo_reason"]
+
