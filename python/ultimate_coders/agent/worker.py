@@ -2962,7 +2962,7 @@ class Worker:
                 if success and test_error:
                     success = False
                     error = test_error
-            acceptance_event = self._acceptance_scores_event(subtask)
+            acceptance_event = self._acceptance_scores_event(subtask, test_event)
             if acceptance_event is not None:
                 await self._emit_step_event(
                     subtask,
@@ -3384,14 +3384,36 @@ class Worker:
         }
         return (context_block + section)[:20000], event
 
-    def _acceptance_scores_event(self, subtask: Subtask) -> dict[str, Any] | None:
-        """Report a declared GDPO rollout group, never invent component rates.
+    def _observed_gdpo_group(self, task_id: str, score: Any) -> list[Any]:
+        """Append one observed score to a bounded process-local task group."""
+
+        from collections import OrderedDict
+
+        groups = getattr(self, "_observed_gdpo_groups", None)
+        if not isinstance(groups, OrderedDict):
+            groups = OrderedDict()
+            self._observed_gdpo_groups = groups
+        scores = list(groups.pop(task_id, []))
+        scores.append(score)
+        groups[task_id] = scores[-8:]
+        while len(groups) > 64:
+            groups.popitem(last=False)
+        return list(groups[task_id])
+
+    def _acceptance_scores_event(
+        self,
+        subtask: Subtask,
+        test_event: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Report declared or observed GDPO scores, never invented rates.
 
         Opt-in via ``UC_GDPO_SCORER``. An external acceptance runner may put
         ``agent_config["acceptance_scores"]`` (a list of rollouts or a
-        ``{"rollouts": [...]}`` mapping) on the task. The worker only
-        normalises those declared values; it does not execute tests or derive
-        F2P/P2P rates from its own run.
+        ``{"rollouts": [...]}`` mapping) on the task. When that declaration is
+        absent, a successful observed ``test_execution`` event contributes one
+        score to a bounded process-local group for the task. The group is a
+        diagnostic of task-local attempts, not a benchmark rollout batch, and
+        no component rate is fabricated.
         """
 
         from ultimate_coders.acceptance.gdpo_scorer import (
@@ -3404,6 +3426,44 @@ class Worker:
             return None
         config = subtask.agent_config if isinstance(subtask.agent_config, dict) else {}
         raw = config.get("acceptance_scores")
+        if raw is None:
+            if not isinstance(test_event, dict):
+                return None
+            if test_event.get("test_execution_status") != "ok":
+                return None
+            try:
+                observed = ComponentScores.from_mapping(test_event)
+            except (TypeError, ValueError) as exc:
+                return {
+                    "phase": "acceptance scores",
+                    "percent": 0,
+                    "gdpo_status": "invalid",
+                    "gdpo_reason": str(exc)[:300],
+                }
+            task_id = str(
+                getattr(subtask, "parent_id", None) or getattr(subtask, "id", "") or ""
+            )
+            if not task_id:
+                return None
+            scores = self._observed_gdpo_group(task_id, observed)
+            if len(scores) < 2:
+                return {
+                    "phase": "acceptance scores",
+                    "percent": 0,
+                    "gdpo_status": "collecting",
+                    "gdpo_group_size": len(scores),
+                    "gdpo_source": "observed_test_execution",
+                    "gdpo_reason": "at least two observed attempts are required",
+                }
+            summary = GDPOGroup(scores).summary()
+            return {
+                "phase": "acceptance scores",
+                "percent": 0,
+                "gdpo_status": "ok",
+                "gdpo_group_size": summary["count"],
+                "gdpo_rewards": list(summary["rewards"])[:16],
+                "gdpo_source": "observed_test_execution",
+            }
         entries: list[Any]
         if isinstance(raw, dict):
             nested = raw.get("rollouts", raw.get("group", raw.get("scores")))
@@ -3445,6 +3505,7 @@ class Worker:
             "gdpo_status": "ok",
             "gdpo_group_size": summary["count"],
             "gdpo_rewards": list(summary["rewards"])[:16],
+            "gdpo_source": "declared",
         }
 
     def _runtime_diagnosis(self, output: AgentOutput) -> dict[str, Any] | None:

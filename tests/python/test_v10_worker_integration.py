@@ -601,6 +601,47 @@ def test_acceptance_scores_require_a_group_and_valid_entries(monkeypatch) -> Non
     assert "pass_rate" in event["gdpo_reason"]
 
 
+def test_observed_test_execution_builds_a_task_local_gdpo_group(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    monkeypatch.setenv("UC_GDPO_SCORER", "1")
+    first = SimpleNamespace(parent_id="task-group", id="s0", agent_config={})
+    first_event = {
+        "test_execution_status": "ok",
+        "pass_rate": 0.0,
+        "f2p_rate": 0.0,
+        "p2p_rate": 0.5,
+    }
+
+    event = worker._acceptance_scores_event(first, first_event)
+    assert event is not None
+    assert event["gdpo_status"] == "collecting"
+    assert event["gdpo_group_size"] == 1
+    assert event["gdpo_source"] == "observed_test_execution"
+
+    second = SimpleNamespace(parent_id="task-group", id="s1", agent_config={})
+    second_event = {
+        "test_execution_status": "ok",
+        "pass_rate": 1.0,
+        "f2p_rate": 1.0,
+        "p2p_rate": 1.0,
+    }
+    event = worker._acceptance_scores_event(second, second_event)
+    assert event is not None
+    assert event["gdpo_status"] == "ok"
+    assert event["gdpo_group_size"] == 2
+    assert event["gdpo_source"] == "observed_test_execution"
+    assert len(event["gdpo_rewards"]) == 2
+
+    failed = SimpleNamespace(parent_id="task-group", id="s2", agent_config={})
+    assert (
+        worker._acceptance_scores_event(
+            failed,
+            {"test_execution_status": "error", "reason": "pytest missing"},
+        )
+        is None
+    )
+
+
 def test_skill_card_is_injected_only_after_validation(monkeypatch) -> None:
     worker = object.__new__(Worker)
     subtask = SimpleNamespace(

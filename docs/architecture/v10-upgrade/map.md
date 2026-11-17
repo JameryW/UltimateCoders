@@ -27,7 +27,7 @@ mandate store.
 | ECLoop gate | `python/ultimate_coders/agent/ecloop_gate.py` | `UC_ECLOOP_GATE` | local-harness edit/submit tool boundary | wired (local harness) |
 | TRACE credit | `packages/uc-orchestrator/src/rl/trace_credit.ts`, `packages/uc-orchestrator/src/rl/trace_runtime.ts` | `UC_TRACE_LOGPROBS` | worker turn likelihoods → orchestrator collector | wired (partial) |
 | Observed test execution | `python/ultimate_coders/acceptance/test_execution.py` | `UC_TEST_EXECUTION` | worker test-execution diagnostic + opt-in P2P gate | wired (partial) |
-| GDPO + skills | `python/ultimate_coders/acceptance/gdpo_scorer.py`, `python/ultimate_coders/knowledge/skill_curriculum.py` | `UC_GDPO_SCORER`, `UC_SKILL_CURRICULUM` | worker declared acceptance-score diagnostic and validated skill-card selection/injection | wired (partial) |
+| GDPO + skills | `python/ultimate_coders/acceptance/gdpo_scorer.py`, `python/ultimate_coders/knowledge/skill_curriculum.py` | `UC_GDPO_SCORER`, `UC_SKILL_CURRICULUM` | worker declared/observed acceptance-score diagnostic and validated skill-card selection/injection | wired (partial) |
 | SWE-Doctor | `python/ultimate_coders/acceptance/swe_doctor_diag.py` | `UC_SWE_DOCTOR` | worker failed-run diagnosis | wired (partial) |
 | RL hardening | `crates/uc-engine/src/rl_hardening.rs`, `crates/uc-engine/src/sandbox/cgroup.rs` | `UC_RL_CGROUP` | Linux subprocess sandbox cgroup guard | wired (Linux, default-off) |
 
@@ -214,8 +214,11 @@ invented and no training or export pipeline runs here.
 within a group and then across the batch. When `UC_GDPO_SCORER` is on, the worker consumes an optional
 `agent_config["acceptance_scores"]` rollout group (a list or `{"rollouts": [...]}`) and publishes a bounded
 `acceptance scores` progress event. At least two rollout mappings are required for group normalisation; invalid
-entries and undersized groups are reported without failing the run. This is a declared-data boundary: the worker
-does not execute tests or invent F2P/P2P rates. `python/ultimate_coders/knowledge/skill_curriculum.py` validates a
+entries and undersized groups are reported without failing the run. Without a declared group, a successful
+observed `test execution` event contributes one score to a bounded process-local task group, which reports
+`collecting` for the first attempt and `ok` once two observed attempts exist. That group is a task-local
+diagnostic of attempts, not a benchmark rollout batch. The declared path never executes tests or invents F2P/P2P
+rates. `python/ultimate_coders/knowledge/skill_curriculum.py` validates a
 declared four-field skill card with its declared replay/transfer/safety evidence; when `UC_SKILL_CURRICULUM` is on,
 the worker accepts one `agent_config["skill_card"]` or a declared `skill_cards` list, validates every card, and
 injects only the highest fully validated card ordered by stage, caller priority, then skill id. A failed validation
