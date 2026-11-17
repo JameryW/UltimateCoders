@@ -876,3 +876,72 @@ def test_credential_preflight_fails_closed_when_lease_is_missing(monkeypatch) ->
     assert error is not None and "UC_CREDENTIAL_LEASE" in error
     assert event is not None and event["credential_status"] == "invalid"
     assert event["credential_lease_present"] is False
+
+
+def test_trajectory_export_writes_provider_token_ids(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("UC_TRAJECTORY_EXPORT", "1")
+    monkeypatch.setenv("UC_TRAJECTORY_EXPORT_DIR", str(tmp_path / "trajectories"))
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        parent_id="task-1",
+        dispatch_retry_count=2,
+        _last_agent="local-harness",
+    )
+    output = AgentOutput(
+        success=True,
+        turn_tokens=[
+            [
+                {"token_id": 10, "logprob": -0.1},
+                {"token_id": 11, "logprob": -0.2},
+            ]
+        ],
+    )
+
+    event = worker._export_trajectory(subtask, output, success=True, error="")
+    assert event is not None
+    assert event["trajectory_exported"] is True
+    written = tmp_path / "trajectories" / "trajectories.jsonl"
+    record = json.loads(written.read_text(encoding="utf-8").strip())
+    assert record["task_id"] == "task-1"
+    assert record["subtask_id"] == "subtask-1"
+    assert record["attempt"] == 2
+    assert record["outcome"] == "succeeded"
+    assert record["turns"] == [
+        {
+            "role": "assistant",
+            "token_ids": [10, 11],
+            "logprobs": [-0.1, -0.2],
+            "loss_mask": [1, 1],
+        }
+    ]
+
+
+def test_trajectory_export_skips_without_provider_token_ids(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("UC_TRAJECTORY_EXPORT", "1")
+    monkeypatch.setenv("UC_TRAJECTORY_EXPORT_DIR", str(tmp_path / "trajectories"))
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        parent_id="task-1",
+        dispatch_retry_count=0,
+        _last_agent="local-harness",
+    )
+    assert worker._export_trajectory(
+        subtask,
+        AgentOutput(success=True, turn_tokens=[]),
+        success=True,
+        error="",
+    ) is None
+
+
+def test_trajectory_export_is_off_by_default(tmp_path: Path) -> None:
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(id="subtask-1", parent_id="task-1", dispatch_retry_count=0)
+    output = AgentOutput(
+        success=True,
+        turn_tokens=[[{"token_id": 10, "logprob": -0.1}]],
+    )
+    assert worker._export_trajectory(subtask, output, success=True, error="") is None

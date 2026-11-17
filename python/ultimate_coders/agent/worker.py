@@ -11,6 +11,7 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -74,6 +75,12 @@ from ultimate_coders.architecture.mandate import (
     Mandate,
     MandateError,
     mandate_envelope_enabled,
+)
+from ultimate_coders.architecture.trajectory_export import (
+    TrajectoryExporter,
+    TrajectoryRecord,
+    TrajectoryTurn,
+    trajectory_export_enabled,
 )
 from ultimate_coders.knowledge import rollout
 from ultimate_coders.knowledge.attempt_chain import (
@@ -895,6 +902,19 @@ class Worker:
         return {
             "_uc_radio_graph_id": graph_id,
             "_uc_radio_node_id": node_id,
+        }
+
+    def _trajectory_hints(self) -> dict[str, str]:
+        """Tell the local harness to request provider token ids for TITO export."""
+
+        if not trajectory_export_enabled():
+            return {}
+        directory = str(os.environ.get("UC_TRAJECTORY_EXPORT_DIR", "")).strip()
+        if not directory:
+            return {}
+        return {
+            "_uc_trajectory_export": "1",
+            "_uc_trajectory_export_dir": directory,
         }
 
     def _credential_preflight(
@@ -2819,6 +2839,7 @@ class Worker:
                 if str(subtask._last_agent) in ("local-harness", "local-llm"):
                     agent_config.update(self._drift_hints(subtask))
                     agent_config.update(self._radio_hints(subtask))
+                    agent_config.update(self._trajectory_hints())
                     agent_config.update(getattr(subtask, "_credential_env", {}) or {})
                 output: AgentOutput = await self._sandbox_manager.execute(
                     prompt,
@@ -2967,6 +2988,18 @@ class Worker:
             if success and boundary_error:
                 success = False
                 error = boundary_error
+            trajectory_event = self._export_trajectory(
+                subtask,
+                output,
+                success=success,
+                error=error,
+            )
+            if trajectory_event is not None:
+                await self._emit_step_event(
+                    subtask,
+                    "subtask_progress",
+                    **trajectory_event,
+                )
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
@@ -3983,6 +4016,81 @@ class Worker:
         data.setdefault("p2p_tests", list(data.get("p2p") or []))
         return data
 
+    def _export_trajectory(
+        self,
+        subtask: Subtask,
+        output: AgentOutput,
+        *,
+        success: bool,
+        error: str,
+    ) -> dict[str, Any] | None:
+        """Append a TITO record when the provider supplied stable token ids.
+
+        This is default-off and never reconstructs ids from token strings: the
+        local harness only emits ``turn_tokens`` when the provider itself
+        returned an integer token id with each log-probability.  Providers that
+        expose only strings leave export inert.
+        """
+
+        if not trajectory_export_enabled() or not output.turn_tokens:
+            return None
+        directory = str(os.environ.get("UC_TRAJECTORY_EXPORT_DIR", "")).strip()
+        if not directory:
+            return None
+        turns: list[TrajectoryTurn] = []
+        for raw_turn in output.turn_tokens:
+            token_ids: list[int] = []
+            logprobs: list[float] = []
+            for item in raw_turn:
+                token_id = item.get("token_id")
+                logprob = item.get("logprob")
+                if not isinstance(token_id, int) or isinstance(token_id, bool):
+                    continue
+                if not isinstance(logprob, (int, float)) or not math.isfinite(float(logprob)):
+                    continue
+                token_ids.append(int(token_id))
+                logprobs.append(float(logprob))
+            if token_ids:
+                turns.append(
+                    TrajectoryTurn(
+                        role="assistant",
+                        token_ids=tuple(token_ids),
+                        logprobs=tuple(logprobs),
+                        loss_mask=tuple(1 for _ in token_ids),
+                    )
+                )
+        if not turns:
+            return None
+        try:
+            record = TrajectoryRecord(
+                task_id=str(subtask.parent_id or subtask.id),
+                subtask_id=str(subtask.id),
+                attempt=int(getattr(subtask, "dispatch_retry_count", 0) or 0),
+                outcome="succeeded" if success else "failed",
+                turns=tuple(turns),
+                created_at="",
+                metadata={
+                    "source": "local-harness",
+                    "adapter": str(getattr(subtask, "_last_agent", "") or "local-harness"),
+                    "error": (error or "")[:500],
+                },
+            )
+            path = TrajectoryExporter(directory).write(record)
+        except Exception as exc:  # pragma: no cover - exporter errors are diagnostic
+            return {
+                "phase": "trajectory export",
+                "percent": 0,
+                "trajectory_exported": False,
+                "trajectory_error": f"{type(exc).__name__}: {exc}"[:500],
+            }
+        return {
+            "phase": "trajectory export",
+            "percent": 0,
+            "trajectory_exported": bool(path),
+            "trajectory_path": str(path or "")[:500],
+            "trajectory_turns": len(turns),
+        }
+
     @staticmethod
     def _test_execution_error(event: dict[str, Any] | None) -> str | None:
         """Return the enforced observed-test failure, if any.
@@ -4437,6 +4545,7 @@ class Worker:
                 **(merged_cfg or {}),
                 **self._drift_hints(subtask),
                 **self._radio_hints(subtask),
+                **self._trajectory_hints(),
                 **(getattr(subtask, "_credential_env", {}) or {}),
             }
         if step.agent in ("metainfer", "inference-infra"):

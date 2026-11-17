@@ -61,6 +61,7 @@ from ultimate_coders.architecture.context_folding import (
     ReadLedger,
     folding_enabled,
 )
+from ultimate_coders.architecture.trajectory_export import trajectory_export_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,8 @@ AGENT_NAME = "local-harness"
 AGENT_ALIASES = ("local-llm",)
 DEFAULT_MAX_TURNS = 30
 RUN_COMMAND_TIMEOUT_SECS = 120
+TRAJECTORY_EXPORT_ENV = "UC_TRAJECTORY_EXPORT"
+TRAJECTORY_EXPORT_DIR_ENV = "UC_TRAJECTORY_EXPORT_DIR"
 MAX_READ_BYTES = 256 * 1024
 DEFAULT_READ_BYTES = 8 * 1024
 MAX_WRITE_BYTES = 256 * 1024
@@ -244,6 +247,8 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             ("_uc_radio_inbox_json", RADIO_INBOX_ENV),
             ("_uc_credential_lease", CREDENTIAL_LEASE_ENV),
             ("_uc_credential_broker", CREDENTIAL_BROKER_ENV),
+            ("_uc_trajectory_export", TRAJECTORY_EXPORT_ENV),
+            ("_uc_trajectory_export_dir", TRAJECTORY_EXPORT_DIR_ENV),
         ):
             value = task_config.get(config_key)
             if value:
@@ -281,6 +286,9 @@ class LocalLoopHarnessAdapter(AgentAdapter):
         envelope = _final_envelope(result.stdout)
         token_usage = _usage_from_events(result.stdout)
         turn_likelihoods = _turn_likelihoods_from_events(result.stdout)
+        turn_tokens = _turn_tokens_from_events(result.stdout)
+        if not turn_tokens and envelope is not None:
+            turn_tokens = _normalise_turn_tokens(envelope.get("turn_tokens"))
         if not turn_likelihoods and envelope is not None:
             raw_likelihoods = envelope.get("turn_likelihoods")
             if isinstance(raw_likelihoods, list):
@@ -319,6 +327,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
                 commands_run=commands_run,
                 token_usage=token_usage,
                 turn_likelihoods=turn_likelihoods,
+                turn_tokens=turn_tokens,
             )
 
         return AgentOutput(
@@ -330,6 +339,7 @@ class LocalLoopHarnessAdapter(AgentAdapter):
             commands_run=commands_run,
             token_usage=token_usage,
             turn_likelihoods=turn_likelihoods,
+            turn_tokens=turn_tokens,
         )
 
 
@@ -408,6 +418,61 @@ def _turn_likelihoods_from_events(stdout: str) -> list[float]:
     return values
 
 
+def _turn_tokens_from_events(stdout: str) -> list[list[dict[str, Any]]]:
+    """Collect provider token ids/logprobs emitted per turn, if any."""
+
+    values: list[list[dict[str, Any]]] = []
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("event") != "turn_tokens":
+            continue
+        tokens = event.get("tokens")
+        if not isinstance(tokens, list):
+            continue
+        cleaned: list[dict[str, Any]] = []
+        for item in tokens:
+            if not isinstance(item, dict):
+                continue
+            token_id = item.get("token_id")
+            logprob = item.get("logprob")
+            if not isinstance(token_id, int) or isinstance(token_id, bool):
+                continue
+            if not isinstance(logprob, (int, float)) or not math.isfinite(float(logprob)):
+                continue
+            cleaned.append({"token_id": int(token_id), "logprob": float(logprob)})
+        if cleaned:
+            values.append(cleaned)
+    return values
+
+
+def _normalise_turn_tokens(value: Any) -> list[list[dict[str, Any]]]:
+    """Validate a decoded turn-token payload; drop malformed entries."""
+
+    if not isinstance(value, list):
+        return []
+    turns: list[list[dict[str, Any]]] = []
+    for raw_turn in value:
+        if not isinstance(raw_turn, list):
+            continue
+        tokens: list[dict[str, Any]] = []
+        for item in raw_turn:
+            if not isinstance(item, dict):
+                continue
+            token_id = item.get("token_id")
+            logprob = item.get("logprob")
+            if not isinstance(token_id, int) or isinstance(token_id, bool):
+                continue
+            if not isinstance(logprob, (int, float)) or not math.isfinite(float(logprob)):
+                continue
+            tokens.append({"token_id": int(token_id), "logprob": float(logprob)})
+        if tokens:
+            turns.append(tokens)
+    return turns
+
+
 def trace_logprobs_enabled() -> bool:
     """Whether the local harness should request token logprobs."""
 
@@ -452,6 +517,43 @@ def _answer_likelihood(response: Any) -> float | None:
         return None
 
 
+def _token_logprobs(response: Any) -> list[dict[str, Any]]:
+    """Provider token ids with logprobs, when the provider exposes both.
+
+    A token string alone is not enough for TITO export: re-tokenizing it with a
+    different tokenizer would fabricate token ids.  Providers that return only
+    strings (the common OpenAI-compatible shape) yield an empty list and the
+    worker skips export rather than guessing.
+    """
+
+    try:
+        choice = response.choices[0]
+        logprobs = getattr(choice, "logprobs", None)
+        if logprobs is None:
+            return []
+        content = getattr(logprobs, "content", None)
+        if content is None and isinstance(logprobs, dict):
+            content = logprobs.get("content")
+        if not content:
+            return []
+        tokens: list[dict[str, Any]] = []
+        for item in content:
+            token_id = getattr(item, "token_id", None)
+            if token_id is None and isinstance(item, dict):
+                token_id = item.get("token_id")
+            logprob = getattr(item, "logprob", None)
+            if logprob is None and isinstance(item, dict):
+                logprob = item.get("logprob")
+            if not isinstance(token_id, int) or isinstance(token_id, bool):
+                return []
+            if not isinstance(logprob, (int, float)) or not math.isfinite(float(logprob)):
+                return []
+            tokens.append({"token_id": int(token_id), "logprob": float(logprob)})
+        return tokens
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return []
+
+
 # ── Runner (child-process side) ──────────────────────────────────────
 
 
@@ -464,6 +566,7 @@ class _RunStats:
     reads: list[str] = field(default_factory=list)
     last_failed_output: str = ""
     turn_likelihoods: list[float] = field(default_factory=list)
+    turn_tokens: list[list[dict[str, Any]]] = field(default_factory=list)
 
 
 def _emit(payload: dict[str, Any]) -> None:
@@ -854,7 +957,7 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
     drift_required = _env_path_list(DRIFT_REQUIRED_FILES_ENV)
     ecloop = ECLoopGate() if ecloop_gate_enabled() else None
     radio_watcher = _radio_watcher_from_env()
-    request_logprobs = trace_logprobs_enabled()
+    request_logprobs = trace_logprobs_enabled() or trajectory_export_enabled()
 
     final_summary = ""
     hit_done = False
@@ -891,6 +994,16 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                             "event": "turn_likelihood",
                             "turn": stats.turns,
                             "likelihood": likelihood,
+                        }
+                    )
+                turn_tokens = _token_logprobs(response)
+                if turn_tokens:
+                    stats.turn_tokens.append(turn_tokens)
+                    _emit(
+                        {
+                            "event": "turn_tokens",
+                            "turn": stats.turns,
+                            "tokens": turn_tokens,
                         }
                     )
 
@@ -1051,6 +1164,7 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                 "turns": stats.turns,
                 "tool_calls": stats.tool_calls,
                 "test_output": stats.last_failed_output,
+                "turn_tokens": stats.turn_tokens,
             }
         )
         return 1
@@ -1070,6 +1184,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         envelope["ecloop_blocks"] = dict(ecloop.blocks)
     if stats.turn_likelihoods:
         envelope["turn_likelihoods"] = list(stats.turn_likelihoods)
+    if stats.turn_tokens:
+        envelope["turn_tokens"] = stats.turn_tokens
     if stats.last_failed_output:
         envelope["test_output"] = stats.last_failed_output
     _emit(envelope)

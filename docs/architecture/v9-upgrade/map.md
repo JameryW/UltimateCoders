@@ -16,7 +16,7 @@ a second knowledge authority, or a second mandate store.
 | Worker context folding | `context_folding` | `UC_ACP_FOLDING` | local harness loop | wired |
 | Process acceptance | `process_verifier` | `UC_PROCESS_VERIFIER_ENFORCE` | worker success path | wired |
 | Sandbox credentials | `credential_broker` | `UC_CREDENTIAL_BROKER` | worker preflight → local-harness child env | wired (pre-issued lease consumer; external broker required) |
-| Trajectory export | `trajectory_export` | `UC_TRAJECTORY_EXPORT` + `UC_TRAJECTORY_EXPORT_DIR` | caller-owned exporter | primitive + tests |
+| Trajectory export | `trajectory_export` | `UC_TRAJECTORY_EXPORT` + `UC_TRAJECTORY_EXPORT_DIR` | local-harness provider token ids → worker exporter | wired (provider token ids required) |
 
 ## Scheduling and retry
 
@@ -112,9 +112,13 @@ enforce it.
 
 `trajectory_export` writes redacted TITO JSONL records
 (`token_id`, `logprob`, `loss_mask`) with bounded rotation, and pairs failed and
-rescued attempts. Token ids and logprobs are only available from the inference
-surface that produced them, so a caller that lacks them must omit the fields
-rather than invent them.
+rescued attempts. The worker now calls it after the acceptance gates: when the
+local harness reports provider-supplied integer token ids per turn, the worker
+converts those turns into assistant-only TITO turns (`loss_mask=1`), records the
+final outcome, and emits a `trajectory export` progress event. Token ids and
+logprobs are only accepted from the inference surface that produced them; a
+provider that returns token strings without ids produces no export, and the
+worker never re-tokenizes those strings or invents logprobs.
 
 ## Rollout and rollback
 

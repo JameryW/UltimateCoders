@@ -264,6 +264,7 @@ def _resp(
     tool_calls: list[tuple[str, dict]],
     text: str = "",
     logprobs: list[float] | None = None,
+    token_ids: list[int] | None = None,
 ) -> SimpleNamespace:
     calls = [
         SimpleNamespace(
@@ -274,9 +275,13 @@ def _resp(
     ]
     choice = SimpleNamespace(message=SimpleNamespace(content=text, tool_calls=calls))
     if logprobs is not None:
-        choice.logprobs = SimpleNamespace(
-            content=[SimpleNamespace(logprob=value) for value in logprobs]
-        )
+        content: list[SimpleNamespace] = []
+        for index, value in enumerate(logprobs):
+            item = SimpleNamespace(logprob=value)
+            if token_ids is not None:
+                item.token_id = token_ids[index]
+            content.append(item)
+        choice.logprobs = SimpleNamespace(content=content)
     return SimpleNamespace(
         choices=[choice],
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
@@ -398,6 +403,56 @@ class TestRunnerLoop:
             code = asyncio.run(hll.run_loop("task", str(tmp_path), 2))
         assert code == 0
         assert requests == [False]
+
+    def test_provider_token_ids_are_forwarded_for_tito(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
+        monkeypatch.setenv("UC_TRACE_LOGPROBS", "1")
+        responses = iter(
+            [
+                _resp(
+                    [("write_file", {"path": "out.txt", "content": "hi"})],
+                    logprobs=[-0.1, -0.2],
+                    token_ids=[10, 11],
+                ),
+                _resp(
+                    [("done", {"summary": "done"})],
+                    text="done",
+                    logprobs=[-0.3],
+                    token_ids=[12],
+                ),
+            ]
+        )
+        with patch.object(hll, "_completion", side_effect=lambda *a, **k: next(responses)):
+            code = asyncio.run(hll.run_loop("task", str(tmp_path), 3))
+        assert code == 0
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        token_events = [event for event in events if event.get("event") == "turn_tokens"]
+        assert token_events == [
+            {
+                "event": "turn_tokens",
+                "turn": 1,
+                "tokens": [
+                    {"token_id": 10, "logprob": -0.1},
+                    {"token_id": 11, "logprob": -0.2},
+                ],
+            },
+            {
+                "event": "turn_tokens",
+                "turn": 2,
+                "tokens": [{"token_id": 12, "logprob": -0.3}],
+            },
+        ]
+        final = [event for event in events if event.get("event") == "final"][-1]
+        assert final["turn_tokens"] == [event["tokens"] for event in token_events]
+
+    def test_provider_token_strings_do_not_become_token_ids(self) -> None:
+        response = _resp([], logprobs=[-0.1])
+        assert hll._token_logprobs(response) == []
 
     def test_max_turns_exhaustion(
         self,

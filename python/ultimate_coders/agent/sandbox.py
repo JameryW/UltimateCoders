@@ -456,6 +456,11 @@ class AgentOutput:
     # fabricating likelihoods.  TRACE turn credit (#20) consumes it after the
     # worker forwards it as a progress event.
     turn_likelihoods: list[float] = field(default_factory=list)
+    # Per-turn generated tokens for TITO export when (and only when) the
+    # provider returns stable token ids alongside each log-probability.  A token
+    # string alone is not enough: re-tokenizing it with a different tokenizer
+    # would fabricate ids.  Adapters that cannot observe ids leave this empty.
+    turn_tokens: list[list[dict[str, Any]]] = field(default_factory=list)
     had_failed_step: bool = False
     failed_file_changes: list[FileChange] = field(default_factory=list)
     # Per-step usage records for a multi-agent workflow (T18 #668).

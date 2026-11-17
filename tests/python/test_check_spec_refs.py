@@ -1099,7 +1099,10 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     entry check landed above the checkpoint helpers; the cited range still
     covers the definition. The V9 credential-lease consumer moved it
     2492 -> 2533: the pre-issued lease preflight landed above the checkpoint
-    helpers; the spec citation and pin were re-measured to 2533-2587.
+    helpers; the spec citation and pin were re-measured to 2533-2587. The V9
+    trajectory-export consumer moved it 2537 -> 2557: the TITO exporter and
+    its worker integration landed above the checkpoint helpers; the spec
+    citation and pin were re-measured to 2557-2611.
     """
     guard = _load_guard()
     want = {
@@ -1121,7 +1124,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            2537,
+            2557,
         ),
     }
     rows = [
