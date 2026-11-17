@@ -2875,6 +2875,10 @@ class Worker:
             test_event = await self._test_execution_event(working_dir, subtask)
             if test_event is not None:
                 await self._emit_step_event(subtask, "subtask_progress", **test_event)
+                test_error = self._test_execution_error(test_event)
+                if success and test_error:
+                    success = False
+                    error = test_error
             acceptance_event = self._acceptance_scores_event(subtask)
             if acceptance_event is not None:
                 await self._emit_step_event(
@@ -2889,7 +2893,7 @@ class Worker:
             )
             if critic_event is not None:
                 await self._emit_step_event(subtask, "subtask_progress", **critic_event)
-            if critic_error:
+            if success and critic_error:
                 success = False
                 error = critic_error
             boundary_event, boundary_error = self._verify_output_boundary(
@@ -3784,6 +3788,7 @@ class Worker:
         command = raw.get("command")
         if not command:
             return None
+        enforce = bool(raw.get("enforce", False))
         timeout = raw.get("timeout_seconds", 120)
         try:
             delta = await asyncio.to_thread(
@@ -3797,14 +3802,37 @@ class Worker:
                 "phase": "test execution",
                 "percent": 0,
                 "test_execution_status": "error",
+                "test_execution_enforced": enforce,
                 "test_execution_reason": f"{type(exc).__name__}: {exc}"[:500],
             }
         return {
             "phase": "test execution",
             "percent": 0,
             "test_execution_status": "ok",
+            "test_execution_enforced": enforce,
             **delta.to_dict(),
         }
+
+    @staticmethod
+    def _test_execution_error(event: dict[str, Any] | None) -> str | None:
+        """Return the enforced observed-test failure, if any.
+
+        The observed producer is diagnostic by default.  A subtask opts into
+        enforcement with ``agent_config["test_execution"]["enforce"] = true``;
+        then missing data is a failure (we never turn "could not measure" into
+        a pass) and any P2P regression blocks the subtask.
+        """
+
+        if not event or not event.get("test_execution_enforced"):
+            return None
+        status = str(event.get("test_execution_status") or "")
+        if status != "ok":
+            reason = str(event.get("test_execution_reason") or "no observed test data")
+            return f"Test execution gate rejected: {status or 'error'}: {reason}"[:2000]
+        broken = [str(test_id) for test_id in event.get("broken") or []]
+        if broken:
+            return f"Observed test regression: {', '.join(broken[:5])}"[:2000]
+        return None
 
     async def _verify_output_process(
         self,

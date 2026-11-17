@@ -676,8 +676,10 @@ def test_test_execution_event_reports_observed_delta(monkeypatch, tmp_path: Path
     assert event is not None
     assert event["phase"] == "test execution"
     assert event["test_execution_status"] == "ok"
+    assert event["test_execution_enforced"] is False
     assert event["pass_rate"] == 0.75
     assert event["f2p_rate"] == 0.5
+    assert Worker._test_execution_error(event) is None
 
     monkeypatch.setattr(
         test_execution,
@@ -697,4 +699,72 @@ def test_test_execution_is_opt_in(monkeypatch, tmp_path: Path) -> None:
     worker = object.__new__(Worker)
     subtask = SimpleNamespace(agent_config={"test_execution": {"command": ["pytest"]}})
     assert asyncio.run(worker._test_execution_event(str(tmp_path), subtask)) is None
+
+
+def test_test_execution_enforce_rejects_observed_regressions(monkeypatch, tmp_path: Path) -> None:
+    from ultimate_coders.acceptance import test_execution
+
+    class FakeDelta:
+        def to_dict(self):
+            return {
+                "pass_rate": 0.5,
+                "f2p_rate": 0.0,
+                "p2p_rate": 0.5,
+                "f2p": [],
+                "p2p": ["test_mod::test_stable"],
+                "broken": ["test_mod::test_was_green"],
+            }
+
+    monkeypatch.setattr(test_execution, "test_execution_enabled", lambda: True)
+    monkeypatch.setattr(test_execution, "run_test_delta", lambda *args, **kwargs: FakeDelta())
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        parent_id="task-1",
+        agent_config={
+            "test_execution": {
+                "command": ["pytest", "-q"],
+                "enforce": True,
+            }
+        },
+    )
+
+    event = asyncio.run(worker._test_execution_event(str(tmp_path), subtask))
+    assert event is not None
+    assert event["test_execution_enforced"] is True
+    error = Worker._test_execution_error(event)
+    assert error is not None
+    assert "Observed test regression" in error
+    assert "test_mod::test_was_green" in error
+
+
+def test_test_execution_enforce_fails_closed_on_runner_error(monkeypatch, tmp_path: Path) -> None:
+    from ultimate_coders.acceptance import test_execution
+
+    monkeypatch.setattr(test_execution, "test_execution_enabled", lambda: True)
+    monkeypatch.setattr(
+        test_execution,
+        "run_test_delta",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("pytest missing")),
+    )
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        id="subtask-1",
+        parent_id="task-1",
+        agent_config={
+            "test_execution": {
+                "command": ["pytest", "-q"],
+                "enforce": True,
+            }
+        },
+    )
+
+    event = asyncio.run(worker._test_execution_event(str(tmp_path), subtask))
+    assert event is not None
+    assert event["test_execution_status"] == "error"
+    assert event["test_execution_enforced"] is True
+    error = Worker._test_execution_error(event)
+    assert error is not None
+    assert "Test execution gate rejected" in error
+    assert "pytest missing" in error
 
