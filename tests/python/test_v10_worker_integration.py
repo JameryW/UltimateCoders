@@ -650,6 +650,73 @@ def test_skill_card_requires_stage_evidence(monkeypatch) -> None:
     assert event["skill_failed_stage"] == "replay"
 
 
+def test_skill_cards_select_the_best_validated_card(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        agent_config={
+            "skill_cards": [
+                {
+                    "skill_id": "unvalidated",
+                    "trigger": "first",
+                    "procedure": "p1",
+                    "verification": "v1",
+                    "evidence": {"schema": True},
+                },
+                {
+                    "skill_id": "valid-low",
+                    "trigger": "second",
+                    "procedure": "p2",
+                    "verification": "v2",
+                    "priority": 5,
+                    "evidence": {"replay": True, "transfer": True, "safety": True},
+                },
+                {
+                    "skill_id": "valid-high",
+                    "trigger": "third",
+                    "procedure": "p3",
+                    "verification": "v3",
+                    "priority": 10,
+                    "evidence": {"replay": True, "transfer": True, "safety": True},
+                },
+            ]
+        }
+    )
+    monkeypatch.setenv("UC_SKILL_CURRICULUM", "1")
+
+    block, event = worker._apply_skill_card(subtask, "base")
+    assert "### Validated skill card: valid-high" in block
+    assert "Procedure: p3" in block
+    assert event is not None
+    assert event["skill_id"] == "valid-high"
+    assert event["skill_passed"] is True
+    assert event["skill_candidates"] == 3
+
+
+def test_skill_cards_without_a_validated_card_are_diagnostic_only(monkeypatch) -> None:
+    worker = object.__new__(Worker)
+    subtask = SimpleNamespace(
+        agent_config={
+            "skill_cards": [
+                {
+                    "skill_id": "schema-only",
+                    "trigger": "first",
+                    "procedure": "p1",
+                    "verification": "v1",
+                    "evidence": {"schema": True},
+                }
+            ]
+        }
+    )
+    monkeypatch.setenv("UC_SKILL_CURRICULUM", "1")
+
+    block, event = worker._apply_skill_card(subtask, "base")
+    assert block == "base"
+    assert event is not None
+    assert event["skill_passed"] is False
+    assert event["skill_failed_stage"] == "replay"
+    assert event["skill_candidates"] == 1
+
+
 def test_test_execution_event_reports_observed_delta(monkeypatch, tmp_path: Path) -> None:
     from ultimate_coders.acceptance import test_execution
 

@@ -3217,7 +3217,7 @@ class Worker:
         subtask: Subtask,
         context_block: str,
     ) -> tuple[str, dict[str, Any] | None]:
-        """Inject one declared skill card only after four-stage validation.
+        """Inject one declared skill card, or select one from ``skill_cards``.
 
         Opt-in via ``UC_SKILL_CURRICULUM``. The card and its evidence come
         from the task payload; the worker does not manufacture replay,
@@ -3234,6 +3234,10 @@ class Worker:
         if not skill_curriculum_enabled():
             return context_block, None
         config = subtask.agent_config if isinstance(subtask.agent_config, dict) else {}
+        raw_cards = config.get("skill_cards")
+        if isinstance(raw_cards, list):
+            return self._select_skill_card(subtask, context_block, raw_cards)
+
         raw = config.get("skill_card")
         if not isinstance(raw, dict):
             return context_block, None
@@ -3261,6 +3265,90 @@ class Worker:
             f"Procedure: {card.procedure}\n"
             f"Verification: {card.verification}\n"
         )
+        return (context_block + section)[:20000], event
+
+    def _select_skill_card(
+        self,
+        subtask: Subtask,
+        context_block: str,
+        raw_cards: list[Any],
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Pick the best fully validated card from a declared card set.
+
+        The worker still validates only caller-supplied evidence; selection is
+        deterministic by validation stage, caller priority, then skill id.
+        """
+
+        from ultimate_coders.knowledge.skill_curriculum import (
+            SkillCard,
+            SkillCurriculum,
+            four_stage_validate,
+        )
+
+        config = subtask.agent_config if isinstance(subtask.agent_config, dict) else {}
+        curriculum = SkillCurriculum()
+        reports: dict[str, Any] = {}
+        for entry in raw_cards:
+            if not isinstance(entry, dict):
+                continue
+            raw = entry.get("card") if isinstance(entry.get("card"), dict) else entry
+            if not isinstance(raw, dict):
+                continue
+            card = SkillCard(
+                skill_id=str(raw.get("skill_id") or ""),
+                trigger=str(raw.get("trigger") or ""),
+                procedure=str(raw.get("procedure") or ""),
+                verification=str(raw.get("verification") or ""),
+            )
+            try:
+                priority = int(entry.get("priority", 0))
+            except (TypeError, ValueError):
+                priority = 0
+            try:
+                curriculum.add(card, priority=priority)
+            except ValueError:
+                continue
+            evidence = entry.get("evidence")
+            if not isinstance(evidence, dict):
+                evidence = config.get("skill_evidence")
+            reports[card.skill_id] = four_stage_validate(
+                card, evidence if isinstance(evidence, dict) else {}
+            )
+
+        if not len(curriculum):
+            return context_block, None
+        ordered = curriculum.curriculum_order(reports)
+        chosen = next((card for card in ordered if reports[card.skill_id].passed), None)
+        if chosen is None:
+            first = ordered[0]
+            report = reports[first.skill_id]
+            event: dict[str, Any] = {
+                "phase": "skill card",
+                "percent": 0,
+                "skill_id": first.skill_id,
+                "skill_status": report.stage,
+                "skill_passed": False,
+                "skill_candidates": len(curriculum),
+            }
+            if report.failed_stage is not None:
+                event["skill_failed_stage"] = report.failed_stage
+            return context_block, event
+
+        report = reports[chosen.skill_id]
+        section = (
+            f"\n\n### Validated skill card: {chosen.skill_id}\n"
+            f"Trigger: {chosen.trigger}\n"
+            f"Procedure: {chosen.procedure}\n"
+            f"Verification: {chosen.verification}\n"
+        )
+        event = {
+            "phase": "skill card",
+            "percent": 0,
+            "skill_id": chosen.skill_id,
+            "skill_status": report.stage,
+            "skill_passed": True,
+            "skill_candidates": len(curriculum),
+        }
         return (context_block + section)[:20000], event
 
     def _acceptance_scores_event(self, subtask: Subtask) -> dict[str, Any] | None:
