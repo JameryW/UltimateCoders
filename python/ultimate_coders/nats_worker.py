@@ -3845,6 +3845,13 @@ class NatsWorker:
                 summary=inner.get("summary", ""),
                 success=True,
                 modified_files=modified_files,
+                # V10 #17: preserve the measured test delta across the remote
+                # hop so the orchestrator can check ancestor F2P regressions.
+                test_execution=(
+                    inner.get("test_execution")
+                    if isinstance(inner.get("test_execution"), dict)
+                    else None
+                ),
             )
             await self._orchestrator.handle_subtask_result(result)
         elif event_type == "subtask_failed" and self._orchestrator:

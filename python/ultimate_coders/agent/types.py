@@ -339,6 +339,11 @@ class SubtaskResult:
     # When set, orchestrator may apply same-contract one-shot agent redispatch
     # under ``UC_STALL_REDISPATCH_ENFORCE`` (default off).
     stall_signal: dict[str, Any] | None = None
+    # Observed pytest delta from the worker's test-execution diagnostic (V10
+    # #17). ``None`` means no measurement was taken. The orchestrator consumes
+    # it for the cumulative ancestor-F2P regression gate; this is real measured
+    # data, never an inferred score.
+    test_execution: dict[str, Any] | None = None
 
 
 @dataclass
@@ -567,6 +572,11 @@ class Task:
                         # a checkpoint is a place a collected verdict can die.
                         "review": (st.result.review.to_dict() if st.result.review else None),
                         "stall_signal": st.result.stall_signal,
+                        # V10 #17: a checkpoint is one more hop the measured
+                        # F2P/P2P delta can be lost on. Without this, a resumed
+                        # task would lose its ancestor regression evidence and
+                        # the cumulative gate would silently pass.
+                        "test_execution": st.result.test_execution,
                     }
                     if st.result
                     else None,
@@ -656,6 +666,11 @@ class Task:
                     ),
                     stall_signal=(
                         rd["stall_signal"] if isinstance(rd.get("stall_signal"), dict) else None
+                    ),
+                    test_execution=(
+                        rd["test_execution"]
+                        if isinstance(rd.get("test_execution"), dict)
+                        else None
                     ),
                 )
                 if "modified_files" in rd:

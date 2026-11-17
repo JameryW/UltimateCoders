@@ -645,6 +645,68 @@ class Orchestrator:
             entry.current_load += 1
         return worker_id
 
+    def _cumulative_regression_error(
+        self,
+        task: Task,
+        subtask: Subtask,
+        result: SubtaskResult,
+    ) -> str | None:
+        """Return an ancestor-regression error for a measured successful result.
+
+        V10 #17 (Python runtime half). The authoritative cumulative-regression
+        plan lives in the Rust engine; until engine nodes carry F2P contracts,
+        the orchestrator can still enforce the same rule over observed pytest
+        deltas: if an ancestor's F2P test is broken by this result, the
+        descendant must not complete. Absent measurement stays a pass — no data
+        is never treated as "no regression".
+        """
+        if not result.success:
+            return None
+        current = result.test_execution
+        if not isinstance(current, dict):
+            return None
+        if current.get("status") != "ok" and current.get("test_execution_status") != "ok":
+            return None
+        broken = {entry for entry in current.get("broken", []) if isinstance(entry, str)}
+        if not broken:
+            return None
+
+        by_id = {st.id: st for st in task.subtasks}
+        ancestors: set[str] = set()
+        pending = list(subtask.depends_on)
+        while pending:
+            ancestor_id = pending.pop()
+            if ancestor_id in ancestors:
+                continue
+            ancestors.add(ancestor_id)
+            ancestor = by_id.get(ancestor_id)
+            if ancestor is not None:
+                pending.extend(ancestor.depends_on)
+
+        inherited: dict[str, str] = {}
+        for ancestor_id in ancestors:
+            ancestor = by_id.get(ancestor_id)
+            measurement = (
+                ancestor.result.test_execution
+                if ancestor is not None and ancestor.result is not None
+                else None
+            )
+            if not isinstance(measurement, dict):
+                continue
+            inherited_tests = measurement.get("f2p_tests", measurement.get("f2p", []))
+            for test_id in inherited_tests:
+                if isinstance(test_id, str):
+                    inherited.setdefault(test_id, ancestor_id)
+
+        overlap = sorted(broken & inherited.keys())
+        if not overlap:
+            return None
+        return (
+            f"Cumulative regression: {overlap[0]} passed for ancestor "
+            f"{inherited[overlap[0]]} but is broken now "
+            f"({len(overlap)} inherited test(s) failed)"
+        )
+
     async def handle_subtask_result(self, result: SubtaskResult) -> None:
         """Process a subtask result — update task state.
 
@@ -728,6 +790,16 @@ class Orchestrator:
                         await self._publish_task_update(task)
                         self.evict_terminal_tasks()
                         return
+
+                    regression_error = self._cumulative_regression_error(task, st, result)
+                    if regression_error is not None:
+                        result.success = False
+                        result.error = regression_error
+                        logger.warning(
+                            "Subtask %s blocked by cumulative regression: %s",
+                            st.id[:8],
+                            regression_error,
+                        )
 
                     challenged = False
                     if result.success and not challenger_observe:

@@ -680,6 +680,11 @@ def test_test_execution_event_reports_observed_delta(monkeypatch, tmp_path: Path
     assert event["pass_rate"] == 0.75
     assert event["f2p_rate"] == 0.5
     assert Worker._test_execution_error(event) is None
+    result_data = Worker._test_execution_result_data(event)
+    assert result_data is not None
+    assert result_data["status"] == "ok"
+    assert result_data["f2p"] == ["test_mod::test_fix"]
+    assert result_data["f2p_tests"] == ["test_mod::test_fix"]
 
     monkeypatch.setattr(
         test_execution,
@@ -690,6 +695,7 @@ def test_test_execution_event_reports_observed_delta(monkeypatch, tmp_path: Path
     assert failed is not None
     assert failed["test_execution_status"] == "error"
     assert "no junit" in failed["test_execution_reason"]
+    assert Worker._test_execution_result_data(failed) is None
 
 
 def test_test_execution_is_opt_in(monkeypatch, tmp_path: Path) -> None:

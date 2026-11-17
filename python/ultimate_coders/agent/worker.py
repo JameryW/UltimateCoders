@@ -1542,6 +1542,10 @@ class Worker:
                             ],
                             "output": result.summary[:50000],  # ponytail: 50KB cap
                         }
+                        if result.test_execution is not None:
+                            # V10 #17: the remote orchestrator needs the measured
+                            # F2P/P2P delta to enforce ancestor regressions.
+                            comp_data["test_execution"] = result.test_execution
                         await self._publish_event(
                             "subtask_completed",
                             task_id=subtask.parent_id,
@@ -2989,6 +2993,10 @@ class Worker:
                 # under-report survived: nothing errors, the number is simply
                 # gone by the time the terminal event is written.
                 step_usages=step_usages,
+                # V10 #17: only a successful observed delta is evidence the
+                # orchestrator may use for ancestor-F2P regression. An error
+                # event is "not measured", not "no regression".
+                test_execution=self._test_execution_result_data(test_event),
             )
         finally:
             # Release edit intent after execution (success or failure)
@@ -3870,6 +3878,22 @@ class Worker:
             "test_execution_enforced": enforce,
             **delta.to_dict(),
         }
+
+    @staticmethod
+    def _test_execution_result_data(event: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Normalise a successful observed-test event for ``SubtaskResult``.
+
+        The event uses ``test_execution_status`` so it does not collide with
+        other progress fields.  The orchestrator's cumulative gate consumes a
+        plain ``status`` + ``broken``/``f2p_tests`` measurement; an error event
+        is "not measured" and must not become an empty (falsely clean) delta.
+        """
+        if not event or event.get("test_execution_status") != "ok":
+            return None
+        data = {**event, "status": "ok"}
+        data.setdefault("f2p_tests", list(data.get("f2p") or []))
+        data.setdefault("p2p_tests", list(data.get("p2p") or []))
+        return data
 
     @staticmethod
     def _test_execution_error(event: dict[str, Any] | None) -> str | None:

@@ -346,6 +346,7 @@ def test_real_repo_is_reconciled() -> None:
         (2740, 2731),  # #20 TRACE runtime collector + test + map row.
         (2742, 2733),  # #21 observed test execution module + test + map row.
         (2743, 2734),  # #24 Linux cgroup guard module + map update.
+        (2744, 2735),  # #17 cumulative-regression gate + its orchestrator test.
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

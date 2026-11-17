@@ -1023,7 +1023,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # 2026-11-17 observed test execution diagnostic names
     # acceptance/test_execution.py in the v10 map row and paragraph
     # (1408 -> 1410); all resolved, unclassified stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1412
+    # V10 #17 cumulative regression names orchestrator.py and worker.py in
+    # the map row/paragraph (1410 -> 1413); all resolved, unclassified 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1413
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1119,7 +1121,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            2533,
+            2537,
         ),
     }
     rows = [
