@@ -46,9 +46,19 @@ from typing import Any, Optional
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
+from ultimate_coders.architecture.sync_async_promotion import (
+    SyncAsyncPromoter,
+    promotion_enabled,
+)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["approvals"])
+
+#: Process-local sync-to-async promotion state for the approval queue. The
+#: gateway remains the authority; promotion only records that the synchronous
+#: budget expired and surfaces convergence notices to the dashboard.
+_PROMOTER: SyncAsyncPromoter | None = None
 
 #: Governance op names this surface speaks.
 OP_APPROVAL_LIST = "approval.list"
@@ -150,6 +160,30 @@ def _unavailable(op: str) -> JSONResponse:
     )
 
 
+def _promoter() -> SyncAsyncPromoter:
+    """Return the process-local promoter, created lazily."""
+
+    global _PROMOTER
+    if _PROMOTER is None:
+        _PROMOTER = SyncAsyncPromoter()
+    return _PROMOTER
+
+
+def _promotion_notices() -> list[dict[str, Any]]:
+    """Promote overdue approvals and return the drained convergence notices.
+
+    The gateway never sees this state: it is a display/telemetry projection of
+    how long the synchronous approval budget has been exceeded. An approval
+    still has exactly the authority the gateway gives it.
+    """
+
+    if not promotion_enabled():
+        return []
+    promoter = _promoter()
+    promoter.promote_due()
+    return [notice.to_dict() for notice in promoter.notices()]
+
+
 def _limit(value: int) -> int:
     if value <= 0:
         return DEFAULT_LIMIT
@@ -176,7 +210,11 @@ async def list_approvals(
     approvals = reply.get("approvals")
     if not isinstance(approvals, list):
         return JSONResponse({"error": "invalid_gateway_reply"}, status_code=502)
-    return {"approvals": approvals}
+    result: dict[str, Any] = {"approvals": approvals}
+    notices = _promotion_notices()
+    if notices:
+        result["sync_promotions"] = notices
+    return result
 
 
 @router.post("/api/approvals")
@@ -253,6 +291,10 @@ async def request_approval(request: Request) -> Any:
     approval = reply.get("approval")
     if not isinstance(approval, Mapping):
         return JSONResponse({"error": "invalid_gateway_reply"}, status_code=502)
+    if promotion_enabled():
+        approval_id = str(approval.get("id") or "").strip()
+        if approval_id:
+            _promoter().submit(approval_id, {"tool": approval.get("tool", "")})
     return {"approval": approval}
 
 
@@ -302,7 +344,21 @@ async def decide_approval(approval_id: str, request: Request) -> Any:
     approval = reply.get("approval")
     if not isinstance(approval, Mapping):
         return JSONResponse({"error": "invalid_gateway_reply"}, status_code=502)
-    return {"approval": approval}
+    if promotion_enabled():
+        promoter = _promoter()
+        try:
+            promoter.check(approval_id.strip())
+        except KeyError:
+            pass
+        try:
+            promoter.converge(approval_id.strip(), accepted=approve, reason="approval decision")
+        except KeyError:
+            pass
+    result: dict[str, Any] = {"approval": approval}
+    notices = _promotion_notices()
+    if notices:
+        result["sync_promotions"] = notices
+    return result
 
 
 def _csv_cell(value: Any) -> str:

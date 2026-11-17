@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from ultimate_coders.architecture.sync_async_promotion import SyncAsyncPromoter
 from ultimate_coders.dashboard import approval_api
 from ultimate_coders.dashboard.approval_api import (
     OP_APPROVAL_DECIDE,
@@ -86,6 +87,7 @@ def _app(client: Any = _UNSET) -> FastAPI:
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(TOKEN_ENV, raising=False)
     monkeypatch.setenv("UC_OPERATOR_ID", "alice")
+    monkeypatch.setattr(approval_api, "_PROMOTER", None)
 
 
 def test_listing_returns_the_queue_unchanged() -> None:
@@ -243,6 +245,90 @@ def test_a_dead_bridge_is_503_not_500() -> None:
     response = broken.get("/api/approvals")
     assert response.status_code == 503
     assert response.json()["error"] == "governance_unavailable"
+
+
+def _promoter(clock: list[float]) -> SyncAsyncPromoter:
+    return SyncAsyncPromoter(threshold_seconds=5.0, now=lambda: clock[0])
+
+
+def test_request_registers_a_pending_sync_decision(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UC_SYNC_ASYNC_PROMOTION", "1")
+    clock = [1000.0]
+    promoter = _promoter(clock)
+    monkeypatch.setattr(approval_api, "_PROMOTER", promoter)
+    client = FakeGovernanceClient({OP_APPROVAL_REQUEST: {"approval": PENDING}})
+
+    response = TestClient(_app(client)).post("/api/approvals", json={"tool": "scale_workers"})
+    assert response.status_code == 200
+    assert response.json() == {"approval": PENDING}
+    assert [decision.decision_id for decision in promoter.pending()] == ["apr-abc123"]
+
+
+def test_listing_promotes_an_overdue_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UC_SYNC_ASYNC_PROMOTION", "1")
+    clock = [1000.0]
+    promoter = _promoter(clock)
+    monkeypatch.setattr(approval_api, "_PROMOTER", promoter)
+    client = FakeGovernanceClient(
+        {
+            OP_APPROVAL_REQUEST: {"approval": PENDING},
+            OP_APPROVAL_LIST: {"approvals": [PENDING]},
+        }
+    )
+    app = TestClient(_app(client))
+    assert app.post("/api/approvals", json={"tool": "scale_workers"}).status_code == 200
+
+    clock[0] += 6.0
+    response = app.get("/api/approvals")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["approvals"] == [PENDING]
+    assert payload["sync_promotions"] == [
+        {
+            "decision_id": "apr-abc123",
+            "status": "promoted",
+            "elapsed_seconds": 6.0,
+            "reason": "promoted: sync threshold exceeded",
+        }
+    ]
+
+
+def test_decision_converges_a_promoted_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UC_SYNC_ASYNC_PROMOTION", "1")
+    clock = [1000.0]
+    promoter = _promoter(clock)
+    monkeypatch.setattr(approval_api, "_PROMOTER", promoter)
+    client = FakeGovernanceClient(
+        {
+            OP_APPROVAL_REQUEST: {"approval": PENDING},
+            OP_APPROVAL_DECIDE: {"approval": APPROVED},
+        }
+    )
+    app = TestClient(_app(client))
+    assert app.post("/api/approvals", json={"tool": "scale_workers"}).status_code == 200
+
+    clock[0] += 6.0
+    response = app.post("/api/approvals/apr-abc123/decide", json={"approve": True})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["approval"] == APPROVED
+    assert [notice["status"] for notice in payload["sync_promotions"]] == [
+        "promoted",
+        "converged",
+    ]
+
+
+def test_deciding_without_a_registered_request_is_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UC_SYNC_ASYNC_PROMOTION", "1")
+    client = FakeGovernanceClient({OP_APPROVAL_DECIDE: {"approval": APPROVED}})
+    response = TestClient(_app(client)).post(
+        "/api/approvals/apr-abc123/decide", json={"approve": True}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"approval": APPROVED}
+
 
 # ── CSV export ───────────────────────────────────────────────
 

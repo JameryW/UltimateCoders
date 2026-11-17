@@ -9,7 +9,7 @@ a second knowledge authority, or a second mandate store.
 
 | Area | Modules | Flag | Wired at | State |
 | --- | --- | --- | --- | --- |
-| Adaptive retry routing | `behavior_router`, `mandate`, `sync_async_promotion` | `UC_ADAPTIVE_ADAPTER_ROUTING`, `UC_MANDATE_ENVELOPE`, `UC_SYNC_ASYNC_PROMOTION` | worker retry path and preflight | modules tested; adapter routing and mandate consumption wired; promotion is an opt-in primitive |
+| Adaptive retry routing | `behavior_router`, `mandate`, `sync_async_promotion` | `UC_ADAPTIVE_ADAPTER_ROUTING`, `UC_MANDATE_ENVELOPE`, `UC_SYNC_ASYNC_PROMOTION` | worker retry path and preflight; dashboard approval queue | adapter routing/mandate consumption wired; sync-to-async promotion wired to approvals |
 | Retrieval arbitration | `memcredit` | `UC_MEMCREDIT` | worker search context | wired |
 | Bitemporal knowledge | `bitemporal` | `UC_BITEMPORAL_KNOWLEDGE` | knowledge read face and recovery view | projection wired |
 | Attempt evolution | `evolution` | `UC_AST_EVOLUTION` | recovery context | wired |
@@ -42,9 +42,12 @@ non-retryable failure. Without `enforce`, the same violations are reported on a
 but no capability payload beyond the bounded violation list.
 
 `sync_async_promotion` records a pending decision, promotes it after the sync
-budget, and emits bounded convergence notices. It is a clock-injected primitive
-for the Event Gate boundary: the orchestrator owns when to call `submit` and
-when to publish `notices()`.
+budget, and emits bounded convergence notices. It is wired to the dashboard
+approval queue: a requested approval is submitted as a pending decision, an
+approval listing promotes overdue entries and returns their bounded
+`sync_promotions` notices, and a decision converges the entry. Promotion never
+changes the gateway's authority; it only reports that the five-second synchronous
+budget expired.
 
 ## Retrieval and context
 
