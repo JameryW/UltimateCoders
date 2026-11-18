@@ -10,7 +10,7 @@ mandate store.
 
 | Area | Modules | Flag | Wired at | State |
 | --- | --- | --- | --- | --- |
-| Boundary contract | `crates/uc-types/src/contract.rs`, `crates/uc-engine/src/lib.rs`, `python/ultimate_coders/agent/boundary_contract.py` | `UC_BOUNDARY_CONTRACT`, `UC_BOUNDARY_CONTRACT_ENFORCE` | worker `_apply_perception_pass` / `_verify_output_boundary` | wired (partial) |
+| Boundary contract | `crates/uc-types/src/contract.rs`, `crates/uc-engine/src/lib.rs`, `crates/uc-grpc/src/server.rs`, `python/ultimate_coders/agent/boundary_contract.py` | `UC_BOUNDARY_CONTRACT`, `UC_BOUNDARY_CONTRACT_ENFORCE` | worker `_apply_perception_pass` / `_verify_output_boundary`; gateway `boundary_contract_error` | wired (partial) |
 | PerceptionPass | `python/ultimate_coders/agent/planner.py` | `UC_PERCEPTION_PASS` | worker `_apply_perception_pass` | wired |
 | Plan critic | `python/ultimate_coders/agent/planner_critic.py` | `UC_PLANNER_CRITIC` | worker PerceptionPass preflight | wired (partial) |
 | Prefix context assembly | `python/ultimate_coders/search/context_assembler.py`, `python/ultimate_coders/agent/harness_local_loop.py` | `UC_PREFIX_CONTEXT_ASSEMBLY` | worker prompt assembly + provider cache samples | wired (partial) |
@@ -50,6 +50,14 @@ that are not editable as a `boundary contract` progress event; with
 read-model boundary, not the Rust engine hot-update path: `required` and
 `protected` entries are accepted but not inferred automatically, and
 `BoundaryChallengeRequest` adjudication remains unimplemented here.
+
+On the Rust gateway side, `uc.task.update` now carries each worker's
+`modified_files` through the flattened execution envelope into
+`SubtaskResult` instead of discarding the list. When a subtask declares
+`file_constraints`, the gateway builds a `BoundaryContract` with those paths as
+editable and fails the result if any reported path falls outside them. This is
+an engine-side ingestion gate only; contract hot-update and challenge
+adjudication still have no execution caller.
 
 `PerceptionPass` is a zero-edit proposal-to-spec compiler. It uses the
 Python AST and, where available, Tree-sitter-style call/import metadata to

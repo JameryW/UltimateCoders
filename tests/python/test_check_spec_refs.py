@@ -1029,7 +1029,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # row (1413 -> 1414); resolved, unclassified 0.
     # The mutation-augmentation CLI adds its module path to the v10 map row
     # (1414 -> 1415); resolved, unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1415
+    # The Rust gateway boundary row names crates/uc-grpc/src/server.rs
+    # (1415 -> 1416); resolved, unclassified 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1416
 
 
 def test_real_corpus_has_no_false_content_mismatch():

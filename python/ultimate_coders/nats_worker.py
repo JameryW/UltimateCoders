@@ -200,7 +200,11 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
         if st.result is not None:
             entry["result"] = st.result.summary
             entry["modified_files"] = [
-                {"path": fc.file_path, "change_type": fc.change_type.value}
+                {
+                    "path": fc.file_path,
+                    "change_type": fc.change_type.value,
+                    "diff": fc.diff,
+                }
                 for fc in st.result.modified_files
             ]
             if st.result.error:

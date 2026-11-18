@@ -370,17 +370,23 @@ pub struct SubtaskReview {
 /// A file change produced by a worker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileChange {
+    #[serde(alias = "path")]
     pub file_path: String,
     pub change_type: ChangeType,
-    /// Unified diff of the change.
+    /// Unified diff of the change. Optional on the `uc.task.update` wire so
+    /// older publishers that only reported path/change_type stay compatible.
+    #[serde(default)]
     pub diff: String,
 }
 
 /// Type of file change.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ChangeType {
+    #[serde(alias = "created")]
     Created,
+    #[serde(alias = "modified")]
     Modified,
+    #[serde(alias = "deleted")]
     Deleted,
 }
 

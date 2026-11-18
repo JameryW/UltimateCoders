@@ -154,6 +154,11 @@ pub struct NatsSubtaskExecution {
     pub required_capabilities: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_constraints: Option<Vec<String>>,
+    /// File changes reported by a worker. Carried on the flattened
+    /// `NatsSubtaskUpdate` wire entry so the gateway retains the paths that
+    /// engine-side boundary/cumulative checks need instead of dropping them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_files: Option<Vec<uc_types::FileChange>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_output: Option<String>,
     // `steps` is already used for usage reports on this wire protocol.
@@ -234,6 +239,42 @@ pub struct NatsSubtaskUpdate {
 /// Convert the wire representation of a subtask into the domain type used by
 /// `TaskStore`. This is shared by the rehydration path and the normal upsert
 /// path so recovered and live subtasks receive the same defaults.
+fn boundary_contract_error(
+    subtask: &uc_types::Subtask,
+    modified_files: &[uc_types::FileChange],
+) -> Option<String> {
+    if subtask.file_constraints.is_empty() || modified_files.is_empty() {
+        return None;
+    }
+    let entries = subtask
+        .file_constraints
+        .iter()
+        .map(|path| (path.clone(), uc_types::BoundaryRole::Editable))
+        .collect::<Vec<_>>();
+    let contract = uc_types::BoundaryContract::from_entries(
+        format!("engine:{}", subtask.id.0),
+        subtask.parent_id.0.clone(),
+        entries,
+    )
+    .ok()?;
+    let violations = modified_files
+        .iter()
+        .filter_map(|file| {
+            let role = contract.role_for(&file.file_path);
+            (role != uc_types::BoundaryRole::Editable)
+                .then(|| format!("{}:{}", file.file_path, role.as_str()))
+        })
+        .collect::<Vec<_>>();
+    if violations.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "Boundary contract rejected: {}",
+            violations.join("; ")
+        ))
+    }
+}
+
 fn nats_subtask_to_domain(task_id: &str, update: &NatsSubtaskUpdate) -> uc_types::Subtask {
     let status =
         subtask_status_from_str(&update.status).unwrap_or(uc_types::SubtaskStatus::Pending);
@@ -247,7 +288,7 @@ fn nats_subtask_to_domain(task_id: &str, update: &NatsSubtaskUpdate) -> uc_types
         .map(|summary| uc_types::SubtaskResult {
             subtask_id: uc_types::TaskId(update.subtask_id.clone()),
             worker_id: assigned_worker.clone().unwrap_or_default(),
-            modified_files: Vec::new(),
+            modified_files: update.execution.modified_files.clone().unwrap_or_default(),
             summary: summary.clone(),
             success: !matches!(&status, uc_types::SubtaskStatus::Failed),
             completed_at: chrono::Utc::now(),
@@ -2009,12 +2050,22 @@ impl TaskStore {
                         subtask_status_from_str(&subtask_update.status),
                         Some(uc_types::SubtaskStatus::Failed)
                     );
+                    let modified_files = subtask_update
+                        .execution
+                        .modified_files
+                        .clone()
+                        .unwrap_or_default();
+                    let boundary_error = boundary_contract_error(subtask, &modified_files);
+                    let summary = match &boundary_error {
+                        Some(error) => format!("{result_str} [{error}]"),
+                        None => result_str.clone(),
+                    };
                     subtask.result = Some(uc_types::SubtaskResult {
                         subtask_id: subtask.id.clone(),
                         worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
-                        modified_files: Vec::new(),
-                        summary: result_str.clone(),
-                        success,
+                        modified_files,
+                        summary,
+                        success: success && boundary_error.is_none(),
                         completed_at: chrono::Utc::now(),
                         result: Some(result_str.clone()),
                         // T15 (#660): the reporter's usage is what makes the
@@ -8831,6 +8882,61 @@ mod tests {
         assert_eq!(parsed.description, None);
         assert_eq!(parsed.depends_on, None);
         assert_eq!(parsed.result, None);
+    }
+
+    #[test]
+    fn nats_subtask_update_preserves_modified_files() {
+        let json = r#"{
+            "subtask_id":"st-1",
+            "status":"Completed",
+            "assigned_worker":"w-1",
+            "result":"done",
+            "modified_files":[{
+                "path":"src/a.py",
+                "change_type":"modified",
+                "diff":"@@ -1 +1 @@"
+            }]
+        }"#;
+        let parsed: NatsSubtaskUpdate = serde_json::from_str(json).unwrap();
+        let files = parsed.execution.modified_files.clone().unwrap_or_default();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_path, "src/a.py");
+        assert_eq!(files[0].change_type, uc_types::ChangeType::Modified);
+        assert_eq!(files[0].diff, "@@ -1 +1 @@");
+
+        let domain = nats_subtask_to_domain("t-1", &parsed);
+        let result = domain.result.unwrap();
+        assert_eq!(result.modified_files.len(), 1);
+        assert_eq!(result.modified_files[0].file_path, "src/a.py");
+    }
+
+    #[test]
+    fn boundary_contract_error_rejects_files_outside_constraints() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "proj".to_string());
+        let mut subtask = task.subtasks[0].clone();
+        subtask.file_constraints = vec!["src/a.py".to_string()];
+        let files = vec![uc_types::FileChange {
+            file_path: "src/b.py".to_string(),
+            change_type: uc_types::ChangeType::Modified,
+            diff: String::new(),
+        }];
+        let error = boundary_contract_error(&subtask, &files).unwrap();
+        assert!(error.contains("src/b.py:inspect_only"));
+    }
+
+    #[test]
+    fn boundary_contract_error_allows_declared_editable_file() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "proj".to_string());
+        let mut subtask = task.subtasks[0].clone();
+        subtask.file_constraints = vec!["src/a.py".to_string()];
+        let files = vec![uc_types::FileChange {
+            file_path: "src/a.py".to_string(),
+            change_type: uc_types::ChangeType::Modified,
+            diff: String::new(),
+        }];
+        assert!(boundary_contract_error(&subtask, &files).is_none());
     }
 
     #[test]

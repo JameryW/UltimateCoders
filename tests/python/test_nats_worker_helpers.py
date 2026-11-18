@@ -24,6 +24,8 @@ import pytest
 from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.radio import RADIO_INBOX_DIR_ENV, RadioFileInbox
 from ultimate_coders.agent.types import (
+    ChangeType,
+    FileChange,
     StepUsage,
     Subtask,
     SubtaskResult,
@@ -152,6 +154,43 @@ def test_complete_task_update_carries_rehydration_metadata():
 
     assert payload["description"] == "restore the task"
     assert payload["project_id"] == "project-a"
+
+
+def test_task_update_carries_modified_file_diff_for_gateway_contracts():
+    """Rust BoundaryContract needs the diff, not only path/change_type."""
+    task = Task(
+        id="t-files",
+        description="change a file",
+        subtasks=[
+            Subtask(
+                id="t-files-s0",
+                parent_id="t-files",
+                status=SubtaskStatus.COMPLETED,
+            )
+        ],
+        status=TaskStatus.IN_PROGRESS,
+    )
+    task.subtasks[0].result = SubtaskResult(
+        subtask_id="t-files-s0",
+        modified_files=[
+            FileChange(
+                file_path="src/a.py",
+                change_type=ChangeType.MODIFIED,
+                diff="@@ -1 +1 @@\n-old\n+new\n",
+            )
+        ],
+        summary="done",
+    )
+
+    entry = _make_task_update_payload(task, partial=True)["subtasks"][0]
+
+    assert entry["modified_files"] == [
+        {
+            "path": "src/a.py",
+            "change_type": "modified",
+            "diff": "@@ -1 +1 @@\n-old\n+new\n",
+        }
+    ]
 
 
 def test_complete_snapshot_preserves_original_request_for_gateway_dispatch():
