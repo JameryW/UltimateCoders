@@ -1031,7 +1031,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # (1414 -> 1415); resolved, unclassified 0.
     # The Rust gateway boundary row names crates/uc-grpc/src/server.rs
     # (1415 -> 1416); resolved, unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1416
+    # The gateway cumulative-regression sentence names the server.rs caller
+    # (1416 -> 1417); resolved, unclassified 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1417
 
 
 def test_real_corpus_has_no_false_content_mismatch():

@@ -3685,6 +3685,7 @@ mod tests {
                 usage: None,
 
                 review: None,
+                test_contract: None,
             }),
             dispatch_mode: uc_types::DispatchMode::default(),
             effect_class: uc_types::EffectClass::default(),

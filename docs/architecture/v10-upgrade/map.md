@@ -22,7 +22,7 @@ mandate store.
 | ExecCritic | `python/ultimate_coders/acceptance/exec_critic.py` | `UC_EXEC_CRITIC` | worker test-artifact gate | wired (partial) |
 | RETRACE | `python/ultimate_coders/acceptance/retrace_verifier.py` | `UC_RETRACE_VERIFIER` | worker diagnostic | wired (diagnostic) |
 | Drift monitor | `python/ultimate_coders/agent/drift_monitor.py` | `UC_DRIFT_MONITOR` | local-harness loop (`drift_advisor`) | wired (local harness) |
-| Cumulative regression | `crates/uc-engine/src/dag.rs`, `python/ultimate_coders/agent/orchestrator.py` | n/a (observed-data gate) | Python orchestrator completion gate; Rust plan remains canonical | wired (Python orchestrator) |
+| Cumulative regression | `crates/uc-engine/src/dag.rs`, `crates/uc-grpc/src/server.rs`, `python/ultimate_coders/agent/orchestrator.py` | n/a (observed-data gate) | gateway result-ingestion gate + Python orchestrator completion gate; Rust plan remains canonical | wired (gateway + Python orchestrator) |
 | Dockerless verifier | `python/ultimate_coders/acceptance/dockerless_verifier.py` | `UC_DOCKERLESS_VERIFIER` | Oracle fallback / TITO filter | wired (diagnostic) |
 | ECLoop gate | `python/ultimate_coders/agent/ecloop_gate.py` | `UC_ECLOOP_GATE` | local-harness edit/submit tool boundary | wired (local harness) |
 | TRACE credit | `packages/uc-orchestrator/src/rl/trace_credit.ts`, `packages/uc-orchestrator/src/rl/trace_runtime.ts` | `UC_TRACE_LOGPROBS` | worker turn likelihoods → orchestrator collector | wired (partial) |
@@ -191,13 +191,15 @@ integration boundary.
 
 `crates/uc-engine/src/dag.rs` models cumulative regression obligations: a
 node inherits every topological ancestor's required test ids, and an
-ancestor regression is a blocking completion condition. The Python
-orchestrator applies the same rule to measured data that already exists:
-when `SubtaskResult.test_execution` is an `ok` delta and its `broken` list
-intersects a transitive ancestor's `f2p_tests`, the descendant is marked
-failed with a bounded `Cumulative regression:` error before completion.
-Missing or errored measurements stay "not measured", never "no regression",
-and the Rust plan is still the canonical engine-side model.
+ancestor regression is a blocking completion condition. The gateway now
+consumes a `test_contract` (`f2p_tests`/`p2p_tests`/`broken_tests`) carried on
+the flattened `uc.task.update` execution block. `cumulative_regression_error`
+builds the plan from real `depends_on` edges and each subtask's reported F2P
+tests, then fails the result with `Cumulative regression:` when the current
+`broken_tests` intersect an ancestor's inherited F2P set. The Python
+orchestrator applies the same rule to `SubtaskResult.test_execution` data for
+runs that do not pass through the gateway. Missing or errored measurements
+stay "not measured", never "no regression"; the Rust plan remains canonical.
 
 ## Execution, credit, and trajectory scoring
 

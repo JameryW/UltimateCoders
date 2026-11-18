@@ -159,6 +159,11 @@ pub struct NatsSubtaskExecution {
     /// engine-side boundary/cumulative checks need instead of dropping them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified_files: Option<Vec<uc_types::FileChange>>,
+    /// Observed pytest contract reported by a worker. Carried with the
+    /// execution block for the engine's cumulative-regression check; absent
+    /// means no observed test command, never "all tests passed".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_contract: Option<uc_types::SubtaskTestContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_output: Option<String>,
     // `steps` is already used for usage reports on this wire protocol.
@@ -295,6 +300,7 @@ fn nats_subtask_to_domain(task_id: &str, update: &NatsSubtaskUpdate) -> uc_types
             result: Some(summary.clone()),
             usage: update.usage.clone(),
             review: update.review.clone(),
+            test_contract: update.execution.test_contract.clone(),
         });
 
     let mut subtask = uc_types::Subtask {
@@ -1932,6 +1938,15 @@ impl TaskStore {
 
         // Update subtasks — full upsert
         for subtask_update in &update.subtasks {
+            // The cumulative-regression check needs ancestors' already-recorded
+            // test contracts. Clone the task before taking the mutable borrow
+            // of the current subtask; only when this update actually carries a
+            // test contract (the check is otherwise a no-op).
+            let cumulative_snapshot = subtask_update
+                .execution
+                .test_contract
+                .as_ref()
+                .map(|_| task.clone());
             if let Some(subtask) = task
                 .subtasks
                 .iter_mut()
@@ -2056,16 +2071,32 @@ impl TaskStore {
                         .clone()
                         .unwrap_or_default();
                     let boundary_error = boundary_contract_error(subtask, &modified_files);
-                    let summary = match &boundary_error {
-                        Some(error) => format!("{result_str} [{error}]"),
-                        None => result_str.clone(),
+                    let test_contract = subtask_update.execution.test_contract.clone();
+                    let cumulative_error = match (&cumulative_snapshot, &test_contract) {
+                        (Some(snapshot), Some(contract)) => {
+                            uc_engine::dag::cumulative_regression_error(
+                                snapshot,
+                                &subtask.id.0,
+                                contract,
+                            )
+                        }
+                        _ => None,
+                    };
+                    let combined_errors = [boundary_error.as_deref(), cumulative_error.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    let summary = if combined_errors.is_empty() {
+                        result_str.clone()
+                    } else {
+                        format!("{result_str} [{}]", combined_errors.join("; "))
                     };
                     subtask.result = Some(uc_types::SubtaskResult {
                         subtask_id: subtask.id.clone(),
                         worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
                         modified_files,
                         summary,
-                        success: success && boundary_error.is_none(),
+                        success: success && boundary_error.is_none() && cumulative_error.is_none(),
                         completed_at: chrono::Utc::now(),
                         result: Some(result_str.clone()),
                         // T15 (#660): the reporter's usage is what makes the
@@ -2074,6 +2105,7 @@ impl TaskStore {
                         usage: subtask_update.usage.clone(),
 
                         review: None,
+                        test_contract,
                     });
                 }
             } else {
@@ -8937,6 +8969,80 @@ mod tests {
             diff: String::new(),
         }];
         assert!(boundary_contract_error(&subtask, &files).is_none());
+    }
+
+    #[test]
+    fn cumulative_regression_rejects_broken_ancestor_f2p() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "proj".to_string());
+        let task_id = task.id.0.clone();
+        let first_id = task.subtasks[0].id.0.clone();
+        let now = chrono::Utc::now();
+        {
+            let task = store.tasks.get_mut(&task_id).unwrap();
+            let first = &mut task.subtasks[0];
+            first.status = uc_types::SubtaskStatus::Completed;
+            first.result = Some(uc_types::SubtaskResult {
+                subtask_id: first.id.clone(),
+                worker_id: uc_types::WorkerId("w-1".into()),
+                modified_files: Vec::new(),
+                summary: "done".into(),
+                success: true,
+                completed_at: now,
+                result: None,
+                usage: None,
+                review: None,
+                test_contract: Some(uc_types::SubtaskTestContract {
+                    f2p_tests: vec!["tests/test_a.py::test_ok".into()],
+                    p2p_tests: Vec::new(),
+                    broken_tests: Vec::new(),
+                }),
+            });
+            let mut second = first.clone();
+            second.id = uc_types::TaskId("B".into());
+            second.description = "second".into();
+            second.status = uc_types::SubtaskStatus::Pending;
+            second.result = None;
+            second.depends_on = vec![uc_types::TaskId(first_id)];
+            task.subtasks.push(second);
+        }
+
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            result: None,
+            partial: true,
+            subtasks: vec![NatsSubtaskUpdate {
+                execution: NatsSubtaskExecution {
+                    test_contract: Some(uc_types::SubtaskTestContract {
+                        f2p_tests: Vec::new(),
+                        p2p_tests: Vec::new(),
+                        broken_tests: vec!["tests/test_a.py::test_ok".into()],
+                    }),
+                    ..Default::default()
+                },
+                subtask_id: "B".to_string(),
+                status: "Completed".to_string(),
+                assigned_worker: Some("w-2".to_string()),
+                description: None,
+                depends_on: None,
+                result: Some("done".to_string()),
+                usage: None,
+                steps: None,
+                review: None,
+                attempt_id: Some(0),
+            }],
+        };
+        store.apply_update(&update);
+
+        let result = store.tasks[&task_id].subtasks[1].result.as_ref().unwrap();
+        assert!(!result.success, "{result:?}");
+        assert!(
+            result.summary.contains("Cumulative regression"),
+            "{}",
+            result.summary
+        );
     }
 
     #[test]

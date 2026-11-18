@@ -238,6 +238,31 @@ pub struct SubtaskResult {
     /// defaulting `approved` to `false`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review: Option<SubtaskReview>,
+    /// Observed test contract reported by the worker (V10 #17).
+    ///
+    /// Additive and optional: absent means the subtask did not run an
+    /// observed test command, which is not the same as "no tests changed".
+    /// The gateway uses `broken_tests` against ancestors' `f2p_tests` to
+    /// enforce cumulative regression obligations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_contract: Option<SubtaskTestContract>,
+}
+
+/// Per-subtask observed test outcome used by cumulative-regression checks.
+///
+/// This is a wire/domain contract, not a test runner: the worker is the only
+/// producer and every list is reported, never synthesized.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubtaskTestContract {
+    /// Tests that failed on the base snapshot and pass after the change.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub f2p_tests: Vec<String>,
+    /// Tests that passed before and after the change.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub p2p_tests: Vec<String>,
+    /// Tests that passed on the base snapshot but fail after the change.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub broken_tests: Vec<String>,
 }
 
 /// Token / cost usage attached to a subtask result (T15 #660, D13 #657).
@@ -826,6 +851,7 @@ mod tests {
             usage: None,
 
             review: None,
+            test_contract: None,
         };
         let bare = serde_json::to_string(&result).unwrap();
         assert!(

@@ -19,8 +19,8 @@ pub mod search;
 // Re-exports for convenience
 pub use agent::{
     AgentEvent, AgentEventPayload, ChangeType, DispatchMode, EffectClass, FileChange, StepUsage,
-    Subtask, SubtaskResult, SubtaskReview, SubtaskSnapshot, SubtaskStatus, SubtaskUsage, Task,
-    TaskId, TaskSnapshot, TaskStatus, WorkerId, WorkerInfo, WorkflowStep,
+    Subtask, SubtaskResult, SubtaskReview, SubtaskSnapshot, SubtaskStatus, SubtaskTestContract,
+    SubtaskUsage, Task, TaskId, TaskSnapshot, TaskStatus, WorkerId, WorkerInfo, WorkflowStep,
 };
 pub use async_trait::async_trait;
 pub use contract::{

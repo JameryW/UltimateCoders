@@ -178,6 +178,7 @@ fn subtask(
             usage: None,
 
             review: None,
+            test_contract: None,
         }),
         dispatch_mode: DispatchMode::default(),
         effect_class: uc_types::EffectClass::default(),

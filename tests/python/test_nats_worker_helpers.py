@@ -193,6 +193,64 @@ def test_task_update_carries_modified_file_diff_for_gateway_contracts():
     ]
 
 
+def test_task_update_carries_observed_test_contract():
+    """V10 #17: only a successful observed test run becomes a contract."""
+    task = Task(
+        id="t-tests",
+        description="change a file",
+        subtasks=[
+            Subtask(
+                id="t-tests-s0",
+                parent_id="t-tests",
+                status=SubtaskStatus.COMPLETED,
+            )
+        ],
+        status=TaskStatus.IN_PROGRESS,
+    )
+    task.subtasks[0].result = SubtaskResult(
+        subtask_id="t-tests-s0",
+        summary="done",
+        test_execution={
+            "status": "ok",
+            "f2p_tests": ["tests/test_a.py::test_ok"],
+            "p2p_tests": ["tests/test_a.py::test_regression"],
+            "broken": ["tests/test_a.py::test_old"],
+        },
+    )
+
+    entry = _make_task_update_payload(task, partial=True)["subtasks"][0]
+
+    assert entry["test_contract"] == {
+        "f2p_tests": ["tests/test_a.py::test_ok"],
+        "p2p_tests": ["tests/test_a.py::test_regression"],
+        "broken_tests": ["tests/test_a.py::test_old"],
+    }
+
+
+def test_task_update_omits_test_contract_when_measurement_failed():
+    task = Task(
+        id="t-tests-failed",
+        description="change a file",
+        subtasks=[
+            Subtask(
+                id="t-tests-failed-s0",
+                parent_id="t-tests-failed",
+                status=SubtaskStatus.COMPLETED,
+            )
+        ],
+        status=TaskStatus.IN_PROGRESS,
+    )
+    task.subtasks[0].result = SubtaskResult(
+        subtask_id="t-tests-failed-s0",
+        summary="done",
+        test_execution={"status": "error", "reason": "pytest missing"},
+    )
+
+    entry = _make_task_update_payload(task, partial=True)["subtasks"][0]
+
+    assert "test_contract" not in entry
+
+
 def test_complete_snapshot_preserves_original_request_for_gateway_dispatch():
     original = "Read README.md and return only its first Markdown heading."
     task = Task(

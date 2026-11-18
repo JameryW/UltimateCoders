@@ -77,6 +77,58 @@ pub struct CumulativeRegressionPlan {
     nodes: BTreeMap<String, PlanNode>,
 }
 
+/// Enforce the cumulative-regression obligation for one task node.
+///
+/// The plan is built from the task's real dependency edges and from the test
+/// contracts each subtask actually reported. A subtask with no observed test
+/// contract contributes no F2P tests; the current subtask's `broken_tests`
+/// are checked against the ancestor F2P union. Absent data is never treated as
+/// a pass.
+pub fn cumulative_regression_error(
+    task: &uc_types::Task,
+    node_id: &str,
+    current: &uc_types::SubtaskTestContract,
+) -> Option<String> {
+    let mut plan = CumulativeRegressionPlan::new();
+    for subtask in &task.subtasks {
+        let f2p = if subtask.id.0 == node_id {
+            current.f2p_tests.iter().cloned()
+        } else {
+            subtask
+                .result
+                .as_ref()
+                .filter(|result| result.success)
+                .and_then(|result| result.test_contract.as_ref())
+                .map(|contract| contract.f2p_tests.iter().cloned())
+                .unwrap_or_default()
+        };
+        let parents = subtask.depends_on.iter().map(|id| id.0.clone());
+        if let Err(error) = plan.add_node(subtask.id.0.clone(), parents, f2p) {
+            return Some(format!("Cumulative regression plan invalid: {error}"));
+        }
+    }
+
+    let broken: BTreeSet<String> = current.broken_tests.iter().cloned().collect();
+    if broken.is_empty() {
+        return None;
+    }
+    let obligation = plan.obligations_for(node_id)?;
+    let violated = obligation
+        .test_ids
+        .intersection(&broken)
+        .cloned()
+        .collect::<Vec<_>>();
+    if violated.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "Cumulative regression: {} inherited test(s) failed: {}",
+            violated.len(),
+            violated.join(", ")
+        ))
+    }
+}
+
 impl CumulativeRegressionPlan {
     pub fn new() -> Self {
         Self::default()
@@ -373,5 +425,98 @@ mod tests {
         assert_eq!(contracts.len(), 1);
         assert_eq!(contracts.get("mid"), Some(&set(&["m1"])));
         assert!(plan.inject_contracts("missing").is_empty());
+    }
+
+    fn task_with_test_contracts() -> uc_types::Task {
+        let now = chrono::Utc::now();
+        let completed = uc_types::SubtaskResult {
+            subtask_id: uc_types::TaskId("A".into()),
+            worker_id: uc_types::WorkerId("w".into()),
+            modified_files: Vec::new(),
+            summary: "done".into(),
+            success: true,
+            completed_at: now,
+            result: None,
+            usage: None,
+            review: None,
+            test_contract: Some(uc_types::SubtaskTestContract {
+                f2p_tests: vec!["a1".into()],
+                p2p_tests: Vec::new(),
+                broken_tests: Vec::new(),
+            }),
+        };
+        let subtask = |id: &str, depends_on: Vec<&str>, result| uc_types::Subtask {
+            id: uc_types::TaskId(id.into()),
+            parent_id: uc_types::TaskId("task".into()),
+            description: id.into(),
+            status: uc_types::SubtaskStatus::Completed,
+            assigned_worker: None,
+            depends_on: depends_on
+                .into_iter()
+                .map(|dependency| uc_types::TaskId(dependency.into()))
+                .collect(),
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            effect_class: uc_types::EffectClass::default(),
+            dispatch_retry_count: 0,
+            required_capabilities: Vec::new(),
+            agent_config_json: None,
+            steps: Vec::new(),
+            retry_count: 0,
+        };
+        uc_types::Task {
+            id: uc_types::TaskId("task".into()),
+            description: "task".into(),
+            project_id: "project".into(),
+            status: uc_types::TaskStatus::Created,
+            subtasks: vec![
+                subtask("A", Vec::new(), Some(completed)),
+                subtask("B", vec!["A"], None),
+            ],
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn task_contract_blocks_ancestor_f2p_regression() {
+        let task = task_with_test_contracts();
+        let contract = uc_types::SubtaskTestContract {
+            f2p_tests: vec!["b1".into()],
+            p2p_tests: Vec::new(),
+            broken_tests: vec!["a1".into()],
+        };
+        let error = cumulative_regression_error(&task, "B", &contract).unwrap();
+        assert!(error.contains("Cumulative regression"), "{error}");
+        assert!(error.contains("a1"), "{error}");
+    }
+
+    #[test]
+    fn failed_ancestor_contract_does_not_create_obligations() {
+        let mut task = task_with_test_contracts();
+        task.subtasks[0].result.as_mut().unwrap().success = false;
+        let contract = uc_types::SubtaskTestContract {
+            f2p_tests: vec!["b1".into()],
+            p2p_tests: Vec::new(),
+            broken_tests: vec!["a1".into()],
+        };
+        assert!(cumulative_regression_error(&task, "B", &contract).is_none());
+    }
+
+    #[test]
+    fn task_contract_ignores_unrelated_breakage_and_absent_data() {
+        let task = task_with_test_contracts();
+        let contract = uc_types::SubtaskTestContract {
+            f2p_tests: vec!["b1".into()],
+            p2p_tests: Vec::new(),
+            broken_tests: vec!["unrelated".into()],
+        };
+        assert!(cumulative_regression_error(&task, "B", &contract).is_none());
+        assert!(
+            cumulative_regression_error(&task, "B", &uc_types::SubtaskTestContract::default())
+                .is_none()
+        );
     }
 }

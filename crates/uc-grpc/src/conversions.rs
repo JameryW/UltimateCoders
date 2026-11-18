@@ -1325,6 +1325,7 @@ impl From<SubtaskProto> for Subtask {
                     .review_json
                     .as_deref()
                     .and_then(|s| serde_json::from_str::<uc_types::SubtaskReview>(s).ok()),
+                test_contract: None,
             }),
             dispatch_mode: proto.dispatch_mode.as_deref().map_or_else(
                 uc_types::DispatchMode::default,
@@ -1553,6 +1554,7 @@ impl From<TaskEventProto> for AgentEvent {
                         },
 
                         review: None,
+                        test_contract: None,
                     },
                 }
             }

@@ -207,6 +207,24 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
                 }
                 for fc in st.result.modified_files
             ]
+            # V10 #17: only observed, successful test measurements become a
+            # test contract. Absent means the worker did not run a test
+            # command; the gateway must not treat that as "all tests pass".
+            test_execution = st.result.test_execution
+            if isinstance(test_execution, dict) and test_execution.get("status") == "ok":
+                entry["test_contract"] = {
+                    "f2p_tests": list(
+                        test_execution.get("f2p_tests")
+                        or test_execution.get("f2p")
+                        or []
+                    ),
+                    "p2p_tests": list(
+                        test_execution.get("p2p_tests")
+                        or test_execution.get("p2p")
+                        or []
+                    ),
+                    "broken_tests": list(test_execution.get("broken") or []),
+                }
             if st.result.error:
                 entry["error"] = st.result.error[:500]
             if st.result.retry_count:
