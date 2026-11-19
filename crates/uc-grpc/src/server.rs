@@ -11,7 +11,7 @@
 //! Python Orchestrator. If NATS is unavailable, it gracefully degrades
 //! to local (newline-split) task decomposition.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -164,6 +164,11 @@ pub struct NatsSubtaskExecution {
     /// means no observed test command, never "all tests passed".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_contract: Option<uc_types::SubtaskTestContract>,
+    /// Evidence-backed boundary challenge supplied by the planner/worker for
+    /// this result. The gateway adjudicates it against the file constraints;
+    /// absent means no challenge was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_challenge: Option<uc_types::BoundaryChallengeRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_output: Option<String>,
     // `steps` is already used for usage reports on this wire protocol.
@@ -244,24 +249,59 @@ pub struct NatsSubtaskUpdate {
 /// Convert the wire representation of a subtask into the domain type used by
 /// `TaskStore`. This is shared by the rehydration path and the normal upsert
 /// path so recovered and live subtasks receive the same defaults.
-fn boundary_contract_error(
+#[derive(Debug, Default)]
+struct BoundaryAdmission {
+    error: Option<String>,
+    challenge: Option<uc_types::BoundaryChallengeDecision>,
+}
+
+fn boundary_admission(
     subtask: &uc_types::Subtask,
     modified_files: &[uc_types::FileChange],
-) -> Option<String> {
+    challenge: Option<&uc_types::BoundaryChallengeRequest>,
+) -> BoundaryAdmission {
+    let mut admission = BoundaryAdmission::default();
     if subtask.file_constraints.is_empty() || modified_files.is_empty() {
-        return None;
+        if challenge.is_some() {
+            admission.error =
+                Some("Boundary challenge requires file constraints and modified files".to_string());
+        }
+        return admission;
     }
-    let entries = subtask
-        .file_constraints
-        .iter()
-        .map(|path| (path.clone(), uc_types::BoundaryRole::Editable))
-        .collect::<Vec<_>>();
-    let contract = uc_types::BoundaryContract::from_entries(
+
+    // The contract names both the declared editable files and every file the
+    // result actually touched as inspect-only. Naming the touched files is
+    // what lets `BoundaryContract::challenge` adjudicate an out-of-boundary
+    // edit instead of rejecting it as "not covered by the contract".
+    let mut entries = BTreeMap::new();
+    for path in &subtask.file_constraints {
+        if path.trim().is_empty() {
+            admission.error = Some("Boundary contract invalid: empty path".to_string());
+            return admission;
+        }
+        entries.insert(path.clone(), uc_types::BoundaryRole::Editable);
+    }
+    for file in modified_files {
+        if file.file_path.trim().is_empty() {
+            admission.error = Some("Boundary contract invalid: empty path".to_string());
+            return admission;
+        }
+        entries
+            .entry(file.file_path.clone())
+            .or_insert(uc_types::BoundaryRole::InspectOnly);
+    }
+
+    let mut contract = uc_types::BoundaryContract::new(
         format!("engine:{}", subtask.id.0),
         subtask.parent_id.0.clone(),
         entries,
-    )
-    .ok()?;
+    );
+    if let Some(request) = challenge {
+        let outcome = contract.challenge(request);
+        admission.challenge = Some(outcome.decision);
+        contract = outcome.contract;
+    }
+
     let violations = modified_files
         .iter()
         .filter_map(|file| {
@@ -270,14 +310,21 @@ fn boundary_contract_error(
                 .then(|| format!("{}:{}", file.file_path, role.as_str()))
         })
         .collect::<Vec<_>>();
-    if violations.is_empty() {
-        None
-    } else {
-        Some(format!(
+    if !violations.is_empty() {
+        admission.error = Some(format!(
             "Boundary contract rejected: {}",
             violations.join("; ")
-        ))
+        ));
     }
+    admission
+}
+
+#[cfg(test)]
+fn boundary_contract_error(
+    subtask: &uc_types::Subtask,
+    modified_files: &[uc_types::FileChange],
+) -> Option<String> {
+    boundary_admission(subtask, modified_files, None).error
 }
 
 fn nats_subtask_to_domain(task_id: &str, update: &NatsSubtaskUpdate) -> uc_types::Subtask {
@@ -301,6 +348,7 @@ fn nats_subtask_to_domain(task_id: &str, update: &NatsSubtaskUpdate) -> uc_types
             usage: update.usage.clone(),
             review: update.review.clone(),
             test_contract: update.execution.test_contract.clone(),
+            boundary_challenge: None,
         });
 
     let mut subtask = uc_types::Subtask {
@@ -2070,7 +2118,14 @@ impl TaskStore {
                         .modified_files
                         .clone()
                         .unwrap_or_default();
-                    let boundary_error = boundary_contract_error(subtask, &modified_files);
+                    let BoundaryAdmission {
+                        error: boundary_error,
+                        challenge: boundary_decision,
+                    } = boundary_admission(
+                        subtask,
+                        &modified_files,
+                        subtask_update.execution.boundary_challenge.as_ref(),
+                    );
                     let test_contract = subtask_update.execution.test_contract.clone();
                     let cumulative_error = match (&cumulative_snapshot, &test_contract) {
                         (Some(snapshot), Some(contract)) => {
@@ -2086,11 +2141,22 @@ impl TaskStore {
                         .into_iter()
                         .flatten()
                         .collect::<Vec<_>>();
-                    let summary = if combined_errors.is_empty() {
+                    let mut summary = if combined_errors.is_empty() {
                         result_str.clone()
                     } else {
                         format!("{result_str} [{}]", combined_errors.join("; "))
                     };
+                    if let Some(decision) = &boundary_decision {
+                        summary.push_str(&format!(
+                            " [boundary challenge {}: {}]",
+                            if decision.approved {
+                                "approved"
+                            } else {
+                                "rejected"
+                            },
+                            decision.reason
+                        ));
+                    }
                     subtask.result = Some(uc_types::SubtaskResult {
                         subtask_id: subtask.id.clone(),
                         worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
@@ -2106,6 +2172,7 @@ impl TaskStore {
 
                         review: None,
                         test_contract,
+                        boundary_challenge: boundary_decision,
                     });
                 }
             } else {
@@ -8972,6 +9039,109 @@ mod tests {
     }
 
     #[test]
+    fn boundary_challenge_approves_evidence_backed_outside_file() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "proj".to_string());
+        let mut subtask = task.subtasks[0].clone();
+        subtask.file_constraints = vec!["src/a.py".to_string()];
+        let files = vec![uc_types::FileChange {
+            file_path: "src/b.py".to_string(),
+            change_type: uc_types::ChangeType::Modified,
+            diff: String::new(),
+        }];
+        let challenge = uc_types::BoundaryChallengeRequest {
+            target_file: "src/b.py".to_string(),
+            ast_symbol: "impl B".to_string(),
+            evidence_line: "tests/test_b.py::test_fix fails on base".to_string(),
+            reason: "the fix requires editing b".to_string(),
+        };
+        let admission = boundary_admission(&subtask, &files, Some(&challenge));
+        assert!(admission.error.is_none(), "{:?}", admission.error);
+        let decision = admission.challenge.unwrap();
+        assert!(decision.approved, "{decision:?}");
+        assert_eq!(decision.previous_role, uc_types::BoundaryRole::InspectOnly);
+        assert_eq!(decision.new_role, uc_types::BoundaryRole::Editable);
+    }
+
+    #[test]
+    fn boundary_challenge_without_evidence_is_rejected() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "proj".to_string());
+        let mut subtask = task.subtasks[0].clone();
+        subtask.file_constraints = vec!["src/a.py".to_string()];
+        let files = vec![uc_types::FileChange {
+            file_path: "src/b.py".to_string(),
+            change_type: uc_types::ChangeType::Modified,
+            diff: String::new(),
+        }];
+        let challenge = uc_types::BoundaryChallengeRequest {
+            target_file: "src/b.py".to_string(),
+            ast_symbol: String::new(),
+            evidence_line: "   ".to_string(),
+            reason: String::new(),
+        };
+        let admission = boundary_admission(&subtask, &files, Some(&challenge));
+        assert!(admission.error.is_some(), "empty evidence must not relax");
+        let decision = admission.challenge.unwrap();
+        assert!(!decision.approved, "{decision:?}");
+    }
+
+    #[test]
+    fn apply_update_records_approved_boundary_challenge() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "proj".to_string());
+        let task_id = task.id.0.clone();
+        let subtask_id = task.subtasks[0].id.0.clone();
+        {
+            let task = store.tasks.get_mut(&task_id).unwrap();
+            task.subtasks[0].file_constraints = vec!["src/a.py".to_string()];
+        }
+
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            result: None,
+            partial: true,
+            subtasks: vec![NatsSubtaskUpdate {
+                execution: NatsSubtaskExecution {
+                    modified_files: Some(vec![uc_types::FileChange {
+                        file_path: "src/b.py".to_string(),
+                        change_type: uc_types::ChangeType::Modified,
+                        diff: String::new(),
+                    }]),
+                    boundary_challenge: Some(uc_types::BoundaryChallengeRequest {
+                        target_file: "src/b.py".to_string(),
+                        ast_symbol: "impl B".to_string(),
+                        evidence_line: "tests/test_b.py::test_fix fails on base".to_string(),
+                        reason: "required edit".to_string(),
+                    }),
+                    ..Default::default()
+                },
+                subtask_id,
+                status: "Completed".to_string(),
+                assigned_worker: Some("w-1".to_string()),
+                description: None,
+                depends_on: None,
+                result: Some("done".to_string()),
+                usage: None,
+                steps: None,
+                review: None,
+                attempt_id: Some(0),
+            }],
+        };
+        store.apply_update(&update);
+
+        let result = store.tasks[&task_id].subtasks[0].result.as_ref().unwrap();
+        assert!(result.success, "{result:?}");
+        assert_eq!(
+            result.boundary_challenge.as_ref().map(|d| d.approved),
+            Some(true)
+        );
+        assert!(result.summary.contains("boundary challenge approved"));
+    }
+
+    #[test]
     fn cumulative_regression_rejects_broken_ancestor_f2p() {
         let mut store = TaskStore::new();
         let task = store.submit_task("Test task".to_string(), "proj".to_string());
@@ -8997,6 +9167,7 @@ mod tests {
                     p2p_tests: Vec::new(),
                     broken_tests: Vec::new(),
                 }),
+                boundary_challenge: None,
             });
             let mut second = first.clone();
             second.id = uc_types::TaskId("B".into());

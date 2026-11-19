@@ -10,7 +10,7 @@ mandate store.
 
 | Area | Modules | Flag | Wired at | State |
 | --- | --- | --- | --- | --- |
-| Boundary contract | `crates/uc-types/src/contract.rs`, `crates/uc-engine/src/lib.rs`, `crates/uc-grpc/src/server.rs`, `python/ultimate_coders/agent/boundary_contract.py` | `UC_BOUNDARY_CONTRACT`, `UC_BOUNDARY_CONTRACT_ENFORCE` | worker `_apply_perception_pass` / `_verify_output_boundary`; gateway `boundary_contract_error` | wired (partial) |
+| Boundary contract | `crates/uc-types/src/contract.rs`, `crates/uc-engine/src/lib.rs`, `crates/uc-grpc/src/server.rs`, `python/ultimate_coders/agent/boundary_contract.py` | `UC_BOUNDARY_CONTRACT`, `UC_BOUNDARY_CONTRACT_ENFORCE` | worker `_apply_perception_pass` / `_verify_output_boundary`; gateway `boundary_admission` / `BoundaryContract::challenge` | wired (partial) |
 | PerceptionPass | `python/ultimate_coders/agent/planner.py` | `UC_PERCEPTION_PASS` | worker `_apply_perception_pass` | wired |
 | Plan critic | `python/ultimate_coders/agent/planner_critic.py` | `UC_PLANNER_CRITIC` | worker PerceptionPass preflight | wired (partial) |
 | Prefix context assembly | `python/ultimate_coders/search/context_assembler.py`, `python/ultimate_coders/agent/harness_local_loop.py` | `UC_PREFIX_CONTEXT_ASSEMBLY` | worker prompt assembly + provider cache samples | wired (partial) |
@@ -52,12 +52,20 @@ read-model boundary, not the Rust engine hot-update path: `required` and
 `BoundaryChallengeRequest` adjudication remains unimplemented here.
 
 On the Rust gateway side, `uc.task.update` now carries each worker's
-`modified_files` through the flattened execution envelope into
-`SubtaskResult` instead of discarding the list. When a subtask declares
-`file_constraints`, the gateway builds a `BoundaryContract` with those paths as
-editable and fails the result if any reported path falls outside them. This is
-an engine-side ingestion gate only; contract hot-update and challenge
-adjudication still have no execution caller.
+`modified_files` and optional `boundary_challenge` through the flattened
+execution envelope into `SubtaskResult` instead of discarding the list. When a
+subtask declares `file_constraints`, the gateway builds a `BoundaryContract`
+with those paths as editable and any other reported path as inspect-only. A
+supplied challenge is adjudicated by `BoundaryContract::challenge`: the
+gateway requires the target to be an explicit covered path and the
+`evidence_line` to be non-empty, then approves the role transition to editable.
+It does not verify that evidence against a test log or AST, so this is a
+declared-evidence admission rule, not semantic proof. The approved contract
+revision applies to that result, the decision is stored on
+`SubtaskResult.boundary_challenge`, and the summary records the audit outcome.
+Results outside the final contract fail with `Boundary contract rejected`. The
+gateway does not persist a contract revision across attempts and there is still
+no engine hot-update path.
 
 `PerceptionPass` is a zero-edit proposal-to-spec compiler. It uses the
 Python AST and, where available, Tree-sitter-style call/import metadata to

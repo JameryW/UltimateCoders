@@ -444,6 +444,7 @@ mod tests {
                 p2p_tests: Vec::new(),
                 broken_tests: Vec::new(),
             }),
+            boundary_challenge: None,
         };
         let subtask = |id: &str, depends_on: Vec<&str>, result| uc_types::Subtask {
             id: uc_types::TaskId(id.into()),

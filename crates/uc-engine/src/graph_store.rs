@@ -3686,6 +3686,7 @@ mod tests {
 
                 review: None,
                 test_contract: None,
+                boundary_challenge: None,
             }),
             dispatch_mode: uc_types::DispatchMode::default(),
             effect_class: uc_types::EffectClass::default(),

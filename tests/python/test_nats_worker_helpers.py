@@ -251,6 +251,76 @@ def test_task_update_omits_test_contract_when_measurement_failed():
     assert "test_contract" not in entry
 
 
+def test_task_update_carries_evidence_backed_boundary_challenge():
+    """A planner challenge is a request; the gateway still decides approval."""
+    task = Task(
+        id="t-challenge",
+        description="change a file",
+        subtasks=[
+            Subtask(
+                id="t-challenge-s0",
+                parent_id="t-challenge",
+                status=SubtaskStatus.COMPLETED,
+            )
+        ],
+        status=TaskStatus.IN_PROGRESS,
+    )
+    task.subtasks[0].agent_config = {
+        "boundary_challenge": {
+            "target_file": " src/b.py ",
+            "ast_symbol": "impl B",
+            "evidence_line": " tests/test_b.py::test_fix fails on base ",
+            "reason": " required edit ",
+        }
+    }
+    task.subtasks[0].result = SubtaskResult(
+        subtask_id="t-challenge-s0",
+        modified_files=[
+            FileChange(
+                file_path="src/b.py",
+                change_type=ChangeType.MODIFIED,
+                diff="",
+            )
+        ],
+        summary="done",
+    )
+
+    entry = _make_task_update_payload(task, partial=True)["subtasks"][0]
+
+    assert entry["boundary_challenge"] == {
+        "target_file": "src/b.py",
+        "ast_symbol": "impl B",
+        "evidence_line": "tests/test_b.py::test_fix fails on base",
+        "reason": "required edit",
+    }
+
+
+def test_task_update_omits_boundary_challenge_without_evidence():
+    task = Task(
+        id="t-challenge-invalid",
+        description="change a file",
+        subtasks=[
+            Subtask(
+                id="t-challenge-invalid-s0",
+                parent_id="t-challenge-invalid",
+                status=SubtaskStatus.COMPLETED,
+            )
+        ],
+        status=TaskStatus.IN_PROGRESS,
+    )
+    task.subtasks[0].agent_config = {
+        "boundary_challenge": {"target_file": "src/b.py", "evidence_line": "  "}
+    }
+    task.subtasks[0].result = SubtaskResult(
+        subtask_id="t-challenge-invalid-s0",
+        summary="done",
+    )
+
+    entry = _make_task_update_payload(task, partial=True)["subtasks"][0]
+
+    assert "boundary_challenge" not in entry
+
+
 def test_complete_snapshot_preserves_original_request_for_gateway_dispatch():
     original = "Read README.md and return only its first Markdown heading."
     task = Task(

@@ -246,6 +246,11 @@ pub struct SubtaskResult {
     /// enforce cumulative regression obligations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_contract: Option<SubtaskTestContract>,
+    /// Adjudicated boundary challenge for this result, when one was supplied
+    /// (V10 #7). Additive and optional: absent means no challenge was made,
+    /// which is not the same as a rejected challenge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_challenge: Option<crate::contract::BoundaryChallengeDecision>,
 }
 
 /// Per-subtask observed test outcome used by cumulative-regression checks.
@@ -852,6 +857,7 @@ mod tests {
 
             review: None,
             test_contract: None,
+            boundary_challenge: None,
         };
         let bare = serde_json::to_string(&result).unwrap();
         assert!(

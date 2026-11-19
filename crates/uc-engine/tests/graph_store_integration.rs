@@ -179,6 +179,7 @@ fn subtask(
 
             review: None,
             test_contract: None,
+            boundary_challenge: None,
         }),
         dispatch_mode: DispatchMode::default(),
         effect_class: uc_types::EffectClass::default(),

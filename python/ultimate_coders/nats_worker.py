@@ -225,6 +225,22 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
                     ),
                     "broken_tests": list(test_execution.get("broken") or []),
                 }
+            # V10 #7: an evidence-backed boundary challenge may be attached by
+            # the planner. The gateway adjudicates it against file_constraints;
+            # this payload only carries the request, never an approval.
+            challenge = (st.agent_config or {}).get("boundary_challenge")
+            if isinstance(challenge, dict):
+                target_file = challenge.get("target_file")
+                evidence_line = challenge.get("evidence_line")
+                if isinstance(target_file, str) and target_file.strip() and isinstance(
+                    evidence_line, str
+                ) and evidence_line.strip():
+                    entry["boundary_challenge"] = {
+                        "target_file": target_file.strip(),
+                        "ast_symbol": str(challenge.get("ast_symbol") or "").strip(),
+                        "evidence_line": evidence_line.strip(),
+                        "reason": str(challenge.get("reason") or "").strip(),
+                    }
             if st.result.error:
                 entry["error"] = st.result.error[:500]
             if st.result.retry_count:
