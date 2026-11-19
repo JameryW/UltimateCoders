@@ -133,6 +133,64 @@ SUPERSEDE_POLICY_METADATA_KEY = "supersede_policy"
 #: Only allowed supersede policy on UC write paths (D6 hard invariant).
 SUPERSEDE_POLICY_MARK_NOT_DELETE = "mark_not_delete"
 
+#: Recall payload key listing fact ids removed because a newer hit superseded
+#: them (read-side half of supersede-not-delete; the stored history is intact).
+SUPERSEDED_REMOVED_KEY = "superseded_removed"
+
+
+def _hit_identity(hit: Any) -> str | None:
+    """Best-effort stable id of one recall hit (fact / experience / chain)."""
+    if not isinstance(hit, dict):
+        return None
+    for key in ("id", "fact_id", "memory_id", "uuid"):
+        value = hit.get(key)
+        text = str(value).strip() if value is not None else ""
+        if text:
+            return text
+    return None
+
+
+def _hit_supersede_ids(hit: Any) -> list[str]:
+    """Ids a single hit declares it has superseded (from its metadata)."""
+    if not isinstance(hit, dict):
+        return []
+    metadata = hit.get("metadata")
+    if not isinstance(metadata, dict):
+        return []
+    raw = metadata.get(SUPERSEDES_METADATA_KEY)
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return _normalize_fact_ids(raw)
+
+
+def filter_superseded_facts(facts: Sequence[Any]) -> tuple[list[Any], list[str]]:
+    """Drop facts that a newer recall hit explicitly supersedes.
+
+    Writes never delete (D6: ``supersede_policy="mark_not_delete"``), so a
+    recall that mixes old and new facts would otherwise inject both — and the
+    model has no way to know which one the repository actually follows today.
+    The newest facts list the ids they replaced in ``metadata["supersedes"]``;
+    we collect that set across the whole page and filter the older entries.
+
+    Returns ``(kept_facts, removed_ids)``. When no hit carries supersede
+    metadata the input list is returned unmodified (identity preserved, so
+    callers that never write supersede metadata see no change).
+    """
+    superseded: set[str] = set()
+    for hit in facts:
+        superseded.update(_hit_supersede_ids(hit))
+    if not superseded:
+        return list(facts), []
+    kept: list[Any] = []
+    removed: list[str] = []
+    for hit in facts:
+        identity = _hit_identity(hit)
+        if identity is not None and identity in superseded:
+            removed.append(identity)
+        else:
+            kept.append(hit)
+    return kept, removed
+
 
 def _parse_version(text: str) -> tuple[int, ...]:
     """Parse ``"2.0.2"`` into ``(2, 0, 2)``; non-numeric parts become 0."""
@@ -365,14 +423,18 @@ class CodingMemory:
                 "raw": None,
             }
         facts = raw.get("facts") or []
+        facts, superseded_removed = filter_superseded_facts(facts)
         experiences = raw.get("experiences") or []
-        return {
+        payload: dict[str, Any] = {
             "ok": True,
             "facts": facts,
             "experiences": experiences,
             "chain_block": raw.get("chain_block"),
             "raw": raw,
         }
+        if superseded_removed:
+            payload[SUPERSEDED_REMOVED_KEY] = superseded_removed
+        return payload
 
     def close(self) -> None:
         """Release the client (only when this wrapper built it)."""
@@ -433,19 +495,20 @@ def _default_coding_memory() -> CodingMemory | None:
         return None
 
 
-def build_hy_memory_context_block(
+def build_hy_memory_channels(
     query: str,
     *,
     memory: CodingMemory | None = None,
     limit: int = 5,
-) -> str | None:
-    """Recall Hy-Memory and format a short context block when auto-inject is on.
+) -> dict[str, Any] | None:
+    """Recall Hy-Memory and return the filtered recall channels.
 
-    Soft-skip contract (T12):
-    - Flag off / empty query / package missing / recall failure / empty hits
-      → ``None`` (never raises for a missing package).
-    - Does not claim inject succeeded; callers treat ``None`` as no-op.
-    - Does not touch remember / supersede write paths.
+    Same gating and soft-skip contract as :func:`build_hy_memory_context_block`
+    (flag off / empty query / package missing / failed recall / empty hits →
+    ``None``, never raises), but keeps ``facts`` / ``experiences`` /
+    ``chain_block`` separate so the context compiler can budget, promote and
+    revive each channel independently. Superseded facts are already filtered
+    by :meth:`CodingMemory.recall`.
     """
     if not hy_memory_auto_context_enabled():
         return None
@@ -476,14 +539,36 @@ def build_hy_memory_context_block(
                 hits.get("error") or "unknown",
             )
             return None
-        lines = _format_recall_lines(hits)
-        if not lines:
+        if not _format_recall_lines(hits):
             logger.debug("hy-memory auto-context: soft skip (empty recall)")
             return None
-        return "## Coding memory\n" + "\n".join(lines)
+        return hits
     finally:
         if owned:
             mem.close()
+
+
+def build_hy_memory_context_block(
+    query: str,
+    *,
+    memory: CodingMemory | None = None,
+    limit: int = 5,
+) -> str | None:
+    """Recall Hy-Memory and format a short context block when auto-inject is on.
+
+    Soft-skip contract (T12):
+    - Flag off / empty query / package missing / recall failure / empty hits
+      → ``None`` (never raises for a missing package).
+    - Does not claim inject succeeded; callers treat ``None`` as no-op.
+    - Does not touch remember / supersede write paths.
+    """
+    hits = build_hy_memory_channels(query, memory=memory, limit=limit)
+    if hits is None:
+        return None
+    lines = _format_recall_lines(hits)
+    if not lines:
+        return None
+    return "## Coding memory\n" + "\n".join(lines)
 
 
 def preflight_check(timeout_secs: int = 20) -> tuple[bool, str]:

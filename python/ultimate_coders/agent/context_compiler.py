@@ -50,6 +50,7 @@ the inference side.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
@@ -90,6 +91,17 @@ RISK_RESERVED_SHARE = {"high": 0.5}
 #: verified evidence (P2), the two things a management task must not lose.
 _RESERVED_TIERS = (Tier.POLICY, Tier.EVIDENCE)
 
+#: Markers that make a Hy-Memory experience worth promoting to P2 evidence on
+#: a retry round or a high-risk subtask: when the agent is already failing,
+#: the failure chain and the troubleshooting experience outrank ordinary
+#: long-term memory (law 3: negative-knowledge / diff-chain leverage).
+_TROUBLESHOOTING_HINT = re.compile(
+    r"(?:error|exception|failed?|failure|timeout|crash|bug|regression|panic|"
+    r"root cause|stack trace|\u62a5\u9519|\u9519\u8bef|\u5931\u8d25|"
+    r"\u5f02\u5e38|\u5d29\u6e83|\u8d85\u65f6|\u56de\u5f52)",
+    re.IGNORECASE,
+)
+
 #: Section titles for the tier-ordered renderer.
 _TIER_TITLES = {
     Tier.POLICY: "P0 policy",
@@ -102,8 +114,43 @@ _TIER_TITLES = {
 
 
 def estimate_tokens(text: str) -> int:
-    """Deterministic, dependency-free token estimate (4 characters/token)."""
-    return max(1, (len(text) + 3) // 4)
+    """Deterministic, dependency-free token estimate.
+
+    The pre-compiler rule was ``len(text) / 4``, which is only right for
+    English prose: one CJK character is usually one token (not a quarter of
+    one), and code symbols are individually tokenized, so a mixed prompt with
+    Chinese error text or a code block was under-budgeted and silently
+    overran the model's context. We keep the function deterministic and
+    dependency-free but count roughly as a tokenizer does:
+
+    * whitespace is free (merged by most BPE vocabularies);
+    * ASCII letters/digits cost a quarter token each (``abcd`` = 1);
+    * symbols and non-CJK non-ASCII characters cost half a token each;
+    * CJK characters cost a full token each.
+
+    The 4× integer arithmetic avoids float ceilings (same results on every
+    platform, no ``math`` import).
+    """
+    if not text:
+        return 1
+    quarters = 0
+    for char in text:
+        if char.isspace():
+            continue
+        code = ord(char)
+        if (
+            0x3040 <= code <= 0x30FF  # Hiragana/Katakana
+            or 0x3400 <= code <= 0x4DBF  # CJK extension A
+            or 0x4E00 <= code <= 0x9FFF  # CJK unified ideographs
+            or 0xAC00 <= code <= 0xD7AF  # Hangul syllables
+            or 0xF900 <= code <= 0xFAFF  # CJK compatibility
+        ):
+            quarters += 4
+        elif code < 128 and char.isalnum():
+            quarters += 1
+        else:
+            quarters += 2
+    return max(1, (quarters + 3) // 4)
 
 
 #: Name of the built-in heuristic meter; recorded in every manifest summary.
@@ -245,6 +292,38 @@ class ContextManifest:
 
     # ── rendering ────────────────────────────────────────────────
 
+    def recovery_hint(self) -> str:
+        """One-line, reversible pointer to volatile items dropped by budget.
+
+        Only trace and memory drops get a pointer: a retry or a recall can
+        restore those. Policy/state/evidence drops would silently change the
+        task or its verified evidence, so the compiler refuses to paper over
+        them with a hint (the manifest's ``dropped`` list still records them).
+        The line is deterministic (tier, then item id) and bounded, so it does
+        not grow with the size of the dropped set.
+        """
+        recoverable = [
+            drop
+            for drop in self.dropped
+            if drop.reason == "budget" and drop.tier in (Tier.TRACE, Tier.MEMORY)
+        ]
+        if not recoverable:
+            return ""
+        recoverable.sort(key=lambda drop: (int(drop.tier), drop.item_id))
+        names: list[str] = []
+        for tier, label in ((Tier.TRACE, "trace"), (Tier.MEMORY, "memory")):
+            ids = [drop.item_id for drop in recoverable if drop.tier == tier]
+            if not ids:
+                continue
+            shown = ", ".join(ids[:3])
+            more = f" +{len(ids) - 3} more" if len(ids) > 3 else ""
+            names.append(f"{label}={shown}{more}")
+        return (
+            "... (recoverable: dropped by budget -- "
+            + "; ".join(names)
+            + " -- re-run the subtask or recall to restore)"
+        )
+
     def render_parts(self) -> tuple[str, str]:
         """Split the tier-ordered text into (stable prefix, volatile tail).
 
@@ -252,12 +331,19 @@ class ContextManifest:
         (the compiler derives this for the policy tier; other tiers may be
         marked by the caller). They are emitted first so a cache-aware
         serving stack can reuse their prefill. Everything else follows in
-        tier order. An all-volatile manifest yields an empty prefix; an
+        tier order; when the budget dropped trace or memory items, the tail
+        ends with a one-line pointer saying they can be restored (the model
+        can then ask for them instead of silently acting on a truncated
+        prompt). An all-volatile manifest yields an empty prefix; an
         all-stable one an empty tail.
         """
         stable = [i for i in self.items if i.stable]
         volatile = [i for i in self.items if not i.stable]
-        return _render_items(stable), _render_items(volatile)
+        tail = _render_items(volatile)
+        hint = self.recovery_hint()
+        if hint:
+            tail = f"{tail}\n{hint}" if tail else hint
+        return _render_items(stable), tail
 
     def render(self) -> str:
         """Tier-ordered rendering with provenance headers."""
@@ -543,6 +629,98 @@ def from_hy_memory_block(text: str | None, *, source: str = "hy-memory") -> list
             relevance=0.6,
         )
     ]
+
+
+def from_hy_memory_channels(
+    channels: Any,
+    *,
+    promote_negative: bool = False,
+    source: str = "hy-memory",
+) -> list[ContextItem]:
+    """Split a Hy-Memory recall into per-channel items with stable ids.
+
+    ``channels`` is the normalised ``CodingMemory.recall`` payload (``facts`` /
+    ``experiences`` / ``chain_block``). Each channel becomes its own item so
+    the compiler can budget and revive them independently instead of treating
+    one big block as all-or-nothing: a long chain can be dropped while the two
+    short facts survive, and a later revision can bring back only the missing
+    channel.
+
+    ``promote_negative`` is the retry/high-risk switch: when the worker is on
+    attempt >= 2 or the routed risk reserves evidence, the version chain and
+    troubleshooting experiences move from P4 memory to P2 evidence. That is
+    what the high-risk reservation exists for -- the failure chain is evidence,
+    not background, once the agent is already failing.
+
+    Superseded facts must already be filtered by the recall path; this adapter
+    does not re-interpret metadata.
+    """
+    if not isinstance(channels, dict):
+        return []
+    items: list[ContextItem] = []
+
+    for index, fact in enumerate(channels.get("facts") or []):
+        if isinstance(fact, dict):
+            statement = fact.get("statement") or fact.get("content") or ""
+        else:
+            statement = str(fact)
+        text = str(statement).strip()
+        if not text:
+            continue
+        items.append(
+            ContextItem(
+                item_id=f"hy-memory-fact-{index}",
+                tier=Tier.MEMORY,
+                content=f"- [fact] {text}",
+                source=source,
+                trust_class="hy_memory_recall",
+                relevance=0.6,
+            )
+        )
+
+    for index, experience in enumerate(channels.get("experiences") or []):
+        if isinstance(experience, dict):
+            task = str(experience.get("task") or experience.get("content") or "").strip()
+            solution = str(experience.get("solution") or "").strip()
+        else:
+            task, solution = str(experience).strip(), ""
+        if not task:
+            continue
+        troubleshooting = bool(_TROUBLESHOOTING_HINT.search(f"{task} {solution}"))
+        line = f"- [experience] {task}" + (f" -> {solution}" if solution else "")
+        items.append(
+            ContextItem(
+                item_id=f"hy-memory-experience-{index}",
+                tier=Tier.EVIDENCE if promote_negative and troubleshooting else Tier.MEMORY,
+                content=line,
+                source=source,
+                trust_class="hy_memory_recall",
+                relevance=0.75 if troubleshooting else 0.6,
+            )
+        )
+
+    chain_block = channels.get("chain_block")
+    chain_items: list[str] = []
+    if chain_block:
+        if isinstance(chain_block, dict):
+            chain_text = chain_block.get("text") or chain_block.get("summary") or ""
+        else:
+            chain_text = str(chain_block)
+        text = str(chain_text).strip()
+        if text:
+            chain_items.append(f"- [chain] {text}")
+    for index, line in enumerate(chain_items):
+        items.append(
+            ContextItem(
+                item_id=f"hy-memory-chain-{index}",
+                tier=Tier.EVIDENCE if promote_negative else Tier.MEMORY,
+                content=line,
+                source=source,
+                trust_class="hy_memory_chain",
+                relevance=0.8,
+            )
+        )
+    return items
 
 
 # ── internals ───────────────────────────────────────────────────────

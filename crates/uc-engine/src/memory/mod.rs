@@ -24,6 +24,22 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use tokio::sync::Mutex;
 
+/// Tag marking a short-term entry as a leave-behind tombstone.
+///
+/// A delete removes the short-term entry eagerly but the long-term (Qdrant)
+/// vector delete is best-effort: a failed dual-write used to leave a zombie
+/// vector that `read(include_semantic=true)` and `search()` could return
+/// forever. The compensation tombstone records the deletion in the same
+/// short-term store (and in the in-process map), so both recall paths ignore
+/// the key until a later `write()` revives it.
+const TOMBSTONE_TAG: &str = "__tombstone__";
+
+/// Tag prefix for an entry-level TTL, seconds after `updated_at`.
+const TTL_TAG_PREFIX: &str = "ttl:";
+
+/// Tag prefix for an absolute expiry instant (RFC 3339).
+const EXPIRES_AT_TAG_PREFIX: &str = "expires_at:";
+
 /// Unified memory store that coordinates short-term and long-term storage.
 ///
 /// Short-term memory (TiKV): fast KV access for task-scoped context.
@@ -38,6 +54,17 @@ pub struct MemoryStore {
     /// instance; upgrade to TiKV-native CAS (`with_atomic_for_cas`) if we
     /// ever go multi-gateway.
     replay_locks: DashMap<String, Arc<Mutex<()>>>,
+    /// Last entry applied by `replay_write` for a key, keyed like the lock.
+    ///
+    /// The durable `MemoryEntry.version` is the epoch of the last committed
+    /// state; this map is the process-local Lamport sequence of replays that
+    /// may arrive out of order or twice. A replay must be strictly newer than
+    /// both (see `replay_write`), and the stored entry lets a stale replay
+    /// still return the state it did not overwrite.
+    replay_seen: DashMap<String, MemoryEntry>,
+    /// Keys deleted but not guaranteed removed from the long-term store,
+    /// keyed by the encoded key with the deletion wall-clock millis as value.
+    tombstones: DashMap<String, u64>,
 }
 
 impl MemoryStore {
@@ -54,6 +81,8 @@ impl MemoryStore {
             embedding_service,
             config,
             replay_locks: DashMap::new(),
+            replay_seen: DashMap::new(),
+            tombstones: DashMap::new(),
         }
     }
 
@@ -69,6 +98,8 @@ impl MemoryStore {
             embedding_service,
             config: MemoryConfig::default(),
             replay_locks: DashMap::new(),
+            replay_seen: DashMap::new(),
+            tombstones: DashMap::new(),
         }
     }
 
@@ -80,10 +111,16 @@ impl MemoryStore {
         &self,
         request: MemoryReadRequest,
     ) -> Result<Option<MemoryEntry>, EngineError> {
-        // Always check short-term first
+        // Always check short-term first. A leave-behind tombstone means the key
+        // was deleted but the long-term vector may survive; treat it as absent
+        // and do NOT fall through to the semantic path (that would resurrect
+        // exactly the entry the delete was meant to hide).
         let result = self.short_term.read(&request.key).await?;
-        if result.is_some() {
-            return Ok(result);
+        if let Some(entry) = result {
+            if is_tombstone(&entry) {
+                return Ok(None);
+            }
+            return Ok(Some(entry));
         }
 
         // If not found and semantic lookup requested, search long-term memory
@@ -106,10 +143,36 @@ impl MemoryStore {
                 Ok(query_embedding) => {
                     let results = self
                         .long_term
-                        .search(query_embedding, &scope, 1, self.config.min_search_score)
+                        .search(query_embedding, &scope, 3, self.config.min_search_score)
                         .await?;
-                    if let Some(first) = results.into_iter().next() {
-                        return Ok(Some(first.entry));
+                    // Validate every candidate before accepting it: a semantic
+                    // hit from another scope, a deleted key, or an expired entry
+                    // is a zombie recall, not memory. Taking only the first hit
+                    // would also lose a valid second one behind a filtered first.
+                    for candidate in results {
+                        if !key_scope_matches(&request.key, &candidate.entry.key) {
+                            tracing::debug!(
+                                "semantic read skipped out-of-scope hit (requested={:?} hit={:?})",
+                                request.key,
+                                candidate.entry.key
+                            );
+                            continue;
+                        }
+                        if ttl_expired(&candidate.entry, chrono::Utc::now()) {
+                            tracing::debug!(
+                                "semantic read skipped expired hit (key={:?})",
+                                candidate.entry.key
+                            );
+                            continue;
+                        }
+                        if self.is_deleted(&candidate.entry.key).await? {
+                            tracing::debug!(
+                                "semantic read skipped tombstoned hit (key={:?})",
+                                candidate.entry.key
+                            );
+                            continue;
+                        }
+                        return Ok(Some(candidate.entry));
                     }
                 }
                 Err(e) => {
@@ -132,6 +195,7 @@ impl MemoryStore {
     /// an embedding if one is not already provided).
     pub async fn write(&self, request: MemoryWriteRequest) -> Result<MemoryEntry, EngineError> {
         let now = chrono::Utc::now();
+        let encoded_key = crate::memory::short_term::encode_key(&request.key);
         let version = request
             .version
             .unwrap_or_else(|| MemoryEntry::version_from_timestamp(now));
@@ -144,6 +208,10 @@ impl MemoryStore {
             updated_at: now,
             version,
         };
+
+        // A write revives a key: clear the compensation tombstone before the
+        // short-term write so reads stop treating the key as deleted.
+        self.tombstones.remove(&encoded_key);
 
         // Always write to short-term
         self.short_term.write(&entry).await?;
@@ -187,9 +255,14 @@ impl MemoryStore {
 
     /// Replay a memory write that happened during a gRPC fallback window.
     ///
-    /// Last-writer-wins by `version`: reads the currently-stored entry under
-    /// a per-key lock, and only writes if `request.version` is >= the stored
-    /// version. This is the authoritative cross-worker reconciliation point
+    /// Last-writer-wins by a monotonic version pair: the durable entry version
+    /// is the *epoch* (what was last committed to the store) and the process
+    /// high-water mark is the *Lamport sequence* for replays that may arrive out
+    /// of order or twice after a fallback window. A replay is applied only when
+    /// it is strictly newer than both; equal versions are duplicate deliveries,
+    /// not new state. The comparison happens inside the per-key lock, and the
+    /// high-water mark also covers a short-term backend that still returns a
+    /// stale read. This is the authoritative cross-worker reconciliation point
     /// for memory writes that bypassed the gateway while it was unreachable.
     pub async fn replay_write(
         &self,
@@ -205,23 +278,52 @@ impl MemoryStore {
         let _guard = lock.lock().await;
 
         let stored = self.short_term.read(&request.key).await?;
+        // A tombstone is a committed deletion, so it participates in the
+        // race: an old replay must not resurrect a key deleted after it was
+        // written. The tombstone's version is its deletion timestamp.
+        let deleted_version = if stored.as_ref().map(is_tombstone).unwrap_or(false) {
+            stored.as_ref().map(|entry| entry.version).unwrap_or(0)
+        } else {
+            0
+        };
         let pending_version = request
             .version
             .unwrap_or_else(|| MemoryEntry::version_from_timestamp(chrono::Utc::now()));
 
-        if let Some(existing) = &stored {
-            if existing.version > pending_version {
-                tracing::info!(
-                    "replay_write skipped stale entry (key={:?} stored_v={} pending_v={})",
-                    request.key,
-                    existing.version,
-                    pending_version
-                );
-                return Ok(uc_types::memory::MemoryReplayResult {
-                    entry: existing.clone(),
-                    applied: false,
-                });
-            }
+        let last_seen = self
+            .replay_seen
+            .get(&encoded_key)
+            .map(|entry| entry.clone());
+        let durable = stored
+            .as_ref()
+            .filter(|entry| !is_tombstone(entry))
+            .map(|entry| entry.version)
+            .unwrap_or(0);
+        let sequence = last_seen.as_ref().map(|entry| entry.version).unwrap_or(0);
+        let floor = durable.max(sequence).max(deleted_version);
+
+        if pending_version > 0 && pending_version <= floor {
+            tracing::info!(
+                "replay_write skipped stale or duplicate entry (key={:?} floor_v={} pending_v={})",
+                request.key,
+                floor,
+                pending_version
+            );
+            // Return whatever newer state we refused to overwrite. A tombstone
+            // is also a committed state, so it is the last resort when no
+            // non-tombstone entry or replay high-water mark exists (for
+            // example a key written through `write` and then deleted).
+            let fallback = stored.clone();
+            let entry = fallback
+                .clone()
+                .filter(|entry| !is_tombstone(entry))
+                .or(last_seen)
+                .or(fallback)
+                .expect("floor>0 implies a stored tombstone, entry, or replay");
+            return Ok(uc_types::memory::MemoryReplayResult {
+                entry,
+                applied: false,
+            });
         }
 
         let req = MemoryWriteRequest {
@@ -229,6 +331,7 @@ impl MemoryStore {
             ..request
         };
         let entry = self.write(req).await?;
+        self.replay_seen.insert(encoded_key, entry.clone());
         Ok(uc_types::memory::MemoryReplayResult {
             entry,
             applied: true,
@@ -237,7 +340,13 @@ impl MemoryStore {
 
     /// Delete a memory entry.
     ///
-    /// Deletes from both short-term and long-term memory.
+    /// Deletes from both short-term and long-term memory. The long-term
+    /// (Qdrant) side is best-effort and can fail while the short-term side
+    /// succeeds; a compensation tombstone is always left behind so semantic
+    /// reads and searches cannot return the deleted entry again (a later
+    /// `write()` clears it). This is the "mark-not-delete" half of the
+    /// supersession story for the incremental layer — the audit trail lives in
+    /// Hy-Memory, while this store must stop serving the stale vector.
     pub async fn delete(&self, key: &MemoryKey) -> Result<(), EngineError> {
         // Delete from short-term
         self.short_term.delete(key).await?;
@@ -249,6 +358,11 @@ impl MemoryStore {
                 tracing::warn!("Failed to delete from long-term memory: {}", e);
             }
         }
+
+        // Compensation tombstone: record the deletion even when both deletes
+        // succeeded, because a concurrent reader may still hold the vector in
+        // a cached search page. A later write() revives the key.
+        self.write_tombstone(key).await?;
 
         Ok(())
     }
@@ -294,7 +408,9 @@ impl MemoryStore {
             .search(query_embedding, &request.scope, max_results, min_score)
             .await?;
 
-        Ok(MemorySearchResponse { results })
+        Ok(MemorySearchResponse {
+            results: self.retain_recallable(results, &request.scope).await?,
+        })
     }
 
     /// Search with a pre-computed embedding vector.
@@ -320,9 +436,90 @@ impl MemoryStore {
             self.config.min_search_score
         };
 
-        self.long_term
+        let results = self
+            .long_term
             .search(query_embedding, &scope, max_results, min_score)
-            .await
+            .await?;
+        self.retain_recallable(results, &scope).await
+    }
+
+    /// Drop semantic hits that must not be recalled: tombstones, expired
+    /// entries, and (for an explicit project/global scope) entries from a
+    /// different scope that a permissive backend returned. One batch pass, so
+    /// the filter sees the same `now` for every hit and stays deterministic.
+    async fn retain_recallable(
+        &self,
+        results: Vec<MemorySearchResult>,
+        scope: &MemorySearchScope,
+    ) -> Result<Vec<MemorySearchResult>, EngineError> {
+        let now = chrono::Utc::now();
+        let mut kept = Vec::with_capacity(results.len());
+        for result in results {
+            if !scope_allows(scope, &result.entry.key) {
+                tracing::debug!(
+                    "memory search skipped out-of-scope hit (scope={:?} hit={:?})",
+                    scope,
+                    result.entry.key
+                );
+                continue;
+            }
+            if ttl_expired(&result.entry, now) {
+                tracing::debug!(
+                    "memory search skipped expired hit (key={:?})",
+                    result.entry.key
+                );
+                continue;
+            }
+            if self.is_deleted(&result.entry.key).await? {
+                tracing::debug!(
+                    "memory search skipped tombstoned hit (key={:?})",
+                    result.entry.key
+                );
+                continue;
+            }
+            kept.push(result);
+        }
+        Ok(kept)
+    }
+
+    /// Whether a key is covered by a compensation tombstone.
+    ///
+    /// Checks the in-process map first (fast path, covers a failed long-term
+    /// delete), then the short-term store (persisted marker, covers a gateway
+    /// restart while `task_ttl_seconds` is still alive).
+    async fn is_deleted(&self, key: &MemoryKey) -> Result<bool, EngineError> {
+        let encoded = crate::memory::short_term::encode_key(key);
+        if self.tombstones.contains_key(&encoded) {
+            return Ok(true);
+        }
+        Ok(match self.short_term.read(key).await? {
+            Some(entry) => is_tombstone(&entry),
+            None => false,
+        })
+    }
+
+    /// Leave a tombstone entry and record it in the in-process map.
+    async fn write_tombstone(&self, key: &MemoryKey) -> Result<(), EngineError> {
+        let now = chrono::Utc::now();
+        let encoded = crate::memory::short_term::encode_key(key);
+        self.tombstones
+            .insert(encoded, now.timestamp_millis().max(0) as u64);
+        let entry = MemoryEntry {
+            id: uc_types::memory::MemoryId::new(),
+            key: key.clone(),
+            content: MemoryContent::Text(String::new()),
+            metadata: uc_types::memory::MemoryMetadata {
+                source_agent: "uc-engine".to_string(),
+                importance: 0.0,
+                tags: vec![TOMBSTONE_TAG.to_string()],
+                embedding: None,
+            },
+            created_at: now,
+            updated_at: now,
+            version: MemoryEntry::version_from_timestamp(now),
+        };
+        self.short_term.write(&entry).await?;
+        Ok(())
     }
 
     /// List all keys in a scope (prefix scan on short-term memory).
@@ -380,6 +577,91 @@ impl MemoryStore {
                 },
             },
         ]
+    }
+}
+
+/// Whether an entry is a leave-behind deletion marker (see [`TOMBSTONE_TAG`]).
+fn is_tombstone(entry: &MemoryEntry) -> bool {
+    entry.metadata.tags.iter().any(|tag| tag == TOMBSTONE_TAG)
+}
+
+/// Whether an entry's own metadata declares it expired at `now`.
+///
+/// Long-term entries carry no TTL column, so expiry is expressed as a tag on
+/// the entry: `ttl:<seconds>` (relative to `updated_at`) or
+/// `expires_at:<rfc3339>`. Unparsable or absent tags never expire an entry —
+/// a malformed hint must not delete knowledge silently.
+fn ttl_expired(entry: &MemoryEntry, now: chrono::DateTime<chrono::Utc>) -> bool {
+    for tag in &entry.metadata.tags {
+        if let Some(raw) = tag.strip_prefix(TTL_TAG_PREFIX) {
+            if let Ok(seconds) = raw.trim().parse::<i64>() {
+                if seconds <= 0 {
+                    return true;
+                }
+                if entry.updated_at + chrono::Duration::seconds(seconds) <= now {
+                    return true;
+                }
+            }
+        } else if let Some(raw) = tag.strip_prefix(EXPIRES_AT_TAG_PREFIX) {
+            if let Ok(expires) = chrono::DateTime::parse_from_rfc3339(raw.trim()) {
+                if expires <= now {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Whether a semantic hit from `candidate` may satisfy a read for `requested`.
+///
+/// The store used to accept any long-term hit for a key (a task-scoped read
+/// could return another task's or a global entry), which is exactly how a
+/// deleted or unrelated memory came back as a "recall". Scopes must match by
+/// variant and, for project/task keys, by id.
+fn key_scope_matches(requested: &MemoryKey, candidate: &MemoryKey) -> bool {
+    match (requested, candidate) {
+        (MemoryKey::Global { .. }, MemoryKey::Global { .. }) => true,
+        (
+            MemoryKey::Project {
+                project_id: requested_id,
+                ..
+            },
+            MemoryKey::Project {
+                project_id: candidate_id,
+                ..
+            },
+        ) => requested_id == candidate_id,
+        (
+            MemoryKey::Task {
+                task_id: requested_id,
+                ..
+            },
+            MemoryKey::Task {
+                task_id: candidate_id,
+                ..
+            },
+        ) => requested_id == candidate_id,
+        _ => false,
+    }
+}
+
+/// Whether a result satisfies an explicit search scope.
+///
+/// `All` intentionally accepts every variant (it is the cross-scope search);
+/// `Project` and `Global` are explicit filters and an entry from another
+/// scope is a backend leak, not a match.
+fn scope_allows(scope: &MemorySearchScope, key: &MemoryKey) -> bool {
+    match scope {
+        MemorySearchScope::Project { project_id } => matches!(
+            key,
+            MemoryKey::Project {
+                project_id: candidate_id,
+                ..
+            } if candidate_id == project_id
+        ),
+        MemorySearchScope::Global => matches!(key, MemoryKey::Global { .. }),
+        MemorySearchScope::All => true,
     }
 }
 
@@ -938,5 +1220,263 @@ mod tests {
             }),
             "external resource"
         );
+    }
+
+    /// A duplicate replay delivery must not apply twice, even though the
+    /// short-term entry it reads already carries the same version.
+    #[tokio::test]
+    async fn test_replay_write_skips_duplicate_version() {
+        let store = make_store().await;
+        let key = MemoryKey::Global {
+            key: "dup".to_string(),
+        };
+
+        let first = store
+            .replay_write(make_replay_request(key.clone(), "first", 100))
+            .await
+            .unwrap();
+        assert!(first.applied);
+
+        let duplicate = store
+            .replay_write(make_replay_request(key.clone(), "duplicate", 100))
+            .await
+            .unwrap();
+        assert!(!duplicate.applied, "an equal version is a duplicate replay");
+        assert_eq!(duplicate.entry.version, 100);
+
+        let read = store
+            .read(MemoryReadRequest {
+                key,
+                include_semantic: false,
+            })
+            .await
+            .unwrap()
+            .expect("entry should exist");
+        match read.content {
+            MemoryContent::Text(t) => assert_eq!(t, "first"),
+            _ => panic!("expected text content"),
+        }
+    }
+
+    /// A stale replay that races a delete must not resurrect the key, and the
+    /// skip path must return a committed state (the tombstone) rather than
+    /// panicking when no replay high-water mark exists yet.
+    #[tokio::test]
+    async fn test_replay_write_after_delete_does_not_resurrect_key() {
+        let store = make_store().await;
+        let key = MemoryKey::Global {
+            key: "deleted-then-replay".to_string(),
+        };
+        store
+            .write(make_write_request(key.clone(), 0.5))
+            .await
+            .unwrap();
+        store.delete(&key).await.unwrap();
+
+        let result = store
+            .replay_write(make_replay_request(key.clone(), "stale", 1))
+            .await
+            .unwrap();
+
+        assert!(!result.applied, "an old replay must not undo the delete");
+        let read = store
+            .read(MemoryReadRequest {
+                key,
+                include_semantic: false,
+            })
+            .await
+            .unwrap();
+        assert!(read.is_none(), "the key stays deleted");
+    }
+
+    /// Deleting leaves a tombstone: short-term reads, semantic reads and
+    /// fabricated backend hits all stop serving the entry, and a later write
+    /// revives the key.
+    #[tokio::test]
+    async fn test_delete_tombstone_blocks_reads_and_search() {
+        let store = make_store().await;
+        let key = MemoryKey::Global {
+            key: "tombstoned".to_string(),
+        };
+        let entry = store
+            .write(make_write_request(key.clone(), 1.0))
+            .await
+            .unwrap();
+
+        store.delete(&key).await.unwrap();
+
+        let read = store
+            .read(MemoryReadRequest {
+                key: key.clone(),
+                include_semantic: true,
+            })
+            .await
+            .unwrap();
+        assert!(read.is_none(), "a deleted key must read as absent");
+        assert!(store.is_deleted(&key).await.unwrap());
+
+        // Even if the vector backend still returns the deleted entry, the
+        // read-side filter must drop it.
+        let kept = store
+            .retain_recallable(
+                vec![MemorySearchResult { entry, score: 0.9 }],
+                &MemorySearchScope::All,
+            )
+            .await
+            .unwrap();
+        assert!(kept.is_empty(), "tombstoned hits must not be recallable");
+
+        // A new write revives the key (mark-not-delete, not permanent loss).
+        store
+            .write(make_write_request(key.clone(), 0.5))
+            .await
+            .unwrap();
+        assert!(!store.is_deleted(&key).await.unwrap());
+        let revived = store
+            .read(MemoryReadRequest {
+                key,
+                include_semantic: false,
+            })
+            .await
+            .unwrap();
+        assert!(revived.is_some(), "the revived key must be readable again");
+    }
+
+    /// Recall filters drop out-of-scope and expired entries, and keep the
+    /// matching one — the long-term backend is intentionally permissive.
+    #[tokio::test]
+    async fn test_retain_recallable_filters_scope_and_ttl() {
+        let store = make_store().await;
+        let project_a = MemoryKey::Project {
+            project_id: "p1".to_string(),
+            key: "match".to_string(),
+        };
+        let project_b = MemoryKey::Project {
+            project_id: "p2".to_string(),
+            key: "other".to_string(),
+        };
+        let keep = store
+            .write(make_write_request(project_a, 0.5))
+            .await
+            .unwrap();
+        let drop = store
+            .write(make_write_request(project_b, 0.5))
+            .await
+            .unwrap();
+        let mut expired = store
+            .write(make_write_request(
+                MemoryKey::Project {
+                    project_id: "p1".to_string(),
+                    key: "expired".to_string(),
+                },
+                0.5,
+            ))
+            .await
+            .unwrap();
+        expired.metadata.tags.push(format!("{}1", TTL_TAG_PREFIX));
+        expired.updated_at = chrono::Utc::now() - chrono::Duration::seconds(30);
+
+        let kept = store
+            .retain_recallable(
+                vec![
+                    MemorySearchResult {
+                        entry: keep.clone(),
+                        score: 0.9,
+                    },
+                    MemorySearchResult {
+                        entry: drop,
+                        score: 0.9,
+                    },
+                    MemorySearchResult {
+                        entry: expired,
+                        score: 0.9,
+                    },
+                ],
+                &MemorySearchScope::Project {
+                    project_id: "p1".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(kept.len(), 1, "only the in-scope, unexpired hit survives");
+        assert_eq!(kept[0].entry.id, keep.id);
+    }
+
+    #[test]
+    fn test_ttl_tag_expiry() {
+        let now = chrono::Utc::now();
+        let mut entry = MemoryEntry {
+            id: uc_types::memory::MemoryId::new(),
+            key: MemoryKey::Global {
+                key: "ttl".to_string(),
+            },
+            content: MemoryContent::Text("x".to_string()),
+            metadata: MemoryMetadata {
+                source_agent: "test".to_string(),
+                importance: 0.5,
+                tags: vec![],
+                embedding: None,
+            },
+            created_at: now - chrono::Duration::seconds(120),
+            updated_at: now - chrono::Duration::seconds(120),
+            version: 1,
+        };
+        assert!(!ttl_expired(&entry, now), "no ttl tag never expires");
+
+        entry.metadata.tags.push(format!("{}60", TTL_TAG_PREFIX));
+        assert!(
+            ttl_expired(&entry, now),
+            "ttl:60 of an old entry is expired"
+        );
+
+        entry.metadata.tags = vec![format!("{}not-a-number", TTL_TAG_PREFIX)];
+        assert!(!ttl_expired(&entry, now), "malformed ttl must not delete");
+
+        entry.metadata.tags = vec![format!(
+            "{}{}",
+            EXPIRES_AT_TAG_PREFIX,
+            (now - chrono::Duration::seconds(5)).to_rfc3339()
+        )];
+        assert!(ttl_expired(&entry, now), "past expires_at is expired");
+    }
+
+    #[test]
+    fn test_key_scope_and_search_scope_matching() {
+        let global = MemoryKey::Global {
+            key: "g".to_string(),
+        };
+        let project_a = MemoryKey::Project {
+            project_id: "p1".to_string(),
+            key: "a".to_string(),
+        };
+        let project_b = MemoryKey::Project {
+            project_id: "p2".to_string(),
+            key: "b".to_string(),
+        };
+        let task_a = MemoryKey::Task {
+            task_id: "t1".to_string(),
+            key: "a".to_string(),
+        };
+
+        assert!(key_scope_matches(&global, &global));
+        assert!(key_scope_matches(&project_a, &project_a));
+        assert!(!key_scope_matches(&project_a, &project_b));
+        assert!(!key_scope_matches(&project_a, &global));
+        assert!(key_scope_matches(&task_a, &task_a));
+
+        assert!(scope_allows(&MemorySearchScope::All, &global));
+        assert!(scope_allows(
+            &MemorySearchScope::Project {
+                project_id: "p1".to_string()
+            },
+            &project_a
+        ));
+        assert!(!scope_allows(
+            &MemorySearchScope::Project {
+                project_id: "p1".to_string()
+            },
+            &project_b
+        ));
+        assert!(!scope_allows(&MemorySearchScope::Global, &project_a));
     }
 }

@@ -1033,7 +1033,10 @@ def test_real_corpus_unanchored_census_is_reported():
     # (1415 -> 1416); resolved, unclassified 0.
     # The gateway cumulative-regression sentence names the server.rs caller
     # (1416 -> 1417); resolved, unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1417
+    # T70 (hy-memory read-side channels) added the read-supersede and
+    # context-compiler test rows to docs/hy-memory.md's test table
+    # (1417 -> 1419); resolved, unclassified 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1419
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1115,7 +1118,10 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     checkpoint helper; the spec citation and pin were re-measured to
     2585-2639. The inbound AgentRadio spool moved it 2585 -> 2591: the spool
     routing landed above the checkpoint helper; the citation and pin were
-    re-measured to 2591-2645.
+    re-measured to 2591-2645. T70 (UC memory channels) moved it 2591 -> 2604:
+    per-channel compile and retry evidence promotion landed above the
+    checkpoint helpers (+13 lines), and the cited range 2591-2645 still covers
+    the definition.
     """
     guard = _load_guard()
     want = {
@@ -1137,7 +1143,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            2591,
+            2604,
         ),
     }
     rows = [

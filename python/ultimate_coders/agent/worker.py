@@ -31,11 +31,13 @@ from ultimate_coders.agent.conflict import (
 from ultimate_coders.agent.context_compiler import (
     compile_context,
     from_gateway_context_block,
-    from_hy_memory_block,
+    from_hy_memory_channels,
     from_search_block,
 )
 from ultimate_coders.agent.contract import contract_digest
-from ultimate_coders.agent.hy_memory import build_hy_memory_context_block
+from ultimate_coders.agent.hy_memory import (
+    build_hy_memory_channels,
+)
 from ultimate_coders.agent.llm import (
     LLMRetryExhaustedError,
     _classify_llm_error,
@@ -1266,8 +1268,17 @@ class Worker:
             self._last_context_manifest = None
             search_block = await self._build_search_context(subtask)
             # Opt-in Hy-Memory auto-context (T12 / UC_HY_MEMORY_AUTO_CONTEXT).
-            # Soft-skip when flag off, package missing, or recall empty.
-            hy_block = build_hy_memory_context_block(subtask.description or "")
+            # Soft-skip when flag off, package missing, or recall empty. The
+            # channels are compiled as individual items so one long chain
+            # cannot crowd out the short facts; a retry round or a high-risk
+            # route promotes the failure chain and troubleshooting experience
+            # to P2 evidence where the risk reservation protects them.
+            retry_round = max(
+                int(getattr(subtask, "retry_count", 0) or 0),
+                int(getattr(subtask, "dispatch_retry_count", 0) or 0),
+            )
+            promote_negative = retry_round >= 1 or self._last_route.risk == "high"
+            hy_channels = build_hy_memory_channels(subtask.description or "")
             if gateway_context_block is not None:
                 source_items = from_gateway_context_block(gateway_context_block)
                 legacy_style = "gateway"
@@ -1293,7 +1304,9 @@ class Worker:
             context_source_items = (
                 list(source_items)
                 + from_search_block(search_block)
-                + from_hy_memory_block(hy_block)
+                + from_hy_memory_channels(
+                    hy_channels, promote_negative=promote_negative
+                )
             )
             # P5 read face: gate-approved claims shared inside this task graph.
             # Empty unless stage >= graph; best-effort, counts-only summary.

@@ -25,6 +25,30 @@ function mapScope(scope: string): string {
 	return SCOPE_MAP[scope] ?? scope;
 }
 
+// Previews inside tool results are bounded so one huge entry cannot flood the
+// model's context, but a bound must never be silent: the model cannot tell
+// "this is all there was" from "the rest was dropped", so it cannot ask for
+// what it lost. These helpers make every cut explicit and name the way back.
+export const MEMORY_EXCERPT_CHARS = 200;
+export const SEARCH_SNIPPET_CHARS = 150;
+
+const MEMORY_RECOVERY = "call uc_memory with a narrower key or read the entry in the UC dashboard";
+const SEARCH_RECOVERY = "open the file at that path for the full snippet";
+
+export function excerptWithMarker(text: string, limit: number, recovery: string): string {
+	if (text.length <= limit) return text;
+	const dropped = text.length - limit;
+	return `${text.slice(0, limit)} …[truncated: ${limit}/${text.length} chars shown, ${dropped} omitted — ${recovery}]`;
+}
+
+export function formatMemorySearchLine(result: { content: string; score: number }): string {
+	return `[${result.score.toFixed(2)}] ${excerptWithMarker(result.content, MEMORY_EXCERPT_CHARS, MEMORY_RECOVERY)}`;
+}
+
+export function formatSearchResultLine(result: { filePath: string; snippet: string; score: number }): string {
+	return `${result.filePath} (score=${result.score.toFixed(2)}): ${excerptWithMarker(result.snippet, SEARCH_SNIPPET_CHARS, SEARCH_RECOVERY)}`;
+}
+
 // ponytail: `as never` on parameters to dodge TS2589 deep instantiation
 // in registerTool<TParams extends TSchema>. Runtime schema is correct,
 // only compile-time inference overflows. Execute callback types params manually.
@@ -90,9 +114,7 @@ export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 					if (results.length === 0) {
 						return { content: [{ type: "text" as const, text: "(no results)" }], useless: true };
 					}
-					const lines = results.map(
-						(r) => `[${r.score.toFixed(2)}] ${r.content.slice(0, 200)}`,
-					);
+					const lines = results.map(formatMemorySearchLine);
 					return { content: [{ type: "text" as const, text: lines.join("\n") }] };
 				}
 				if (p.action === "delete") {
@@ -147,9 +169,7 @@ export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 				if (results.length === 0) {
 					return { content: [{ type: "text" as const, text: "(no results)" }], useless: true };
 				}
-				const lines = results.map(
-					(r) => `${r.filePath} (score=${r.score.toFixed(2)}): ${r.snippet.slice(0, 150)}`,
-				);
+				const lines = results.map(formatSearchResultLine);
 				return { content: [{ type: "text" as const, text: lines.join("\n") }] };
 			} catch (err) {
 				return {
