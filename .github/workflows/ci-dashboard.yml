@@ -33,14 +33,14 @@ jobs:
         working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: dashboard/pnpm-lock.yaml
       - uses: pnpm/action-setup@v4
         with:
           version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       # The two gRPC stubs are generated: `dashboard/src/grpc/engine_pb.ts` from
       # the root `buf.gen.yaml`, `packages/uc-orchestrator/src/grpc/engine_pb.ts`
@@ -49,7 +49,7 @@ jobs:
       # instead of by a reviewer noticing a stale field.
       - name: Regenerate gRPC stubs
         run: |
-          npm run generate
+          pnpm run generate
           cd ../packages/uc-orchestrator
           PATH="$PWD/../../dashboard/node_modules/.bin:$PATH" buf generate
       - name: Generated stubs are current
@@ -79,14 +79,14 @@ jobs:
         working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: dashboard/pnpm-lock.yaml
       - uses: pnpm/action-setup@v4
         with:
           version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec vite build
 
@@ -102,13 +102,13 @@ jobs:
         working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: dashboard/pnpm-lock.yaml
       - uses: pnpm/action-setup@v4
         with:
           version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm test

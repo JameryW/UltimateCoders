@@ -49,10 +49,15 @@ def _call_name(call: ast.Call) -> tuple[str, str] | None:
 def _owners(tree: ast.AST) -> dict[ast.AST, str]:
     """Map each node to the name of its innermost enclosing function, or "<module>"."""
     result: dict[ast.AST, str] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for child in ast.walk(node):
-                result.setdefault(child, node.name)
+
+    def visit(node: ast.AST, owner: str) -> None:
+        current = node.name if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else owner
+        if current != "<module>":
+            result[node] = current
+        for child in ast.iter_child_nodes(node):
+            visit(child, current)
+
+    visit(tree, "<module>")
     return result
 
 

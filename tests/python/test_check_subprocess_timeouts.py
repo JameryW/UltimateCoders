@@ -83,6 +83,18 @@ def test_module_level_calls_are_reported_as_module(tmp_path):
     assert findings == [(2, "<module>", "call")]
 
 
+def test_nested_function_reports_innermost_owner(tmp_path):
+    findings = _scan(
+        tmp_path,
+        "import subprocess\n"
+        "def outer():\n"
+        "    def inner():\n"
+        "        return subprocess.run(['git', 'status'])\n"
+        "    return inner()\n",
+    )
+    assert findings == [(4, "inner", "run")]
+
+
 def test_other_objects_named_run_are_not_subprocess(tmp_path):
     findings = _scan(
         tmp_path,

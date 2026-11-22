@@ -426,7 +426,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- advisories: printed, never a verdict -----------------------------
     for s in stats_all:
-        if s["lone_lf"]:
+        if s["lone_lf"] and s["crlf"]:
             print(f"ADVISORY: {s['path']} mixes line endings "
                   f"({s['lone_lf']} lone LF vs {s['crlf']} CRLF)")
     for dev_dir in sorted({p.parent for p in journals}):

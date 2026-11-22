@@ -121,6 +121,16 @@ def test_an_inline_task_is_not_a_finding(tmp_path):
     assert findings == [], "a returned task is owned by the caller"
 
 
+def test_a_bare_create_task_statement_is_reported(tmp_path):
+    findings = _scan(
+        tmp_path,
+        "import asyncio\n"
+        "async def run():\n"
+        "    asyncio.create_task(work())\n",
+    )
+    assert findings == [(3, "bare create_task() discards the task reference")]
+
+
 def test_the_real_repository_is_clean():
     # The interpreter running this test, not a platform-specific venv path: the
     # same test has to work on Windows locally and on the Linux CI runner.
