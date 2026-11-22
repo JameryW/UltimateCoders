@@ -34,6 +34,8 @@ function localFailureMessage(verb: string, tid: string, r: { reason: string; can
 			return `${verb} failed: "${tid}" matches multiple local tasks: ${list}`;
 		case "bad_state":
 			return `${verb} failed: local task "${tid}" is not in a ${verb.toLowerCase()}-able state`;
+		case "rpc_failed":
+			return `${verb} failed: gateway RPC rejected the request for "${tid}"`;
 		default:
 			return `${verb} failed (${r.reason})`;
 	}
@@ -141,6 +143,7 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 										? `Cancelled subtask ${p.subtask_id} in task ${r.taskId} (cascade applied)`
 										: `Cancel failed (${r.reason})${r.candidates?.length ? `: ${r.candidates.join(", ")}` : ""}`,
 								}],
+								...(r.ok ? {} : { isError: true }),
 							};
 						}
 						// ponytail: F40 — down server must read as "unavailable", not
@@ -174,6 +177,7 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 									? `Cancelled task ${p.task_id}${p.subtask_id ? " (server-side whole-task cancel; subtask-level cancel needs the local orchestrator)" : ""}`
 									: `Cancel failed: task ${p.task_id} not found or not cancellable`,
 							}],
+							...(ok ? {} : { isError: true }),
 						};
 					}
 					case "pause": {
@@ -207,6 +211,7 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 								type: "text" as const,
 								text: ok ? `Paused task ${p.task_id}` : `Pause failed: task ${p.task_id} not found or not in progress`,
 							}],
+							...(ok ? {} : { isError: true }),
 						};
 					}
 					case "resume": {
@@ -238,6 +243,7 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 								type: "text" as const,
 								text: ok ? `Resumed task ${p.task_id}` : `Resume failed: task ${p.task_id} not found or not pausable`,
 							}],
+							...(ok ? {} : { isError: true }),
 						};
 					}
 					case "status": {

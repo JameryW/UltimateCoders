@@ -128,9 +128,24 @@ export class RpcServer {
 	}
 
 	async dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse> {
+		if (!req || typeof req !== "object" || Array.isArray(req) || typeof req.method !== "string") {
+			return {
+				id: null,
+				error: { code: -32600, message: "Invalid Request" },
+			};
+		}
 		const id = req.id ?? ++this.nextId;
+		if (
+			req.params !== undefined &&
+			(req.params === null || typeof req.params !== "object" || Array.isArray(req.params))
+		) {
+			return {
+				id,
+				error: { code: -32602, message: "Invalid params: expected an object" },
+			};
+		}
 		try {
-			const result = await this.handleMethod(req.method, req.params);
+			const result = await this.handleMethod(req.method, req.params ?? {});
 			return { id, result };
 		} catch (err) {
 			return {

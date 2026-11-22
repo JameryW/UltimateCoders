@@ -106,16 +106,20 @@ export class TraceRuntimeCollector {
 
 	/** Copy the observed likelihoods for one subtask, or all subtasks (default). */
 	likelihoods(taskId: string, subtaskId = ""): number[] {
-		const task = this.byTask.get(taskId);
+		const id = String(taskId ?? "").trim();
+		if (!id) return [];
+		const task = this.byTask.get(id);
 		if (task === undefined) return [];
-		const key = String(subtaskId ?? "").trim() || "__task__";
-		if (subtaskId) return [...(task.values.get(key) ?? [])];
-		return task.order.flatMap((id) => [...(task.values.get(id) ?? [])]);
+		const trimmedSubtask = String(subtaskId ?? "").trim();
+		if (trimmedSubtask) return [...(task.values.get(trimmedSubtask) ?? [])];
+		return task.order.flatMap((entryId) => [...(task.values.get(entryId) ?? [])]);
 	}
 
 	/** Per-subtask copies with credits computed independently. */
 	creditsBySubtask(taskId: string): SubtaskTrace[] {
-		const task = this.byTask.get(taskId);
+		const id = String(taskId ?? "").trim();
+		if (!id) return [];
+		const task = this.byTask.get(id);
 		if (task === undefined) return [];
 		return task.order.map((subtaskId) => {
 			const likelihoods = [...(task.values.get(subtaskId) ?? [])];
@@ -134,9 +138,17 @@ export class TraceRuntimeCollector {
 
 	/** Release a completed task's buffer. */
 	clear(taskId: string): void {
-		this.byTask.delete(taskId);
-		const index = this.taskOrder.indexOf(taskId);
+		const id = String(taskId ?? "").trim();
+		if (!id) return;
+		this.byTask.delete(id);
+		const index = this.taskOrder.indexOf(id);
 		if (index >= 0) this.taskOrder.splice(index, 1);
+	}
+
+	/** Release all buffered tasks (e.g. on orchestrator shutdown). */
+	clearAll(): void {
+		this.byTask.clear();
+		this.taskOrder.length = 0;
 	}
 
 	/** Number of tasks currently buffered. */

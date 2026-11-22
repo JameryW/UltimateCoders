@@ -126,7 +126,12 @@ function collapseAdjacentSameKind(segments: readonly TrajectorySegment[]): Traje
 	const collapsed: TrajectorySegment[] = [];
 	for (const segment of segments) {
 		const previous = collapsed[collapsed.length - 1];
-		if (previous !== undefined && previous.kind === segment.kind && previous.endTurn + 1 === segment.startTurn) {
+		if (
+			previous !== undefined &&
+			previous.kind === segment.kind &&
+			previous.endTurn + 1 === segment.startTurn &&
+			String(previous.metadata?.subtaskId ?? "") === String(segment.metadata?.subtaskId ?? "")
+		) {
 			collapsed[collapsed.length - 1] = {
 				...previous,
 				endTurn: segment.endTurn,
@@ -223,8 +228,10 @@ export function selectHighValueTrajectories<T extends ScoredTrajectory>(
 		if (b.item.score !== a.item.score) return b.item.score - a.item.score;
 		const aId = a.item.id;
 		const bId = b.item.id;
-		if (aId !== undefined && bId !== undefined && aId !== bId) {
-			return aId < bId ? -1 : 1;
+		if (aId !== undefined && bId !== undefined) {
+			if (aId !== bId) return aId < bId ? -1 : 1;
+		} else if (aId !== undefined || bId !== undefined) {
+			return aId !== undefined ? -1 : 1;
 		}
 		return a.index - b.index;
 	});

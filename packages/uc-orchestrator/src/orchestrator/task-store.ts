@@ -103,8 +103,13 @@ export class TaskStore {
 		// keeps each write→rename pair self-contained; last rename wins, which
 		// is fine — both writes carry equivalent state snapshots.
 		const tmpPath = `${filePath}.${++this.tmpSeq}-${Date.now().toString(36)}.tmp`;
-		await fs.writeFile(tmpPath, JSON.stringify(stamped, null, 2), "utf-8");
-		await fs.rename(tmpPath, filePath);
+		try {
+			await fs.writeFile(tmpPath, JSON.stringify(stamped, null, 2), "utf-8");
+			await fs.rename(tmpPath, filePath);
+		} catch (err) {
+			await fs.unlink(tmpPath).catch(() => {});
+			throw err;
+		}
 	}
 
 	async load(taskId: string): Promise<PersistedTask | null> {
@@ -173,11 +178,11 @@ export class TaskStore {
 			try {
 				const files = await fs.readdir(this.dir);
 				for (const file of files) {
-					// ponytail: F42 — also sweep .tmp orphans a crash can leave
-					// behind from the atomic-write rename.
-					const isTmp = file.endsWith(".json.tmp");
+					// ponytail: F42 — also sweep .tmp orphans (both legacy `.json.tmp`
+					// and suffixed `.json.<seq>-<ts>.tmp`) a crash can leave behind.
+					const isTmp = /\.json(?:\.[^.]+)?\.tmp$/.test(file);
 					if (!file.endsWith(".json") && !isTmp) continue;
-					const taskId = file.replace(/\.json\.tmp$|\.snap\.json$|\.json$/, "");
+					const taskId = file.replace(/\.json(?:\.[^.]+)?\.tmp$|\.snap\.json$|\.json$/, "");
 					if (!taskIdsToKeep.has(taskId)) {
 						try {
 							await fs.unlink(path.join(this.dir, file));

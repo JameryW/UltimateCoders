@@ -96,6 +96,7 @@ export class ControlSignalSubscriber {
 			console.info(`[ControlSignalSubscriber] Connected to NATS at ${this.config.natsUrl}`);
 		} catch (err) {
 			this.natsConnected = false;
+			if (this.stopped) return;
 			console.warn(
 				`[ControlSignalSubscriber] NATS unavailable (${err instanceof Error ? err.message : String(err)}), starting polling fallback`,
 			);
@@ -111,12 +112,19 @@ export class ControlSignalSubscriber {
 			this.pollTimer = null;
 		}
 		if (this.eventSub) {
-			this.eventSub.unsubscribe();
+			try {
+				this.eventSub.unsubscribe();
+			} catch { /* already unsubscribed */ }
 			this.eventSub = null;
 		}
 		if (this.natsConn) {
-			await this.natsConn.drain();
+			const conn = this.natsConn;
 			this.natsConn = null;
+			try {
+				await conn.drain();
+			} catch (err) {
+				console.warn(`[ControlSignalSubscriber] NATS drain failed during stop: ${err}`);
+			}
 		}
 		this.natsConnected = false;
 	}
@@ -182,12 +190,15 @@ export class ControlSignalSubscriber {
 				console.warn(`[ControlSignalSubscriber] NATS reconnect attempt ${attempt + 1} failed`);
 			}
 		}
+		if (this.stopped) return;
 		console.warn("[ControlSignalSubscriber] NATS reconnect exhausted, falling back to polling");
 		this.startPolling();
 	}
 
 	private handleNatsEvent(event: NatsControlEvent): void {
+		if (!event || typeof event !== "object") return;
 		const { type, task_id, message_id } = event;
+		if (typeof task_id !== "string" || task_id.length === 0) return;
 
 		// Only handle control events
 		if (type !== "task_paused" && type !== "task_resumed" && type !== "task_cancelled") {
@@ -195,7 +206,7 @@ export class ControlSignalSubscriber {
 		}
 
 		// Dedup
-		if (message_id) {
+		if (typeof message_id === "string" && message_id.length > 0) {
 			const now = Date.now();
 			const lastSeen = this.seenMessageIds.get(message_id);
 			if (lastSeen !== undefined && now - lastSeen < 300_000) {
@@ -234,6 +245,7 @@ export class ControlSignalSubscriber {
 	// ── Polling Fallback ────────────────────────────────────────
 
 	private startPolling(): void {
+		if (this.stopped) return;
 		// Clear any existing poll timer so a second startPolling (e.g. NATS
 		// reconnect exhaustion while already polling) doesn't leak a duplicate.
 		if (this.pollTimer) {
@@ -241,6 +253,7 @@ export class ControlSignalSubscriber {
 			this.pollTimer = null;
 		}
 		this.pollTimer = setInterval(async () => {
+			if (this.stopped) return;
 			const activeIds = this.handler.getActiveTaskIds();
 			if (activeIds.length === 0) return;
 
@@ -254,6 +267,7 @@ export class ControlSignalSubscriber {
 			}
 
 			for (const taskId of activeIds) {
+				if (this.stopped) return;
 				try {
 					const task = await this.bridge.getTask(taskId);
 					if (!task) continue;
@@ -263,6 +277,8 @@ export class ControlSignalSubscriber {
 				}
 			}
 		}, this.config.pollIntervalMs);
+		const timer = this.pollTimer as unknown as { unref?: () => void };
+		if (typeof timer?.unref === "function") timer.unref();
 	}
 
 	/**

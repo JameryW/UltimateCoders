@@ -92,9 +92,14 @@ export class OrchestratorEventEmitter {
 	emit<E extends OrchestratorEventType>(event: E, payload: OrchestratorEvents[E]): void {
 		const set = this.handlers.get(event);
 		if (set) {
-			for (const handler of set) {
+			for (const handler of [...set]) {
 				try {
-					handler(payload);
+					const ret: unknown = handler(payload);
+					if (ret !== null && (typeof ret === "object" || typeof ret === "function") && typeof (ret as PromiseLike<unknown>).then === "function") {
+						Promise.resolve(ret).catch((err) => {
+							console.warn(`OrchestratorEventEmitter async handler error for ${event}: ${err}`);
+						});
+					}
 				} catch (err) {
 					console.warn(`OrchestratorEventEmitter handler error for ${event}: ${err}`);
 				}

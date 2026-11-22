@@ -36,17 +36,27 @@ const MEMORY_RECOVERY = "call uc_memory with a narrower key or read the entry in
 const SEARCH_RECOVERY = "open the file at that path for the full snippet";
 
 export function excerptWithMarker(text: string, limit: number, recovery: string): string {
-	if (text.length <= limit) return text;
-	const dropped = text.length - limit;
-	return `${text.slice(0, limit)} …[truncated: ${limit}/${text.length} chars shown, ${dropped} omitted — ${recovery}]`;
+	const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
+	if (text.length <= safeLimit) return text;
+	let cut = safeLimit;
+	if (cut > 0) {
+		const lastCode = text.charCodeAt(cut - 1);
+		if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+			cut -= 1;
+		}
+	}
+	const dropped = text.length - cut;
+	return `${text.slice(0, cut)} …[truncated: ${cut}/${text.length} chars shown, ${dropped} omitted — ${recovery}]`;
 }
 
 export function formatMemorySearchLine(result: { content: string; score: number }): string {
-	return `[${result.score.toFixed(2)}] ${excerptWithMarker(result.content, MEMORY_EXCERPT_CHARS, MEMORY_RECOVERY)}`;
+	const score = Number.isFinite(result.score) ? result.score.toFixed(2) : "0.00";
+	return `[${score}] ${excerptWithMarker(result.content, MEMORY_EXCERPT_CHARS, MEMORY_RECOVERY)}`;
 }
 
 export function formatSearchResultLine(result: { filePath: string; snippet: string; score: number }): string {
-	return `${result.filePath} (score=${result.score.toFixed(2)}): ${excerptWithMarker(result.snippet, SEARCH_SNIPPET_CHARS, SEARCH_RECOVERY)}`;
+	const score = Number.isFinite(result.score) ? result.score.toFixed(2) : "0.00";
+	return `${result.filePath} (score=${score}): ${excerptWithMarker(result.snippet, SEARCH_SNIPPET_CHARS, SEARCH_RECOVERY)}`;
 }
 
 // ponytail: `as never` on parameters to dodge TS2589 deep instantiation
@@ -124,6 +134,7 @@ export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 							type: "text" as const,
 							text: ok ? `Deleted key ${p.key} from ${p.scope}` : `Delete failed for key ${p.key}`,
 						}],
+						...(ok ? {} : { isError: true }),
 					};
 				}
 				return {
