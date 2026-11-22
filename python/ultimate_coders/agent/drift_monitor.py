@@ -20,10 +20,13 @@ The whole feature is opt-in and default-off (``UC_DRIFT_MONITOR``).
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+_HEX_ADDR_RE = re.compile(r"\b0x[0-9a-fA-F]{4,}\b")
 
 __all__ = [
     "DRIFT_MONITOR_ENV",
@@ -207,6 +210,7 @@ class DriftMonitor:
         self.state.observed_test_traces += 1
         if not normalized:
             self._last_trace = ""
+            self.state.repeated_traces = 0
             return False
         if normalized == self._last_trace:
             self.state.repeated_traces += 1
@@ -227,8 +231,10 @@ class DriftMonitor:
         """Record budget/coverage; exhausted budget with no required coverage raises a signal."""
 
         self.state.budget_checks += 1
-        required = {str(item) for item in (required_files or ()) if str(item)}
-        covered = {str(item) for item in (covered_files or ()) if str(item)}
+        req_seq = [required_files] if isinstance(required_files, str) else (required_files or ())
+        cov_seq = [covered_files] if isinstance(covered_files, str) else (covered_files or ())
+        required = {str(item) for item in req_seq if str(item)}
+        covered = {str(item) for item in cov_seq if str(item)}
         exhausted = int(total_steps) > 0 and int(step_index) >= int(total_steps)
         if not exhausted:
             return False
@@ -299,6 +305,7 @@ def _normalize_trace(trace: str) -> str:
             continue
         if line.startswith("File "):
             line = _normalize_file_line(line)
+        line = _HEX_ADDR_RE.sub("0xADDR", line)
         lines.append(line)
     return "\n".join(lines)
 

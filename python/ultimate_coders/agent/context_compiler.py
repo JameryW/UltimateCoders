@@ -218,7 +218,9 @@ class ContextItem:
     token_cost: int | None = None
 
     def tokens(self) -> int:
-        return self.token_cost if self.token_cost is not None else estimate_tokens(self.content)
+        if self.token_cost is not None:
+            return max(0, int(self.token_cost))
+        return estimate_tokens(self.content)
 
     def expired(self, now: float) -> bool:
         if self.ttl_seconds is None or self.observed_at is None:
@@ -312,7 +314,7 @@ class ContextManifest:
         recoverable.sort(key=lambda drop: (int(drop.tier), drop.item_id))
         names: list[str] = []
         for tier, label in ((Tier.TRACE, "trace"), (Tier.MEMORY, "memory")):
-            ids = [drop.item_id for drop in recoverable if drop.tier == tier]
+            ids = list(dict.fromkeys(drop.item_id for drop in recoverable if drop.tier == tier))
             if not ids:
                 continue
             shown = ", ".join(ids[:3])
@@ -476,6 +478,8 @@ def compile_context(
             updates["stable"] = True
         if item.token_cost is None:
             updates["token_cost"] = max(1, int(meter(item.content)))
+        elif item.token_cost < 0:
+            updates["token_cost"] = 0
         normalized.append(replace(item, **updates) if updates else item)
     items = normalized
 
@@ -484,7 +488,10 @@ def compile_context(
         if item.expired(now):
             manifest.dropped.append(DroppedItem(item.item_id, item.tier, "expired"))
             continue
-        key = _content_key(item.content)
+        if item.content.strip():
+            key = _content_key(item.content)
+        else:
+            key = f"empty:{int(item.tier)}:{item.item_id}"
         incumbent = deduped.get(key)
         if incumbent is None or _preference(item) < _preference(incumbent):
             if incumbent is not None:
@@ -777,11 +784,12 @@ def _pack_first_fit(
 def _render_items(items: list[ContextItem], *, include_header: bool = False) -> str:
     if not items:
         return ""
+    ordered = sorted(items, key=lambda item: int(item.tier)) if include_header else items
     parts: list[str] = []
     if include_header:
         parts.append("## Compiled context\n")
     current: Tier | None = None
-    for item in items:
+    for item in ordered:
         if item.tier != current:
             current = item.tier
             if include_header:

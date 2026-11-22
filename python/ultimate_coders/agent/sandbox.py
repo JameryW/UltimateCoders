@@ -390,14 +390,47 @@ class SandboxConfig:
         exact = {name.upper() for name in allow if not name.endswith("*")}
         prefixes = tuple(name.upper()[:-1] for name in allow if name.endswith("*"))
 
+        # Known host-infrastructure secrets under the UC_* namespace must never
+        # inherit automatically into untrusted agent subprocesses (explicit
+        # adapter overlays may still supply a short-lived broker lease).
+        host_only_uc_secrets = frozenset(
+            {
+                "UC_GIT_TOKEN",
+                "UC_DATABASE_URL",
+                "UC_DASHBOARD_TOKEN",
+                "UC_GITHUB_WEBHOOK_SECRET",
+                "UC_VOYAGE_API_KEY",
+                "UC_CREDENTIAL_LEASE",
+            }
+        )
+        overlay_dict = dict(overlay) if overlay else {}
+        overlay_upper = {k.upper(): v for k, v in overlay_dict.items()}
+        broker_active = bool(
+            str(overlay_upper.get("UC_CREDENTIAL_LEASE", "")).strip()
+            and str(overlay_upper.get("UC_CREDENTIAL_BROKER", "")).strip()
+        )
+        raw_provider_keys = frozenset(
+            {
+                "OPENAI_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN",
+                "XAI_API_KEY",
+                "GROK_API_KEY",
+                "DEEPSEEK_API_KEY",
+            }
+        )
+
         env: dict[str, str] = {}
         for key, value in dict(host_env).items():
             upper = key.upper()
+            if upper in host_only_uc_secrets:
+                continue
+            if broker_active and upper in raw_provider_keys:
+                continue
             if upper in exact or (prefixes and upper.startswith(prefixes)):
                 env[key] = value
-        if overlay:
-            for key, value in dict(overlay).items():
-                env[key] = value
+        for key, value in overlay_dict.items():
+            env[key] = value
         return env
 
 
@@ -847,12 +880,10 @@ class SandboxManager:
         self._active.pop(handle.id, None)
         handle.status = "ready"
 
-        # Keep in pool if below warm size
+        # Keep in pool if below warm size; only stop handles we actually discard
         if len(self._pool) < self.config.warm_pool_size:
             self._pool.append(handle)
-        # Otherwise, discard (Rust engine handles cleanup)
-
-        if self.engine is not None and hasattr(self.engine, "stop_sandbox"):
+        elif self.engine is not None and hasattr(self.engine, "stop_sandbox"):
             try:
                 await self.engine.stop_sandbox(handle_id=handle.id)
             except Exception:
@@ -1057,17 +1088,25 @@ class SandboxManager:
                 # Stream stdout line-by-line if callback provided
                 if on_stdout_line is not None and proc.stdout is not None:
                     stdout_lines: list[str] = []
+                    stdout_bytes_kept = 0
+                    stdout_truncated = False
                     stderr_chunks: list[bytes] = []
+                    stderr_bytes_kept = 0
 
                     async def _read_stderr() -> bytes:
-                        """Read stderr in background."""
+                        """Read stderr in background (bounded in memory, drained to EOF)."""
+                        nonlocal stderr_bytes_kept
                         if proc.stderr is None:
                             return b""
                         while True:
                             chunk = await proc.stderr.read(4096)
                             if not chunk:
                                 break
-                            stderr_chunks.append(chunk)
+                            remaining_cap = stream_limit - stderr_bytes_kept
+                            if remaining_cap > 0:
+                                piece = chunk[:remaining_cap]
+                                stderr_chunks.append(piece)
+                                stderr_bytes_kept += len(piece)
                         return b"".join(stderr_chunks)
 
                     stderr_task = asyncio.create_task(_read_stderr())
@@ -1090,7 +1129,13 @@ class SandboxManager:
                             if not line_bytes:
                                 break
                             line = line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
-                            stdout_lines.append(line)
+                            if not stdout_truncated:
+                                next_size = stdout_bytes_kept + len(line_bytes)
+                                if next_size <= stream_limit:
+                                    stdout_lines.append(line)
+                                    stdout_bytes_kept = next_size
+                                else:
+                                    stdout_truncated = True
                             # Emit streaming event
                             try:
                                 await on_stdout_line(line)
@@ -1453,9 +1498,15 @@ def _codex_mcp_server_toml(name: str, cfg: dict[str, Any]) -> str:
     ponytail: minimal toml — only command/args/url, no OAuth or per-tool overrides.
     """
 
-    def _toml_escape(s: str) -> str:
+    def _toml_escape(s: Any) -> str:
         """Escape a string for TOML double-quoted value."""
-        return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        return (
+            str(s)
+            .replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\r", "\\r")
+            .replace("\n", "\\n")
+        )
 
     lines = [f'[mcp_servers."{_toml_escape(name)}"]']
     if "url" in cfg:
@@ -1469,8 +1520,11 @@ def _codex_mcp_server_toml(name: str, cfg: dict[str, Any]) -> str:
         if "args" in cfg:
             args_str = ", ".join(f'"{_toml_escape(a)}"' for a in cfg["args"])
             lines.append(f"args = [{args_str}]")
-        if "env" in cfg:
-            env_pairs = ", ".join(f'{k} = "{_toml_escape(v)}"' for k, v in cfg["env"].items())
+        if "env" in cfg and isinstance(cfg["env"], dict):
+            env_pairs = ", ".join(
+                f'{json.dumps(str(k), ensure_ascii=False)} = "{_toml_escape(v)}"'
+                for k, v in cfg["env"].items()
+            )
             lines.append(f"env = {{{env_pairs}}}")
     if "enabled_tools" in cfg:
         tools_str = ", ".join(f'"{_toml_escape(t)}"' for t in cfg["enabled_tools"])
@@ -1960,6 +2014,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             summary = ""
             tool_calls: list[str] = []
             token_usage = None
+            stream_is_error = False
 
             for line in output.splitlines():
                 line = line.strip()
@@ -1969,12 +2024,16 @@ class ClaudeCodeAdapter(AgentAdapter):
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(obj, dict):
+                    continue
 
                 evt_type = obj.get("type", "")
                 if evt_type == "result":
+                    if obj.get("is_error") is True:
+                        stream_is_error = True
                     summary = str(obj.get("result", ""))[:500]
-                    if "usage" in obj:
-                        u = obj["usage"]
+                    u = obj.get("usage")
+                    if isinstance(u, dict):
                         token_usage = TokenUsage(
                             input_tokens=u.get("input_tokens", 0),
                             output_tokens=u.get("output_tokens", 0),
@@ -1982,7 +2041,8 @@ class ClaudeCodeAdapter(AgentAdapter):
                             source=self.name(),
                         )
                 elif evt_type == "assistant":
-                    content = obj.get("message", {}).get("content", [])
+                    msg_obj = obj.get("message")
+                    content = msg_obj.get("content", []) if isinstance(msg_obj, dict) else []
                     if isinstance(content, list):
                         for block in content:
                             if isinstance(block, dict) and block.get("type") == "tool_use":
@@ -1997,12 +2057,12 @@ class ClaudeCodeAdapter(AgentAdapter):
                                 summary = " ".join(texts)[:500]
 
             if not summary:
-                summary = "Claude Code completed"
+                summary = "Claude Code failed" if stream_is_error else "Claude Code completed"
 
             return AgentOutput(
                 summary=summary,
                 token_usage=token_usage,
-                success=True,
+                success=not stream_is_error,
                 stderr_tail=stderr_tail,
                 tool_calls=tool_calls[-5:],
             )
@@ -2010,15 +2070,22 @@ class ClaudeCodeAdapter(AgentAdapter):
         # ── Try single-JSON format (legacy --output-format json) ───
         try:
             parsed = json.loads(output)
+            if not isinstance(parsed, dict):
+                return AgentOutput(
+                    summary=output[:1000] if output else "Claude Code completed",
+                    success=True,
+                    stderr_tail=stderr_tail,
+                )
+            is_error = parsed.get("is_error") is True
             summary = ""
             if "result" in parsed:
                 summary = str(parsed["result"])[:500]
             elif "message" in parsed:
                 summary = str(parsed["message"])[:500]
-            elif "messages" in parsed:
+            elif isinstance(parsed.get("messages"), list):
                 # Take last assistant message
                 for msg in reversed(parsed["messages"]):
-                    if msg.get("role") == "assistant":
+                    if isinstance(msg, dict) and msg.get("role") == "assistant":
                         content = msg.get("content", "")
                         if isinstance(content, list):
                             texts = [b.get("text", "") for b in content if isinstance(b, dict)]
@@ -2028,13 +2095,13 @@ class ClaudeCodeAdapter(AgentAdapter):
                         break
 
             if not summary:
-                summary = "Claude Code completed"
+                summary = "Claude Code failed" if is_error else "Claude Code completed"
 
             # Extract tool call names from messages for failure context
             tool_calls: list[str] = []
-            if "messages" in parsed:
+            if isinstance(parsed.get("messages"), list):
                 for msg in parsed["messages"]:
-                    if msg.get("role") == "assistant":
+                    if isinstance(msg, dict) and msg.get("role") == "assistant":
                         content = msg.get("content", "")
                         if isinstance(content, list):
                             for block in content:
@@ -2043,8 +2110,8 @@ class ClaudeCodeAdapter(AgentAdapter):
 
             # Extract token usage
             token_usage = None
-            if "usage" in parsed:
-                usage = parsed["usage"]
+            usage = parsed.get("usage")
+            if isinstance(usage, dict):
                 token_usage = TokenUsage(
                     input_tokens=usage.get("input_tokens", 0),
                     output_tokens=usage.get("output_tokens", 0),
@@ -2055,7 +2122,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             return AgentOutput(
                 summary=summary,
                 token_usage=token_usage,
-                success=True,
+                success=not is_error,
                 stderr_tail=stderr_tail,
                 tool_calls=tool_calls[-5:],  # ponytail: keep last 5 tool calls
             )
@@ -2064,6 +2131,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             return AgentOutput(
                 summary=output[:1000] if output else "Claude Code completed",
                 success=True,
+                stderr_tail=stderr_tail,
             )
 
 
@@ -3230,11 +3298,10 @@ class MiMoCodeAdapter(AgentAdapter):
             if str(item).strip().lower() == "default":
                 continue
             name, resource = _mimocode_tool_rule(item, agent="MiMo Code")
-            if name and resource:
-                if name == "bash":
-                    permission[name] = {"*": "deny", resource: "allow"}
-                elif name in {"edit", "webfetch", "task"}:
-                    permission[name] = {"*": "deny", resource: "allow"}
+            if name and resource and name in {"bash", "edit", "webfetch", "task"}:
+                rules = permission.setdefault(name, {"*": "deny"})
+                if isinstance(rules, dict):
+                    rules[resource] = "allow"
 
         for item in _config_values(cfg.get("disallowed_tools")):
             name, resource = _mimocode_tool_rule(item, agent="MiMo Code")

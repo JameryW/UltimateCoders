@@ -344,6 +344,7 @@ class Orchestrator:
                 project_id=project_id,
                 status=TaskStatus.PAUSED,
                 subtasks=[],
+                verify_command=verify_command,
             )
             self.tasks[tid] = task
             self._pending_tasks.append(
@@ -352,6 +353,7 @@ class Orchestrator:
                     "description": description,
                     "project_id": project_id,
                     "agent_config": agent_config,
+                    "verify_command": verify_command,
                 }
             )
             logger.info(
@@ -592,7 +594,7 @@ class Orchestrator:
                     depends_on=depends_on,
                     file_constraints=item.get("file_constraints", []) or [],
                     expected_output=item.get("expected_output", "") or "",
-                    agent_config=agent_config or {},
+                    agent_config=dict(agent_config) if agent_config else {},
                     project_id=project_id,
                 )
             )
@@ -623,7 +625,7 @@ class Orchestrator:
                 user_request=description,
                 status=SubtaskStatus.PENDING,
                 depends_on=[],  # no deps for simple split
-                agent_config=agent_config or {},
+                agent_config=dict(agent_config) if agent_config else {},
                 project_id=project_id,
             )
             for i, line in enumerate(lines)
@@ -667,7 +669,10 @@ class Orchestrator:
             return None
         if current.get("status") != "ok" and current.get("test_execution_status") != "ok":
             return None
-        broken = {entry for entry in current.get("broken", []) if isinstance(entry, str)}
+        raw_broken = current.get("broken")
+        if not isinstance(raw_broken, (list, tuple, set)):
+            return None
+        broken = {entry for entry in raw_broken if isinstance(entry, str)}
         if not broken:
             return None
 
@@ -684,16 +689,26 @@ class Orchestrator:
                 pending.extend(ancestor.depends_on)
 
         inherited: dict[str, str] = {}
-        for ancestor_id in ancestors:
+        for ancestor_id in sorted(ancestors):
             ancestor = by_id.get(ancestor_id)
-            measurement = (
-                ancestor.result.test_execution
-                if ancestor is not None and ancestor.result is not None
-                else None
-            )
+            if ancestor is None or ancestor.result is None or not ancestor.result.success:
+                continue
+            measurement = ancestor.result.test_execution
             if not isinstance(measurement, dict):
                 continue
-            inherited_tests = measurement.get("f2p_tests", measurement.get("f2p", []))
+            if (
+                measurement.get("status") is not None
+                or measurement.get("test_execution_status") is not None
+            ) and (
+                measurement.get("status") != "ok"
+                and measurement.get("test_execution_status") != "ok"
+            ):
+                continue
+            inherited_tests = measurement.get("f2p_tests")
+            if inherited_tests is None:
+                inherited_tests = measurement.get("f2p")
+            if not isinstance(inherited_tests, (list, tuple, set)):
+                continue
             for test_id in inherited_tests:
                 if isinstance(test_id, str):
                     inherited.setdefault(test_id, ancestor_id)
@@ -1023,7 +1038,7 @@ class Orchestrator:
                 self.governance_client,
                 task_id=getattr(task, "id", ""),
                 task_status=getattr(getattr(task, "status", None), "value", None),
-                project_id=None,
+                project_id=getattr(task, "project_id", None) or None,
                 case_id=getattr(task, "case_id", None),
                 stalled_streak=getattr(stall, "stalled_streak", 0),
                 action=action_token,
@@ -1126,7 +1141,7 @@ class Orchestrator:
 
     def _update_task_status(self, task: Task) -> None:
         """Update task status based on subtask states."""
-        if all(st.status == SubtaskStatus.COMPLETED for st in task.subtasks):
+        if task.subtasks and all(st.status == SubtaskStatus.COMPLETED for st in task.subtasks):
             task.status = TaskStatus.COMPLETED
             # Advisory in-memory aggregation — surfaces same-file conflicts
             # between concurrent subtasks early (non-fatal, does NOT write).
@@ -1245,8 +1260,15 @@ class Orchestrator:
         subtask_results = [st.result for st in task.subtasks if st.result is not None]
         if not subtask_results:
             return
+        verify_command = task.verify_command
         try:
-            agg_task = asyncio.create_task(self._aggregate_results(task.id, subtask_results))
+            agg_task = asyncio.create_task(
+                self._aggregate_results(
+                    task.id,
+                    subtask_results,
+                    verify_command=verify_command,
+                )
+            )
         except RuntimeError:
             # No running event loop — cannot schedule. Log and skip.
             logger.warning(
@@ -1262,6 +1284,7 @@ class Orchestrator:
         self,
         task_id: str,
         subtask_results: list[SubtaskResult],
+        verify_command: str | None = None,
     ) -> None:
         """Run advisory result aggregation for a completed task (non-fatal).
 
@@ -1277,10 +1300,9 @@ class Orchestrator:
         """
         try:
             base_files = self._collect_base_files(subtask_results)
-            # Thread verify_command from the task (set by submit_task from
-            # the scheduler config → NatsTaskSubmit payload).
-            task = self.tasks.get(task_id)
-            verify_command = task.verify_command if task is not None else None
+            if verify_command is None:
+                task = self.tasks.get(task_id)
+                verify_command = task.verify_command if task is not None else None
             result = await self.aggregator.aggregate(
                 subtask_results,
                 base_files,
@@ -1336,12 +1358,19 @@ class Orchestrator:
                     modified_paths.add(fc.file_path)
 
         base_files: dict[str, str] = {}
+        root_real = os.path.realpath(project_path)
         for fpath in modified_paths:
-            full_path = os.path.join(project_path, fpath)
+            if os.path.isabs(fpath):
+                logger.warning("Skipping absolute base path outside workspace: %s", fpath)
+                continue
+            full_path = os.path.realpath(os.path.join(root_real, fpath))
             try:
+                if os.path.commonpath([root_real, full_path]) != root_real:
+                    logger.warning("Skipping base path escaping workspace: %s", fpath)
+                    continue
                 with open(full_path, encoding="utf-8") as f:
                     base_files[fpath] = f.read()
-            except (OSError, UnicodeDecodeError):
+            except (OSError, UnicodeDecodeError, ValueError):
                 # File may not exist yet (created by a subtask) or be
                 # binary — skip it. An empty/missing base is acceptable
                 # (first-modifier-wins).
@@ -1405,8 +1434,8 @@ class Orchestrator:
         """
         if self.merge_arbiter is None:
             return
+        grant: dict[str, Any] | None = None
         try:
-            grant: dict[str, Any] | None = None
             if self.merge_gate is not None:
                 grant = await self.merge_gate.issue_merge_grant(task_id)
                 if not grant.get("granted", False):
@@ -1457,11 +1486,31 @@ class Orchestrator:
                         task_id,
                         key[:8],
                     )
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Merge arbitration failed for task %s (non-fatal)",
                 task_id,
             )
+            if self.merge_gate is not None and grant is not None:
+                key = grant.get("merge_idempotency_key", "")
+                try:
+                    await self.merge_gate.report_merge_outcome(
+                        task_id,
+                        key,
+                        {
+                            "status": "failed",
+                            "merged_branches": [],
+                            "conflict_branches": [],
+                            "push_status": "failed",
+                            "error": str(exc)[:500],
+                        },
+                    )
+                except Exception:
+                    logger.debug(
+                        "Failed to report merge arbitration error for task %s",
+                        task_id,
+                        exc_info=True,
+                    )
 
     # ── Task queries ───────────────────────────────────────────
 
@@ -1523,6 +1572,7 @@ class Orchestrator:
             for st in task.subtasks:
                 if st.id == subtask_id:
                     st.status = SubtaskStatus.FAILED
+                    self._update_task_status(task)
                     task.update_timestamp()
                     return True
             return False
@@ -1606,6 +1656,7 @@ class Orchestrator:
                     task_id=entry["task_id"],
                     agent_config=entry.get("agent_config"),
                     _scheduled=False,
+                    verify_command=entry.get("verify_command"),
                 )
                 executed.append(task)
             except Exception:

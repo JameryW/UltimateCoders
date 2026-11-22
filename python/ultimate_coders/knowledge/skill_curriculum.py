@@ -294,10 +294,12 @@ def _evidence_passed(value: Any) -> bool:
     if isinstance(value, Mapping):
         for key in ("passed", "ok", "success", "valid"):
             if key in value:
-                return bool(value[key])
-        return bool(value)
+                return _evidence_passed(value[key])
+        if "status" in value:
+            return _evidence_passed(value["status"])
+        return False
     if isinstance(value, str):
         return value.strip().lower() not in _EVIDENCE_FALSE
     if isinstance(value, (list, tuple, set, frozenset)):
-        return len(value) > 0
+        return any(_evidence_passed(item) for item in value)
     return bool(value)

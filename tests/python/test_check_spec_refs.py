@@ -1121,7 +1121,9 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     re-measured to 2591-2645. T70 (UC memory channels) moved it 2591 -> 2604:
     per-channel compile and retry evidence promotion landed above the
     checkpoint helpers (+13 lines), and the cited range 2591-2645 still covers
-    the definition.
+    the definition. The repo-wide hardening review moved it 2604 -> 2719:
+    credential-lease/radio/checkpoint guards landed above `_save_checkpoint`,
+    and the spec citation and pin were re-measured to 2719-2779.
     """
     guard = _load_guard()
     want = {
@@ -1143,7 +1145,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            2604,
+            2719,
         ),
     }
     rows = [

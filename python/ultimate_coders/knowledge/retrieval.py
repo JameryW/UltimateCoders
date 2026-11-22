@@ -138,7 +138,11 @@ def _bitemporal_project(
                 )
             )
         resolved_ids = {claim.claim_id for claim in graph.resolve(reader_revision)}
-        return [claim for claim in claims if getattr(claim, "claim_id", "") in resolved_ids]
+        return [
+            claim
+            for claim in claims
+            if safe_text(getattr(claim, "claim_id", ""), limit=120) in resolved_ids
+        ]
     except Exception:  # pragma: no cover - projection is best-effort
         return list(claims)
 

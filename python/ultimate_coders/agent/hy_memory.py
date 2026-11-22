@@ -158,7 +158,7 @@ def _hit_supersede_ids(hit: Any) -> list[str]:
     if not isinstance(metadata, dict):
         return []
     raw = metadata.get(SUPERSEDES_METADATA_KEY)
-    if not isinstance(raw, (list, tuple)):
+    if not isinstance(raw, (list, tuple, str, bytes)):
         return []
     return _normalize_fact_ids(raw)
 
@@ -171,16 +171,43 @@ def filter_superseded_facts(facts: Sequence[Any]) -> tuple[list[Any], list[str]]
     model has no way to know which one the repository actually follows today.
     The newest facts list the ids they replaced in ``metadata["supersedes"]``;
     we collect that set across the whole page and filter the older entries.
+    Self-references and mutual cycles never drop every participating hit.
 
     Returns ``(kept_facts, removed_ids)``. When no hit carries supersede
     metadata the input list is returned unmodified (identity preserved, so
     callers that never write supersede metadata see no change).
     """
+    edges: dict[str, set[str]] = {}
     superseded: set[str] = set()
     for hit in facts:
-        superseded.update(_hit_supersede_ids(hit))
+        identity = _hit_identity(hit)
+        targets = {
+            target for target in _hit_supersede_ids(hit) if target != identity
+        }
+        if targets:
+            if identity is not None:
+                edges.setdefault(identity, set()).update(targets)
+            superseded.update(targets)
     if not superseded:
         return list(facts), []
+
+    # Break mutual cycles deterministically: if A supersedes B and B supersedes A
+    # (or longer cycle), preserve the later entry in page order so a cycle never
+    # wipes out all hits.
+    order = {
+        identity: idx
+        for idx, hit in enumerate(facts)
+        if (identity := _hit_identity(hit)) is not None
+    }
+    cycle_protected: set[str] = set()
+    for src, targets in edges.items():
+        for dst in targets:
+            if dst in edges and src in edges[dst]:
+                # Keep whichever appeared later (higher index) in the recall page.
+                winner = src if order.get(src, -1) >= order.get(dst, -1) else dst
+                cycle_protected.add(winner)
+    superseded -= cycle_protected
+
     kept: list[Any] = []
     removed: list[str] = []
     for hit in facts:
@@ -297,7 +324,12 @@ def _merge_supersede_metadata(
     """
     from_arg = _normalize_fact_ids(supersede_fact_ids)
     prior_raw = metadata.get(SUPERSEDES_METADATA_KEY) if metadata else None
-    from_meta = _normalize_fact_ids(prior_raw if isinstance(prior_raw, (list, tuple)) else None)
+    if isinstance(prior_raw, str):
+        from_meta = _normalize_fact_ids([prior_raw])
+    elif isinstance(prior_raw, (list, tuple, set)):
+        from_meta = _normalize_fact_ids(list(prior_raw))
+    else:
+        from_meta = []
     # Union: ids already in metadata plus any newly supplied via the arg.
     merged_ids = _normalize_fact_ids([*from_meta, *from_arg])
     if not merged_ids:
@@ -421,6 +453,15 @@ class CodingMemory:
                 "experiences": [],
                 "chain_block": None,
                 "raw": None,
+            }
+        if not isinstance(raw, dict):
+            return {
+                "ok": False,
+                "error": f"Unexpected search response type: {type(raw).__name__}",
+                "facts": [],
+                "experiences": [],
+                "chain_block": None,
+                "raw": raw,
             }
         facts = raw.get("facts") or []
         facts, superseded_removed = filter_superseded_facts(facts)
@@ -638,7 +679,7 @@ def doctor_report() -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI: ``python -m ultimate_coders.agent.hy_memory [--check] [--json]``."""
-    args = sys.argv[1:] if argv is None else argv
+    args = list(sys.argv[1:]) if argv is None else list(argv)
     timeout = 20
     if "--timeout" in args:
         i = args.index("--timeout")
