@@ -305,7 +305,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
           subtasks: resp.subtasks.map((s) => ({
             id: s.id,
             description: s.description,
-            status: s.status,
+            status: normalizeGrpcStatus(s.status),
             dependsOn: [...s.dependsOn],
             assignedWorker: s.assignedWorker ?? undefined,
           })),
@@ -326,7 +326,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     const transport = getTransport();
     const client = createClient(EngineService, transport);
     const req = create(HealthRequestSchema, {});
-    const resp = await client.health(req);
+    const resp = await unaryWithTimeout((signal) => client.health(req, { signal }), "healthCheck");
     return {
       status: resp.status,
       version: resp.version,

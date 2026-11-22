@@ -42,7 +42,7 @@ import type {
   AlertEvent,
   MetricsSnapshot as MetricsSnapshotType,
 } from "@/types/dashboard";
-import { getSharedTransport, grpcTasksToDashboard } from "@/hooks/useGrpcWeb";
+import { getSharedTransport, grpcTasksToDashboard, unaryWithTimeout } from "@/hooks/useGrpcWeb";
 import { normalizeTaskSnapshot } from "@/lib/taskSnapshots";
 import { eventTimestampToISO } from "@/lib/grpcTimestamp";
 import { getStoredToken } from "@/hooks/useAuth";
@@ -296,6 +296,8 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   // D1: connectionStateRef removed — dead write (never read); was flagged by react-hooks/refs.
   const abortRef = useRef<AbortController | null>(null);
   const retryCountRef = useRef(0);
+  const grpcFailureCountRef = useRef(0);
+  const sseFailureCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optsRef = useRef(opts);
   // eslint-disable-next-line react-hooks/refs -- stable-callback ref-mirror: synchronous to avoid one-frame race in reconnect timers
@@ -314,14 +316,33 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     }
   }, []);
 
-  const scheduleReconnect = useCallback(() => {
+  const scheduleReconnect = useCallback((fromSse = false) => {
+    clearRetryTimer();
     const delay = RETRY_INTERVALS[retryCountRef.current] ?? MAX_RETRY_INTERVAL;
     retryCountRef.current += 1;
+    if (fromSse) {
+      sseFailureCountRef.current += 1;
+    } else {
+      grpcFailureCountRef.current += 1;
+    }
     if (import.meta.env.DEV) console.log(`[Dashboard gRPC] Reconnecting in ${delay}ms (attempt ${retryCountRef.current})`);
     setConnectionState("reconnecting");
 
+    // Periodically retry gRPC after SSE fails so a recovered gateway is not
+    // permanently trapped on SSE fallback.
+    if (fromSse && sseFailureCountRef.current >= 2) {
+      grpcFailureCountRef.current = 0;
+      sseFailureCountRef.current = 0;
+      retryTimerRef.current = setTimeout(() => {
+        if (optsRef.current.enabled) {
+          connectRef.current(false);
+        }
+      }, delay);
+      return;
+    }
+
     // Fallback to SSE after too many gRPC failures
-    if (retryCountRef.current >= SSE_FALLBACK_THRESHOLD && !usingSseRef.current) {
+    if (grpcFailureCountRef.current >= SSE_FALLBACK_THRESHOLD && !usingSseRef.current) {
       if (import.meta.env.DEV) console.log("[Dashboard] gRPC failed repeatedly, falling back to SSE");
       // ponytail: use `delay` (the same exponential backoff as the gRPC path),
       // not a fixed 1000ms. SSE failing too (e.g. gRPC-only deploy with no
@@ -340,7 +361,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
         connectRef.current(false);
       }
     }, delay);
-  }, []);
+  }, [clearRetryTimer]);
 
   // ── SSE fallback ──────────────────────────────────────────
 
@@ -359,6 +380,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     setConnectionState("connecting");
     sse.onopen = () => {
       if (sseRef.current !== sse) return;
+      sseFailureCountRef.current = 0;
       setConnectionState("connected");
     };
 
@@ -366,6 +388,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
       try {
         const data = JSON.parse(e.data);
         retryCountRef.current = 0;
+        sseFailureCountRef.current = 0;
         const taskEvent: TaskEvent = {
           timestamp: eventTimestampToISO(data.timestamp ?? new Date().toISOString()),
           type: data.type ?? "",
@@ -382,6 +405,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
       try {
         const snapshot = JSON.parse(e.data);
         retryCountRef.current = 0;
+        sseFailureCountRef.current = 0;
         const converted: {
           health?: HealthData;
           workers?: WorkersData;
@@ -412,12 +436,13 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     });
 
     sse.onerror = () => {
+      if (sseRef.current !== sse) return;
       if (import.meta.env.DEV) console.log("[Dashboard SSE] Connection lost, reconnecting...");
       setConnectionState("error");
       sse.close();
       sseRef.current = null;
       usingSseRef.current = false;
-      scheduleReconnect();
+      scheduleReconnect(true);
     };
   }, [scheduleReconnect]);
 
@@ -438,7 +463,11 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   const connect = useCallback((resetRetries = true) => {
     abortRef.current?.abort();
     clearRetryTimer();
-    if (resetRetries) retryCountRef.current = 0;
+    if (resetRetries) {
+      retryCountRef.current = 0;
+      grpcFailureCountRef.current = 0;
+      sseFailureCountRef.current = 0;
+    }
     sseRef.current?.close();
     sseRef.current = null;
     usingSseRef.current = false;
@@ -463,6 +492,8 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
           signal: ac.signal,
           onHeader: () => {
             if (ac.signal.aborted) return;
+            grpcFailureCountRef.current = 0;
+            sseFailureCountRef.current = 0;
             setConnectionState("connected");
           },
         });
@@ -470,6 +501,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
         for await (const snapshot of stream) {
           if (ac.signal.aborted) break;
           retryCountRef.current = 0;
+          grpcFailureCountRef.current = 0;
 
           const converted: {
             health?: HealthData;
@@ -528,13 +560,13 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
         // Stream ended normally (server closed) -- reconnect
         if (!ac.signal.aborted) {
           setConnectionState("error");
-          scheduleReconnect();
+          scheduleReconnect(false);
         }
       } catch (err: unknown) {
         if (ac.signal.aborted) return;
         console.error("[Dashboard gRPC] WatchDashboard stream error:", err);
         setConnectionState("error");
-        scheduleReconnect();
+        scheduleReconnect(false);
       }
     })();
   }, [clearRetryTimer, scheduleReconnect, getTransport]);
@@ -550,6 +582,8 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     usingSseRef.current = false;
     clearRetryTimer();
     retryCountRef.current = 0;
+    grpcFailureCountRef.current = 0;
+    sseFailureCountRef.current = 0;
     setConnectionState("disconnected");
   }, [clearRetryTimer]);
 
@@ -558,21 +592,24 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   const listWorkers = useCallback(async (): Promise<WorkersData> => {
     const transport = getTransport();
     const client = createClient(DashboardService, transport);
-    const resp = await client.listWorkers(create(ListWorkersRequestSchema, {}));
+    const req = create(ListWorkersRequestSchema, {});
+    const resp = await unaryWithTimeout((signal) => client.listWorkers(req, { signal }), "listWorkers");
     return grpcWorkersToDashboard(resp);
   }, [getTransport]);
 
   const getSchedulerStatus = useCallback(async (): Promise<SchedulerData> => {
     const transport = getTransport();
     const client = createClient(DashboardService, transport);
-    const resp = await client.getSchedulerStatus(create(GetSchedulerStatusRequestSchema, {}));
+    const req = create(GetSchedulerStatusRequestSchema, {});
+    const resp = await unaryWithTimeout((signal) => client.getSchedulerStatus(req, { signal }), "getSchedulerStatus");
     return grpcSchedulerToDashboard(resp);
   }, [getTransport]);
 
   const triggerSchedulerJob = useCallback(async (jobId: string): Promise<{ success: boolean; error?: string }> => {
     const transport = getTransport();
     const client = createClient(DashboardService, transport);
-    const resp = await client.triggerSchedulerJob(create(TriggerSchedulerJobRequestSchema, { jobId }));
+    const req = create(TriggerSchedulerJobRequestSchema, { jobId });
+    const resp = await unaryWithTimeout((signal) => client.triggerSchedulerJob(req, { signal }), "triggerSchedulerJob");
     return { success: resp.success, error: resp.error ?? undefined };
   }, [getTransport]);
 
@@ -585,8 +622,10 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   ): Promise<{ success: boolean; enabled: boolean; error?: string }> => {
     const transport = getTransport();
     const client = createClient(DashboardService, transport);
-    const resp = await client.setSchedulerJobEnabled(
-      create(SetSchedulerJobEnabledRequestSchema, { jobId, enabled }),
+    const req = create(SetSchedulerJobEnabledRequestSchema, { jobId, enabled });
+    const resp = await unaryWithTimeout(
+      (signal) => client.setSchedulerJobEnabled(req, { signal }),
+      "setSchedulerJobEnabled",
     );
     return { success: resp.success, enabled: resp.enabled, error: resp.error ?? undefined };
   }, [getTransport]);
@@ -594,18 +633,20 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   const flushPendingTasks = useCallback(async (): Promise<{ success: boolean; pendingCount: number; executedCount: number; error?: string }> => {
     const transport = getTransport();
     const client = createClient(DashboardService, transport);
-    const resp = await client.flushPendingTasks(create(FlushPendingTasksRequestSchema, {}));
+    const req = create(FlushPendingTasksRequestSchema, {});
+    const resp = await unaryWithTimeout((signal) => client.flushPendingTasks(req, { signal }), "flushPendingTasks");
     return { success: resp.success, pendingCount: resp.pendingCount, executedCount: resp.executedCount, error: resp.error ?? undefined };
   }, [getTransport]);
 
   const listEvents = useCallback(async (taskId?: string, limit = 100): Promise<{ available: boolean; events: DashboardEvent[]; total: number }> => {
     const transport = getTransport();
     const client = createClient(DashboardService, transport);
-    const resp = await client.listEvents(create(ListEventsRequestSchema, {
+    const req = create(ListEventsRequestSchema, {
       taskId: taskId ?? undefined,
       limit,
       offset: 0,
-    }));
+    });
+    const resp = await unaryWithTimeout((signal) => client.listEvents(req, { signal }), "listEvents");
     return {
       available: resp.available,
       events: resp.events.map(grpcEventProtoToDashboardEvent),

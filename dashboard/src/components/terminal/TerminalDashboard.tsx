@@ -62,7 +62,14 @@ const VIEWS: Array<{ id: TerminalView; label: string; meta: string; key: string;
 
 /** Tasks still moving through the pipeline — listed before finished ones. */
 function isLiveTask(task: { status: string }): boolean {
-  return task.status === "inprogress" || task.status === "pending" || task.status === "paused";
+  return (
+    task.status === "in_progress"
+    || task.status === "inprogress"
+    || task.status === "running"
+    || task.status === "planning"
+    || task.status === "pending"
+    || task.status === "paused"
+  );
 }
 
 /** Single-letter view shortcuts live in `@/lib/terminalView` beside the view list. */
@@ -751,7 +758,10 @@ function OverviewView({
     };
   }, [previewMode]);
 
-  const preview = previewMode ? buildPreviewBoard(previewTick) : null;
+  const preview = useMemo(
+    () => (previewMode ? buildPreviewBoard(previewTick) : null),
+    [previewMode, previewTick],
+  );
 
   const workerList = workers.workers ?? [];
   const liveOnlineWorkers = workerList.filter((worker) => worker.is_available).length;
@@ -803,13 +813,12 @@ function OverviewView({
   const flow = connectorFlowsFor(activeStage);
   const boardHealth = preview?.health ?? health;
   const boardEvents = preview?.advice ?? eventLog;
-  const failureEventSource = preview
-    ? (boardEvents ?? [])
-    : mergeDashboardEvents(historicalDashboardEvents, boardEvents ?? []);
-  const failureHeatmap = buildFailureHeatmap(
-    failureEventsFromDashboard(failureEventSource),
-    { maxEvents: 2000 },
-  );
+  const failureHeatmap = useMemo(() => {
+    const source = preview
+      ? (preview.advice ?? [])
+      : mergeDashboardEvents(historicalDashboardEvents, eventLog ?? []);
+    return buildFailureHeatmap(failureEventsFromDashboard(source), { maxEvents: 2000 });
+  }, [preview, eventLog, historicalDashboardEvents]);
   const boardWorkers: WorkersData = preview
     ? {
         available: false,
@@ -843,7 +852,8 @@ function OverviewView({
 
   useEffect(() => {
     // The overview heatmap needs history as well as the live stream. The
-    // gRPC event log is live-only, so load the durable REST snapshot once.
+    // gRPC event log is live-only, so load the durable REST snapshot on mount
+    // and refresh when gateway connectivity transitions back online.
     const controller = new AbortController();
     fetchDashboardEvents(fetch, getStoredToken(), controller.signal)
       .then((events) => {
@@ -853,7 +863,7 @@ function OverviewView({
         // Auth/offline failures leave the live-only heatmap available.
       });
     return () => controller.abort();
-  }, []);
+  }, [connected]);
 
   useEffect(() => {
     // Defer setState into timers so we never sync-setState in the effect body
@@ -1361,8 +1371,14 @@ export function TerminalDashboard({
   }, [command, grpcSubmitTask, onCancelTask, onOptimisticAdd, onPauseTask, onRefresh, onResumeTask, onTaskCreated, selectedTaskForCommand]);
   useEffect(() => {
     const isTypingTarget = () => {
-      const tag = document.activeElement?.tagName;
-      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      return (
+        tag === "INPUT"
+        || tag === "TEXTAREA"
+        || tag === "SELECT"
+        || (active instanceof HTMLElement && active.isContentEditable)
+      );
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -1380,6 +1396,7 @@ export function TerminalDashboard({
         closeHelp();
         return;
       }
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (isTypingTarget()) return;
       if (event.key === "?") {
         event.preventDefault();
@@ -1403,9 +1420,10 @@ export function TerminalDashboard({
         setView(letterView);
         return;
       }
-      const numeric = Number(event.key);
-      const next = VIEWS.find((item) => item.key === String(numeric));
-      if (next) setView(next.id);
+      if (/^[0-9]$/.test(event.key)) {
+        const next = VIEWS.find((item) => item.key === event.key);
+        if (next) setView(next.id);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

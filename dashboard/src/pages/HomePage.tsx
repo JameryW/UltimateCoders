@@ -169,11 +169,11 @@ function shortReplayId(value: string): string {
   return `${value.slice(0, 9)}…${value.slice(-6)}`;
 }
 
-function replayAge(updatedAt: string | null): string {
+function replayAge(updatedAt: string | null, nowMs: number): string {
   if (!updatedAt) return "no timestamp";
   const parsed = Date.parse(updatedAt);
   if (!Number.isFinite(parsed)) return "no timestamp";
-  return formatSyncAge(parsed, Date.now());
+  return formatSyncAge(parsed, nowMs);
 }
 
 type RuntimeSnapshot = {
@@ -200,9 +200,12 @@ export default function HomePage() {
     enabled: probe === "reachable",
   });
   const connectRef = useRef(connect);
-  connectRef.current = connect;
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   const [runtime, setRuntime] = useState<RuntimeSnapshot>(initialRuntime);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [consecutiveFailures, setConsecutiveFailures] = useState(0);
   const failuresRef = useRef(0);
@@ -244,11 +247,13 @@ export default function HomePage() {
     }
     failuresRef.current = 0;
     setConsecutiveFailures(0);
+    const syncedAt = Date.now();
+    setNowMs(syncedAt);
     setRuntime((current) => ({
       gatewayStatus: health.value.status || "healthy",
       gatewayVersion: health.value.version || "—",
       taskTotal: tasks.status === "fulfilled" ? tasks.value.total : current.taskTotal,
-      lastSyncedAt: Date.now(),
+      lastSyncedAt: syncedAt,
     }));
     return true;
   }, [healthCheck, listTasks]);
@@ -377,7 +382,6 @@ export default function HomePage() {
 
   useEffect(() => {
     let cancelled = false;
-    setProbe("probing");
     void probeOnce().then((verdict) => {
       if (cancelled) return;
       setProbe(verdict);
@@ -390,6 +394,12 @@ export default function HomePage() {
       probeAbortRef.current?.abort();
     };
   }, [probeOnce, probeNonce]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 5_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // Poll only while the card claims a live or connecting transport. Keying the
   // loop on the mode is what makes it stop when the card says OFFLINE — and what
@@ -453,6 +463,7 @@ export default function HomePage() {
       return;
     }
     // Not reachable: re-probe rather than hammer a backend that is not there.
+    setProbe("probing");
     setProbeNonce((nonce) => nonce + 1);
   }, [canRefresh, refreshRuntime]);
 
@@ -551,7 +562,7 @@ export default function HomePage() {
               </p>
             ) : null}
             <div className="home-runtime-foot">
-              <span>live snapshot · {formatSyncAge(runtime.lastSyncedAt, Date.now())}</span>
+              <span>live snapshot · {formatSyncAge(runtime.lastSyncedAt, nowMs)}</span>
               <span>
                 {mode === "stalled"
                   ? "auto refresh paused"
@@ -679,7 +690,7 @@ export default function HomePage() {
                     <span className={`home-replay-badge home-replay-badge-${run.status}`}>{run.status}</span>
                     <strong title={run.taskId}>{shortReplayId(run.taskId || "task")}</strong>
                     <small>{shortReplayId(run.subtaskId || "subtask")} · {run.completedSteps}/{run.stepTotal} steps</small>
-                    <span className="home-replay-run-age">{replayAge(run.updatedAt)}</span>
+                    <span className="home-replay-run-age">{replayAge(run.updatedAt, nowMs)}</span>
                   </button>
                 ))
               ) : probe !== "reachable" ? (
@@ -705,7 +716,7 @@ export default function HomePage() {
                     <div className="home-replay-title">
                       <span className={`home-replay-badge home-replay-badge-${activeReplay.status}`}>{activeReplay.status}</span>
                       <strong title={activeReplay.taskId}>{shortReplayId(activeReplay.taskId || "task")}</strong>
-                      <small>{shortReplayId(activeReplay.subtaskId || "subtask")} · updated {replayAge(activeReplay.updatedAt)}</small>
+                      <small>{shortReplayId(activeReplay.subtaskId || "subtask")} · updated {replayAge(activeReplay.updatedAt, nowMs)}</small>
                     </div>
                     <span className="home-replay-counter">{replayCursorIndex + 1} / {replaySteps.length}</span>
                   </div>
