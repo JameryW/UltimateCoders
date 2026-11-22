@@ -25,11 +25,14 @@ nothing here decides what an event may cause -- that is the gateway's mandate.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
+import inspect
+import json
 import os
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from ultimate_coders.trigger.github_webhook import (
@@ -46,8 +49,14 @@ from ultimate_coders.trigger.github_webhook import (
 )
 
 try:  # The bridge module is owned by the gateway wiring; use its type when present.
-    from ultimate_coders.governance_client import GovernanceUnavailable
+    from ultimate_coders.governance_client import GovernanceError, GovernanceUnavailable
 except ImportError:  # pragma: no cover - exercised only before the bridge lands
+
+    class GovernanceError(Exception):  # noqa: N818 - name fixed by the bridge contract
+        def __init__(self, code: str, message: str) -> None:
+            super().__init__(f"{code}: {message}")
+            self.code = code
+            self.message = message
 
     class GovernanceUnavailable(Exception):  # noqa: N818 - name fixed by the bridge contract
         """Marker for "the gateway is unreachable" when the bridge is absent.
@@ -61,12 +70,17 @@ router = APIRouter()
 
 GITHUB_WEBHOOK_SECRET_ENV = "UC_GITHUB_WEBHOOK_SECRET"
 DASHBOARD_TOKEN_ENV = "UC_DASHBOARD_TOKEN"
+AUTH_CHECK_STATE_ATTR = "dashboard_auth_check"
 GOVERNANCE_UNAVAILABLE_ERROR = "governance_unavailable"
 
 #: The dashboard is the authenticated caller of the gateway; a trigger event
 #: itself never holds a permission (see the package docstring).
 PRINCIPAL_KIND = "service"
 PRINCIPAL_ID = "dashboard"
+
+#: Maximum raw HTTP body bytes accepted for ``/api/triggers/ingest`` (allows
+#: outer envelope fields around a ``MAX_PAYLOAD_BYTES`` payload).
+_MAX_INGEST_BODY_BYTES = MAX_PAYLOAD_BYTES + 65536
 
 
 # ── Gateway bridge ─────────────────────────────────────────────────────
@@ -75,11 +89,31 @@ PRINCIPAL_ID = "dashboard"
 #: Transport-level failures that mean "the bridge is down", not "the request is
 #: wrong". The real client wraps these in ``GovernanceUnavailable``; keeping them
 #: here means an older or simpler client cannot turn an outage into a 500.
-_BRIDGE_FAILURES: tuple[type[BaseException], ...] = (ConnectionError, TimeoutError, OSError)
+_BRIDGE_FAILURES: tuple[type[BaseException], ...] = (
+    ConnectionError,
+    TimeoutError,
+    OSError,
+    asyncio.TimeoutError,
+)
 
 
 def _unavailable_response() -> JSONResponse:
     return JSONResponse({"error": GOVERNANCE_UNAVAILABLE_ERROR}, status_code=503)
+
+
+def _governance_error_response(exc: BaseException) -> JSONResponse:
+    code = str(getattr(exc, "code", "") or "governance_error")
+    detail = str(getattr(exc, "message", "") or str(exc))
+    lowered = code.lower()
+    if any(token in lowered for token in ("forbidden", "permission", "denied", "unauthorized")):
+        status_code = 403
+    elif "not_found" in lowered:
+        status_code = 404
+    elif any(token in lowered for token in ("conflict", "already_", "expired", "spent")):
+        status_code = 409
+    else:
+        status_code = 400
+    return _error(status_code, code, detail)
 
 
 async def _call(
@@ -100,6 +134,8 @@ async def _call(
         result = await client.call(op, payload)
     except (GovernanceUnavailable, *_BRIDGE_FAILURES):
         return None, _unavailable_response()
+    except GovernanceError as exc:
+        return None, _governance_error_response(exc)
     if not isinstance(result, dict):
         return None, _error(502, "governance_bad_reply")
     return result, None
@@ -122,16 +158,50 @@ def _declared_content_length(request: Request) -> int | None:
     return int(raw.strip())
 
 
+async def _read_bounded_body(request: Request, max_bytes: int) -> bytes:
+    """Read request body up to ``max_bytes``, raising ``PayloadTooLargeError`` early."""
+    declared = _declared_content_length(request)
+    if declared is not None and declared > max_bytes:
+        raise PayloadTooLargeError("payload exceeds limit")
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > max_bytes:
+            raise PayloadTooLargeError("payload exceeds limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _bearer_token(request: Request) -> str:
     header = request.headers.get("authorization", "")
-    if header.startswith("Bearer "):
-        return header[len("Bearer ") :].strip()
+    if header[:7].lower() == "bearer ":
+        return header[7:].strip()
     return ""
 
 
-def _require_dashboard_token(request: Request) -> JSONResponse | None:
-    """Enforce ``UC_DASHBOARD_TOKEN`` when an operator configured it."""
-    expected = os.environ.get(DASHBOARD_TOKEN_ENV, "")
+def _call_host_auth(checker: Any, request: Request, *, mutating: bool) -> Response | None:
+    try:
+        params = inspect.signature(checker).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "mutating" in params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    ):
+        return checker(request, mutating=mutating)
+    return checker(request)
+
+
+def _require_dashboard_token(request: Request, *, mutating: bool = True) -> Response | None:
+    """Enforce the host dashboard auth check, or ``UC_DASHBOARD_TOKEN`` standalone."""
+    checker = getattr(request.app.state, AUTH_CHECK_STATE_ATTR, None)
+    if checker is not None:
+        return _call_host_auth(checker, request, mutating=mutating)
+    if not mutating:
+        return None
+    expected = os.environ.get(DASHBOARD_TOKEN_ENV, "").strip()
     if not expected:
         return None
     supplied = _bearer_token(request)
@@ -188,10 +258,10 @@ async def github_webhook(request: Request) -> JSONResponse:
     secret = os.environ.get(GITHUB_WEBHOOK_SECRET_ENV, "")
     if not secret:
         return _error(503, "webhook_secret_not_configured")
-    declared = _declared_content_length(request)
-    if declared is not None and declared > MAX_PAYLOAD_BYTES:
+    try:
+        body = await _read_bounded_body(request, MAX_PAYLOAD_BYTES)
+    except PayloadTooLargeError:
         return _error(413, "payload_too_large")
-    body = await request.body()
     if not verify_signature(secret, body, request.headers.get("x-hub-signature-256")):
         return _error(401, "invalid_signature")
     try:
@@ -212,7 +282,7 @@ async def github_webhook(request: Request) -> JSONResponse:
 
 
 @router.post("/api/triggers/ingest")
-async def ingest_trigger(request: Request) -> JSONResponse:
+async def ingest_trigger(request: Request) -> Response:
     """Ingest a generic (api/cron/manual) event.
 
     The body is the trigger itself, not a raw source payload: callers that own
@@ -221,12 +291,16 @@ async def ingest_trigger(request: Request) -> JSONResponse:
     tokens are the trigger contract's; an event that needs a kind outside it is
     a contract change, not something this door should guess.
     """
-    failure = _require_dashboard_token(request)
+    failure = _require_dashboard_token(request, mutating=True)
     if failure is not None:
         return failure
     try:
-        document = await request.json()
-    except ValueError:
+        raw_body = await _read_bounded_body(request, _MAX_INGEST_BODY_BYTES)
+    except PayloadTooLargeError:
+        return _error(413, "payload_too_large")
+    try:
+        document = json.loads(raw_body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
         return _error(400, "invalid_json")
     if not isinstance(document, dict):
         return _error(400, "invalid_request", "body must be a JSON object")
@@ -280,8 +354,11 @@ async def ingest_trigger(request: Request) -> JSONResponse:
 
 
 @router.get("/api/triggers/subscriptions")
-async def list_trigger_subscriptions(request: Request) -> JSONResponse:
+async def list_trigger_subscriptions(request: Request) -> Response:
     """Read the gateway's subscriptions, optionally scoped to one case."""
+    failure = _require_dashboard_token(request, mutating=False)
+    if failure is not None:
+        return failure
     payload: dict[str, Any] = {}
     case_id = _optional_str(request.query_params.get("case_id"))
     if case_id is not None:

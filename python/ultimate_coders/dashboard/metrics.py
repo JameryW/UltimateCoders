@@ -186,9 +186,11 @@ class MetricsAggregator:
         now = time.monotonic()
 
         duration_ms: float | None = None
-        if "duration_ms" in data:
+        if "duration_ms" in data and not isinstance(data["duration_ms"], bool):
             try:
-                duration_ms = float(data["duration_ms"])
+                parsed_dur = float(data["duration_ms"])
+                if math.isfinite(parsed_dur):
+                    duration_ms = parsed_dur
             except (ValueError, TypeError):
                 pass
 
@@ -242,6 +244,7 @@ class MetricsAggregator:
         now = time.monotonic()
         cutoff = now - WINDOW_SECONDS
         event_rate_cutoff = now - EVENT_RATE_WINDOW
+        sample_to_persist: MetricsSample | None = None
 
         with self._lock:
             # Purge expired events
@@ -351,18 +354,20 @@ class MetricsAggregator:
             # ── Trend sampling ─────────────────────────────
             if now - self._last_trend_ts >= TREND_INTERVAL:
                 self._last_trend_ts = now
-                sample = MetricsSample(
+                sample_to_persist = MetricsSample(
                     timestamp=int(time.time()),
                     events_per_minute=events_per_minute,
                     avg_duration_ms=avg,
                     error_rate=error_rate,
                     cluster_utilization=self._cluster_utilization_pct,
                 )
-                self._trend.append(sample)
-                # Persist to SQLite
-                self._metrics_store.insert(sample)
+                self._trend.append(sample_to_persist)
 
             trend = list(self._trend)
+
+        # Persist to SQLite outside self._lock so I/O cannot block record_event.
+        if sample_to_persist is not None:
+            self._metrics_store.insert(sample_to_persist)
 
         return MetricsSnapshot(task=task, worker=worker, event=event, system=system, trend=trend)
 
@@ -380,73 +385,71 @@ class MetricsAggregator:
         new_alerts: list[Alert] = []
         current_types: set[str] = set()
 
-        # 1. Error spike
-        if cfg.error_spike_alert and snap.event.error_spike:
-            current_types.add("error_spike")
-            if "error_spike" not in self._active_alert_types:
-                a = Alert("error_spike", "Error rate spike detected (>30%)", "critical", now)
-                self._alert_store.insert(a)
-                new_alerts.append(a)
+        with self._lock:
+            # 1. Error spike
+            if cfg.error_spike_alert and snap.event.error_spike:
+                current_types.add("error_spike")
+                if "error_spike" not in self._active_alert_types:
+                    new_alerts.append(
+                        Alert("error_spike", "Error rate spike detected (>30%)", "critical", now)
+                    )
 
-        # 2. Slow tasks
-        if cfg.slow_tasks_alert and snap.task.slow_tasks_count > 0:
-            current_types.add("slow_tasks")
-            if "slow_tasks" not in self._active_alert_types:
-                msg = f"{snap.task.slow_tasks_count} slow task(s) (>5min)"
-                a = Alert("slow_tasks", msg, "warning", now)
-                self._alert_store.insert(a)
-                new_alerts.append(a)
+            # 2. Slow tasks
+            if cfg.slow_tasks_alert and snap.task.slow_tasks_count > 0:
+                current_types.add("slow_tasks")
+                if "slow_tasks" not in self._active_alert_types:
+                    msg = f"{snap.task.slow_tasks_count} slow task(s) (>5min)"
+                    new_alerts.append(Alert("slow_tasks", msg, "warning", now))
 
-        # 3. High latency
-        if cfg.high_latency_alert and snap.task.p95_duration_ms > cfg.high_latency_ms:
-            current_types.add("high_latency")
-            if "high_latency" not in self._active_alert_types:
-                p95 = snap.task.p95_duration_ms
-                threshold = cfg.high_latency_ms
-                msg = f"P95 latency {p95:.0f}ms exceeds {threshold:.0f}ms"
-                a = Alert("high_latency", msg, "warning", now)
-                self._alert_store.insert(a)
-                new_alerts.append(a)
+            # 3. High latency
+            if cfg.high_latency_alert and snap.task.p95_duration_ms > cfg.high_latency_ms:
+                current_types.add("high_latency")
+                if "high_latency" not in self._active_alert_types:
+                    p95 = snap.task.p95_duration_ms
+                    threshold = cfg.high_latency_ms
+                    msg = f"P95 latency {p95:.0f}ms exceeds {threshold:.0f}ms"
+                    new_alerts.append(Alert("high_latency", msg, "warning", now))
 
-        # 4. Rate limiter high
-        used_pct = (1 - snap.system.rate_limiter_remaining_ratio) * 100
-        if used_pct >= cfg.rate_limiter_threshold_pct:
-            current_types.add("rate_limiter_high")
-            if "rate_limiter_high" not in self._active_alert_types:
-                a = Alert("rate_limiter_high", f"Rate limiter {used_pct:.0f}% used", "warning", now)
-                self._alert_store.insert(a)
-                new_alerts.append(a)
+            # 4. Rate limiter high
+            used_pct = (1 - snap.system.rate_limiter_remaining_ratio) * 100
+            if used_pct >= cfg.rate_limiter_threshold_pct:
+                current_types.add("rate_limiter_high")
+                if "rate_limiter_high" not in self._active_alert_types:
+                    new_alerts.append(
+                        Alert(
+                            "rate_limiter_high",
+                            f"Rate limiter {used_pct:.0f}% used",
+                            "warning",
+                            now,
+                        )
+                    )
 
-        # 5. Stale workers (using heartbeat age)
-        if snap.worker.avg_heartbeat_age_seconds > cfg.stale_worker_threshold_seconds:
-            current_types.add("stale_workers")
-            if "stale_workers" not in self._active_alert_types:
-                age = snap.worker.avg_heartbeat_age_seconds
-                threshold = cfg.stale_worker_threshold_seconds
-                msg = f"Avg heartbeat age {age:.1f}s (>{threshold:.0f}s)"
-                a = Alert("stale_workers", msg, "warning", now)
-                self._alert_store.insert(a)
-                new_alerts.append(a)
+            # 5. Stale workers (using heartbeat age)
+            if snap.worker.avg_heartbeat_age_seconds > cfg.stale_worker_threshold_seconds:
+                current_types.add("stale_workers")
+                if "stale_workers" not in self._active_alert_types:
+                    age = snap.worker.avg_heartbeat_age_seconds
+                    threshold = cfg.stale_worker_threshold_seconds
+                    msg = f"Avg heartbeat age {age:.1f}s (>{threshold:.0f}s)"
+                    new_alerts.append(Alert("stale_workers", msg, "warning", now))
 
-        # 6. Recent failures (within sliding window)
-        if snap.task.recent_failed > 0:
-            current_types.add("recent_failures")
-            if (
-                "recent_failures" not in self._active_alert_types
-                and snap.task.recent_failed >= cfg.failure_count_threshold
-            ):
-                msg = f"{snap.task.recent_failed} recent failure(s) (1h window)"
-                a = Alert("recent_failures", msg, "critical", now)
-                self._alert_store.insert(a)
-                new_alerts.append(a)
+            # 6. Recent failures (within sliding window)
+            if snap.task.recent_failed >= cfg.failure_count_threshold:
+                current_types.add("recent_failures")
+                if "recent_failures" not in self._active_alert_types:
+                    msg = f"{snap.task.recent_failed} recent failure(s) (1h window)"
+                    new_alerts.append(Alert("recent_failures", msg, "critical", now))
 
-        # Resolve alerts that are no longer active
-        resolved_types = self._active_alert_types - current_types
-        for t in resolved_types:
-            self._alert_store.resolve(t)
+            # Resolve alerts that are no longer active
+            resolved_types = list(self._active_alert_types - current_types)
+            self._active_alert_types = current_types
 
-        self._active_alert_types = current_types
-        return new_alerts, list(resolved_types)
+        for alert in new_alerts:
+            self._alert_store.insert(alert)
+        for alert_type in resolved_types:
+            self._alert_store.resolve(alert_type)
+
+        return new_alerts, resolved_types
 
     @property
     def alert_store(self) -> AlertStore:
@@ -569,7 +572,9 @@ class AlertStore(_ThreadLocalSQLiteStore):
         self._db_path = db_path or _ALERTS_DB_PATH
         self._init_connections()
         # Ensure parent directory exists
-        os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+        parent = os.path.dirname(self._db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         self._init_db()
 
     def _init_db(self) -> None:
@@ -626,7 +631,16 @@ class AlertStore(_ThreadLocalSQLiteStore):
 
 # ── MetricsStore (SQLite time-series persistence) ──────────
 
-_METRICS_RETENTION_DAYS = int(os.environ.get("UC_METRICS_RETENTION_DAYS", "7"))
+
+def _parse_retention_days() -> int:
+    raw = os.environ.get("UC_METRICS_RETENTION_DAYS", "7")
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 7
+
+
+_METRICS_RETENTION_DAYS = _parse_retention_days()
 
 
 class MetricsStore(_ThreadLocalSQLiteStore):
@@ -642,7 +656,9 @@ class MetricsStore(_ThreadLocalSQLiteStore):
         self._db_path = db_path or _ALERTS_DB_PATH
         self._init_connections()
         self._last_cleanup_ts: float = 0.0
-        os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+        parent = os.path.dirname(self._db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         self._init_db()
 
     def _init_db(self) -> None:
@@ -786,9 +802,11 @@ class PrometheusExporter:
 
         if event_type in ("task_completed", "subtask_completed"):
             self.tasks_completed.inc()
-            if "duration_ms" in data:
+            if "duration_ms" in data and not isinstance(data["duration_ms"], bool):
                 try:
-                    self.task_duration.observe(float(data["duration_ms"]) / 1000)
+                    dur_s = float(data["duration_ms"]) / 1000
+                    if math.isfinite(dur_s) and dur_s >= 0:
+                        self.task_duration.observe(dur_s)
                 except (ValueError, TypeError):
                     pass
         elif event_type in ("task_failed", "subtask_failed"):

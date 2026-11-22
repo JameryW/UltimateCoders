@@ -45,12 +45,13 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import inspect
 import logging
 import os
 from collections.abc import Mapping
 from typing import Any, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from ultimate_coders.attention import (
@@ -76,6 +77,7 @@ OP_CASE_GET = "case.get"
 #: Environment variable carrying the gateway's shared bearer token.
 TOKEN_ENV = "UC_DASHBOARD_TOKEN"
 BEARER_PREFIX = "Bearer "
+AUTH_CHECK_STATE_ATTR = "dashboard_auth_check"
 
 #: Default and maximum page size for the worklist / case list.
 DEFAULT_LIMIT = 100
@@ -125,6 +127,14 @@ def _unavailable_exception_types() -> tuple[type[BaseException], ...]:
     return (GovernanceUnavailable,)
 
 
+def _governance_error_types() -> tuple[type[BaseException], ...]:
+    try:
+        from ultimate_coders.governance_client import GovernanceError
+    except Exception:  # pragma: no cover - optional at import time
+        return ()
+    return (GovernanceError,)
+
+
 def _is_unavailable_error(exc: BaseException) -> bool:
     """True when ``exc`` reports the gateway as unavailable rather than a bug.
 
@@ -137,25 +147,70 @@ def _is_unavailable_error(exc: BaseException) -> bool:
     return bool(types) and isinstance(exc, types)
 
 
+def _is_governance_error(exc: BaseException) -> bool:
+    if type(exc).__name__ == "GovernanceError":
+        return True
+    types = _governance_error_types()
+    return bool(types) and isinstance(exc, types)
+
+
+def _governance_error_response(exc: BaseException) -> JSONResponse:
+    code = str(getattr(exc, "code", "") or "governance_error")
+    detail = str(getattr(exc, "message", "") or str(exc))
+    lowered = code.lower()
+    if any(token in lowered for token in ("forbidden", "permission", "denied", "unauthorized")):
+        status_code = 403
+    elif "not_found" in lowered:
+        status_code = 404
+    elif any(token in lowered for token in ("conflict", "already_", "expired", "spent")):
+        status_code = 409
+    else:
+        status_code = 400
+    return JSONResponse({"error": code, "detail": detail}, status_code=status_code)
+
+
 def _unavailable() -> JSONResponse:
     """The single 503 shape every handler returns for a dead bridge."""
     return JSONResponse({"error": "governance_unavailable"}, status_code=503)
 
 
-def _check_token(request: Request) -> JSONResponse | None:
-    """Gate a mutation on ``UC_DASHBOARD_TOKEN`` when the deployment sets one.
+def _call_host_auth(checker: Any, request: Request, *, mutating: bool) -> Response | None:
+    try:
+        params = inspect.signature(checker).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "mutating" in params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    ):
+        return checker(request, mutating=mutating)
+    return checker(request)
 
-    No token configured means open access (backwards compatible with local
-    deployments). No localhost bypass: unlike ``DASHBOARD_PASSWORD``, this is
-    the gateway's shared bearer token, and a mutation either presents it or the
-    deployment left the gate open on purpose.
+
+def _check_token(request: Request, *, mutating: bool = True) -> Response | None:
+    """Gate endpoints via the host auth check, or ``UC_DASHBOARD_TOKEN`` standalone.
+
+    When mounted inside ``DashboardApp``, ``app.state.dashboard_auth_check``
+    enforces ``DASHBOARD_PASSWORD`` / ``UC_DASHBOARD_TOKEN`` and fail-closed
+    mutations. When mounted standalone, no token configured remains open for
+    backwards-compatible local deployments.
     """
+    checker = getattr(request.app.state, AUTH_CHECK_STATE_ATTR, None)
+    if checker is not None:
+        return _call_host_auth(checker, request, mutating=mutating)
+    if not mutating:
+        return None
     expected = (os.environ.get(TOKEN_ENV) or "").strip()
     if not expected:
         return None
     header = request.headers.get("authorization", "")
-    provided = header[len(BEARER_PREFIX) :].strip() if header.startswith(BEARER_PREFIX) else ""
-    if provided and hmac.compare_digest(provided, expected):
+    provided = (
+        header[len(BEARER_PREFIX) :].strip()
+        if header[: len(BEARER_PREFIX)].lower() == BEARER_PREFIX.lower()
+        else ""
+    )
+    if provided and hmac.compare_digest(
+        provided.encode("utf-8"), expected.encode("utf-8")
+    ):
         return None
     return JSONResponse({"error": "unauthorized"}, status_code=401)
 
@@ -252,6 +307,9 @@ async def list_attention(
     limit: int = DEFAULT_LIMIT,
 ) -> Any:
     """Return the operator worklist in canonical order, plus capacity."""
+    denied = _check_token(request, mutating=False)
+    if denied is not None:
+        return denied
     selected = None
     if kind is not None:
         selected = AttentionKind.from_str_lossy(kind)
@@ -269,6 +327,10 @@ async def list_attention(
         reply = await _call_governance(request, OP_ATTENTION_LIST, payload)
     except _GatewayUnavailableError:
         return _unavailable()
+    except Exception as exc:
+        if _is_governance_error(exc):
+            return _governance_error_response(exc)
+        raise
     items = _project_items(reply.get("items"))
     return {
         "items": [item.to_dict() for item in items],
@@ -285,7 +347,7 @@ async def resolve_attention(attention_id: str, request: Request) -> Any:
     hand instead of through a Pydantic model so a malformed body gets a precise
     ``400`` rather than a schema dump.
     """
-    denied = _check_token(request)
+    denied = _check_token(request, mutating=True)
     if denied is not None:
         return denied
     try:
@@ -320,6 +382,10 @@ async def resolve_attention(attention_id: str, request: Request) -> Any:
         reply = await _call_governance(request, OP_ATTENTION_RESOLVE, payload)
     except _GatewayUnavailableError:
         return _unavailable()
+    except Exception as exc:
+        if _is_governance_error(exc):
+            return _governance_error_response(exc)
+        raise
     raw = reply.get("item")
     if not isinstance(raw, Mapping):
         return JSONResponse({"error": "attention_not_found"}, status_code=404)
@@ -334,10 +400,17 @@ async def resolve_attention(attention_id: str, request: Request) -> Any:
 @router.get("/api/capacity")
 async def get_capacity(request: Request) -> Any:
     """Return the capacity snapshot the scheduler reports."""
+    denied = _check_token(request, mutating=False)
+    if denied is not None:
+        return denied
     try:
         reply = await _call_governance(request, OP_CAPACITY_GET, {})
     except _GatewayUnavailableError:
         return _unavailable()
+    except Exception as exc:
+        if _is_governance_error(exc):
+            return _governance_error_response(exc)
+        raise
     raw = reply.get("capacity")
     capacity = Capacity.from_dict(raw if isinstance(raw, Mapping) else None)
     return {"capacity": capacity.to_dict()}
@@ -353,6 +426,9 @@ async def list_cases(
     limit: int = DEFAULT_LIMIT,
 ) -> Any:
     """Return governance cases for the worklist (read-only projection)."""
+    denied = _check_token(request, mutating=False)
+    if denied is not None:
+        return denied
     selected = None
     if status is not None:
         selected = _case_status(status)
@@ -372,6 +448,10 @@ async def list_cases(
         reply = await _call_governance(request, OP_CASE_LIST, payload)
     except _GatewayUnavailableError:
         return _unavailable()
+    except Exception as exc:
+        if _is_governance_error(exc):
+            return _governance_error_response(exc)
+        raise
     raw = reply.get("cases")
     cases = (
         [dict(case) for case in raw if isinstance(case, Mapping)]
@@ -388,10 +468,17 @@ async def list_cases(
 @router.get("/api/cases/{case_id}")
 async def get_case(case_id: str, request: Request) -> Any:
     """Return one governance case (read-only projection)."""
+    denied = _check_token(request, mutating=False)
+    if denied is not None:
+        return denied
     try:
         reply = await _call_governance(request, OP_CASE_GET, {"case_id": case_id})
     except _GatewayUnavailableError:
         return _unavailable()
+    except Exception as exc:
+        if _is_governance_error(exc):
+            return _governance_error_response(exc)
+        raise
     raw = reply.get("case")
     if not isinstance(raw, Mapping):
         return JSONResponse({"error": "case_not_found"}, status_code=404)
