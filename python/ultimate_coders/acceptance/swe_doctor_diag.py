@@ -230,13 +230,14 @@ def _parse_frames(text: str) -> list[_Frame]:
             in_error_block = True
             continue
 
+        local_match = _LOCAL_RE.match(raw_line)
+        if local_match is not None:
+            current.locals.append(
+                (local_match.group("name"), local_match.group("value").rstrip())
+            )
+            continue
+
         if in_error_block:
-            local_match = _LOCAL_RE.match(raw_line)
-            if local_match is not None:
-                current.locals.append(
-                    (local_match.group("name"), local_match.group("value").rstrip())
-                )
-                continue
             if raw_line.strip() == "":
                 in_error_block = False
             # ``E    + where ...`` continuations and indented reprs are
@@ -244,7 +245,7 @@ def _parse_frames(text: str) -> list[_Frame]:
             continue
 
         stripped = raw_line.strip()
-        if stripped and raw_line[:1].isspace() and not stripped.startswith("E"):
+        if stripped and raw_line[:1].isspace() and _ERROR_RE.match(raw_line) is None:
             current.code_lines.append(stripped)
 
     return frames

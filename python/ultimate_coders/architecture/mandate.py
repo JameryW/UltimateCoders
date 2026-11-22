@@ -27,9 +27,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 __all__ = [
@@ -71,6 +73,7 @@ def canonical_json(payload: Any) -> str:
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
         default=str,
     )
 
@@ -98,17 +101,22 @@ def _dedupe(values: Any) -> tuple[str, ...]:
     return tuple(out)
 
 
-def _metadata(value: Any) -> dict[str, Any]:
+def _metadata(value: Any) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
-        return dict(value)
-    return {}
+        return MappingProxyType(dict(value))
+    return MappingProxyType({})
 
 
 def _canonical_float(value: Any) -> float:
+    if isinstance(value, bool):
+        raise MandateError(f"expires_at must be a number, got {value!r}")
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         raise MandateError(f"expires_at must be a number, got {value!r}") from None
+    if not math.isfinite(parsed):
+        raise MandateError(f"expires_at must be a finite number, got {value!r}")
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -123,28 +131,39 @@ class Mandate:
     budget_tokens: int = DEFAULT_BUDGET_TOKENS
     expires_at: float = 0.0
     parent_id: str | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "mandate_id", str(self.mandate_id or "").strip())
         object.__setattr__(self, "subject", str(self.subject or "").strip())
         object.__setattr__(self, "capabilities", _dedupe(self.capabilities))
         object.__setattr__(self, "resources", _dedupe(self.resources))
+        if isinstance(self.max_attempts, bool):
+            raise MandateError(f"max_attempts must be an integer, got {self.max_attempts!r}")
         try:
             max_attempts = int(self.max_attempts)
         except (TypeError, ValueError):
             raise MandateError(
                 f"max_attempts must be an integer, got {self.max_attempts!r}"
             ) from None
+        if max_attempts <= 0:
+            raise MandateError(f"max_attempts must be positive, got {max_attempts}")
+        if isinstance(self.budget_tokens, bool):
+            raise MandateError(f"budget_tokens must be an integer, got {self.budget_tokens!r}")
         try:
             budget_tokens = int(self.budget_tokens)
         except (TypeError, ValueError):
             raise MandateError(
                 f"budget_tokens must be an integer, got {self.budget_tokens!r}"
             ) from None
+        if budget_tokens <= 0:
+            raise MandateError(f"budget_tokens must be positive, got {budget_tokens}")
+        expires_at = _canonical_float(self.expires_at)
+        if expires_at < 0.0:
+            raise MandateError("expires_at must be zero or a positive timestamp")
         object.__setattr__(self, "max_attempts", max_attempts)
         object.__setattr__(self, "budget_tokens", budget_tokens)
-        object.__setattr__(self, "expires_at", _canonical_float(self.expires_at))
+        object.__setattr__(self, "expires_at", expires_at)
         parent_id = self.parent_id
         normalized_parent = None if parent_id is None else str(parent_id).strip()
         object.__setattr__(self, "parent_id", normalized_parent or None)
@@ -189,7 +208,10 @@ class Mandate:
 
         if self.expires_at <= 0.0:
             return False
-        return float(now) >= self.expires_at
+        current = float(now)
+        if not math.isfinite(current):
+            return True
+        return current >= self.expires_at
 
     def allows(self, capability: str, resource: str | None = None) -> bool:
         """Whether the envelope grants ``capability`` (on ``resource`` when given).

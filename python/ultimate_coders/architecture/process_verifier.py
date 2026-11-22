@@ -32,7 +32,12 @@ CLEAN_SUMMARY = "No process-level acceptance risk detected."
 _MAX_CAUSAL_LINES = 8
 _MAX_DETAIL_CHARS = 160
 
-_ASSERTION_MARKERS = ("assert", "self.assert", "expect(", "pytest.raises")
+_ASSERTION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bassert\b"),
+    re.compile(r"\bself\.assert\w*"),
+    re.compile(r"\bexpect\s*\("),
+    re.compile(r"\bpytest\.raises\b"),
+)
 _TEST_BYPASS_MARKERS = (
     "pytest.skip(",
     "pytest.mark.skip",
@@ -130,7 +135,7 @@ def verify_process(
 ) -> ProcessReviewReport:
     """Review the line-level delta between two snapshots of a repository.
 
-    ``test_paths`` is unioned with the automatic rule (name contains
+    ``test_paths`` is unioned with the automatic rule (name starts with
     ``test_``, ends with ``_test.py`` or lives under a ``tests/`` directory)
     so callers can flag unusual test locations without losing the default.
     Findings are ordered errors-first, then by path/line; at most
@@ -190,9 +195,13 @@ def _is_test_path(path: str, explicit: set[str]) -> bool:
     if normalised in explicit or path in explicit:
         return True
     name = normalised.rsplit("/", 1)[-1]
-    if "test_" in name or name.endswith("_test.py"):
+    if name.startswith("test_") or name.endswith("_test.py"):
         return True
-    return normalised.startswith(("tests/", "test/")) or "/tests/" in normalised
+    return (
+        normalised.startswith(("tests/", "test/"))
+        or "/tests/" in normalised
+        or "/test/" in normalised
+    )
 
 
 def _line_changes(
@@ -232,8 +241,31 @@ def _review_path(
     return findings
 
 
+def _strip_comment(text: str) -> str:
+    in_quote: str | None = None
+    escaped = False
+    for index, ch in enumerate(text):
+        if escaped:
+            escaped = False
+            continue
+        if in_quote is not None:
+            if ch == "\\":
+                escaped = True
+            elif ch == in_quote:
+                in_quote = None
+            continue
+        if ch in ("'", '"'):
+            in_quote = ch
+        elif ch == "#":
+            return text[:index]
+    return text
+
+
 def _has_assertion(text: str) -> bool:
-    return any(marker in text for marker in _ASSERTION_MARKERS)
+    code = _strip_comment(text).strip()
+    if not code:
+        return False
+    return any(pattern.search(code) for pattern in _ASSERTION_PATTERNS)
 
 
 def _shorten(text: str) -> str:
@@ -282,7 +314,10 @@ def _test_bypass_findings(
     if is_test:
         flagged_lines: set[int] = set()
         for line, text in added:
-            marker = next((item for item in _TEST_BYPASS_MARKERS if item in text), None)
+            code = _strip_comment(text).strip()
+            if not code:
+                continue
+            marker = next((item for item in _TEST_BYPASS_MARKERS if item in code), None)
             if marker is not None:
                 findings.append(
                     ProcessFinding(
@@ -295,7 +330,8 @@ def _test_bypass_findings(
                 )
                 flagged_lines.add(line)
         for line, text in added:
-            if line in flagged_lines or text.strip() not in ("return", "return None"):
+            code = _strip_comment(text).strip()
+            if line in flagged_lines or code not in ("return", "return None"):
                 continue
             if _return_bypasses_assertion(after_lines, line):
                 findings.append(
@@ -310,10 +346,11 @@ def _test_bypass_findings(
         return findings
 
     for line, text in added:
-        guard = next((token for token in _ENV_GUARD_TOKENS if token in text), None)
-        if guard is None or not _looks_like_branch(text):
+        code = _strip_comment(text)
+        guard = next((token for token in _ENV_GUARD_TOKENS if token in code), None)
+        if guard is None or not _looks_like_branch(code):
             continue
-        exit_statement = _guard_exit(after_lines, line, text)
+        exit_statement = _guard_exit(after_lines, line, code)
         if exit_statement is None:
             continue
         findings.append(
@@ -333,7 +370,7 @@ def _return_bypasses_assertion(after_lines: list[str], line: int) -> bool:
 
     for index in range(line, min(len(after_lines), line + 10)):
         text = after_lines[index]
-        stripped = text.strip()
+        stripped = _strip_comment(text).strip()
         if not stripped:
             continue
         if _TEST_FUNCTION_RE.match(text) or stripped.startswith(("def ", "class ")):
@@ -351,14 +388,14 @@ def _looks_like_branch(text: str) -> bool:
 def _guard_exit(after_lines: list[str], line: int, text: str) -> str | None:
     """Return the early-exit statement guarded by ``text``, if any."""
 
-    stripped = text.strip()
+    stripped = _strip_comment(text).strip()
     if ":" in stripped:
-        tail = stripped.split(":", 1)[1].split("#", 1)[0].strip()
+        tail = stripped.split(":", 1)[1].strip()
         if tail in _EARLY_EXITS:
             return tail
     index = line  # zero-based index of the line *after* ``line`` (1-based).
     while index < len(after_lines):
-        candidate = after_lines[index].split("#", 1)[0].strip()
+        candidate = _strip_comment(after_lines[index]).strip()
         if candidate:
             return candidate if candidate in _EARLY_EXITS else None
         index += 1
@@ -377,33 +414,42 @@ def _exception_swallow_findings(
         text = after_lines[line - 1]
         if not _SWALLOW_RE.match(text):
             continue
-        body = _next_non_blank(after_lines, line)
+        body = _next_code_line(after_lines, line)
         if body is None:
             continue
-        body_index, body_text = body
-        if body_text.strip() not in _SWALLOW_BODY:
+        body_index, body_code = body
+        if body_code not in _SWALLOW_BODY:
             continue
         indent = len(text) - len(text.lstrip())
         body_indent = len(after_lines[body_index]) - len(after_lines[body_index].lstrip())
         if body_indent <= indent:
             continue
+        following = _next_code_line(after_lines, body_index + 1)
+        if following is not None:
+            follow_index, _ = following
+            follow_indent = len(after_lines[follow_index]) - len(
+                after_lines[follow_index].lstrip()
+            )
+            if follow_indent > indent:
+                continue
         findings.append(
             ProcessFinding(
                 kind="exception_swallow",
                 severity="warning",
                 path=path,
                 line=line,
-                detail=f"added exception handler whose body is only {body_text.strip()!r}",
+                detail=f"added exception handler whose body is only {body_code!r}",
             )
         )
     return findings
 
 
-def _next_non_blank(lines: list[str], line: int) -> tuple[int, str] | None:
-    index = line
+def _next_code_line(lines: list[str], start_index: int) -> tuple[int, str] | None:
+    index = start_index
     while index < len(lines):
-        if lines[index].strip():
-            return index, lines[index]
+        code = _strip_comment(lines[index]).strip()
+        if code:
+            return index, code
         index += 1
     return None
 
@@ -472,7 +518,10 @@ def _function_body(
 
 def _body_has_check(body: list[tuple[int, str]]) -> bool:
     for _, text in body:
-        if _has_assertion(text) or _HELPER_CALL_RE.search(text):
+        code = _strip_comment(text).strip()
+        if not code:
+            continue
+        if _has_assertion(code) or _HELPER_CALL_RE.search(code):
             return True
     return False
 

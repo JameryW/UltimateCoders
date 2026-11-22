@@ -50,6 +50,8 @@ def _env_float(name: str, default: float) -> float:
         value = float(os.environ.get(name, str(default)))
     except (TypeError, ValueError):
         return default
+    if not math.isfinite(value):
+        return default
     return value
 
 
@@ -184,12 +186,12 @@ class ReadLedger:
     """Bounded per-attempt map of reads already added to the conversation."""
 
     max_entries: int = 128
-    reads: dict[tuple[str, int, int], VerifiedRead] = field(default_factory=dict)
+    reads: dict[tuple[str, int], VerifiedRead] = field(default_factory=dict)
     blocked: int = 0
-    _order: list[tuple[str, int, int]] = field(default_factory=list)
+    _order: list[tuple[str, int]] = field(default_factory=list)
 
     def record(self, path: str, offset: int, content: str, *, turn: int) -> VerifiedRead:
-        key = (path, offset, len(content))
+        key = (path, offset)
         entry = VerifiedRead(
             path=path,
             offset=offset,
@@ -198,18 +200,19 @@ class ReadLedger:
             turn=turn,
         )
         self.reads[key] = entry
-        if key not in self._order:
-            self._order.append(key)
+        if key in self._order:
+            self._order.remove(key)
+        self._order.append(key)
         while len(self._order) > self.max_entries:
             oldest = self._order.pop(0)
             self.reads.pop(oldest, None)
         return entry
 
     def duplicate(self, path: str, offset: int, content: str) -> bool:
-        for entry in self.reads.values():
-            if entry.matches(path, offset, content):
-                self.blocked += 1
-                return True
+        entry = self.reads.get((path, offset))
+        if entry is not None and entry.matches(path, offset, content):
+            self.blocked += 1
+            return True
         return False
 
     def describe(self, *, limit: int = 20) -> list[dict[str, Any]]:
@@ -296,8 +299,13 @@ class ACPFolder:
         keep_tail: int | None = None,
         max_checkpoints: int = MAX_CHECKPOINTS,
     ) -> None:
-        self.budget_tokens = max(512, budget_tokens or context_budget_tokens())
-        self.threshold = max(0.5, min(0.95, threshold or folding_threshold()))
+        raw_budget = budget_tokens if budget_tokens is not None else context_budget_tokens()
+        self.budget_tokens = max(512, int(raw_budget))
+        raw_threshold = threshold if threshold is not None else folding_threshold()
+        threshold_val = float(raw_threshold)
+        if not math.isfinite(threshold_val):
+            threshold_val = DEFAULT_FOLD_THRESHOLD
+        self.threshold = max(0.5, min(0.95, threshold_val))
         self.keep_tail = max(
             MIN_KEEP_TAIL_MESSAGES,
             keep_tail if keep_tail is not None else keep_tail_messages(),
@@ -330,6 +338,10 @@ class ACPFolder:
         turn: int = 0,
     ) -> FoldResult:
         snapshot = list(messages)
+        if not snapshot:
+            return FoldResult(messages=snapshot)
+        if snapshot[-1].get("role") == "assistant" and _tools_in(snapshot[-1]):
+            return FoldResult(messages=snapshot)
         head_len = self._head_length(snapshot)
         tail_start = max(head_len, len(snapshot) - self.keep_tail)
         tail_start = self._safe_tail_start(snapshot, tail_start)
@@ -340,6 +352,8 @@ class ACPFolder:
         middle = snapshot[head_len:tail_start]
         tail = snapshot[tail_start:]
         if not middle:
+            return FoldResult(messages=snapshot)
+        if tail and tail[0].get("role") == "tool":
             return FoldResult(messages=snapshot)
 
         before_tokens = estimate_messages_tokens(snapshot)
@@ -384,8 +398,7 @@ class ACPFolder:
         self, messages: Sequence[Mapping[str, Any]], tail_start: int
     ) -> int:
         # A kept tail may begin with a tool result only if its assistant call is
-        # included too.  Move back exactly one message in that case; do not keep
-        # walking through a whole tool chain into the protected head.
+        # included too.  Move back to the preceding assistant message in that case.
         if 0 <= tail_start < len(messages) and messages[tail_start].get("role") == "tool":
             tail_start -= 1
             while tail_start > 0 and messages[tail_start].get("role") == "tool":
@@ -402,7 +415,25 @@ class ACPFolder:
     ) -> str:
         tools: list[str] = []
         writes: list[str] = []
+        prior_folds = 0
         for message in middle:
+            if message.get("role") == "system":
+                content = _message_text(message)
+                if content.startswith("[ACP fold]"):
+                    prior_folds += 1
+                    for line in content.splitlines():
+                        if line.startswith("Tools used:"):
+                            items = line.split(":", 1)[1].strip().rstrip(".")
+                            if items and items != "none recorded":
+                                tools.extend(
+                                    part.strip() for part in items.split(",") if part.strip()
+                                )
+                        elif line.startswith("Files written:"):
+                            items = line.split(":", 1)[1].strip().rstrip(".")
+                            if items:
+                                writes.extend(
+                                    part.strip() for part in items.split(",") if part.strip()
+                                )
             for name in _tools_in(message):
                 tools.append(name)
             if message.get("role") == "tool":
@@ -418,9 +449,10 @@ class ACPFolder:
                         tools.append("list_dir")
         unique_tools = sorted(set(tools))
         unique_writes = sorted(set(writes))
+        fold_note = f" (includes {prior_folds} prior fold(s))" if prior_folds else ""
         lines = [
             "[ACP fold] Earlier conversation was compacted to keep the context budget.",
-            f"Turn {turn} checkpoint; folded {len(middle)} messages.",
+            f"Turn {turn} checkpoint; folded {len(middle)} messages{fold_note}.",
             f"Tools used: {', '.join(unique_tools) if unique_tools else 'none recorded'}.",
         ]
         if unique_writes:

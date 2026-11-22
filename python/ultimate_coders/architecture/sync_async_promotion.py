@@ -22,7 +22,9 @@ drive time through the injected ``now`` callable.  The feature flag
 from __future__ import annotations
 
 import logging
+import math
 import os
+import threading
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -89,9 +91,12 @@ class PendingDecision:
         status = str(self.status or "").strip()
         if status not in _STATUSES:
             raise ValueError(f"unknown pending decision status {status!r}")
+        created = float(self.created_at)
+        if not math.isfinite(created):
+            raise ValueError("created_at must be finite")
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "payload", dict(self.payload or {}))
-        object.__setattr__(self, "created_at", float(self.created_at))
+        object.__setattr__(self, "created_at", created)
         object.__setattr__(self, "reason", str(self.reason or ""))
 
     def to_dict(self) -> dict[str, Any]:
@@ -131,15 +136,20 @@ class SyncAsyncPromoter:
         now: Callable[[], float] = time.time,
         max_pending: int = DEFAULT_MAX_PENDING,
     ) -> None:
+        if isinstance(threshold_seconds, bool):
+            raise ValueError("threshold_seconds must be a finite non-negative number")
         threshold = float(threshold_seconds)
-        if threshold < 0.0:
+        if not math.isfinite(threshold) or threshold < 0.0:
             raise ValueError("threshold_seconds must be non-negative")
+        if isinstance(max_pending, bool):
+            raise ValueError("max_pending must be positive")
         limit = int(max_pending)
         if limit <= 0:
             raise ValueError("max_pending must be positive")
         self._threshold = threshold
         self._now = now
         self._max_pending = limit
+        self._lock = threading.RLock()
         self._decisions: dict[str, PendingDecision] = {}
         self._notices: deque[ConvergenceNotice] = deque(maxlen=limit)
         self._callbacks: list[Callable[[ConvergenceNotice], None]] = []
@@ -153,7 +163,8 @@ class SyncAsyncPromoter:
         return self._max_pending
 
     def __len__(self) -> int:
-        return len(self._decisions)
+        with self._lock:
+            return len(self._decisions)
 
     def submit(
         self, decision_id: str, payload: Mapping[str, Any] | None = None
@@ -163,23 +174,63 @@ class SyncAsyncPromoter:
         key = str(decision_id or "").strip()
         if not key:
             raise ValueError("decision_id must be non-empty")
-        existing = self._decisions.get(key)
-        if existing is not None:
-            return existing
-        self._make_room()
-        decision = PendingDecision(
-            decision_id=key,
-            payload=dict(payload or {}),
-            created_at=float(self._now()),
-        )
-        self._decisions[key] = decision
+        pending_notices: list[
+            tuple[ConvergenceNotice, tuple[Callable[[ConvergenceNotice], None], ...]]
+        ] = []
+        with self._lock:
+            existing = self._decisions.get(key)
+            if existing is not None:
+                return existing
+            self._make_room(pending_notices)
+            decision = PendingDecision(
+                decision_id=key,
+                payload=dict(payload or {}),
+                created_at=float(self._now()),
+            )
+            self._decisions[key] = decision
+        self._dispatch_notices(pending_notices)
         return decision
 
     def pending(self) -> tuple[PendingDecision, ...]:
         """Pending decisions, oldest first (ties broken by decision id)."""
 
-        return tuple(
-            sorted(
+        with self._lock:
+            return tuple(
+                sorted(
+                    (
+                        decision
+                        for decision in self._decisions.values()
+                        if decision.status == PENDING
+                    ),
+                    key=lambda decision: (decision.created_at, decision.decision_id),
+                )
+            )
+
+    def check(self, decision_id: str) -> PendingDecision:
+        """Promote a due decision, otherwise return its current state."""
+
+        pending_notices: list[
+            tuple[ConvergenceNotice, tuple[Callable[[ConvergenceNotice], None], ...]]
+        ] = []
+        with self._lock:
+            decision = self._require(decision_id)
+            if decision.status != PENDING:
+                return decision
+            if self._elapsed(decision) < self._threshold:
+                return decision
+            updated = self._settle(decision, PROMOTED, _PROMOTED_REASON, pending_notices)
+        self._dispatch_notices(pending_notices)
+        return updated
+
+    def promote_due(self) -> tuple[PendingDecision, ...]:
+        """Promote every pending decision whose sync budget is spent."""
+
+        promoted: list[PendingDecision] = []
+        pending_notices: list[
+            tuple[ConvergenceNotice, tuple[Callable[[ConvergenceNotice], None], ...]]
+        ] = []
+        with self._lock:
+            candidates = sorted(
                 (
                     decision
                     for decision in self._decisions.values()
@@ -187,28 +238,16 @@ class SyncAsyncPromoter:
                 ),
                 key=lambda decision: (decision.created_at, decision.decision_id),
             )
-        )
-
-    def check(self, decision_id: str) -> PendingDecision:
-        """Promote a due decision, otherwise return its current state."""
-
-        decision = self._require(decision_id)
-        if decision.status != PENDING:
-            return decision
-        if self._elapsed(decision) < self._threshold:
-            return decision
-        return self._settle(decision, PROMOTED, _PROMOTED_REASON)
-
-    def promote_due(self) -> tuple[PendingDecision, ...]:
-        """Promote every pending decision whose sync budget is spent."""
-
-        promoted: list[PendingDecision] = []
-        for decision in self.pending():
-            if self._elapsed(decision) < self._threshold:
-                continue
-            promoted.append(
-                self._settle(decision, PROMOTED, _PROMOTED_REASON)
-            )
+            for decision in candidates:
+                current = self._decisions.get(decision.decision_id)
+                if current is None or current.status != PENDING:
+                    continue
+                if self._elapsed(current) < self._threshold:
+                    continue
+                promoted.append(
+                    self._settle(current, PROMOTED, _PROMOTED_REASON, pending_notices)
+                )
+        self._dispatch_notices(pending_notices)
         return tuple(promoted)
 
     def converge(
@@ -216,24 +255,33 @@ class SyncAsyncPromoter:
     ) -> PendingDecision:
         """Record the async outcome of a pending or promoted decision."""
 
-        decision = self._require(decision_id)
-        if decision.status in _TERMINAL:
-            return decision
-        status = CONVERGED if accepted else REJECTED
-        return self._settle(decision, status, str(reason or ""))
+        pending_notices: list[
+            tuple[ConvergenceNotice, tuple[Callable[[ConvergenceNotice], None], ...]]
+        ] = []
+        with self._lock:
+            decision = self._require(decision_id)
+            if decision.status in _TERMINAL:
+                return decision
+            status = CONVERGED if accepted else REJECTED
+            updated = self._settle(decision, status, str(reason or ""), pending_notices)
+        self._dispatch_notices(pending_notices)
+        return updated
 
     def notices(self) -> tuple[ConvergenceNotice, ...]:
         """Drain the retained convergence notices (oldest first)."""
 
-        drained = tuple(self._notices)
-        self._notices.clear()
-        return drained
+        with self._lock:
+            drained = tuple(self._notices)
+            self._notices.clear()
+            return drained
 
     def subscribe(self, callback: Callable[[ConvergenceNotice], None]) -> None:
         """Register a notice callback (best-effort; failures are logged)."""
 
-        if callable(callback) and callback not in self._callbacks:
-            self._callbacks.append(callback)
+        if callable(callback):
+            with self._lock:
+                if callback not in self._callbacks:
+                    self._callbacks.append(callback)
 
     def _require(self, decision_id: str) -> PendingDecision:
         key = str(decision_id or "").strip()
@@ -246,52 +294,68 @@ class SyncAsyncPromoter:
         return round(max(0.0, float(self._now()) - decision.created_at), 6)
 
     def _settle(
-        self, decision: PendingDecision, status: str, reason: str
+        self,
+        decision: PendingDecision,
+        status: str,
+        reason: str,
+        pending_notices: list[
+            tuple[ConvergenceNotice, tuple[Callable[[ConvergenceNotice], None], ...]]
+        ],
     ) -> PendingDecision:
         updated = replace(decision, status=status, reason=reason)
         self._decisions[updated.decision_id] = updated
-        self._record_notice(
-            ConvergenceNotice(
-                decision_id=updated.decision_id,
-                status=status,
-                elapsed_seconds=self._elapsed(updated),
-                reason=reason,
-            )
+        notice = ConvergenceNotice(
+            decision_id=updated.decision_id,
+            status=status,
+            elapsed_seconds=self._elapsed(updated),
+            reason=reason,
         )
+        self._notices.append(notice)
+        pending_notices.append((notice, tuple(self._callbacks)))
         return updated
 
-    def _record_notice(self, notice: ConvergenceNotice) -> None:
-        self._notices.append(notice)
-        for callback in tuple(self._callbacks):
-            try:
-                callback(notice)
-            except Exception:  # best-effort: a subscriber must never break promotion
-                _LOGGER.debug("sync-async notice subscriber failed", exc_info=True)
+    def _dispatch_notices(
+        self,
+        pending_notices: list[
+            tuple[ConvergenceNotice, tuple[Callable[[ConvergenceNotice], None], ...]]
+        ],
+    ) -> None:
+        for notice, callbacks in pending_notices:
+            for callback in callbacks:
+                try:
+                    callback(notice)
+                except Exception:  # best-effort: a subscriber must never break promotion
+                    _LOGGER.debug("sync-async notice subscriber failed", exc_info=True)
 
-    def _make_room(self) -> None:
+    def _make_room(
+        self,
+        pending_notices: list[
+            tuple[ConvergenceNotice, tuple[Callable[[ConvergenceNotice], None], ...]]
+        ],
+    ) -> None:
         if len(self._decisions) < self._max_pending:
             return
-        settled = sorted(
+        terminal = sorted(
             (
                 decision
                 for decision in self._decisions.values()
-                if decision.status != PENDING
+                if decision.status in _TERMINAL
             ),
             key=lambda decision: (decision.created_at, decision.decision_id),
         )
-        if settled:
-            self._decisions.pop(settled[0].decision_id, None)
+        if terminal:
+            self._decisions.pop(terminal[0].decision_id, None)
             return
         oldest = min(
             self._decisions.values(),
             key=lambda decision: (decision.created_at, decision.decision_id),
         )
         self._decisions.pop(oldest.decision_id, None)
-        self._record_notice(
-            ConvergenceNotice(
-                decision_id=oldest.decision_id,
-                status=REJECTED,
-                elapsed_seconds=self._elapsed(oldest),
-                reason=_CAPACITY_REASON,
-            )
+        notice = ConvergenceNotice(
+            decision_id=oldest.decision_id,
+            status=REJECTED,
+            elapsed_seconds=self._elapsed(oldest),
+            reason=_CAPACITY_REASON,
         )
+        self._notices.append(notice)
+        pending_notices.append((notice, tuple(self._callbacks)))

@@ -13,13 +13,20 @@ file and rotates to ``trajectories-<n>.jsonl`` when a write would exceed
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX
+    fcntl = None  # type: ignore[assignment]
 
 _EXPORT_ENABLED_ENV = "UC_TRAJECTORY_EXPORT"
 _EXPORT_DIR_ENV = "UC_TRAJECTORY_EXPORT_DIR"
@@ -27,14 +34,28 @@ _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 _ACTIVE_FILENAME = "trajectories.jsonl"
 _ROTATED_TEMPLATE = "trajectories-{index}.jsonl"
+_LOCK_FILENAME = ".trajectories.lock"
 _OUTCOMES = ("failed", "rescued", "succeeded")
 _PAIRABLE_OUTCOMES = ("failed", "rescued")
 _REDACTED = "[redacted]"
 _SECRET_PATTERNS = (
-    re.compile(r"sk-[A-Za-z0-9]{8,}"),
-    re.compile(r"Bearer\s+\S+"),
+    re.compile(r"sk-[A-Za-z0-9_-]{8,}"),
+    re.compile(r"Bearer\s+\S+", re.IGNORECASE),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{16,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
 )
-_SENSITIVE_METADATA_KEY_PARTS = ("api_key", "token", "secret")
+_SENSITIVE_METADATA_KEY_PARTS = (
+    "api_key",
+    "apikey",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "authorization",
+    "credential",
+    "private_key",
+)
 
 
 @dataclass(frozen=True)
@@ -46,10 +67,18 @@ class TITOToken:
     loss_mask: int
 
     def __post_init__(self) -> None:
-        if self.loss_mask not in (0, 1):
+        if isinstance(self.loss_mask, bool) or self.loss_mask not in (0, 1):
             raise ValueError("loss_mask must be 0 or 1")
+        if isinstance(self.token_id, bool):
+            raise ValueError("token_id must be an integer")
+        if isinstance(self.logprob, bool):
+            raise ValueError("logprob must be a finite float")
+        logprob = float(self.logprob)
+        if not math.isfinite(logprob):
+            raise ValueError("logprob must be finite")
         object.__setattr__(self, "token_id", int(self.token_id))
-        object.__setattr__(self, "logprob", float(self.logprob))
+        object.__setattr__(self, "logprob", logprob)
+        object.__setattr__(self, "loss_mask", int(self.loss_mask))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,13 +100,24 @@ class TrajectoryTurn:
     def __post_init__(self) -> None:
         if not isinstance(self.role, str) or not self.role.strip():
             raise ValueError("role must be a non-empty string")
-        token_ids = tuple(int(item) for item in self.token_ids)
-        logprobs = tuple(float(item) for item in self.logprobs)
-        loss_mask = tuple(int(item) for item in self.loss_mask)
+        raw_ids = tuple(self.token_ids)
+        raw_logprobs = tuple(self.logprobs)
+        raw_masks = tuple(self.loss_mask)
+        if any(isinstance(item, bool) for item in raw_ids):
+            raise ValueError("token_ids entries must be integers")
+        if any(isinstance(item, bool) for item in raw_logprobs):
+            raise ValueError("logprobs entries must be finite floats")
+        if any(isinstance(item, bool) for item in raw_masks):
+            raise ValueError("loss_mask entries must be 0 or 1")
+        token_ids = tuple(int(item) for item in raw_ids)
+        logprobs = tuple(float(item) for item in raw_logprobs)
+        loss_mask = tuple(int(item) for item in raw_masks)
         if not len(token_ids) == len(logprobs) == len(loss_mask):
             raise ValueError(
                 "token_ids, logprobs and loss_mask must have the same length"
             )
+        if any(not math.isfinite(val) for val in logprobs):
+            raise ValueError("logprobs entries must be finite")
         if any(mask not in (0, 1) for mask in loss_mask):
             raise ValueError("loss_mask entries must be 0 or 1")
         object.__setattr__(self, "token_ids", token_ids)
@@ -108,7 +148,7 @@ class TrajectoryRecord:
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, str) or not isinstance(self.subtask_id, str):
             raise TypeError("task_id and subtask_id must be strings")
-        if int(self.attempt) < 0:
+        if isinstance(self.attempt, bool) or int(self.attempt) < 0:
             raise ValueError("attempt must be non-negative")
         if self.outcome not in _OUTCOMES:
             raise ValueError(f"outcome must be one of {_OUTCOMES}")
@@ -145,13 +185,14 @@ class TrajectoryExporter:
         *,
         fsync: bool = False,
     ) -> None:
-        if int(max_file_bytes) <= 0:
+        if isinstance(max_file_bytes, bool) or int(max_file_bytes) <= 0:
             raise ValueError("max_file_bytes must be positive")
         self.directory = Path(directory)
         self.enabled = trajectory_export_enabled() if enabled is None else bool(enabled)
         self.max_file_bytes = int(max_file_bytes)
         self._now = now
         self.fsync = bool(fsync)
+        self._lock = threading.Lock()
 
     @property
     def active_path(self) -> Path:
@@ -164,16 +205,33 @@ class TrajectoryExporter:
             return None
         if not record.created_at:
             record = replace(record, created_at=self._timestamp())
-        line = json.dumps(
-            _sanitize_record(record),
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ) + "\n"
-        self.directory.mkdir(parents=True, exist_ok=True)
+        line = (
+            json.dumps(
+                _sanitize_record(record),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            + "\n"
+        )
+        line_bytes = len(line.encode("utf-8"))
+        with self._lock:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            if fcntl is not None:
+                lock_path = self.directory / _LOCK_FILENAME
+                with lock_path.open("a", encoding="utf-8") as lock_handle:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+                    try:
+                        return self._append_locked(line, line_bytes)
+                    finally:
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            return self._append_locked(line, line_bytes)
+
+    def _append_locked(self, line: str, line_bytes: int) -> Path:
         path = self.active_path
         if path.exists():
             size = path.stat().st_size
-            if size > 0 and size + len(line.encode("utf-8")) > self.max_file_bytes:
+            if size > 0 and size + line_bytes > self.max_file_bytes:
                 path = self._rotate()
         with path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(line)

@@ -56,7 +56,7 @@ _MAX_SEMANTIC_MUTATIONS = 40
 _NUMBER_RE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])")
 _MODAL_RE = re.compile(r"\b(must|should|always|never|required|shall)\b", re.IGNORECASE)
 _BOOL_RE = re.compile(r"\b(True|False)\b")
-_COMPARISON_RE = re.compile(r"(==|!=|<=|>=|<|>)")
+_COMPARISON_RE = re.compile(r"(?<![-<>!])(==|!=|<=|>=|<|>)(?![=<>])")
 _QUOTED_RE = re.compile(r"(\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*')")
 
 _MODAL_REPLACEMENTS = {
@@ -242,6 +242,9 @@ def _section_revert_mutations(path: str, before_text: str, after_text: str) -> l
             + before_lines[before_start:before_end]
             + after_lines[after_end:]
         )
+        rendered_reverted = _render_lines(reverted)
+        if rendered_reverted and after_text.endswith("\n"):
+            rendered_reverted += "\n"
         mutations.append(
             Mutation(
                 kind=MutationKind.SECTION_REVERT,
@@ -251,7 +254,7 @@ def _section_revert_mutations(path: str, before_text: str, after_text: str) -> l
                     f"to its pre-patch form"
                 ),
                 before=after_text,
-                after=_render_lines(reverted) + ("\n" if after_text.endswith("\n") else ""),
+                after=rendered_reverted,
                 line=after_start + 1,
             )
         )
@@ -363,6 +366,17 @@ def _semantic_mutations(path: str, after_text: str) -> list[Mutation]:
     return mutations
 
 
+def _replace_utf8_span(
+    line_text: str, start_byte: int, end_byte: int, replacement: str
+) -> str | None:
+    encoded = line_text.encode("utf-8")
+    if start_byte < 0 or end_byte > len(encoded) or start_byte >= end_byte:
+        return None
+    prefix = encoded[:start_byte].decode("utf-8", errors="strict")
+    suffix = encoded[end_byte:].decode("utf-8", errors="strict")
+    return prefix + replacement + suffix
+
+
 def _constant_mutation(path: str, text: str, node: ast.Constant) -> Mutation | None:
     value = node.value
     if isinstance(value, bool):
@@ -382,10 +396,27 @@ def _constant_mutation(path: str, text: str, node: ast.Constant) -> Mutation | N
     else:
         return None
     line = getattr(node, "lineno", 0)
-    source_line = _source_line(text, line)
-    if source_line is None or token not in source_line:
+    end_line = getattr(node, "end_lineno", line)
+    col = getattr(node, "col_offset", None)
+    end_col = getattr(node, "end_col_offset", None)
+    if line != end_line or col is None or end_col is None:
         return None
-    new_line = source_line.replace(token, replacement, 1)
+    source_line = _source_line(text, line)
+    if source_line is None:
+        return None
+    encoded = source_line.encode("utf-8")
+    if col < 0 or end_col > len(encoded) or col >= end_col:
+        return None
+    raw_slice = encoded[col:end_col].decode("utf-8", errors="replace")
+    if isinstance(value, str) and raw_slice.startswith('"') and raw_slice.endswith('"'):
+        # Preserve double-quote style when mutating a double-quoted string literal
+        replacement = '"' + (value + "_mutant").replace("\\", "\\\\").replace('"', '\\"') + '"'
+    try:
+        new_line = _replace_utf8_span(source_line, col, end_col, replacement)
+    except UnicodeDecodeError:
+        return None
+    if new_line is None or new_line == source_line:
+        return None
     return Mutation(
         kind=MutationKind.SEMANTIC_MUTATION,
         path=path,
@@ -397,33 +428,53 @@ def _constant_mutation(path: str, text: str, node: ast.Constant) -> Mutation | N
 
 
 def _operator_mutation(path: str, text: str, node: ast.Compare) -> Mutation | None:
-    if not node.ops:
-        return None
-    operator = _COMPARISON_REPLACEMENTS.get(_comparison_symbol(node.ops[0]))
-    if operator is None:
-        return None
-    line = getattr(node, "lineno", 0)
-    source_line = _source_line(text, line)
-    if source_line is None:
+    if not node.ops or not node.comparators:
         return None
     original = _comparison_symbol(node.ops[0])
-    if original not in source_line:
+    operator = _COMPARISON_REPLACEMENTS.get(original)
+    if operator is None:
         return None
-    new_line = source_line.replace(original, operator, 1)
+    left_end_line = getattr(node.left, "end_lineno", 0)
+    right_line = getattr(node.comparators[0], "lineno", 0)
+    left_end_col = getattr(node.left, "end_col_offset", None)
+    right_col = getattr(node.comparators[0], "col_offset", None)
+    if (
+        left_end_line <= 0
+        or left_end_line != right_line
+        or left_end_col is None
+        or right_col is None
+    ):
+        return None
+    source_line = _source_line(text, left_end_line)
+    if source_line is None:
+        return None
+    encoded = source_line.encode("utf-8")
+    if left_end_col < 0 or right_col > len(encoded) or left_end_col >= right_col:
+        return None
+    gap = encoded[left_end_col:right_col].decode("utf-8", errors="replace")
+    pos = gap.find(original)
+    if pos < 0:
+        return None
+    op_start = left_end_col + len(gap[:pos].encode("utf-8"))
+    op_end = op_start + len(original.encode("utf-8"))
+    try:
+        new_line = _replace_utf8_span(source_line, op_start, op_end, operator)
+    except UnicodeDecodeError:
+        return None
+    if new_line is None or new_line == source_line:
+        return None
     return Mutation(
         kind=MutationKind.SEMANTIC_MUTATION,
         path=path,
-        description=f"mutate comparison at line {line}: {original} -> {operator}",
+        description=f"mutate comparison at line {left_end_line}: {original} -> {operator}",
         before=text,
-        after=_replace_line(text, line, new_line),
-        line=line,
+        after=_replace_line(text, left_end_line, new_line),
+        line=left_end_line,
     )
 
 
 def _bool_op_mutation(path: str, text: str, node: ast.BoolOp) -> Mutation | None:
-    line = getattr(node, "lineno", 0)
-    source_line = _source_line(text, line)
-    if source_line is None:
+    if len(node.values) < 2:
         return None
     if isinstance(node.op, ast.And):
         original, replacement = "and", "or"
@@ -431,16 +482,42 @@ def _bool_op_mutation(path: str, text: str, node: ast.BoolOp) -> Mutation | None
         original, replacement = "or", "and"
     else:
         return None
-    if original not in source_line:
+    left_end_line = getattr(node.values[0], "end_lineno", 0)
+    right_line = getattr(node.values[1], "lineno", 0)
+    left_end_col = getattr(node.values[0], "end_col_offset", None)
+    right_col = getattr(node.values[1], "col_offset", None)
+    if (
+        left_end_line <= 0
+        or left_end_line != right_line
+        or left_end_col is None
+        or right_col is None
+    ):
         return None
-    new_line = source_line.replace(original, replacement, 1)
+    source_line = _source_line(text, left_end_line)
+    if source_line is None:
+        return None
+    encoded = source_line.encode("utf-8")
+    if left_end_col < 0 or right_col > len(encoded) or left_end_col >= right_col:
+        return None
+    gap = encoded[left_end_col:right_col].decode("utf-8", errors="replace")
+    match = re.search(rf"\b{original}\b", gap)
+    if match is None:
+        return None
+    op_start = left_end_col + len(gap[: match.start()].encode("utf-8"))
+    op_end = op_start + len(original.encode("utf-8"))
+    try:
+        new_line = _replace_utf8_span(source_line, op_start, op_end, replacement)
+    except UnicodeDecodeError:
+        return None
+    if new_line is None or new_line == source_line:
+        return None
     return Mutation(
         kind=MutationKind.SEMANTIC_MUTATION,
         path=path,
-        description=f"mutate boolean operator at line {line}: {original} -> {replacement}",
+        description=f"mutate boolean operator at line {left_end_line}: {original} -> {replacement}",
         before=text,
-        after=_replace_line(text, line, new_line),
-        line=line,
+        after=_replace_line(text, left_end_line, new_line),
+        line=left_end_line,
     )
 
 

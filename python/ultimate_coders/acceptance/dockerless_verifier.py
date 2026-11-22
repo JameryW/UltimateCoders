@@ -209,6 +209,14 @@ class DockerlessAgenticVerifier:
 
     def _check_lock_release(self, patch: str) -> tuple[bool, list[str]]:
         added = _added_lines(patch)
+        lock_acquire_re = re.compile(
+            r"(?P<target>[A-Za-z_][A-Za-z0-9_.]*(?:_?lock|mutex|semaphore))\s*\.acquire\s*\(",
+            re.IGNORECASE,
+        )
+        lock_release_re = re.compile(
+            r"(?P<target>[A-Za-z_][A-Za-z0-9_.]*(?:_?lock|mutex|semaphore))\s*\.release\s*\(",
+            re.IGNORECASE,
+        )
         lock_lines = [
             line
             for line in added
@@ -219,15 +227,31 @@ class DockerlessAgenticVerifier:
         ]
         if not acquires:
             return True, []
+
+        named_acquires: set[str] = set()
+        for line in acquires:
+            for m in lock_acquire_re.finditer(line):
+                named_acquires.add(m.group("target"))
+        named_releases: set[str] = set()
+        for line in added:
+            for m in lock_release_re.finditer(line):
+                named_releases.add(m.group("target"))
+        if named_acquires:
+            missing_locks = sorted(named_acquires - named_releases)
+            if not missing_locks:
+                return True, []
+            return False, [
+                "lock release path missing: "
+                f"{', '.join(missing_locks)} acquired without matching release()"
+            ]
+
         releases = [line for line in added if re.search(r"\.release\s*\(|\brelease\s*\(", line)]
         context_managed = [
             line
             for line in lock_lines
             if re.search(r"\bwith\b", line) and not re.search(r"\bacquire\s*\(", line)
         ]
-        if releases:
-            return True, []
-        if context_managed:
+        if releases or context_managed:
             return True, []
         return False, [
             "lock release path missing: a lock is acquired but no release() or context manager "
@@ -245,7 +269,8 @@ class DockerlessAgenticVerifier:
         expectations = _boundary_expectations(repo_index, call_chain)
         if not expectations:
             return True, []
-        covered_text = patch
+        added_lines = _added_lines(patch)
+        covered_text = "\n".join(added_lines) if added_lines else ""
         missing = [
             f"boundary condition unaddressed: {expectation}"
             for expectation in expectations
@@ -301,26 +326,35 @@ def _split_params(text: str) -> tuple[str, ...]:
         elif char in ")]}":
             depth = max(0, depth - 1)
         if char == "," and depth == 0:
-            parts.append("".join(current).strip())
+            item = "".join(current).strip()
+            if item:
+                parts.append(item)
             current = []
             continue
         current.append(char)
     tail = "".join(current).strip()
     if tail:
         parts.append(tail)
-    params: list[str] = []
-    for part in parts:
-        name = part.split("=", 1)[0].strip()
-        if name:
-            params.append(name)
-    return tuple(params)
+    return tuple(parts)
+
+
+def _param_name(param: str) -> str:
+    head = str(param).split("=", 1)[0]
+    head = head.split(":", 1)[0].strip()
+    return head.lstrip("*")
+
+
+def _is_optional_param(param: str) -> bool:
+    cleaned = str(param).strip()
+    return cleaned in {"*", "/"} or cleaned.startswith("*") or "=" in cleaned
 
 
 def _required_params(params: Sequence[str]) -> int:
     count = 0
     for param in params:
         cleaned = str(param).strip()
-        if cleaned in {"self", "cls", "/"}:
+        name = _param_name(cleaned)
+        if name in {"self", "cls", "/"} or cleaned in {"/", "*"}:
             continue
         if cleaned.startswith("*") or "=" in cleaned:
             continue
@@ -329,14 +363,25 @@ def _required_params(params: Sequence[str]) -> int:
 
 
 def _compatible_signatures(old: Sequence[str], new: Sequence[str]) -> bool:
-    old_params = [param for param in old if str(param).strip() not in {"self", "cls"}]
-    new_params = [param for param in new if str(param).strip() not in {"self", "cls"}]
-    if len(old_params) != len(new_params):
+    old_params = [
+        p
+        for p in old
+        if _param_name(str(p)) not in {"self", "cls"} and str(p).strip() not in {"/", "*"}
+    ]
+    new_params = [
+        p
+        for p in new
+        if _param_name(str(p)) not in {"self", "cls"} and str(p).strip() not in {"/", "*"}
+    ]
+    if len(new_params) < len(old_params):
         return False
     for old_param, new_param in zip(old_params, new_params):
-        old_name = str(old_param).split("=", 1)[0].strip().lstrip("*")
-        new_name = str(new_param).split("=", 1)[0].strip().lstrip("*")
-        if old_name != new_name:
+        if _param_name(str(old_param)) != _param_name(str(new_param)):
+            return False
+        if _is_optional_param(str(old_param)) and not _is_optional_param(str(new_param)):
+            return False
+    for extra in new_params[len(old_params) :]:
+        if not _is_optional_param(str(extra)):
             return False
     return True
 

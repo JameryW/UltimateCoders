@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -55,6 +56,7 @@ STATUS_HARD_FAIL = "hard_fail"
 STATUS_INCONCLUSIVE_INFRA = "inconclusive_infra"
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSY = frozenset({"0", "false", "no", "off", ""})
 
 PROTECTED_TEST_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(^|/)tests?/"),
@@ -65,7 +67,8 @@ PROTECTED_TEST_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(^|/)tox\.ini$"),
 )
 
-_PATCH_PATH_RE = re.compile(r"^(?:\+\+\+|---)\s+(?:[ab]/)?(\S+)")
+_PATCH_PATH_RE = re.compile(r"^(?:\+\+\+|---)\s+(.+?)\s*$")
+_RENAME_PATH_RE = re.compile(r"^(?:rename|copy)\s+(?:from|to)\s+(.+?)\s*$")
 
 
 def exec_critic_enabled() -> bool:
@@ -201,8 +204,8 @@ class TestGenNode:
         test_patch = str(_field(candidate, "test_patch") or "").strip()
         test_command = str(_field(candidate, "test_command") or "").strip()
         contract_value = _field(candidate, "test_contract", _field(candidate, "contract"))
-        hidden = bool(_field(candidate, "hidden", True))
-        frozen = bool(_field(candidate, "frozen", True))
+        hidden = _coerce_bool(_field(candidate, "hidden", True), default=False)
+        frozen = _coerce_bool(_field(candidate, "frozen", True), default=False)
 
         if not test_patch:
             return self._failed(task_id, STATUS_HARD_FAIL, "test_patch must be non-empty")
@@ -314,25 +317,28 @@ class SourceRepairNode:
                 feedback_chars=0,
                 reason="source_patch must be non-empty",
             )
-        protected = _protected_paths_in_patch(patch)
+        prev_text = str(previous_patch or "").strip()
+        protected = _protected_paths_in_patch(patch) | _protected_paths_in_patch(prev_text)
         if protected:
             raise ProtectedTestError(
                 "source repair may not modify protected test files: " + ", ".join(sorted(protected))
             )
         if test_patch:
-            # Test content is not applicable, and a repair patch must never
-            # embed it; tolerate callers that pass it purely for contrast.
-            embedded = _protected_paths_in_patch(str(test_patch))
-            if embedded and _protected_paths_in_patch(patch) & embedded:
+            # Any file touched by test_patch is protected even if its path
+            # does not match the default filename patterns.
+            test_paths = _paths_in_patch(str(test_patch))
+            repair_paths = _paths_in_patch(patch) | _paths_in_patch(prev_text)
+            overlap = repair_paths & test_paths
+            if overlap:
                 raise ProtectedTestError(
                     "source repair duplicates a protected test patch: "
-                    + ", ".join(sorted(embedded))
+                    + ", ".join(sorted(overlap))
                 )
         feedback_text = str(feedback or "")
         feedback_chars = min(len(feedback_text), self.max_feedback_chars)
         bounded_feedback = feedback_text[: self.max_feedback_chars]
         del bounded_feedback
-        cumulative = _cumulative_patch(previous_patch, patch)
+        cumulative = _cumulative_patch(prev_text, patch)
         return RepairResult(
             status=STATUS_OK,
             source_patch=cumulative,
@@ -350,6 +356,25 @@ def _field(source: Any, name: str, default: Any = None) -> Any:
     if isinstance(source, Mapping):
         return source.get(name, default)
     return getattr(source, name, default)
+
+
+def _coerce_bool(value: Any, *, default: bool | None = None) -> bool | None:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value in (0, 1):
+            return bool(value)
+        return default
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _TRUTHY:
+            return True
+        if lowered in _FALSY:
+            return False
+        return default
+    return default
 
 
 def _parse_contract(value: Any) -> dict[str, Any]:
@@ -394,8 +419,9 @@ def _clean_fail_evidence(base_tree: Any, candidate: Mapping[str, Any]) -> bool |
         value = _field(source, "base_clean_fail", None)
         if value is None:
             value = _field(source, "clean_fail", None)
-        if value is not None:
-            return bool(value)
+        coerced = _coerce_bool(value, default=None)
+        if coerced is not None:
+            return coerced
     return None
 
 
@@ -405,7 +431,9 @@ def _interpret_runner_result(result: Any) -> bool | None:
     if isinstance(result, Mapping):
         for key in ("base_clean_fail", "clean_fail", "failed"):
             if key in result:
-                return bool(result[key])
+                coerced = _coerce_bool(result[key], default=None)
+                if coerced is not None:
+                    return coerced
         status = str(result.get("status", "")).strip().lower()
         if status in {"inconclusive_infra", "infra", "error"}:
             return None
@@ -422,20 +450,56 @@ def _cumulative_patch(previous_patch: str, source_patch: str) -> str:
     return previous.rstrip() + "\n" + current.lstrip()
 
 
-def _protected_paths_in_patch(patch: str) -> set[str]:
+def _parse_diff_path(raw: str, *, strip_ab: bool = True) -> str | None:
+    token = raw.split("\t", 1)[0].strip()
+    if not token:
+        return None
+    if len(token) >= 2 and token[0] == '"' and token[-1] == '"':
+        token = token[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    else:
+        token = token.split(" ", 1)[0]
+    if not token or token == "/dev/null":
+        return None
+    normalized = token.replace("\\", "/")
+    if strip_ab and normalized.startswith(("a/", "b/")):
+        normalized = normalized[2:]
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized or None
+
+
+def _paths_in_patch(patch: str) -> set[str]:
     paths: set[str] = set()
     for raw_line in str(patch or "").splitlines():
-        match = _PATCH_PATH_RE.match(raw_line.strip())
+        stripped = raw_line.strip()
+        if stripped.startswith("diff --git "):
+            rest = stripped[len("diff --git ") :].strip()
+            try:
+                parts = shlex.split(rest)
+            except ValueError:
+                parts = rest.split()
+            for part in parts[:2]:
+                parsed = _parse_diff_path(part, strip_ab=True)
+                if parsed:
+                    paths.add(parsed)
+            continue
+        rename_match = _RENAME_PATH_RE.match(stripped)
+        if rename_match:
+            parsed = _parse_diff_path(rename_match.group(1), strip_ab=False)
+            if parsed:
+                paths.add(parsed)
+            continue
+        match = _PATCH_PATH_RE.match(stripped)
         if not match:
             continue
-        path = match.group(1).strip()
-        if path == "/dev/null":
-            continue
-        if path.startswith("b/") or path.startswith("a/"):
-            path = path[2:]
-        if _is_protected_test_path(path):
-            paths.add(path)
+        parsed = _parse_diff_path(match.group(1), strip_ab=True)
+        if parsed:
+            paths.add(parsed)
     return paths
+
+
+def _protected_paths_in_patch(patch: str) -> set[str]:
+    return {path for path in _paths_in_patch(patch) if _is_protected_test_path(path)}
 
 
 def _is_protected_test_path(path: str) -> bool:

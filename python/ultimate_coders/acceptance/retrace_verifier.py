@@ -135,7 +135,8 @@ _STOPWORDS = frozenset(
     }
 )
 _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_PATCH_PATH_RE = re.compile(r"^(?:\+\+\+|---)\s+(?:[ab]/)?(\S+)")
+_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_']*")
+_PATCH_PATH_RE = re.compile(r"^(?:\+\+\+|---)\s+(.+?)\s*$")
 _MAX_CLAUSE_CHARS = 240
 _MATCH_THRESHOLD = 0.6
 
@@ -546,12 +547,17 @@ def _patch_files(patch: str) -> set[str]:
         match = _PATCH_PATH_RE.match(raw_line.strip())
         if not match:
             continue
-        path = match.group(1)
-        if path == "/dev/null":
+        raw = match.group(1).split("\t", 1)[0].strip()
+        if len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
+            path = raw[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        else:
+            path = raw.split(" ", 1)[0]
+        if not path or path == "/dev/null":
             continue
         if path.startswith(("a/", "b/")):
             path = path[2:]
-        files.add(path)
+        if path:
+            files.add(path)
     return files
 
 
@@ -569,29 +575,50 @@ def _patch_summary(patch: str) -> str:
 # ── claim matching helpers ──────────────────────────────────────
 
 
+def _coerce_clauses(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if isinstance(raw, str):
+        return tuple(_split_text(raw))
+    if isinstance(raw, (bytes, bytearray)):
+        return tuple(_split_text(raw.decode("utf-8", errors="replace")))
+    if isinstance(raw, Iterable):
+        return tuple(str(item) for item in raw)
+    return (str(raw),)
+
+
 def _coerce_rationale(value: Any) -> TraceRationale:
+    if value is None:
+        return TraceRationale()
     if isinstance(value, TraceRationale):
         return value
     if isinstance(value, Mapping):
-        raw = value.get("clauses", value.get("claims", ()))
-        return TraceRationale(clauses=tuple(str(item) for item in raw))
-    if isinstance(value, str):
-        return TraceRationale(clauses=tuple(_split_text(value)))
-    return TraceRationale(clauses=tuple(str(item) for item in value))
+        raw = value.get("clauses")
+        if raw is None:
+            raw = value.get("claims", ())
+        return TraceRationale(clauses=_coerce_clauses(raw))
+    return TraceRationale(clauses=_coerce_clauses(value))
 
 
 def _coerce_reconstruction(value: Any) -> BlindReconstruction:
+    if value is None:
+        return BlindReconstruction()
     if isinstance(value, BlindReconstruction):
         return value
     if isinstance(value, Mapping):
-        raw = value.get("claims", value.get("clauses", ()))
+        raw = value.get("claims")
+        if raw is None:
+            raw = value.get("clauses", ())
+        used_issue = value.get("used_issue_text", False)
+        if isinstance(used_issue, str):
+            used_issue_bool = used_issue.strip().lower() in _TRUTHY
+        else:
+            used_issue_bool = bool(used_issue)
         return BlindReconstruction(
-            claims=tuple(str(item) for item in raw),
-            used_issue_text=bool(value.get("used_issue_text", False)),
+            claims=_coerce_clauses(raw),
+            used_issue_text=used_issue_bool,
         )
-    if isinstance(value, str):
-        return BlindReconstruction(claims=tuple(_split_text(value)))
-    return BlindReconstruction(claims=tuple(str(item) for item in value))
+    return BlindReconstruction(claims=_coerce_clauses(value))
 
 
 def _coerce_evidence(value: Any) -> list[str]:
@@ -599,10 +626,14 @@ def _coerce_evidence(value: Any) -> list[str]:
         return []
     if isinstance(value, str):
         return _claims_from_patch(value)
+    if isinstance(value, (bytes, bytearray)):
+        return _claims_from_patch(value.decode("utf-8", errors="replace"))
     if isinstance(value, Mapping):
-        raw = value.get("claims", value.get("clauses", ()))
-        return [str(item) for item in raw]
-    if isinstance(value, Sequence):
+        raw = value.get("claims")
+        if raw is None:
+            raw = value.get("clauses", ())
+        return list(_coerce_clauses(raw))
+    if isinstance(value, Iterable):
         return [str(item) for item in value]
     return []
 
@@ -643,8 +674,8 @@ def _claim_similarity(left: str, right: str) -> float:
 
 
 def _negation_mismatch(left: str, right: str) -> bool:
-    left_words = {word.lower() for word in _IDENTIFIER_RE.findall(left)}
-    right_words = {word.lower() for word in _IDENTIFIER_RE.findall(right)}
+    left_words = {word.lower() for word in _WORD_RE.findall(left)}
+    right_words = {word.lower() for word in _WORD_RE.findall(right)}
     return bool(left_words & _NEGATIONS) != bool(right_words & _NEGATIONS)
 
 

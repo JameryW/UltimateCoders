@@ -127,6 +127,8 @@ def _metadata_dict(value: Any) -> dict[str, Any]:
 
 
 def _as_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -134,10 +136,15 @@ def _as_int(value: Any, default: int = 0) -> int:
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return default
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return default
+    if not math.isfinite(result):
+        return default
+    return result
 
 
 def _running_average(previous: float, sample: float, count: int) -> float:
@@ -600,10 +607,21 @@ class ComplementaryAdapterRouter:
         }
         text = str(failure_text or "").strip()
         kind = str(failure_kind or "").strip()
-        if not text:
-            text = kind
+
+        def _failure_similarity(failure_kinds: Sequence[str] | str) -> float:
+            if kind and text:
+                combined = f"{kind} {text}" if kind.lower() not in text.lower() else text
+                return max(
+                    keyword_similarity(failure_kinds, text),
+                    keyword_similarity(failure_kinds, kind),
+                    keyword_similarity(failure_kinds, combined),
+                )
+            return keyword_similarity(failure_kinds, text or kind)
+
         complementary = tuple(
-            name for name in names if is_complementary(profiles[name], text)
+            name
+            for name in names
+            if _failure_similarity(profiles[name].failure_kinds) < INCOMPATIBLE_JACCARD
         )
         filtered = bool(complementary) and len(complementary) < len(names)
         pool = complementary if complementary else names
@@ -627,7 +645,7 @@ class ComplementaryAdapterRouter:
         for name in pool:
             profile = profiles[name]
             win_rate = profile.win_rate
-            complement = 1.0 - keyword_similarity(profile.failure_kinds, text)
+            complement = 1.0 - _failure_similarity(profile.failure_kinds)
             score = (
                 TFIDF_WEIGHT * normalized[name]
                 + WIN_RATE_WEIGHT * win_rate
