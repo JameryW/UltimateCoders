@@ -255,6 +255,14 @@ struct BoundaryAdmission {
     challenge: Option<uc_types::BoundaryChallengeDecision>,
 }
 
+fn normalize_boundary_path(raw: &str) -> String {
+    let mut normalized = raw.trim().replace('\\', "/");
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    normalized
+}
+
 fn boundary_admission(
     subtask: &uc_types::Subtask,
     modified_files: &[uc_types::FileChange],
@@ -275,19 +283,21 @@ fn boundary_admission(
     // edit instead of rejecting it as "not covered by the contract".
     let mut entries = BTreeMap::new();
     for path in &subtask.file_constraints {
-        if path.trim().is_empty() {
+        let normalized = normalize_boundary_path(path);
+        if normalized.is_empty() {
             admission.error = Some("Boundary contract invalid: empty path".to_string());
             return admission;
         }
-        entries.insert(path.clone(), uc_types::BoundaryRole::Editable);
+        entries.insert(normalized, uc_types::BoundaryRole::Editable);
     }
     for file in modified_files {
-        if file.file_path.trim().is_empty() {
+        let normalized = normalize_boundary_path(&file.file_path);
+        if normalized.is_empty() {
             admission.error = Some("Boundary contract invalid: empty path".to_string());
             return admission;
         }
         entries
-            .entry(file.file_path.clone())
+            .entry(normalized)
             .or_insert(uc_types::BoundaryRole::InspectOnly);
     }
 
@@ -297,7 +307,9 @@ fn boundary_admission(
         entries,
     );
     if let Some(request) = challenge {
-        let outcome = contract.challenge(request);
+        let mut normalized_request = request.clone();
+        normalized_request.target_file = normalize_boundary_path(&request.target_file);
+        let outcome = contract.challenge(&normalized_request);
         admission.challenge = Some(outcome.decision);
         contract = outcome.contract;
     }
@@ -305,9 +317,10 @@ fn boundary_admission(
     let violations = modified_files
         .iter()
         .filter_map(|file| {
-            let role = contract.role_for(&file.file_path);
+            let normalized = normalize_boundary_path(&file.file_path);
+            let role = contract.role_for(&normalized);
             (role != uc_types::BoundaryRole::Editable)
-                .then(|| format!("{}:{}", file.file_path, role.as_str()))
+                .then(|| format!("{}:{}", normalized, role.as_str()))
         })
         .collect::<Vec<_>>();
     if !violations.is_empty() {
@@ -1641,7 +1654,12 @@ impl TaskStore {
                     ));
                 }
                 existing.status = st.status;
-                existing.result = st.result.clone();
+                if st.result.is_some() {
+                    existing.result = st.result.clone();
+                }
+                if st.agent_config_json.is_some() {
+                    existing.agent_config_json = st.agent_config_json.clone();
+                }
                 if !st.description.is_empty() {
                     existing.description = st.description;
                 }
@@ -2038,10 +2056,80 @@ impl TaskStore {
                         }
                     }
                 }
-                // Existing subtask — update all provided fields
-                if let Some(status) = subtask_status_from_str(&subtask_update.status) {
+                // Existing subtask — update non-status metadata before gate checks so
+                // full updates carrying file_constraints are evaluated accurately.
+                if let Some(worker) = &subtask_update.assigned_worker {
+                    subtask.assigned_worker = Some(uc_types::WorkerId(worker.clone()));
+                }
+                if let Some(desc) = &subtask_update.description {
+                    subtask.description = desc.clone();
+                }
+                if let Some(deps) = &subtask_update.depends_on {
+                    subtask.depends_on = deps.iter().map(|d| uc_types::TaskId(d.clone())).collect();
+                }
+                if !update.partial {
+                    subtask_update.execution.apply_to(subtask);
+                }
+
+                let parsed_status = subtask_status_from_str(&subtask_update.status);
+                let modified_files = subtask_update
+                    .execution
+                    .modified_files
+                    .clone()
+                    .unwrap_or_default();
+                let test_contract = subtask_update.execution.test_contract.clone();
+                let should_check_gates = subtask_update.result.is_some()
+                    || matches!(parsed_status, Some(uc_types::SubtaskStatus::Completed))
+                    || !modified_files.is_empty()
+                    || subtask_update.execution.boundary_challenge.is_some()
+                    || test_contract.is_some();
+
+                let (boundary_error, boundary_decision, cumulative_error) = if should_check_gates {
+                    let BoundaryAdmission {
+                        error: boundary_error,
+                        challenge: boundary_decision,
+                    } = boundary_admission(
+                        subtask,
+                        &modified_files,
+                        subtask_update.execution.boundary_challenge.as_ref(),
+                    );
+                    let cumulative_error = match (&cumulative_snapshot, &test_contract) {
+                        (Some(snapshot), Some(contract)) => {
+                            uc_engine::dag::cumulative_regression_error(
+                                snapshot,
+                                &subtask.id.0,
+                                contract,
+                            )
+                        }
+                        _ => None,
+                    };
+                    (boundary_error, boundary_decision, cumulative_error)
+                } else {
+                    (None, None, None)
+                };
+
+                let gate_rejected = boundary_error.is_some() || cumulative_error.is_some();
+                let effective_status = match parsed_status.as_ref() {
+                    Some(uc_types::SubtaskStatus::Completed) if gate_rejected => {
+                        Some(uc_types::SubtaskStatus::Failed)
+                    }
+                    other => other.cloned(),
+                };
+
+                if let Some(status) = effective_status {
                     let prev_status = subtask.status.clone();
-                    let verb = graph_verb_for(&status, &prev_status);
+                    let verb = if gate_rejected
+                        && status == uc_types::SubtaskStatus::Failed
+                        && status != prev_status
+                    {
+                        Some(PendingGraphVerb::Fail(if boundary_error.is_some() {
+                            "boundary_contract_rejected"
+                        } else {
+                            "cumulative_regression_rejected"
+                        }))
+                    } else {
+                        graph_verb_for(&status, &prev_status)
+                    };
                     let attempt = subtask.dispatch_retry_count;
                     // Clear assigned-at tracking on any transition out of Assigned
                     // (we bypass update_subtask_status here, which would otherwise
@@ -2093,84 +2181,59 @@ impl TaskStore {
                         "Unknown subtask status in NATS update, ignoring"
                     );
                 }
-                if let Some(worker) = &subtask_update.assigned_worker {
-                    subtask.assigned_worker = Some(uc_types::WorkerId(worker.clone()));
-                }
-                if let Some(desc) = &subtask_update.description {
-                    subtask.description = desc.clone();
-                }
-                if let Some(deps) = &subtask_update.depends_on {
-                    subtask.depends_on = deps.iter().map(|d| uc_types::TaskId(d.clone())).collect();
-                }
-                if !update.partial {
-                    subtask_update.execution.apply_to(subtask);
-                }
-                if let Some(result_str) = &subtask_update.result {
+
+                if subtask_update.result.is_some() || gate_rejected || boundary_decision.is_some() {
+                    let result_str = subtask_update.result.clone().unwrap_or_default();
                     // ponytail: derive success from parsed subtask status — the raw
                     // string is CamelCase ("Failed"), so a naive `!= "failed"` check
                     // would always be true and record failed subtasks as successful.
-                    let success = !matches!(
-                        subtask_status_from_str(&subtask_update.status),
-                        Some(uc_types::SubtaskStatus::Failed)
-                    );
-                    let modified_files = subtask_update
-                        .execution
-                        .modified_files
-                        .clone()
-                        .unwrap_or_default();
-                    let BoundaryAdmission {
-                        error: boundary_error,
-                        challenge: boundary_decision,
-                    } = boundary_admission(
-                        subtask,
-                        &modified_files,
-                        subtask_update.execution.boundary_challenge.as_ref(),
-                    );
-                    let test_contract = subtask_update.execution.test_contract.clone();
-                    let cumulative_error = match (&cumulative_snapshot, &test_contract) {
-                        (Some(snapshot), Some(contract)) => {
-                            uc_engine::dag::cumulative_regression_error(
-                                snapshot,
-                                &subtask.id.0,
-                                contract,
-                            )
-                        }
-                        _ => None,
-                    };
+                    let success = !matches!(parsed_status, Some(uc_types::SubtaskStatus::Failed));
                     let combined_errors = [boundary_error.as_deref(), cumulative_error.as_deref()]
                         .into_iter()
                         .flatten()
                         .collect::<Vec<_>>();
                     let mut summary = if combined_errors.is_empty() {
                         result_str.clone()
+                    } else if result_str.is_empty() {
+                        format!("[{}]", combined_errors.join("; "))
                     } else {
                         format!("{result_str} [{}]", combined_errors.join("; "))
                     };
                     if let Some(decision) = &boundary_decision {
-                        summary.push_str(&format!(
-                            " [boundary challenge {}: {}]",
+                        let tag = format!(
+                            "[boundary challenge {}: {}]",
                             if decision.approved {
                                 "approved"
                             } else {
                                 "rejected"
                             },
                             decision.reason
-                        ));
+                        );
+                        if summary.is_empty() {
+                            summary = tag;
+                        } else {
+                            summary.push(' ');
+                            summary.push_str(&tag);
+                        }
                     }
+                    let final_success = success && !gate_rejected;
                     subtask.result = Some(uc_types::SubtaskResult {
                         subtask_id: subtask.id.clone(),
                         worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
                         modified_files,
-                        summary,
-                        success: success && boundary_error.is_none() && cumulative_error.is_none(),
+                        summary: summary.clone(),
+                        success: final_success,
                         completed_at: chrono::Utc::now(),
-                        result: Some(result_str.clone()),
+                        result: if gate_rejected {
+                            Some(summary)
+                        } else {
+                            subtask_update.result.clone()
+                        },
                         // T15 (#660): the reporter's usage is what makes the
                         // terminal event's cost/tokens non-NULL. Absent stays
                         // absent — nothing is synthesized here.
                         usage: subtask_update.usage.clone(),
-
-                        review: None,
+                        review: subtask_update.review.clone(),
                         test_contract,
                         boundary_challenge: boundary_decision,
                     });
@@ -2186,9 +2249,118 @@ impl TaskStore {
                     new_subtask.expected_output.clear();
                     new_subtask.steps.clear();
                 }
-                if let Some(verb) =
-                    graph_verb_for(&new_subtask.status, &uc_types::SubtaskStatus::Pending)
+                let modified_files = subtask_update
+                    .execution
+                    .modified_files
+                    .clone()
+                    .unwrap_or_default();
+                let test_contract = subtask_update.execution.test_contract.clone();
+                let should_check_gates = subtask_update.result.is_some()
+                    || new_subtask.status == uc_types::SubtaskStatus::Completed
+                    || !modified_files.is_empty()
+                    || subtask_update.execution.boundary_challenge.is_some()
+                    || test_contract.is_some();
+                let (boundary_error, boundary_decision, cumulative_error) = if should_check_gates {
+                    let BoundaryAdmission {
+                        error: boundary_error,
+                        challenge: boundary_decision,
+                    } = boundary_admission(
+                        &new_subtask,
+                        &modified_files,
+                        subtask_update.execution.boundary_challenge.as_ref(),
+                    );
+                    let cumulative_error = match (&cumulative_snapshot, &test_contract) {
+                        (Some(snapshot), Some(contract)) => {
+                            let mut with_new = snapshot.clone();
+                            with_new.subtasks.push(new_subtask.clone());
+                            uc_engine::dag::cumulative_regression_error(
+                                &with_new,
+                                &new_subtask.id.0,
+                                contract,
+                            )
+                        }
+                        _ => None,
+                    };
+                    (boundary_error, boundary_decision, cumulative_error)
+                } else {
+                    (None, None, None)
+                };
+                let gate_rejected = boundary_error.is_some() || cumulative_error.is_some();
+                if gate_rejected && new_subtask.status == uc_types::SubtaskStatus::Completed {
+                    new_subtask.status = uc_types::SubtaskStatus::Failed;
+                }
+                if gate_rejected || boundary_decision.is_some() {
+                    let combined_errors = [boundary_error.as_deref(), cumulative_error.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    let base_str = subtask_update.result.clone().unwrap_or_default();
+                    let mut summary = if combined_errors.is_empty() {
+                        base_str.clone()
+                    } else if base_str.is_empty() {
+                        format!("[{}]", combined_errors.join("; "))
+                    } else {
+                        format!("{base_str} [{}]", combined_errors.join("; "))
+                    };
+                    if let Some(decision) = &boundary_decision {
+                        let tag = format!(
+                            "[boundary challenge {}: {}]",
+                            if decision.approved {
+                                "approved"
+                            } else {
+                                "rejected"
+                            },
+                            decision.reason
+                        );
+                        if summary.is_empty() {
+                            summary = tag;
+                        } else {
+                            summary.push(' ');
+                            summary.push_str(&tag);
+                        }
+                    }
+                    let final_success =
+                        new_subtask.status != uc_types::SubtaskStatus::Failed && !gate_rejected;
+                    new_subtask.result = Some(uc_types::SubtaskResult {
+                        subtask_id: new_subtask.id.clone(),
+                        worker_id: new_subtask.assigned_worker.clone().unwrap_or_default(),
+                        modified_files,
+                        summary: summary.clone(),
+                        success: final_success,
+                        completed_at: chrono::Utc::now(),
+                        result: if gate_rejected {
+                            Some(summary)
+                        } else {
+                            subtask_update.result.clone()
+                        },
+                        usage: subtask_update.usage.clone(),
+                        review: subtask_update.review.clone(),
+                        test_contract,
+                        boundary_challenge: boundary_decision,
+                    });
+                }
+                let verb = if gate_rejected && new_subtask.status == uc_types::SubtaskStatus::Failed
                 {
+                    Some(PendingGraphVerb::Fail(if boundary_error.is_some() {
+                        "boundary_contract_rejected"
+                    } else {
+                        "cumulative_regression_rejected"
+                    }))
+                } else {
+                    graph_verb_for(&new_subtask.status, &uc_types::SubtaskStatus::Pending).map(
+                        |v| match v {
+                            PendingGraphVerb::Commit(..) => PendingGraphVerb::Commit(
+                                subtask_update.result.clone().or_else(|| {
+                                    new_subtask.result.as_ref().map(|r| r.summary.clone())
+                                }),
+                                subtask_update.usage.clone(),
+                                subtask_update.steps.clone(),
+                            ),
+                            other => other,
+                        },
+                    )
+                };
+                if let Some(verb) = verb {
                     graph_fanout.push((
                         new_subtask.id.0.clone(),
                         new_subtask.dispatch_retry_count,
@@ -4034,21 +4206,37 @@ fn spawn_nats_subscriber(
                                                         })
                                                     }
                                                     uc_types::SubtaskStatus::Completed => {
+                                                        let (summary, success, modified_files, output) =
+                                                            if let Some(res) = &subtask.result {
+                                                                (
+                                                                    res.summary.clone(),
+                                                                    res.success,
+                                                                    res.modified_files.clone(),
+                                                                    res.result.clone().unwrap_or_default(),
+                                                                )
+                                                            } else {
+                                                                (String::new(), true, Vec::new(), String::new())
+                                                            };
                                                         Some(uc_engine::AgentEventType::SubtaskCompleted {
                                                             task_id: task.id.clone(),
                                                             subtask_id: subtask.id.clone(),
-                                                            summary: String::new(),
-                                                            success: true,
-                                                            modified_files: Vec::new(),
-                                                            output: String::new(),
+                                                            summary,
+                                                            success,
+                                                            modified_files,
+                                                            output,
                                                             simulated: false,
                                                         })
                                                     }
                                                     uc_types::SubtaskStatus::Failed => {
+                                                        let error = subtask
+                                                            .result
+                                                            .as_ref()
+                                                            .map(|res| res.summary.clone())
+                                                            .unwrap_or_default();
                                                         Some(uc_engine::AgentEventType::SubtaskFailed {
                                                             task_id: task.id.clone(),
                                                             subtask_id: subtask.id.clone(),
-                                                            error: String::new(),
+                                                            error,
                                                             recoverable: false,
                                                             stderr_tail: String::new(),
                                                             recent_tools: String::new(),
@@ -4507,29 +4695,32 @@ pub fn spawn_pause_grace_timer(
     #[cfg(not(feature = "messaging"))]
     let _ = &nats_client; // unit placeholder — no control plane to publish to
     let tid = task_id.clone();
+    let timers_cleanup = timers.clone();
     let handle = tokio::spawn(async move {
         tokio::time::sleep(grace).await;
+        if let Ok(mut map) = timers_cleanup.lock() {
+            map.remove(&tid);
+        }
         // Drop discipline: the tokio Mutex is not reentrant — check → sink →
         // bridge each hold its own lock acquisition.
-        let still_paused = {
+        let (still_paused, sink) = {
             let store = task_store.lock().await;
-            store
+            let paused = store
                 .get_task(&tid)
                 .map(|t| t.status == uc_types::TaskStatus::Paused)
-                .unwrap_or(false)
+                .unwrap_or(false);
+            let sink = if paused { store.graph_shadow() } else { None };
+            (paused, sink)
         };
         if !still_paused {
             return; // resumed before the grace lapsed — nothing to do
         }
-        let swept: Vec<uc_engine::SweptAttempt> = {
-            let store = task_store.lock().await;
-            match store.graph_shadow() {
-                Some(sink) => {
-                    sink.fail_running_attempts(&tid, "pause_grace_expired")
-                        .await
-                }
-                None => Vec::new(),
+        let swept: Vec<uc_engine::SweptAttempt> = match sink {
+            Some(sink) => {
+                sink.fail_running_attempts(&tid, "pause_grace_expired")
+                    .await
             }
+            None => Vec::new(),
         };
         if swept.is_empty() {
             return;
@@ -4653,12 +4844,10 @@ fn spawn_heartbeat_monitor(
             // re-armed nodes up. With no graph shadow wired (shadow mode
             // off) the sweep is a no-op — the legacy monitor semantics end
             // here, which is the documented T6 posture.
-            let swept: Vec<uc_engine::SweptAttempt> = {
-                let store = task_store.lock().await;
-                match store.graph_shadow() {
-                    Some(sink) => sink.sweep_timeouts(heartbeat_timeout).await,
-                    None => Vec::new(),
-                }
+            let sink = { task_store.lock().await.graph_shadow() };
+            let swept: Vec<uc_engine::SweptAttempt> = match sink {
+                Some(sink) => sink.sweep_timeouts(heartbeat_timeout).await,
+                None => Vec::new(),
             };
             if !swept.is_empty() {
                 let mut affected: Vec<String> = Vec::new();
@@ -4985,7 +5174,7 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let success = json_bool_or_default(&event.data, "success", true);
+            let success = json_bool_or_default(&event.data, "success", false);
             let output = event
                 .data
                 .get("output")
@@ -4993,12 +5182,17 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            let modified_files: Vec<uc_types::FileChange> = event
+                .data
+                .get("modified_files")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
             Some(uc_engine::AgentEventType::SubtaskCompleted {
                 task_id,
                 subtask_id,
                 summary,
                 success,
-                modified_files: Vec::new(),
+                modified_files,
                 output,
                 simulated: false,
             })
@@ -6222,7 +6416,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                     dispatch_retry_count: st.dispatch_retry_count.unwrap_or(0),
                     retry_count: st.retry_count.unwrap_or(0),
                     required_capabilities: st.required_capabilities,
-                    agent_config_json: None,
+                    agent_config_json: st.agent_config_json,
                     steps: st
                         .steps
                         .iter()

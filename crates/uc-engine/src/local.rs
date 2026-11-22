@@ -381,7 +381,17 @@ impl LocalEngine {
         {
             return Err(EngineError::NotFound(format!("Invalid path: {}", path)));
         }
-        Ok(std::path::Path::new(local_path).join(path))
+        let root = std::path::Path::new(local_path);
+        let joined = root.join(path);
+        // If both root and target exist on disk, canonicalize both so a
+        // symlink inside the repository cannot escape outside `local_path`.
+        if let (Ok(canon_root), Ok(canon_target)) = (root.canonicalize(), joined.canonicalize()) {
+            if !canon_target.starts_with(&canon_root) {
+                return Err(EngineError::NotFound(format!("Invalid path: {}", path)));
+            }
+            return Ok(canon_target);
+        }
+        Ok(joined)
     }
 
     /// Get the memory store (for direct access from tests or other components).
@@ -868,9 +878,9 @@ impl EngineApi for LocalEngine {
                 size: meta.len(),
             });
         }
-        // Sort: directories first, then files, alphabetically
+        // Sort: directories first, then files, alphabetically ("directory" < "file")
         entries.sort_by(|a, b| {
-            let dir_cmp = b.entry_type.cmp(&a.entry_type); // "directory" < "file" reversed = dirs first
+            let dir_cmp = a.entry_type.cmp(&b.entry_type);
             dir_cmp.then_with(|| a.name.cmp(&b.name))
         });
 
@@ -910,12 +920,18 @@ impl EngineApi for LocalEngine {
             .map_err(|e| EngineError::IndexingError(format!("Metadata error: {}", e)))?;
         let size = meta.len();
 
-        // Try reading as text; if it fails (binary), mark binary
-        let content_bytes = std::fs::read(&full_path)
-            .map_err(|e| EngineError::IndexingError(format!("Failed to read file: {}", e)))?;
-
-        // ponytail: max 500KB for dashboard display, truncate beyond that
+        // ponytail: max 500KB for dashboard display, truncate beyond that.
+        // Read at most MAX_FILE_SIZE + 1 bytes so huge files cannot OOM the gateway.
         const MAX_FILE_SIZE: usize = 512_000;
+        let file = std::fs::File::open(&full_path)
+            .map_err(|e| EngineError::IndexingError(format!("Failed to read file: {}", e)))?;
+        let mut content_bytes = Vec::new();
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(file, (MAX_FILE_SIZE + 1) as u64),
+            &mut content_bytes,
+        )
+        .map_err(|e| EngineError::IndexingError(format!("Failed to read file: {}", e)))?;
+
         let is_binary = content_bytes.contains(&0);
         let truncated = content_bytes.len() > MAX_FILE_SIZE;
 

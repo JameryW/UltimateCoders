@@ -349,21 +349,44 @@ fn hash_entry(hasher: &mut blake3::Hasher, path: &Path) {
                 Err(_) => hash_field(hasher, b"<unreadable-link>"),
             }
         }
-        Ok(metadata) if metadata.is_file() => match fs::File::open(path) {
-            Ok(mut file) => match io::copy(&mut file, hasher) {
-                Ok(_) => {}
+        Ok(metadata) if metadata.is_file() => {
+            hash_field(hasher, b"file");
+            match fs::File::open(path) {
+                Ok(mut file) => {
+                    let mut buf = [0u8; 8192];
+                    let mut read_ok = true;
+                    loop {
+                        match io::Read::read(&mut file, &mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => hash_field(hasher, &buf[..n]),
+                            Err(_) => {
+                                read_ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    // Terminate chunk stream so file contents cannot collide
+                    // with following fields or entries.
+                    hasher.update(&0u64.to_le_bytes());
+                    if !read_ok {
+                        hash_field(hasher, b"<read-error>");
+                        hash_metadata(hasher, &metadata);
+                    }
+                }
                 Err(_) => {
-                    hash_field(hasher, b"<read-error>");
+                    hash_field(hasher, b"<open-error>");
                     hash_metadata(hasher, &metadata);
                 }
-            },
-            Err(_) => {
-                hash_field(hasher, b"<open-error>");
-                hash_metadata(hasher, &metadata);
             }
-        },
-        Ok(metadata) => {
+        }
+        Ok(metadata) if metadata.is_dir() => {
+            // Directory mtime/size change whenever temporary files are created
+            // and removed inside the directory; children are hashed individually,
+            // so hash only the stable directory kind marker.
             hash_field(hasher, b"dir");
+        }
+        Ok(metadata) => {
+            hash_field(hasher, b"special");
             hash_metadata(hasher, &metadata);
         }
         Err(_) => {
@@ -497,7 +520,7 @@ mod tests {
         let hardening = RlHardening::new();
         let missing = std::env::temp_dir().join("uc-rl-hardening-definitely-missing-path");
         let first = hardening
-            .hash_state(&[missing.clone()])
+            .hash_state(std::slice::from_ref(&missing))
             .expect("missing paths must not error");
         let second = hardening
             .hash_state(&[missing])

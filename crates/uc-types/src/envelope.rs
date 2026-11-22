@@ -378,8 +378,11 @@ mod tests {
 
     #[test]
     fn planner_view_budget_env_reader_round_trips_through_the_process_env() {
-        // The wrapper only reads the env; the parser is tested above. Use a
-        // unique var value and restore it so parallel tests stay safe.
+        // The wrapper only reads the env; the parser is tested above. Hold a
+        // mutex so concurrent tests calling `ContextBlock::compose()` never see
+        // the temporary override.
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var(PLANNER_VIEW_BUDGET_ENV).ok();
         std::env::set_var(PLANNER_VIEW_BUDGET_ENV, "5000");
         assert_eq!(planner_view_budget_bytes(), 5000);
@@ -413,16 +416,29 @@ mod tests {
     #[test]
     fn compose_with_budget_clamps_to_the_documented_range() {
         let big = "x".repeat(1000);
-        let entries: Vec<ContextEntry> = (0..10)
+        let big_entries: Vec<ContextEntry> = (0..10)
             .map(|index| entry(&format!("n-{index}"), true, &big))
             .collect();
         // An oversized budget cannot grow the block past the hard ceiling.
-        let capped = ContextBlock::compose_with_budget(entries.clone(), usize::MAX).unwrap();
+        let capped = ContextBlock::compose_with_budget(big_entries.clone(), usize::MAX).unwrap();
         let serialized = serde_json::to_vec(&capped).unwrap();
         assert!(serialized.len() <= CONTEXT_BLOCK_MAX_BYTES);
-        // A tiny budget is raised to the floor rather than emitted empty.
-        let floored = ContextBlock::compose_with_budget(entries, 1).unwrap();
+        // When even a single entry exceeds the 512-byte floor, packing drops
+        // whole entries cleanly and marks truncated rather than overflowing.
+        let oversized_floored = ContextBlock::compose_with_budget(big_entries, 1).unwrap();
+        assert!(oversized_floored.entries.is_empty());
+        assert!(oversized_floored.truncated);
+        assert!(serde_json::to_vec(&oversized_floored).unwrap().len() <= CONTEXT_BLOCK_MIN_BYTES);
+
+        // A tiny budget is raised to the 512-byte floor so normal-sized
+        // entries still fit rather than being emitted empty.
+        let small = "x".repeat(100);
+        let small_entries: Vec<ContextEntry> = (0..6)
+            .map(|index| entry(&format!("n-{index}"), true, &small))
+            .collect();
+        let floored = ContextBlock::compose_with_budget(small_entries, 1).unwrap();
         assert!(!floored.entries.is_empty());
+        assert!(floored.truncated);
         assert!(serde_json::to_vec(&floored).unwrap().len() <= CONTEXT_BLOCK_MIN_BYTES);
     }
 }

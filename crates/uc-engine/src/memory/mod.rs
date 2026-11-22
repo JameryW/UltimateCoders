@@ -40,6 +40,10 @@ const TTL_TAG_PREFIX: &str = "ttl:";
 /// Tag prefix for an absolute expiry instant (RFC 3339).
 const EXPIRES_AT_TAG_PREFIX: &str = "expires_at:";
 
+/// Upper bound on in-process tracking maps (`replay_seen`, `tombstones`) so a
+/// long-running gateway cannot leak memory unboundedly across ephemeral task keys.
+const MAX_TRACKED_KEYS: usize = 10_000;
+
 /// Unified memory store that coordinates short-term and long-term storage.
 ///
 /// Short-term memory (TiKV): fast KV access for task-scoped context.
@@ -49,12 +53,13 @@ pub struct MemoryStore {
     long_term: Arc<LongTermMemory>,
     embedding_service: Arc<EmbeddingService>,
     config: MemoryConfig,
-    /// Per-key locks for replay reconciliation (last-writer-wins by version).
+    /// Per-key locks serializing `write`, `delete`, and `replay_write` so
+    /// concurrent mutations cannot race or resurrect deleted keys.
     /// ponytail: in-process mutex is safe because there's a single gateway
     /// instance; upgrade to TiKV-native CAS (`with_atomic_for_cas`) if we
     /// ever go multi-gateway.
     replay_locks: DashMap<String, Arc<Mutex<()>>>,
-    /// Last entry applied by `replay_write` for a key, keyed like the lock.
+    /// Last entry applied for a key, keyed like the lock (embedding stripped).
     ///
     /// The durable `MemoryEntry.version` is the epoch of the last committed
     /// state; this map is the process-local Lamport sequence of replays that
@@ -63,7 +68,7 @@ pub struct MemoryStore {
     /// still return the state it did not overwrite.
     replay_seen: DashMap<String, MemoryEntry>,
     /// Keys deleted but not guaranteed removed from the long-term store,
-    /// keyed by the encoded key with the deletion wall-clock millis as value.
+    /// keyed by the encoded key with the monotonic deletion version as value.
     tombstones: DashMap<String, u64>,
 }
 
@@ -103,6 +108,44 @@ impl MemoryStore {
         }
     }
 
+    fn key_lock(&self, encoded_key: &str) -> Arc<Mutex<()>> {
+        self.replay_locks
+            .entry(encoded_key.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    fn prune_tracking_maps(&self) {
+        if self.replay_seen.len() > MAX_TRACKED_KEYS {
+            let to_drop = self.replay_seen.len() - MAX_TRACKED_KEYS / 2;
+            let keys: Vec<String> = self
+                .replay_seen
+                .iter()
+                .take(to_drop)
+                .map(|r| r.key().clone())
+                .collect();
+            for k in keys {
+                self.replay_seen.remove(&k);
+            }
+        }
+        if self.tombstones.len() > MAX_TRACKED_KEYS {
+            let to_drop = self.tombstones.len() - MAX_TRACKED_KEYS / 2;
+            let keys: Vec<String> = self
+                .tombstones
+                .iter()
+                .take(to_drop)
+                .map(|r| r.key().clone())
+                .collect();
+            for k in keys {
+                self.tombstones.remove(&k);
+            }
+        }
+        if self.replay_locks.len() > MAX_TRACKED_KEYS {
+            self.replay_locks
+                .retain(|_, lock| Arc::strong_count(lock) > 1);
+        }
+    }
+
     /// Read a memory entry.
     ///
     /// Checks short-term memory first. If not found and `include_semantic` is true,
@@ -117,7 +160,7 @@ impl MemoryStore {
         // exactly the entry the delete was meant to hide).
         let result = self.short_term.read(&request.key).await?;
         if let Some(entry) = result {
-            if is_tombstone(&entry) {
+            if is_tombstone(&entry) || ttl_expired(&entry, chrono::Utc::now()) {
                 return Ok(None);
             }
             return Ok(Some(entry));
@@ -194,8 +237,18 @@ impl MemoryStore {
     /// the configured threshold, also writes to long-term memory (generating
     /// an embedding if one is not already provided).
     pub async fn write(&self, request: MemoryWriteRequest) -> Result<MemoryEntry, EngineError> {
-        let now = chrono::Utc::now();
         let encoded_key = crate::memory::short_term::encode_key(&request.key);
+        let lock = self.key_lock(&encoded_key);
+        let _guard = lock.lock().await;
+        self.write_unlocked(request, &encoded_key).await
+    }
+
+    async fn write_unlocked(
+        &self,
+        request: MemoryWriteRequest,
+        encoded_key: &str,
+    ) -> Result<MemoryEntry, EngineError> {
+        let now = chrono::Utc::now();
         let version = request
             .version
             .unwrap_or_else(|| MemoryEntry::version_from_timestamp(now));
@@ -209,12 +262,22 @@ impl MemoryStore {
             version,
         };
 
-        // A write revives a key: clear the compensation tombstone before the
-        // short-term write so reads stop treating the key as deleted.
-        self.tombstones.remove(&encoded_key);
-
-        // Always write to short-term
+        // Always write to short-term first; only clear the compensation
+        // tombstone after the write succeeds so a failed write cannot hide a
+        // prior deletion.
+        let was_tombstoned = self.tombstones.contains_key(encoded_key);
         self.short_term.write(&entry).await?;
+        self.tombstones.remove(encoded_key);
+
+        // If this write revives a previously tombstoned key with low
+        // importance, best-effort purge any surviving long-term vector so
+        // semantic search does not resurrect the pre-delete content.
+        if was_tombstoned && entry.metadata.importance < self.config.long_term_importance_threshold
+        {
+            if let Err(e) = self.long_term.delete(&entry.key).await {
+                tracing::warn!("Failed to purge stale long-term vector on revive: {}", e);
+            }
+        }
 
         // Write to long-term if importance exceeds threshold
         if entry.metadata.importance >= self.config.long_term_importance_threshold {
@@ -235,6 +298,11 @@ impl MemoryStore {
                         );
                     }
                 }
+            }
+            // Replace any prior long-term vector for the same key so updates
+            // do not accumulate duplicate points.
+            if let Err(e) = self.long_term.delete(&entry.key).await {
+                tracing::debug!("Pre-write long-term cleanup skipped/failed: {}", e);
             }
             match self.long_term.write(&entry).await {
                 Ok(()) => {
@@ -269,23 +337,21 @@ impl MemoryStore {
         request: MemoryWriteRequest,
     ) -> Result<uc_types::memory::MemoryReplayResult, EngineError> {
         let encoded_key = crate::memory::short_term::encode_key(&request.key);
-        // ponytail: per-key in-process lock — single gateway makes this safe.
-        let lock = self
-            .replay_locks
-            .entry(encoded_key.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone();
+        let lock = self.key_lock(&encoded_key);
         let _guard = lock.lock().await;
 
         let stored = self.short_term.read(&request.key).await?;
         // A tombstone is a committed deletion, so it participates in the
         // race: an old replay must not resurrect a key deleted after it was
-        // written. The tombstone's version is its deletion timestamp.
-        let deleted_version = if stored.as_ref().map(is_tombstone).unwrap_or(false) {
+        // written. Check both short-term and the in-process tombstone map.
+        let stored_deleted_version = if stored.as_ref().map(is_tombstone).unwrap_or(false) {
             stored.as_ref().map(|entry| entry.version).unwrap_or(0)
         } else {
             0
         };
+        let mem_deleted_version = self.tombstones.get(&encoded_key).map(|v| *v).unwrap_or(0);
+        let deleted_version = stored_deleted_version.max(mem_deleted_version);
+
         let pending_version = request
             .version
             .unwrap_or_else(|| MemoryEntry::version_from_timestamp(chrono::Utc::now()));
@@ -302,24 +368,30 @@ impl MemoryStore {
         let sequence = last_seen.as_ref().map(|entry| entry.version).unwrap_or(0);
         let floor = durable.max(sequence).max(deleted_version);
 
-        if pending_version > 0 && pending_version <= floor {
+        if floor > 0 && pending_version <= floor {
             tracing::info!(
                 "replay_write skipped stale or duplicate entry (key={:?} floor_v={} pending_v={})",
                 request.key,
                 floor,
                 pending_version
             );
-            // Return whatever newer state we refused to overwrite. A tombstone
-            // is also a committed state, so it is the last resort when no
-            // non-tombstone entry or replay high-water mark exists (for
-            // example a key written through `write` and then deleted).
+            // Return whatever newer state we refused to overwrite. When the
+            // tombstone is the winning state (deleted_version >= durable and
+            // sequence), return the tombstone rather than a pre-delete entry.
             let fallback = stored.clone();
-            let entry = fallback
-                .clone()
-                .filter(|entry| !is_tombstone(entry))
-                .or(last_seen)
-                .or(fallback)
-                .expect("floor>0 implies a stored tombstone, entry, or replay");
+            let entry = if deleted_version >= durable && deleted_version >= sequence {
+                fallback
+                    .filter(is_tombstone)
+                    .or(last_seen)
+                    .unwrap_or_else(|| tombstone_entry(&request.key, deleted_version))
+            } else {
+                fallback
+                    .clone()
+                    .filter(|entry| !is_tombstone(entry))
+                    .or(last_seen)
+                    .or(fallback)
+                    .unwrap_or_else(|| tombstone_entry(&request.key, floor))
+            };
             return Ok(uc_types::memory::MemoryReplayResult {
                 entry,
                 applied: false,
@@ -330,8 +402,11 @@ impl MemoryStore {
             version: Some(pending_version),
             ..request
         };
-        let entry = self.write(req).await?;
-        self.replay_seen.insert(encoded_key, entry.clone());
+        let entry = self.write_unlocked(req, &encoded_key).await?;
+        let mut cached = entry.clone();
+        cached.metadata.embedding = None;
+        self.replay_seen.insert(encoded_key, cached);
+        self.prune_tracking_maps();
         Ok(uc_types::memory::MemoryReplayResult {
             entry,
             applied: true,
@@ -348,6 +423,23 @@ impl MemoryStore {
     /// supersession story for the incremental layer — the audit trail lives in
     /// Hy-Memory, while this store must stop serving the stale vector.
     pub async fn delete(&self, key: &MemoryKey) -> Result<(), EngineError> {
+        let encoded = crate::memory::short_term::encode_key(key);
+        let lock = self.key_lock(&encoded);
+        let _guard = lock.lock().await;
+
+        let prior_durable = self
+            .short_term
+            .read(key)
+            .await?
+            .map(|entry| entry.version)
+            .unwrap_or(0);
+        let prior_seen = self
+            .replay_seen
+            .get(&encoded)
+            .map(|entry| entry.version)
+            .unwrap_or(0);
+        let prior_tombstone = self.tombstones.get(&encoded).map(|v| *v).unwrap_or(0);
+
         // Delete from short-term
         self.short_term.delete(key).await?;
 
@@ -362,7 +454,10 @@ impl MemoryStore {
         // Compensation tombstone: record the deletion even when both deletes
         // succeeded, because a concurrent reader may still hold the vector in
         // a cached search page. A later write() revives the key.
-        self.write_tombstone(key).await?;
+        let min_version = prior_durable.max(prior_seen).max(prior_tombstone);
+        let tombstone = self.write_tombstone(key, &encoded, min_version).await?;
+        self.replay_seen.insert(encoded, tombstone);
+        self.prune_tracking_maps();
 
         Ok(())
     }
@@ -499,11 +594,21 @@ impl MemoryStore {
     }
 
     /// Leave a tombstone entry and record it in the in-process map.
-    async fn write_tombstone(&self, key: &MemoryKey) -> Result<(), EngineError> {
+    async fn write_tombstone(
+        &self,
+        key: &MemoryKey,
+        encoded: &str,
+        min_prior_version: u64,
+    ) -> Result<MemoryEntry, EngineError> {
         let now = chrono::Utc::now();
-        let encoded = crate::memory::short_term::encode_key(key);
-        self.tombstones
-            .insert(encoded, now.timestamp_millis().max(0) as u64);
+        let now_version = MemoryEntry::version_from_timestamp(now);
+        // Guarantee monotonic tombstone version above any previously seen
+        // version for this key so logical-clock entries cannot outrank delete.
+        let version = if now_version > min_prior_version {
+            now_version
+        } else {
+            min_prior_version.saturating_add(1)
+        };
         let entry = MemoryEntry {
             id: uc_types::memory::MemoryId::new(),
             key: key.clone(),
@@ -516,16 +621,24 @@ impl MemoryStore {
             },
             created_at: now,
             updated_at: now,
-            version: MemoryEntry::version_from_timestamp(now),
+            version,
         };
         self.short_term.write(&entry).await?;
-        Ok(())
+        self.tombstones.insert(encoded.to_string(), version);
+        Ok(entry)
     }
 
-    /// List all keys in a scope (prefix scan on short-term memory).
+    /// List all live (non-tombstoned) keys in a scope (prefix scan on short-term memory).
     pub async fn list_keys(&self, key: &MemoryKey) -> Result<Vec<MemoryKey>, EngineError> {
         let prefix = crate::memory::short_term::scope_prefix(key);
-        self.short_term.list_keys(&prefix).await
+        let raw_keys = self.short_term.list_keys(&prefix).await?;
+        let mut live = Vec::with_capacity(raw_keys.len());
+        for candidate in raw_keys {
+            if !self.is_deleted(&candidate).await? {
+                live.push(candidate);
+            }
+        }
+        Ok(live)
     }
 
     /// Get a reference to the long-term memory store.
@@ -580,6 +693,24 @@ impl MemoryStore {
     }
 }
 
+fn tombstone_entry(key: &MemoryKey, version: u64) -> MemoryEntry {
+    let now = chrono::Utc::now();
+    MemoryEntry {
+        id: uc_types::memory::MemoryId::new(),
+        key: key.clone(),
+        content: MemoryContent::Text(String::new()),
+        metadata: uc_types::memory::MemoryMetadata {
+            source_agent: "uc-engine".to_string(),
+            importance: 0.0,
+            tags: vec![TOMBSTONE_TAG.to_string()],
+            embedding: None,
+        },
+        created_at: now,
+        updated_at: now,
+        version,
+    }
+}
+
 /// Whether an entry is a leave-behind deletion marker (see [`TOMBSTONE_TAG`]).
 fn is_tombstone(entry: &MemoryEntry) -> bool {
     entry.metadata.tags.iter().any(|tag| tag == TOMBSTONE_TAG)
@@ -598,7 +729,10 @@ fn ttl_expired(entry: &MemoryEntry, now: chrono::DateTime<chrono::Utc>) -> bool 
                 if seconds <= 0 {
                     return true;
                 }
-                if entry.updated_at + chrono::Duration::seconds(seconds) <= now {
+                if chrono::Duration::try_seconds(seconds)
+                    .and_then(|dur| entry.updated_at.checked_add_signed(dur))
+                    .is_some_and(|exp| exp <= now)
+                {
                     return true;
                 }
             }

@@ -318,7 +318,12 @@ impl SubtaskUsage {
     pub fn total_tokens(&self) -> Option<i64> {
         match (self.input_tokens, self.output_tokens) {
             (None, None) => None,
-            (input, output) => Some((input.unwrap_or(0) + output.unwrap_or(0)) as i64),
+            (input, output) => Some(
+                input
+                    .unwrap_or(0)
+                    .saturating_add(output.unwrap_or(0))
+                    .min(i64::MAX as u64) as i64,
+            ),
         }
     }
 }
@@ -482,7 +487,7 @@ pub enum AgentEventPayload {
     },
     SubtaskCompleted {
         task_id: TaskId,
-        result: SubtaskResult,
+        result: Box<SubtaskResult>,
     },
     SubtaskFailed {
         task_id: TaskId,

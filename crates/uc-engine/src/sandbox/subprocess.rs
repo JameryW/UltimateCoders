@@ -91,6 +91,9 @@ impl Sandbox for SubprocessSandbox {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if request.stdin.is_some() {
+            cmd.stdin(Stdio::piped());
+        }
 
         // Set working directory
         if !request.working_dir.is_empty() {
@@ -108,6 +111,32 @@ impl Sandbox for SubprocessSandbox {
         {
             self.apply_unix_limits(&mut cmd, &request)?;
         }
+
+        // On Linux the opt-in cgroup guard is created BEFORE spawn (so it drops
+        // AFTER `child` is reaped) and attaches the child inside `pre_exec`
+        // before execve so no grandchild can fork before migration.
+        #[cfg(target_os = "linux")]
+        let mut cgroup_guard = match super::cgroup::CgroupGuard::create("sandbox") {
+            Ok(guard) if guard.is_active() => {
+                let procs_path = guard.path().join("cgroup.procs");
+                // SAFETY: `pre_exec` runs between fork and exec in the child
+                // process. Writing `"0"` to `cgroup.procs` via std::fs or
+                // raw open/write only accesses a pre-allocated path; failures
+                // are non-fatal because the parent still attempts attach.
+                unsafe {
+                    cmd.pre_exec(move || {
+                        let _ = std::fs::write(&procs_path, b"0");
+                        Ok(())
+                    });
+                }
+                Some(guard)
+            }
+            Ok(_) => None,
+            Err(error) => {
+                tracing::warn!(%error, "could not create subprocess cgroup guard");
+                None
+            }
+        };
 
         tracing::info!(
             sandbox_id = %handle.id,
@@ -136,25 +165,45 @@ impl Sandbox for SubprocessSandbox {
             }
         };
 
-        // On Linux the opt-in cgroup guard attaches the child to a dedicated
-        // cgroup v2 subtree; dropping it kills descendants that escaped the
-        // direct child, not just the direct process.
+        // Best-effort parent-side attach in case pre_exec could not migrate.
         #[cfg(target_os = "linux")]
-        let cgroup_guard = match super::cgroup::CgroupGuard::create("sandbox") {
-            Ok(guard) if guard.is_active() => {
-                if let Some(pid) = child.id() {
-                    if let Err(error) = guard.attach(pid) {
-                        tracing::warn!(%error, "could not attach subprocess to cgroup");
-                    }
+        if let Some(guard) = &cgroup_guard {
+            if let Some(pid) = child.id() {
+                if let Err(error) = guard.attach(pid) {
+                    tracing::debug!(%error, "parent-side cgroup attach skipped or failed");
                 }
-                Some(guard)
             }
-            Ok(_) => None,
-            Err(error) => {
-                tracing::warn!(%error, "could not create subprocess cgroup guard");
-                None
-            }
-        };
+        }
+
+        // Cap in-flight output buffering at 50 MB + 1 byte so a chatty process
+        // cannot OOM the gateway before exit or timeout.
+        const MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
+        const READ_LIMIT: u64 = (MAX_OUTPUT_BYTES + 1) as u64;
+
+        // Drain both pipes in background tasks BEFORE writing stdin and while
+        // waiting for the process so large stdin/stdout exchanges never deadlock.
+        let mut stdout_task = child.stdout.take().map(|stdout| {
+            tokio::spawn(async move {
+                let mut bytes = Vec::new();
+                let mut reader = stdout.take(READ_LIMIT);
+                reader.read_to_end(&mut bytes).await?;
+                // Drain any remaining bytes without storing them so the child
+                // never blocks on a full pipe before exit.
+                let mut sink = tokio::io::sink();
+                let _ = tokio::io::copy(&mut reader.into_inner(), &mut sink).await;
+                Ok::<Vec<u8>, std::io::Error>(bytes)
+            })
+        });
+        let mut stderr_task = child.stderr.take().map(|stderr| {
+            tokio::spawn(async move {
+                let mut bytes = Vec::new();
+                let mut reader = stderr.take(READ_LIMIT);
+                reader.read_to_end(&mut bytes).await?;
+                let mut sink = tokio::io::sink();
+                let _ = tokio::io::copy(&mut reader.into_inner(), &mut sink).await;
+                Ok::<Vec<u8>, std::io::Error>(bytes)
+            })
+        });
 
         // Optionally provide stdin
         if let Some(stdin_data) = &request.stdin {
@@ -164,24 +213,6 @@ impl Sandbox for SubprocessSandbox {
                 let _ = stdin_pipe.shutdown().await;
             }
         }
-
-        // Drain both pipes in background tasks while waiting for the process.
-        // Waiting on either pipe before `child.wait()` deadlocks when a child
-        // fills one pipe while the other is still waiting to be read.
-        let mut stdout_task = child.stdout.take().map(|mut stdout| {
-            tokio::spawn(async move {
-                let mut bytes = Vec::new();
-                stdout.read_to_end(&mut bytes).await?;
-                Ok::<Vec<u8>, std::io::Error>(bytes)
-            })
-        });
-        let mut stderr_task = child.stderr.take().map(|mut stderr| {
-            tokio::spawn(async move {
-                let mut bytes = Vec::new();
-                stderr.read_to_end(&mut bytes).await?;
-                Ok::<Vec<u8>, std::io::Error>(bytes)
-            })
-        });
 
         // Apply the timeout to the process wait only. Descendant processes may
         // inherit stdout/stderr; timing out a pipe read would otherwise wait
@@ -196,17 +227,19 @@ impl Sandbox for SubprocessSandbox {
 
         match status {
             Ok(Ok(exit_status)) => {
+                // If an active cgroup holds stray descendants keeping stdout/stderr
+                // open after the direct child exited, terminate them once the
+                // direct child has finished so `collect_output` cannot hang.
+                #[cfg(target_os = "linux")]
+                if let Some(guard) = cgroup_guard.as_mut() {
+                    let _ = guard.cleanup();
+                }
                 let stdout_bytes = collect_output(stdout_task.take(), "stdout").await?;
                 let stderr_bytes = collect_output(stderr_task.take(), "stderr").await?;
                 let exit_code = exit_status.code().unwrap_or(-1);
 
-                // Use the default max output size from ResourceLimits.
-                // The subprocess sandbox does not have access to the SandboxConfig
-                // at execute time, so we use the default (50 MB).
-                let max_output = 50 * 1024 * 1024;
-
-                let stdout = truncate_output(&stdout_bytes, max_output);
-                let stderr = truncate_output(&stderr_bytes, max_output);
+                let stdout = truncate_output(&stdout_bytes, MAX_OUTPUT_BYTES);
+                let stderr = truncate_output(&stderr_bytes, MAX_OUTPUT_BYTES);
 
                 tracing::info!(
                     sandbox_id = %handle.id,
@@ -230,9 +263,7 @@ impl Sandbox for SubprocessSandbox {
                 e
             ))),
             Err(_) => {
-                // Timeout -- kill the process and, on Windows, its descendants.
-                // `cmd.exe /C` leaves child tools holding inherited pipe handles
-                // unless the process tree is terminated as a unit.
+                // Timeout -- kill the process and, on Windows/Linux, its descendants.
                 #[cfg(windows)]
                 if let Some(job) = &process_job {
                     job.terminate();
@@ -245,11 +276,14 @@ impl Sandbox for SubprocessSandbox {
                         tracing::warn!(%error, "could not kill subprocess cgroup");
                     }
                 }
-                // `Child::kill()` waits for process exit. On Windows a shell
-                // can remain blocked while descendants release inherited pipe
-                // handles, so only request termination here and return the
-                // timeout result without waiting for cleanup.
                 let _ = child.start_kill();
+                // Bounded reap before cleaning up the cgroup so the kernel can
+                // remove the directory instead of failing with EBUSY.
+                let _ = timeout(Duration::from_millis(500), child.wait()).await;
+                #[cfg(target_os = "linux")]
+                if let Some(guard) = cgroup_guard.as_mut() {
+                    let _ = guard.cleanup();
+                }
                 if let Some(task) = stdout_task.take() {
                     task.abort();
                 }
@@ -385,9 +419,13 @@ impl WindowsProcessJob {
             return Err(std::io::Error::last_os_error());
         }
 
-        let child_handle = child
-            .raw_handle()
-            .ok_or_else(std::io::Error::last_os_error)?;
+        let Some(child_handle) = child.raw_handle() else {
+            unsafe { CloseHandle(handle) };
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "child process handle unavailable",
+            ));
+        };
         let assigned = unsafe { AssignProcessToJobObject(handle, child_handle as HANDLE) };
         if assigned == 0 {
             unsafe { CloseHandle(handle) };

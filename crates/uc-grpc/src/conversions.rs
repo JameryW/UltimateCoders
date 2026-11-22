@@ -1301,21 +1301,28 @@ impl From<TaskProto> for Task {
 
 impl From<SubtaskProto> for Subtask {
     fn from(proto: SubtaskProto) -> Self {
+        let status = subtask_status_from_proto(&proto.status);
+        let assigned_worker = proto.assigned_worker.map(WorkerId);
+        let subtask_id = TaskId(proto.id);
+        let success = !matches!(
+            status,
+            uc_types::SubtaskStatus::Failed | uc_types::SubtaskStatus::Conflicted
+        );
         Self {
-            id: TaskId(proto.id),
+            id: subtask_id.clone(),
             parent_id: TaskId(proto.parent_id),
             description: proto.description,
-            status: subtask_status_from_proto(&proto.status),
-            assigned_worker: proto.assigned_worker.map(WorkerId),
+            status,
+            assigned_worker: assigned_worker.clone(),
             depends_on: proto.depends_on.into_iter().map(TaskId).collect(),
             file_constraints: proto.file_constraints,
             expected_output: proto.expected_output,
             result: proto.result.map(|r| uc_types::SubtaskResult {
-                subtask_id: TaskId::new(), // not carried by proto
-                worker_id: WorkerId::new(),
+                subtask_id,
+                worker_id: assigned_worker.unwrap_or_default(),
                 modified_files: Vec::new(),
                 summary: String::new(), // summary is in event data, not SubtaskProto
-                success: true,
+                success,
                 completed_at: chrono::Utc::now(),
                 result: Some(r),
                 usage: None,
@@ -1540,7 +1547,7 @@ impl From<TaskEventProto> for AgentEvent {
                 let output = proto.data.get("output").cloned().unwrap_or_default();
                 AgentEventPayload::SubtaskCompleted {
                     task_id,
-                    result: uc_types::SubtaskResult {
+                    result: Box::new(uc_types::SubtaskResult {
                         subtask_id,
                         worker_id: WorkerId::new(),
                         modified_files,
@@ -1557,7 +1564,7 @@ impl From<TaskEventProto> for AgentEvent {
                         review: None,
                         test_contract: None,
                         boundary_challenge: None,
-                    },
+                    }),
                 }
             }
             "subtask_failed" => {

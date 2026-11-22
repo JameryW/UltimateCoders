@@ -23,6 +23,7 @@ pub fn cgroup_enabled() -> bool {
     matches!(
         std::env::var(CGROUP_ENV)
             .unwrap_or_default()
+            .trim()
             .to_ascii_lowercase()
             .as_str(),
         "1" | "true" | "yes" | "on"
@@ -43,8 +44,9 @@ pub struct CgroupGuard {
 }
 
 impl CgroupGuard {
-    /// Create the guard.  Disabled or unavailable cgroup v2 hosts return an
-    /// inactive guard rather than failing the command.
+    /// Create the guard. Disabled hosts return an inactive guard; non-cgroup2
+    /// paths fail explicitly and clean up the created directory rather than
+    /// writing plain files into an ordinary directory.
     pub fn create(label: &str) -> io::Result<Self> {
         if !cgroup_enabled() {
             return Ok(Self {
@@ -54,6 +56,7 @@ impl CgroupGuard {
         }
         let safe: String = label
             .chars()
+            .take(64)
             .map(|ch| {
                 if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
                     ch
@@ -62,10 +65,23 @@ impl CgroupGuard {
                 }
             })
             .collect();
+        let prefix = if safe.is_empty() { "sandbox" } else { &safe };
         let unique = uuid::Uuid::new_v4();
-        let path = cgroup_root().join(format!("{safe}-{unique}"));
-        fs::create_dir_all(cgroup_root())?;
+        let root = cgroup_root();
+        let path = root.join(format!("{prefix}-{unique}"));
+        fs::create_dir_all(&root)?;
         fs::create_dir(&path)?;
+        // A real cgroup2fs kernel mount immediately populates `cgroup.procs`
+        // inside every new cgroup directory. On a non-cgroup2 directory that
+        // file does not exist — remove the empty dir and refuse rather than
+        // failing open and creating regular files on disk.
+        if !path.join("cgroup.procs").exists() {
+            let _ = fs::remove_dir(&path);
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("{} is not a cgroup v2 filesystem", root.display()),
+            ));
+        }
         Ok(Self { path, active: true })
     }
 
@@ -85,29 +101,72 @@ impl CgroupGuard {
         fs::write(self.path.join("cgroup.procs"), pid.to_string())
     }
 
-    /// Kill every process in the cgroup.  `cgroup.kill` exists on cgroup v2
-    /// kernels; an older kernel returns an error and the caller can fall back
-    /// to the ordinary child kill.
+    /// Kill every process in the cgroup. Uses `cgroup.kill` on Linux 5.14+
+    /// kernels and falls back to reading `cgroup.procs` + `SIGKILL` when
+    /// `cgroup.kill` is absent on older cgroup v2 kernels.
     pub fn kill(&self) -> io::Result<()> {
         if !self.active {
             return Ok(());
         }
-        fs::write(self.path.join("cgroup.kill"), "1")
+        match fs::write(self.path.join("cgroup.kill"), "1") {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => self.kill_procs_fallback(),
+            Err(error) => Err(error),
+        }
     }
 
-    /// Kill and remove the cgroup directory.  Missing directory is harmless.
+    fn kill_procs_fallback(&self) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            let content = fs::read_to_string(self.path.join("cgroup.procs"))?;
+            for line in content.lines() {
+                if let Ok(pid) = line.trim().parse::<i32>() {
+                    if pid > 0 {
+                        let _ = std::process::Command::new("kill")
+                            .args(["-KILL", &pid.to_string()])
+                            .status();
+                    }
+                }
+            }
+            Ok(())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "cgroup.kill unavailable",
+            ))
+        }
+    }
+
+    /// Kill and remove the cgroup directory, retrying briefly while the kernel
+    /// drains dying processes (`EBUSY`). Missing directory is harmless.
     pub fn cleanup(&mut self) -> io::Result<()> {
         if !self.active {
             return Ok(());
         }
         let _ = self.kill();
-        let result = fs::remove_dir(&self.path);
-        self.active = false;
-        match result {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
+        let mut last_err = None;
+        for attempt in 0..20 {
+            match fs::remove_dir(&self.path) {
+                Ok(()) => {
+                    self.active = false;
+                    return Ok(());
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    self.active = false;
+                    return Ok(());
+                }
+                Err(error) => {
+                    last_err = Some(error);
+                    if attempt < 19 {
+                        let _ = self.kill();
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                }
+            }
         }
+        Err(last_err.unwrap_or_else(|| io::Error::other("failed to remove cgroup directory")))
     }
 }
 
@@ -121,10 +180,14 @@ impl Drop for CgroupGuard {
 mod tests {
     use super::*;
     use std::process::{Command, Stdio};
+    use std::sync::Mutex;
     use std::time::{Duration, Instant};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn guard_is_inactive_when_flag_is_off() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old = std::env::var_os(CGROUP_ENV);
         std::env::remove_var(CGROUP_ENV);
         let guard = CgroupGuard::create("test").expect("inactive guard is infallible");
@@ -134,9 +197,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn create_rejects_non_cgroup2_directory_and_cleans_up() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let old_flag = std::env::var_os(CGROUP_ENV);
+        let old_root = std::env::var_os(CGROUP_ROOT_ENV);
+        let tmp_root =
+            std::env::temp_dir().join(format!("uc-non-cgroup2-{}", uuid::Uuid::new_v4()));
+        std::env::set_var(CGROUP_ENV, "true");
+        std::env::set_var(CGROUP_ROOT_ENV, &tmp_root);
+        let res = CgroupGuard::create("not-a-cgroup");
+        assert!(res.is_err(), "non-cgroup2 directory must not fail open");
+        let remaining = fs::read_dir(&tmp_root).map(|it| it.count()).unwrap_or(0);
+        assert_eq!(remaining, 0, "failed create must clean up subdirectory");
+        let _ = fs::remove_dir_all(&tmp_root);
+        match old_flag {
+            Some(v) => std::env::set_var(CGROUP_ENV, v),
+            None => std::env::remove_var(CGROUP_ENV),
+        }
+        match old_root {
+            Some(v) => std::env::set_var(CGROUP_ROOT_ENV, v),
+            None => std::env::remove_var(CGROUP_ROOT_ENV),
+        }
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn cgroup_guard_kills_attached_process() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old = std::env::var_os(CGROUP_ENV);
         std::env::set_var(CGROUP_ENV, "1");
         let mut child = match Command::new("sh")
