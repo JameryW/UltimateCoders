@@ -23,7 +23,9 @@ pub mod runtime_metrics;
 pub mod sandbox;
 pub mod scheduler;
 pub mod search;
+pub mod shift_reconciler;
 pub mod task_store;
+pub mod tomasu_ooo;
 
 pub use checkpoint::{CheckpointConfig, CheckpointManager};
 pub use config::{EmbeddingConfig, EngineConfig, MemoryConfig, StorageConfig};
@@ -56,6 +58,16 @@ pub use repos_config::{
 pub use rl_hardening::{
     EnvironmentAnomaly, ProcessGroupCleanupPlan, ProcessGroupCommand, ProcessGroupPlan,
     ProcessGroupSpec, RlHardening, RlHardeningError, StateHashReceipt, HASH_ALGORITHM,
+};
+pub use shift_reconciler::{
+    DEFAULT_EVENT_CAPACITY, RecoveryPlan, ShiftError, ShiftEvent, ShiftKind, ShiftPhase,
+    ShiftReconciler, WorkspaceEpoch,
+};
+pub use tomasu_ooo::{
+    ActionKind, AuditEntry, AuditOutcome, CommittedObservation, OperandKind, RunAheadConfig,
+    RunAheadController, RunAheadStats, SpeculativeAction, TomasuError, TraceIrValidator,
+    ValidationFailure, ValidationReport, DEFAULT_AUDIT_CAPACITY, DEFAULT_MAX_CHAIN_DEPTH,
+    DEFAULT_MAX_SPECULATIVE_SLOTS,
 };
 pub use search::HybridSearchEngine;
 pub use search::SemanticSearchEngine;

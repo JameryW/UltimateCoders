@@ -5145,19 +5145,58 @@ class Worker:
                 chosen = items[:8]
             if not chosen:
                 return None
-            lines = ["## Related code from indexed repositories"]
+            entries: list[tuple[str, str, str, str, float]] = []
             for r in chosen:
                 if isinstance(r, MemCreditCandidate):
                     repo = str(r.metadata.get("repo", "?"))
                     path = str(r.metadata.get("path", r.path or "?"))
                     snippet = r.content
+                    symbol = str(r.symbol or "")
+                    score = float(r.score or 0.0)
                 else:
-                    repo = getattr(r, "repo_id", "?")
-                    path = getattr(r, "file_path", "?")
-                    snippet = getattr(r, "content_snippet", "")
+                    repo = str(getattr(r, "repo_id", "?"))
+                    path = str(getattr(r, "file_path", "?"))
+                    snippet = getattr(r, "content_snippet", "") or ""
+                    symbol = str(getattr(r, "symbol_name", "") or "")
+                    score = float(getattr(r, "score", 0.0) or 0.0)
                 if snippet:
-                    lines.append(f"### [{repo}] {path}")
-                    lines.append(f"```\n{snippet[:500]}\n```")
+                    entries.append((repo, path, snippet, symbol, score))
+            if not entries:
+                return None
+            # Rivet shaping is opt-in: it grounds identifiers, links utility
+            # edges and degrades snippet -> signature -> summary under the same
+            # context budget instead of blindly truncating the hit list.
+            from ultimate_coders.search.rivet_shaper import (
+                EvidenceItem,
+                rivet_shaper_enabled,
+                shape_context,
+            )
+
+            if rivet_shaper_enabled():
+                pool = [
+                    EvidenceItem(
+                        path=f"[{repo}] {path}",
+                        symbol=symbol,
+                        content=snippet,
+                        score=score,
+                    )
+                    for repo, path, snippet, symbol, score in entries
+                ]
+                shaped = shape_context(
+                    subtask.description,
+                    pool,
+                    budget_tokens=self._context_budget_tokens(),
+                )
+                if not shaped.shaped:
+                    return None
+                lines = ["## Related code from indexed repositories"]
+                for evidence in shaped.shaped:
+                    lines.append(evidence.text)
+                return "\n\n".join(lines)
+            lines = ["## Related code from indexed repositories"]
+            for repo, path, snippet, _symbol, _score in entries:
+                lines.append(f"### [{repo}] {path}")
+                lines.append(f"```\n{snippet[:500]}\n```")
             return "\n".join(lines) if len(lines) > 1 else None
         except Exception:
             # ponytail: search failure is non-fatal — subtask still executes
