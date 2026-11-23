@@ -3,6 +3,7 @@
 //! Implements the `EngineApi` trait with local (in-process) components.
 //! Depends on uc-types for the trait and data definitions.
 
+pub mod argus_pmg;
 pub mod async_dep_checker;
 pub mod chain_isolation;
 pub mod checkpoint;
@@ -41,6 +42,10 @@ pub mod task_store;
 pub mod tokencast_budgeter;
 pub mod tomasu_ooo;
 
+pub use argus_pmg::{
+    ArgusError, ArgusPhase, ArgusReport, ArgusRuntime, ArgusStrategy, PhysicalConstraint,
+    PmgDecision, PmgError, PmgGuard, S2PMapping, DEFAULT_MAX_STRATEGIES, MATURE_WAVE_THRESHOLD,
+};
 pub use async_dep_checker::{
     AsyncDepError, AsyncDependencyChecker, DependencyEdge, DependencyKind, DependencyProbe,
     DependencyState, HoppingWindow, IntegrationReport, DEFAULT_MAX_EDGES,
