@@ -24,6 +24,7 @@ pub mod sandbox;
 pub mod scheduler;
 pub mod search;
 pub mod shift_reconciler;
+pub mod soei_ledger;
 pub mod task_store;
 pub mod tomasu_ooo;
 
@@ -59,21 +60,25 @@ pub use rl_hardening::{
     EnvironmentAnomaly, ProcessGroupCleanupPlan, ProcessGroupCommand, ProcessGroupPlan,
     ProcessGroupSpec, RlHardening, RlHardeningError, StateHashReceipt, HASH_ALGORITHM,
 };
+pub use search::HybridSearchEngine;
+pub use search::SemanticSearchEngine;
 pub use shift_reconciler::{
-    DEFAULT_EVENT_CAPACITY, RecoveryPlan, ShiftError, ShiftEvent, ShiftKind, ShiftPhase,
-    ShiftReconciler, WorkspaceEpoch,
+    RecoveryPlan, ShiftError, ShiftEvent, ShiftKind, ShiftPhase, ShiftReconciler, WorkspaceEpoch,
+    DEFAULT_EVENT_CAPACITY,
 };
+pub use soei_ledger::{
+    LedgerEntry, LedgerEventKind, PendingRecord, ProvEdge, ProvRelation, SoeiError, SoeiLedger,
+    DEFAULT_LEDGER_CAPACITY, GENESIS_HASH, LEDGER_ALGORITHM,
+};
+#[cfg(feature = "storage")]
+pub use task_store::PostgresTaskBackend;
+pub use task_store::{InMemoryTaskBackend, TaskStoreBackend};
 pub use tomasu_ooo::{
     ActionKind, AuditEntry, AuditOutcome, CommittedObservation, OperandKind, RunAheadConfig,
     RunAheadController, RunAheadStats, SpeculativeAction, TomasuError, TraceIrValidator,
     ValidationFailure, ValidationReport, DEFAULT_AUDIT_CAPACITY, DEFAULT_MAX_CHAIN_DEPTH,
     DEFAULT_MAX_SPECULATIVE_SLOTS,
 };
-pub use search::HybridSearchEngine;
-pub use search::SemanticSearchEngine;
-#[cfg(feature = "storage")]
-pub use task_store::PostgresTaskBackend;
-pub use task_store::{InMemoryTaskBackend, TaskStoreBackend};
 
 // Sandbox module re-exports
 pub use sandbox::agents::claude_code::ClaudeCodeAgent;
