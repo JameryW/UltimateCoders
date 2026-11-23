@@ -17,6 +17,7 @@ pub mod dag;
 pub mod dsh_aig_taint_guard;
 pub mod events;
 pub mod expert_rubric_calibrator;
+pub mod germline_mcp;
 pub mod git;
 pub mod governance;
 pub mod graph_store;
@@ -27,10 +28,12 @@ pub mod local;
 pub mod mem_sidecar;
 pub mod memory;
 pub mod metadata;
+pub mod metal_scheduler;
 pub mod micro_commit;
 pub mod migration_lock;
 pub mod monitor_firewall;
 pub mod mutation_authority_guard;
+pub mod prism_agentcap;
 pub mod rate_limiter;
 pub mod repos_config;
 pub mod rl_hardening;
@@ -43,6 +46,7 @@ pub mod shift_reconciler;
 pub mod soei_ledger;
 pub mod swe_gate_verifier;
 pub mod task_store;
+pub mod tenon_residency;
 pub mod tokencast_budgeter;
 pub mod tomasu_ooo;
 pub mod vuln_guard;
@@ -99,6 +103,9 @@ pub use expert_rubric_calibrator::{
     CalibrationCase, CalibrationReport, ExpertRubricCalibrator, PatchEvidence, PatchKind,
     RubricCriterion, RubricError, RubricScore, DEFAULT_MAX_CRITERIA,
 };
+pub use germline_mcp::{
+    GermlineError, GermlineExecution, GermlinePool, SinkKind, ToolInvocation, DEFAULT_POOL_SIZE,
+};
 pub use graph_store::{requires_independence, transition_ok, GraphShadowSink, SweptAttempt};
 #[cfg(feature = "storage")]
 pub use graph_store::{BackfillStats, FailOutcome, GraphStore, DEFAULT_MAX_ATTEMPTS};
@@ -119,6 +126,11 @@ pub use mem_sidecar::{
     PrefetchPrediction, RouteReport, SidecarStats, DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_MAX_PREFETCH,
 };
+pub use metal_scheduler::{
+    CollusionMonitor, CommandAssignment, CommandKind, CrossProviderReview, DecisionRecord,
+    MetalCommand, MetalError, MetalScheduler, NodeSpec, ProvenanceReport, ReviewEvidence,
+    SchedulePlan, DEFAULT_PARALLEL_SLOTS, DEFAULT_SERIAL_SLOTS,
+};
 pub use micro_commit::{
     AgentEvent, AgentEventKind, AgentStepper, HotEdit, IngestOutcome, MicroCommit,
     MicroCommitError, StepperState, DEFAULT_MAX_COMMITS, DEFAULT_MAX_EVENTS, DEFAULT_MAX_OVERRIDES,
@@ -130,6 +142,10 @@ pub use monitor_firewall::{
 pub use mutation_authority_guard::{
     receipt_signature, AuthorityDecision, AuthorityReceipt, MutationAuthorityError,
     MutationAuthorityGuard, MutationRequest, DEFAULT_MAX_DECISIONS,
+};
+pub use prism_agentcap::{
+    distinct_tools, AgentCapVerifier, CapabilityIssuer, CapabilityToken, MinimizedRole, PrismError,
+    PrismMinimizer, ToolPrivilege, DEFAULT_NECESSITY_THRESHOLD,
 };
 pub use rate_limiter::{
     LlmRateLimiter, LlmRateLimiterConfig, ModelFallbackChain, RequestPriority, TaskComplexity,
@@ -165,6 +181,10 @@ pub use swe_gate_verifier::{
 #[cfg(feature = "storage")]
 pub use task_store::PostgresTaskBackend;
 pub use task_store::{InMemoryTaskBackend, TaskStoreBackend};
+pub use tenon_residency::{
+    ResidencyAction, ResidencyPlan, SessionDemand, SessionState, TenonError, TenonResidency,
+    DEFAULT_MAX_OVERSUBSCRIPTION, DEFAULT_MEMORY_BUDGET_MB,
+};
 pub use tokencast_budgeter::{
     BudgetAction, BudgetDecision, ExecutionSegment, TokenCastBudgeter, TokenForecast,
     DEFAULT_TOKEN_BUDGET,
