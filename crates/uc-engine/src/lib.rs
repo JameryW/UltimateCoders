@@ -29,6 +29,7 @@ pub mod memory;
 pub mod metadata;
 pub mod micro_commit;
 pub mod migration_lock;
+pub mod monitor_firewall;
 pub mod mutation_authority_guard;
 pub mod rate_limiter;
 pub mod repos_config;
@@ -121,6 +122,10 @@ pub use mem_sidecar::{
 pub use micro_commit::{
     AgentEvent, AgentEventKind, AgentStepper, HotEdit, IngestOutcome, MicroCommit,
     MicroCommitError, StepperState, DEFAULT_MAX_COMMITS, DEFAULT_MAX_EVENTS, DEFAULT_MAX_OVERRIDES,
+};
+pub use monitor_firewall::{
+    admit_message, evidence_digest, EvidenceKind, MonitorDecision, MonitorFirewall,
+    MonitorFirewallError, MonitorRequest, MonitorVerdict, StructuredEvidence, DEFAULT_MAX_EVIDENCE,
 };
 pub use mutation_authority_guard::{
     receipt_signature, AuthorityDecision, AuthorityReceipt, MutationAuthorityError,
