@@ -8,6 +8,7 @@ pub mod checkpoint;
 pub mod clean_regrader;
 pub mod config;
 pub mod conflict;
+pub mod cross_os_migration_gate;
 pub mod cross_repo_coordinator;
 pub mod dag;
 pub mod events;
@@ -30,6 +31,7 @@ pub mod scheduler;
 pub mod search;
 pub mod shift_reconciler;
 pub mod soei_ledger;
+pub mod swe_gate_verifier;
 pub mod task_store;
 pub mod tomasu_ooo;
 
@@ -47,6 +49,10 @@ pub use conflict::merger::three_way_merge;
 pub use conflict::{
     ConflictDetector, ConflictMarker, ConflictResult, EditIntent, EditType, MergeResult,
     ResolutionTier,
+};
+pub use cross_os_migration_gate::{
+    CoverageGap, CoverageRegion, CrossOsError, CrossOsMigrationGate, MigrationReport,
+    MigrationRequest, OsTestOutcome, Platform, RegionKind, DEFAULT_MAX_REGIONS,
 };
 pub use cross_repo_coordinator::{
     ConsumerDependency, ContractChange, ContractCheck, ContractCheckState, CrossRepoCoordinator,
@@ -96,6 +102,11 @@ pub use shift_reconciler::{
 pub use soei_ledger::{
     LedgerEntry, LedgerEventKind, PendingRecord, ProvEdge, ProvRelation, SoeiError, SoeiLedger,
     DEFAULT_LEDGER_CAPACITY, GENESIS_HASH, LEDGER_ALGORITHM,
+};
+pub use swe_gate_verifier::{
+    ConstraintCheck, ConstraintKind, FunctionalResult, GateReport, ReviewConstraint,
+    RewardHackScrubber, RewardHackSignals, ScrubReport, SweGateError, SweGateVerifier,
+    DEFAULT_MAX_CONSTRAINTS,
 };
 #[cfg(feature = "storage")]
 pub use task_store::PostgresTaskBackend;
