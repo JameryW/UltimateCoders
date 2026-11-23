@@ -32,6 +32,7 @@ pub mod outbox;
 pub mod policy;
 pub mod proactive;
 pub mod record_store;
+pub mod subagent_safety_barrier;
 pub mod submission;
 pub mod trigger_inbox;
 pub mod watchdog;
@@ -59,6 +60,10 @@ pub use proactive::{ProactiveGate, ProactiveGateError};
 pub use record_store::PostgresRecordStore;
 pub use record_store::{
     InMemoryRecordStore, Record, RecordError, RecordStore, GOVERNANCE_RECORDS_TABLE,
+};
+pub use subagent_safety_barrier::{
+    DelegationDecision, DelegationRequest, EvidenceMode, SubagentSafetyBarrier,
+    SubagentSafetyError, SubagentTier,
 };
 pub use submission::{SubmissionError, SubmissionStore};
 pub use trigger_inbox::{TriggerInbox, TriggerInboxError};
