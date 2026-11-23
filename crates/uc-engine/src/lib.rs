@@ -8,11 +8,13 @@ pub mod checkpoint;
 pub mod clean_regrader;
 pub mod config;
 pub mod conflict;
+pub mod cross_repo_coordinator;
 pub mod dag;
 pub mod events;
 pub mod git;
 pub mod governance;
 pub mod graph_store;
+pub mod her_block_checkpoint;
 pub mod indexer;
 pub mod local;
 pub mod memory;
@@ -46,6 +48,11 @@ pub use conflict::{
     ConflictDetector, ConflictMarker, ConflictResult, EditIntent, EditType, MergeResult,
     ResolutionTier,
 };
+pub use cross_repo_coordinator::{
+    ConsumerDependency, ContractChange, ContractCheck, ContractCheckState, CrossRepoCoordinator,
+    CrossRepoError, DependencyKind as CrossRepoDependencyKind, ExportedSymbol, PropagationReport,
+    RepoContract, DEFAULT_MAX_EDGES as DEFAULT_MAX_CROSS_REPO_EDGES, DEFAULT_MAX_REPOS,
+};
 pub use dag::{CumulativeRegressionPlan, RegressionObligation, RegressionPlanError};
 /// NATS JetStream-backed `EventStore` (feature-gated on `messaging`).
 #[cfg(feature = "messaging")]
@@ -56,6 +63,11 @@ pub use events::{
 pub use graph_store::{requires_independence, transition_ok, GraphShadowSink, SweptAttempt};
 #[cfg(feature = "storage")]
 pub use graph_store::{BackfillStats, FailOutcome, GraphStore, DEFAULT_MAX_ATTEMPTS};
+pub use her_block_checkpoint::{
+    BlockCheckpoint, CheckpointOutcome, FailureRelocation, HerBlockController, HerError,
+    HerSnapshot, PatchBack, ReplayPlan, SetupBlock, SetupBlockKind, DEFAULT_MAX_BLOCKS,
+    DEFAULT_MAX_CHECKPOINTS,
+};
 pub use indexer::semantic::{EmbeddingService, SemanticIndexer};
 pub use indexer::IndexPipeline;
 pub use local::LocalEngine;
