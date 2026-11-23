@@ -3,7 +3,9 @@
 //! Implements the `EngineApi` trait with local (in-process) components.
 //! Depends on uc-types for the trait and data definitions.
 
+pub mod async_dep_checker;
 pub mod checkpoint;
+pub mod clean_regrader;
 pub mod config;
 pub mod conflict;
 pub mod dag;
@@ -16,6 +18,7 @@ pub mod local;
 pub mod memory;
 pub mod metadata;
 pub mod migration_lock;
+pub mod mutation_authority_guard;
 pub mod rate_limiter;
 pub mod repos_config;
 pub mod rl_hardening;
@@ -28,7 +31,15 @@ pub mod soei_ledger;
 pub mod task_store;
 pub mod tomasu_ooo;
 
+pub use async_dep_checker::{
+    AsyncDepError, AsyncDependencyChecker, DependencyEdge, DependencyKind, DependencyProbe,
+    DependencyState, HoppingWindow, IntegrationReport, DEFAULT_MAX_EDGES,
+};
 pub use checkpoint::{CheckpointConfig, CheckpointManager};
+pub use clean_regrader::{
+    CleanRegradeReport, CleanRegradeRequest, CleanRegrader, RegradeConfigError, RegradeViolation,
+    SandboxEgressPolicy, CLEAN_REGRADER_ID, DEFAULT_MAX_PATCH_BYTES,
+};
 pub use config::{EmbeddingConfig, EngineConfig, MemoryConfig, StorageConfig};
 pub use conflict::merger::three_way_merge;
 pub use conflict::{
@@ -48,6 +59,10 @@ pub use graph_store::{BackfillStats, FailOutcome, GraphStore, DEFAULT_MAX_ATTEMP
 pub use indexer::semantic::{EmbeddingService, SemanticIndexer};
 pub use indexer::IndexPipeline;
 pub use local::LocalEngine;
+pub use mutation_authority_guard::{
+    receipt_signature, AuthorityDecision, AuthorityReceipt, MutationAuthorityError,
+    MutationAuthorityGuard, MutationRequest, DEFAULT_MAX_DECISIONS,
+};
 pub use rate_limiter::{
     LlmRateLimiter, LlmRateLimiterConfig, ModelFallbackChain, RequestPriority, TaskComplexity,
     TokenBucket,
