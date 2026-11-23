@@ -10,6 +10,7 @@ pub mod checkpoint;
 pub mod clean_regrader;
 pub mod config;
 pub mod conflict;
+pub mod continuous_bench;
 pub mod cross_os_migration_gate;
 pub mod cross_repo_coordinator;
 pub mod dag;
@@ -43,6 +44,7 @@ pub mod swe_gate_verifier;
 pub mod task_store;
 pub mod tokencast_budgeter;
 pub mod tomasu_ooo;
+pub mod vuln_guard;
 
 pub use argus_pmg::{
     ArgusError, ArgusPhase, ArgusReport, ArgusRuntime, ArgusStrategy, PhysicalConstraint,
@@ -66,6 +68,11 @@ pub use conflict::merger::three_way_merge;
 pub use conflict::{
     ConflictDetector, ConflictMarker, ConflictResult, EditIntent, EditType, MergeResult,
     ResolutionTier,
+};
+pub use continuous_bench::{
+    Attribution, AttributionKind, BenchmarkBudget, BenchmarkResult, BenchmarkSpec,
+    CalibrationReport as BenchCalibrationReport, ContinuousBench, ContinuousBenchError,
+    TrajectoryQaFinding, DEFAULT_MAX_RESULTS, DEFAULT_MAX_SPECS,
 };
 pub use cross_os_migration_gate::{
     CoverageGap, CoverageRegion, CrossOsError, CrossOsMigrationGate, MigrationReport,
@@ -162,6 +169,11 @@ pub use tomasu_ooo::{
     RunAheadController, RunAheadStats, SpeculativeAction, TomasuError, TraceIrValidator,
     ValidationFailure, ValidationReport, DEFAULT_AUDIT_CAPACITY, DEFAULT_MAX_CHAIN_DEPTH,
     DEFAULT_MAX_SPECULATIVE_SLOTS,
+};
+pub use vuln_guard::{
+    CweClass, Disclosure, MemoryAuditReport, MemoryFile, MemoryFinding, MemoryRule, PatchFinding,
+    PatchFindingKind, PatchHunk, PatchReview, VulnGuard, VulnGuardError, VulnerableSnippet,
+    DEFAULT_MAX_MEMORY_FILES, DEFAULT_MAX_SNIPPETS, MEMORY_RULES,
 };
 
 // Sandbox module re-exports
