@@ -19,9 +19,11 @@ pub mod expert_rubric_calibrator;
 pub mod git;
 pub mod governance;
 pub mod graph_store;
+pub mod harness_awareness;
 pub mod her_block_checkpoint;
 pub mod indexer;
 pub mod local;
+pub mod mem_sidecar;
 pub mod memory;
 pub mod metadata;
 pub mod micro_commit;
@@ -92,6 +94,10 @@ pub use expert_rubric_calibrator::{
 pub use graph_store::{requires_independence, transition_ok, GraphShadowSink, SweptAttempt};
 #[cfg(feature = "storage")]
 pub use graph_store::{BackfillStats, FailOutcome, GraphStore, DEFAULT_MAX_ATTEMPTS};
+pub use harness_awareness::{
+    HarnessAwarenessError, HarnessAwarenessRouter, RouteDecision, RouteScore, ToolCandidate,
+    ToolHealthSnapshot, ToolObservation, DEFAULT_FAULT_PENALTY_MS, DEFAULT_HEALTH_WINDOW,
+};
 pub use her_block_checkpoint::{
     BlockCheckpoint, CheckpointOutcome, FailureRelocation, HerBlockController, HerError,
     HerSnapshot, PatchBack, ReplayPlan, SetupBlock, SetupBlockKind, DEFAULT_MAX_BLOCKS,
@@ -100,6 +106,11 @@ pub use her_block_checkpoint::{
 pub use indexer::semantic::{EmbeddingService, SemanticIndexer};
 pub use indexer::IndexPipeline;
 pub use local::LocalEngine;
+pub use mem_sidecar::{
+    HookRule, MemSidecar, MemSidecarError, MemoryKind, MemoryRecord, MemoryRoute, PrefetchEntry,
+    PrefetchPrediction, RouteReport, SidecarStats, DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_MAX_PREFETCH,
+};
 pub use micro_commit::{
     AgentEvent, AgentEventKind, AgentStepper, HotEdit, IngestOutcome, MicroCommit,
     MicroCommitError, StepperState, DEFAULT_MAX_COMMITS, DEFAULT_MAX_EVENTS, DEFAULT_MAX_OVERRIDES,
