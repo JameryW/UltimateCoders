@@ -13,6 +13,7 @@ pub mod conflict;
 pub mod continuous_bench;
 pub mod cross_os_migration_gate;
 pub mod cross_repo_coordinator;
+pub mod crustify_wavefront;
 pub mod dag;
 pub mod dsh_aig_taint_guard;
 pub mod events;
@@ -89,6 +90,10 @@ pub use cross_repo_coordinator::{
     ConsumerDependency, ContractChange, ContractCheck, ContractCheckState, CrossRepoCoordinator,
     CrossRepoError, DependencyKind as CrossRepoDependencyKind, ExportedSymbol, PropagationReport,
     RepoContract, DEFAULT_MAX_EDGES as DEFAULT_MAX_CROSS_REPO_EDGES, DEFAULT_MAX_REPOS,
+};
+pub use crustify_wavefront::{
+    BindingInventory, CrustifyError, CrustifyReport, CrustifyVerifier, CrustifyWavefront,
+    FfiSymbol, MiriFinding, UbKind, WavefrontPlan, DEFAULT_MAX_SYMBOLS,
 };
 pub use dag::{CumulativeRegressionPlan, RegressionObligation, RegressionPlanError};
 pub use dsh_aig_taint_guard::{
