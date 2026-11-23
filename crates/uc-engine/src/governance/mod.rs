@@ -27,6 +27,7 @@ pub mod case_resume;
 pub mod case_store;
 pub mod case_wake;
 pub mod compaction_rule_guard;
+pub mod dual_rule_auditor;
 pub mod outbox;
 pub mod policy;
 pub mod proactive;
@@ -45,6 +46,11 @@ pub use case_wake::{wake_matched_cases, CaseWake};
 pub use compaction_rule_guard::{
     CompactionAnchor, CompactionRuleError, CompactionRuleGuard, MandateRule, RuleViolation,
     RuleViolationKind, DEFAULT_MAX_RULES,
+};
+pub use dual_rule_auditor::{
+    AuditDecision, AuditEntry, DualRuleAuditor, DualRuleError, HardRule, HopAttestation,
+    PropagationToken, Proposal, SoftRule, DEFAULT_MAX_AUDIT_ENTRIES, DEFAULT_SOFT_THRESHOLD,
+    ROOT_SIGNATURE,
 };
 pub use outbox::{OutboxError, OutboxQueue};
 pub use policy::{PolicyEngine, PolicyEngineError};

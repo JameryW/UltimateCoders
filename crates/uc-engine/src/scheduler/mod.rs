@@ -14,6 +14,7 @@ pub mod config;
 pub mod dependency;
 pub mod dispatcher;
 pub mod executor;
+pub mod kv_metastability_budgeter;
 pub mod lock;
 pub mod migration;
 pub mod night_window;
@@ -25,6 +26,9 @@ pub use dispatcher::{EngineSubmitDispatcher, OrchestratorDispatcher, WindowEvent
 pub use executor::{
     AttemptOutcome, AttemptStatus, Executor, ExecutorError, ExecutorSelector, LocalExecutor,
     LocalNodeHandler, RemoteExecutor, RouteDecision, SandboxExecutor,
+};
+pub use kv_metastability_budgeter::{
+    BudgetPlan, KvBudgetError, KvMetastabilityBudgeter, SessionDemand, DEFAULT_SAFETY_RATIO,
 };
 pub use lock::{LockProvider, NoOpLockProvider};
 pub use night_window::{NightWindow, NightWindowError};
