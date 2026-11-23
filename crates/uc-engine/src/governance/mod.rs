@@ -26,6 +26,7 @@ pub mod attention;
 pub mod case_resume;
 pub mod case_store;
 pub mod case_wake;
+pub mod compaction_rule_guard;
 pub mod outbox;
 pub mod policy;
 pub mod proactive;
@@ -41,6 +42,10 @@ pub use attention::{AttentionBoard, AttentionBoardError};
 pub use case_resume::{plan_resume, ResumePlan, ResumeSkip};
 pub use case_store::{CaseStore, CaseStoreError, MandateStore};
 pub use case_wake::{wake_matched_cases, CaseWake};
+pub use compaction_rule_guard::{
+    CompactionAnchor, CompactionRuleError, CompactionRuleGuard, MandateRule, RuleViolation,
+    RuleViolationKind, DEFAULT_MAX_RULES,
+};
 pub use outbox::{OutboxError, OutboxQueue};
 pub use policy::{PolicyEngine, PolicyEngineError};
 pub use proactive::{ProactiveGate, ProactiveGateError};

@@ -68,6 +68,128 @@ impl RuntimeMetrics {
     }
 }
 
+/// Default heat ratio that trips the early-stop recommendation.
+pub const DEFAULT_HEAT_THRESHOLD: f64 = 0.8;
+
+/// One tool call and the repository tree hash before and after it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TokenHeatSample {
+    pub tool: String,
+    pub tree_before: String,
+    pub tree_after: String,
+    pub tokens: u64,
+}
+
+/// Token thermodynamics for one coding run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TokenHeatReport {
+    pub samples: usize,
+    pub heat_tokens: u64,
+    pub free_energy_tokens: u64,
+    pub heat_ratio: f64,
+    pub free_energy_ratio: f64,
+    pub threshold: f64,
+    pub breach: bool,
+}
+
+/// Bounded recorder for token heat.
+#[derive(Debug, Clone)]
+pub struct TokenHeatTelemetry {
+    samples: Vec<TokenHeatSample>,
+    max_samples: usize,
+    threshold: f64,
+}
+
+impl Default for TokenHeatTelemetry {
+    fn default() -> Self {
+        Self::new(4096, DEFAULT_HEAT_THRESHOLD)
+    }
+}
+
+impl TokenHeatTelemetry {
+    pub fn new(max_samples: usize, threshold: f64) -> Self {
+        Self {
+            samples: Vec::new(),
+            max_samples,
+            threshold,
+        }
+    }
+
+    pub fn record(
+        &mut self,
+        tool: impl Into<String>,
+        tree_before: impl Into<String>,
+        tree_after: impl Into<String>,
+        tokens: u64,
+    ) -> Result<(), &'static str> {
+        let tool = tool.into();
+        let tree_before = tree_before.into();
+        let tree_after = tree_after.into();
+        if tool.trim().is_empty() {
+            return Err("empty tool");
+        }
+        if tree_before.trim().is_empty() || tree_after.trim().is_empty() {
+            return Err("empty tree hash");
+        }
+        if tokens == 0 {
+            return Err("zero tokens");
+        }
+        if self.samples.len() >= self.max_samples {
+            self.samples.remove(0);
+        }
+        self.samples.push(TokenHeatSample {
+            tool,
+            tree_before,
+            tree_after,
+            tokens,
+        });
+        Ok(())
+    }
+
+    pub fn samples(&self) -> &[TokenHeatSample] {
+        &self.samples
+    }
+
+    pub fn report(&self) -> TokenHeatReport {
+        let heat_tokens = self
+            .samples
+            .iter()
+            .filter(|sample| sample.tree_before == sample.tree_after)
+            .map(|sample| sample.tokens)
+            .sum::<u64>();
+        let free_energy_tokens = self
+            .samples
+            .iter()
+            .filter(|sample| sample.tree_before != sample.tree_after)
+            .map(|sample| sample.tokens)
+            .sum::<u64>();
+        let total = heat_tokens + free_energy_tokens;
+        let heat_ratio = if total == 0 {
+            0.0
+        } else {
+            heat_tokens as f64 / total as f64
+        };
+        let free_energy_ratio = if total == 0 {
+            0.0
+        } else {
+            free_energy_tokens as f64 / total as f64
+        };
+        TokenHeatReport {
+            samples: self.samples.len(),
+            heat_tokens,
+            free_energy_tokens,
+            heat_ratio,
+            free_energy_ratio,
+            threshold: self.threshold,
+            breach: total > 0 && heat_ratio > self.threshold,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.samples.clear();
+    }
+}
+
 /// Read an existing graph without migrating or modifying the database.
 #[cfg(feature = "storage")]
 pub async fn read_runtime_report(
@@ -224,5 +346,97 @@ mod tests {
         assert_eq!(report.activation_inflation, Some(1.5));
         assert_eq!(report.metrics.reported_tokens, None);
         assert_eq!(report.metrics.reported_cost_usd, None);
+    }
+}
+
+#[cfg(test)]
+mod token_heat_tests {
+    use super::*;
+
+    #[test]
+    fn empty_telemetry_has_no_heat_or_breach() {
+        let report = TokenHeatTelemetry::default().report();
+        assert_eq!(report.samples, 0);
+        assert_eq!(report.heat_tokens, 0);
+        assert_eq!(report.heat_ratio, 0.0);
+        assert!(!report.breach);
+    }
+
+    #[test]
+    fn unchanged_tree_is_heat() {
+        let mut telemetry = TokenHeatTelemetry::default();
+        telemetry.record("read_file", "abc", "abc", 100).unwrap();
+        let report = telemetry.report();
+        assert_eq!(report.heat_tokens, 100);
+        assert_eq!(report.free_energy_tokens, 0);
+        assert_eq!(report.heat_ratio, 1.0);
+        assert!(report.breach);
+    }
+
+    #[test]
+    fn changed_tree_is_free_energy() {
+        let mut telemetry = TokenHeatTelemetry::default();
+        telemetry.record("edit_file", "abc", "def", 50).unwrap();
+        let report = telemetry.report();
+        assert_eq!(report.heat_tokens, 0);
+        assert_eq!(report.free_energy_ratio, 1.0);
+        assert!(!report.breach);
+    }
+
+    #[test]
+    fn mixed_run_reports_both_ratios() {
+        let mut telemetry = TokenHeatTelemetry::new(8, 0.5);
+        telemetry.record("read", "a", "a", 80).unwrap();
+        telemetry.record("edit", "a", "b", 20).unwrap();
+        let report = telemetry.report();
+        assert_eq!(report.heat_tokens, 80);
+        assert_eq!(report.free_energy_tokens, 20);
+        assert_eq!(report.heat_ratio, 0.8);
+        assert!(report.breach);
+    }
+
+    #[test]
+    fn threshold_boundary_is_not_a_breach() {
+        let mut telemetry = TokenHeatTelemetry::new(8, 0.8);
+        telemetry.record("read", "a", "a", 80).unwrap();
+        telemetry.record("edit", "a", "b", 20).unwrap();
+        assert!(!telemetry.report().breach);
+    }
+
+    #[test]
+    fn invalid_samples_are_rejected() {
+        let mut telemetry = TokenHeatTelemetry::default();
+        assert_eq!(telemetry.record("", "a", "b", 1), Err("empty tool"));
+        assert_eq!(telemetry.record("read", "", "b", 1), Err("empty tree hash"));
+        assert_eq!(telemetry.record("read", "a", "b", 0), Err("zero tokens"));
+        assert!(telemetry.samples().is_empty());
+    }
+
+    #[test]
+    fn capacity_drops_oldest_sample() {
+        let mut telemetry = TokenHeatTelemetry::new(1, 0.8);
+        telemetry.record("first", "a", "a", 10).unwrap();
+        telemetry.record("second", "b", "b", 20).unwrap();
+        assert_eq!(telemetry.samples().len(), 1);
+        assert_eq!(telemetry.samples()[0].tool, "second");
+        assert_eq!(telemetry.report().heat_tokens, 20);
+    }
+
+    #[test]
+    fn reset_clears_samples_and_report() {
+        let mut telemetry = TokenHeatTelemetry::default();
+        telemetry.record("read", "a", "a", 10).unwrap();
+        telemetry.reset();
+        assert!(telemetry.samples().is_empty());
+        assert_eq!(telemetry.report().samples, 0);
+    }
+
+    #[test]
+    fn report_is_deterministic_for_same_samples() {
+        let mut first = TokenHeatTelemetry::default();
+        let mut second = TokenHeatTelemetry::default();
+        first.record("read", "a", "a", 10).unwrap();
+        second.record("read", "a", "a", 10).unwrap();
+        assert_eq!(first.report(), second.report());
     }
 }
