@@ -33,6 +33,7 @@ pub mod micro_commit;
 pub mod migration_lock;
 pub mod monitor_firewall;
 pub mod mutation_authority_guard;
+pub mod planters_fence;
 pub mod prism_agentcap;
 pub mod rate_limiter;
 pub mod repos_config;
@@ -49,6 +50,7 @@ pub mod task_store;
 pub mod tenon_residency;
 pub mod tokencast_budgeter;
 pub mod tomasu_ooo;
+pub mod triple_kv_manager;
 pub mod vuln_guard;
 
 pub use argus_pmg::{
@@ -143,6 +145,10 @@ pub use mutation_authority_guard::{
     receipt_signature, AuthorityDecision, AuthorityReceipt, MutationAuthorityError,
     MutationAuthorityGuard, MutationRequest, DEFAULT_MAX_DECISIONS,
 };
+pub use planters_fence::{
+    FenceDecision, FenceSnapshot, PendingReview, PlanterError, PlanterFence, ToolClass,
+    DEFAULT_APPROVAL_BUDGET,
+};
 pub use prism_agentcap::{
     distinct_tools, AgentCapVerifier, CapabilityIssuer, CapabilityToken, MinimizedRole, PrismError,
     PrismMinimizer, ToolPrivilege, DEFAULT_NECESSITY_THRESHOLD,
@@ -194,6 +200,10 @@ pub use tomasu_ooo::{
     RunAheadController, RunAheadStats, SpeculativeAction, TomasuError, TraceIrValidator,
     ValidationFailure, ValidationReport, DEFAULT_AUDIT_CAPACITY, DEFAULT_MAX_CHAIN_DEPTH,
     DEFAULT_MAX_SPECULATIVE_SLOTS,
+};
+pub use triple_kv_manager::{
+    KvPlan, KvStats, KvTier, TripleKvError, TripleKvManager, DEFAULT_DRAM_BLOCKS,
+    DEFAULT_GPU_BLOCKS, DEFAULT_SSD_BLOCKS,
 };
 pub use vuln_guard::{
     CweClass, Disclosure, MemoryAuditReport, MemoryFile, MemoryFinding, MemoryRule, PatchFinding,
