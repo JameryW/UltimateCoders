@@ -4,6 +4,7 @@
 //! Depends on uc-types for the trait and data definitions.
 
 pub mod async_dep_checker;
+pub mod chain_isolation;
 pub mod checkpoint;
 pub mod clean_regrader;
 pub mod config;
@@ -22,6 +23,7 @@ pub mod indexer;
 pub mod local;
 pub mod memory;
 pub mod metadata;
+pub mod micro_commit;
 pub mod migration_lock;
 pub mod mutation_authority_guard;
 pub mod rate_limiter;
@@ -31,6 +33,7 @@ pub mod runtime_metrics;
 pub mod sandbox;
 pub mod scheduler;
 pub mod search;
+pub mod setupx_lifo;
 pub mod shift_reconciler;
 pub mod soei_ledger;
 pub mod swe_gate_verifier;
@@ -41,6 +44,10 @@ pub mod tomasu_ooo;
 pub use async_dep_checker::{
     AsyncDepError, AsyncDependencyChecker, DependencyEdge, DependencyKind, DependencyProbe,
     DependencyState, HoppingWindow, IntegrationReport, DEFAULT_MAX_EDGES,
+};
+pub use chain_isolation::{
+    AstEdit, BugScope, ChainError, ChainPatch, ChainSanitizer, SanitizedPatch,
+    DEFAULT_OVERSHOOT_LAMBDA,
 };
 pub use checkpoint::{CheckpointConfig, CheckpointManager};
 pub use clean_regrader::{
@@ -88,6 +95,10 @@ pub use her_block_checkpoint::{
 pub use indexer::semantic::{EmbeddingService, SemanticIndexer};
 pub use indexer::IndexPipeline;
 pub use local::LocalEngine;
+pub use micro_commit::{
+    AgentEvent, AgentEventKind, AgentStepper, HotEdit, IngestOutcome, MicroCommit,
+    MicroCommitError, StepperState, DEFAULT_MAX_COMMITS, DEFAULT_MAX_EVENTS, DEFAULT_MAX_OVERRIDES,
+};
 pub use mutation_authority_guard::{
     receipt_signature, AuthorityDecision, AuthorityReceipt, MutationAuthorityError,
     MutationAuthorityGuard, MutationRequest, DEFAULT_MAX_DECISIONS,
@@ -106,6 +117,10 @@ pub use rl_hardening::{
 };
 pub use search::HybridSearchEngine;
 pub use search::SemanticSearchEngine;
+pub use setupx_lifo::{
+    SetupEvidence, SetupXError, SetupXLifo, Snapshot, Speculation, SpeculationOutcome, Verdict,
+    Xpu, DEFAULT_MAX_SNAPSHOTS, DEFAULT_MAX_XPUS,
+};
 pub use shift_reconciler::{
     RecoveryPlan, ShiftError, ShiftEvent, ShiftKind, ShiftPhase, ShiftReconciler, WorkspaceEpoch,
     DEFAULT_EVENT_CAPACITY,
