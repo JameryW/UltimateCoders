@@ -11,7 +11,9 @@ pub mod conflict;
 pub mod cross_os_migration_gate;
 pub mod cross_repo_coordinator;
 pub mod dag;
+pub mod dsh_aig_taint_guard;
 pub mod events;
+pub mod expert_rubric_calibrator;
 pub mod git;
 pub mod governance;
 pub mod graph_store;
@@ -33,6 +35,7 @@ pub mod shift_reconciler;
 pub mod soei_ledger;
 pub mod swe_gate_verifier;
 pub mod task_store;
+pub mod tokencast_budgeter;
 pub mod tomasu_ooo;
 
 pub use async_dep_checker::{
@@ -60,11 +63,19 @@ pub use cross_repo_coordinator::{
     RepoContract, DEFAULT_MAX_EDGES as DEFAULT_MAX_CROSS_REPO_EDGES, DEFAULT_MAX_REPOS,
 };
 pub use dag::{CumulativeRegressionPlan, RegressionObligation, RegressionPlanError};
+pub use dsh_aig_taint_guard::{
+    fresh_nonce, is_hidden_unicode, strip_hidden_unicode, AigTaintGuard, LlmJudge, TaintChannel,
+    TaintFinding, TaintKind, TaintReport, ToolEnvelope,
+};
 /// NATS JetStream-backed `EventStore` (feature-gated on `messaging`).
 #[cfg(feature = "messaging")]
 pub use events::NatsEventStore;
 pub use events::{
     AgentEventType, EventStore, InMemoryEventStore, LineRange, RecordedEvent, TaskSnapshot,
+};
+pub use expert_rubric_calibrator::{
+    CalibrationCase, CalibrationReport, ExpertRubricCalibrator, PatchEvidence, PatchKind,
+    RubricCriterion, RubricError, RubricScore, DEFAULT_MAX_CRITERIA,
 };
 pub use graph_store::{requires_independence, transition_ok, GraphShadowSink, SweptAttempt};
 #[cfg(feature = "storage")]
@@ -111,6 +122,10 @@ pub use swe_gate_verifier::{
 #[cfg(feature = "storage")]
 pub use task_store::PostgresTaskBackend;
 pub use task_store::{InMemoryTaskBackend, TaskStoreBackend};
+pub use tokencast_budgeter::{
+    BudgetAction, BudgetDecision, ExecutionSegment, TokenCastBudgeter, TokenForecast,
+    DEFAULT_TOKEN_BUDGET,
+};
 pub use tomasu_ooo::{
     ActionKind, AuditEntry, AuditOutcome, CommittedObservation, OperandKind, RunAheadConfig,
     RunAheadController, RunAheadStats, SpeculativeAction, TomasuError, TraceIrValidator,
