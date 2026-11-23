@@ -36,12 +36,14 @@ pub mod monitor_firewall;
 pub mod mutation_authority_guard;
 pub mod planters_fence;
 pub mod prism_agentcap;
+pub mod prover_pool;
 pub mod rate_limiter;
 pub mod repos_config;
 pub mod rl_hardening;
 pub mod runtime_metrics;
 pub mod sandbox;
 pub mod scheduler;
+pub mod seam_compositional_guard;
 pub mod search;
 pub mod setupx_lifo;
 pub mod shift_reconciler;
@@ -158,6 +160,10 @@ pub use prism_agentcap::{
     distinct_tools, AgentCapVerifier, CapabilityIssuer, CapabilityToken, MinimizedRole, PrismError,
     PrismMinimizer, ToolPrivilege, DEFAULT_NECESSITY_THRESHOLD,
 };
+pub use prover_pool::{
+    CuriosityCandidate, CuriosityChoice, CuriosityEngine, ProverError, ProverKind, ProverPool,
+    ProverPoolStats, ProverSlot, DEFAULT_MAX_CURIOSITY_CANDIDATES, DEFAULT_MAX_PROVER_SLOTS,
+};
 pub use rate_limiter::{
     LlmRateLimiter, LlmRateLimiterConfig, ModelFallbackChain, RequestPriority, TaskComplexity,
     TokenBucket,
@@ -169,6 +175,10 @@ pub use repos_config::{
 pub use rl_hardening::{
     EnvironmentAnomaly, ProcessGroupCleanupPlan, ProcessGroupCommand, ProcessGroupPlan,
     ProcessGroupSpec, RlHardening, RlHardeningError, StateHashReceipt, HASH_ALGORITHM,
+};
+pub use seam_compositional_guard::{
+    Escalation, EscalationChannel, HarmMatch, HarmPattern, Observation, SeamError, SeamGuard,
+    SeamReport, SourceKind, DEFAULT_MAX_OBSERVATIONS, DEFAULT_MAX_PATTERNS,
 };
 pub use search::HybridSearchEngine;
 pub use search::SemanticSearchEngine;
