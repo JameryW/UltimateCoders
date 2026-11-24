@@ -1033,7 +1033,11 @@ def test_real_corpus_unanchored_census_is_reported():
     # (1415 -> 1416); resolved, unclassified 0.
     # The gateway cumulative-regression sentence names the server.rs caller
     # (1416 -> 1417); resolved, unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1417
+    # V11-V29 architecture maps add module, test, dashboard and verification
+    # mentions across the remaining ledger periods (1417 -> 1669, after the
+    # deferred AgentStepperPanel mention was made prose); all resolve and the
+    # unclassified count stays 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1669
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1591,8 +1595,10 @@ def test_real_corpus_moves_only_where_predicted():
     # 2026-11-07 T18c: WorkCase.replans_used + proactive_service accounting
     # shifted a live workcase citation back into range (OK 223 -> 224,
     # STALE 25 -> 24); rows / AMBIGUOUS / calibers unchanged.
-    assert sum(1 for r in rows if r["verdict"] == "OK") == 224
-    assert sum(1 for r in rows if r["verdict"] == "STALE") == 24
+    # V11-V29 maps move one path:line row from STALE to OK (OK 224 -> 225,
+    # STALE 24 -> 23).
+    assert sum(1 for r in rows if r["verdict"] == "OK") == 225
+    assert sum(1 for r in rows if r["verdict"] == "STALE") == 23
     assert sum(1 for r in rows if r["verdict"] == "AMBIGUOUS") == 72
     assert sum(1 for r in rows if r["symbol"] is not None) == 59
     assert sum(1 for r in rows if r["unanchored"]) == 124

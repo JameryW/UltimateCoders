@@ -348,6 +348,7 @@ def test_real_repo_is_reconciled() -> None:
         (2743, 2734),  # #24 Linux cgroup guard module + map update.
         (2744, 2735),  # #17 cumulative-regression gate + its orchestrator test.
         (2746, 2737),  # Mutation-augmentation CLI + its test.
+        (2969, 2960),  # V11-V29 ledger modules, tests, maps and dashboard assets.
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

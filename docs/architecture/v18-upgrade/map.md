@@ -97,10 +97,10 @@ sequence, parent, summary, and diff. The module never writes to the target
 repository; callers own the shadow `git commit-tree` backend.
 
 `dashboard/src/lib/agentStepper.ts` mirrors the state machine and shadow
-commit bookkeeping for the React dashboard. The optional
-`AgentStepperPanel.tsx` UI is intentionally deferred: the current delivery is
-the deterministic state library and its test harness, so the dashboard can
-consume it without a new route.
+commit bookkeeping for the React dashboard. The optional AgentStepperPanel UI
+is intentionally deferred: the current delivery is the deterministic state
+library and its test harness, so the dashboard can consume it without a new
+route.
 
 ## SWE-CI continuous integration (#72)
 
