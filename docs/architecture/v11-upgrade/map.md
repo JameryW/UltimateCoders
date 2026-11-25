@@ -12,7 +12,7 @@ authority, or a network service.
 | Area | Modules | Flag | Wired at | State |
 | --- | --- | --- | --- | --- |
 | Out-of-order speculative execution | `crates/uc-engine/src/tomasu_ooo.rs`, `crates/uc-engine/src/lib.rs` | n/a (additive Rust library) | `RunAheadController` / `TraceIrValidator` exported from `uc-engine` | module only |
-| SWE-Shift mid-execution guard | `crates/uc-engine/src/shift_reconciler.rs`, `python/ultimate_coders/agent/shift_guard.py` | `UC_SHIFT_GUARD` | Python `ShiftGuard` mirror; no harness or gateway listener yet | module only |
+| SWE-Shift mid-execution guard | `crates/uc-engine/src/shift_reconciler.rs`, `python/ultimate_coders/agent/shift_guard.py` | `UC_SHIFT_GUARD` | local harness write gate + fresh-observation recovery | wired (opt-in) |
 | LatentSift candidate filter | `python/ultimate_coders/acceptance/latent_sift.py` | `UC_LATENT_SIFT` | acceptance library; no worker caller yet | module only |
 | ANTE belief world model | `python/ultimate_coders/agent/ante_world_model.py` | `UC_ANTE_WORLD_MODEL` | agent library; no harness caller yet | module only |
 | Rivet context shaper | `python/ultimate_coders/search/rivet_shaper.py` | `UC_RIVET_SHAPER` | worker `_build_search_context` after MemCredit / before rendering | wired |
@@ -60,6 +60,15 @@ requirement_revision)`.
 collaborator-added symbols that must be preserved; `verify_symbols_preserved`
 rejects a patch that removes one of those symbols. The event log is bounded
 (default 512).
+
+Production wiring (local harness): with `UC_SHIFT_GUARD` set, the Python
+`shift_guard.py` mirror is armed from `snapshot_workspace()`, which requires the
+run directory to be its own git top level and packs HEAD plus a dirty-set digest
+into the epoch. Every `write_file` re-probes that epoch; a shift freezes the
+write and returns a structured `workspace_changed` tool result naming the paths
+to re-read, and a `read_file` of each path clears the freeze. The final envelope
+reports the guard phase, the last five shift events, and the remaining
+observations.
 
 `python/ultimate_coders/agent/shift_guard.py` mirrors the protocol for worker
 or local-harness use with the same five shift kinds and six phases. It accepts

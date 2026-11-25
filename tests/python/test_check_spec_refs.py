@@ -1039,7 +1039,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # unclassified count stays 0.
     # The V29 #133 wiring note names memory.py and the two write methods
     # (1669 -> 1671); resolved, unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1671
+    # The V29 #26 wiring note names snapshot_workspace (1671 -> 1672);
+    # resolved, unclassified 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1672
 
 
 def test_real_corpus_has_no_false_content_mismatch():

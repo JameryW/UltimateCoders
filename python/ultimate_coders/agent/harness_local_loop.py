@@ -59,6 +59,12 @@ from ultimate_coders.agent.sandbox import (
     SandboxConfig,
     TokenUsage,
 )
+from ultimate_coders.agent.shift_guard import (
+    ShiftGuard,
+    ShiftPhase,
+    shift_guard_enabled,
+    snapshot_workspace,
+)
 from ultimate_coders.architecture.context_folding import (
     ACPFolder,
     ReadLedger,
@@ -772,6 +778,37 @@ def _failed_command_output(result: str) -> str:
     return output[-12000:] if isinstance(output, str) and output.strip() else ""
 
 
+def _shift_write_gate(guard: ShiftGuard, root: Path, rel: str) -> str | None:
+    """Freeze a write after a mid-run shift until the state is re-read.
+
+    Returns the tool result to send back when the write must not run, or
+    ``None`` when the guard is satisfied and the normal dispatch continues.
+    """
+
+    snapshot = snapshot_workspace(root)
+    if snapshot is not None:
+        event = guard.observe_epoch(snapshot.epoch, changed_paths=snapshot.changed_paths)
+        if event is not None and guard.phase is ShiftPhase.FROZEN:
+            guard.acknowledge_refresh()
+            guard.apply_history_reset()
+    if guard.can_write:
+        return None
+    remaining = guard.remaining_observations()
+    targets = ", ".join(remaining[:5]) or "the affected files"
+    return json.dumps(
+        {
+            "error": "workspace_changed",
+            "hint": (
+                "The workspace changed underneath this attempt. Writes are "
+                f"frozen until you re-read: {targets}. Re-read, then retry."
+            ),
+            "phase": guard.phase.value,
+            "target": rel,
+            "must_observe": list(remaining[:5]),
+        }
+    )
+
+
 def _inject_drift_advisor(messages: list[dict[str, Any]], drift: DriftMonitor) -> bool:
     """Append the one-shot advisor prompt once a deterministic signal is live."""
 
@@ -1099,6 +1136,15 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
     # a completion claim that contradicts the last failing observation is rolled
     # back once.  Without the flag every branch below is skipped.
     overserve = OverServeGuard() if overserve_guard_enabled() else None
+    # SWE-Shift guard (v29 #26) is opt-in and needs a git workspace: it packs
+    # HEAD plus the dirty-set digest into an epoch, and a write is frozen until
+    # the agent re-reads the paths that changed underneath it.  Outside a git
+    # repository the guard stays off instead of guessing an identity.
+    shift = None
+    if shift_guard_enabled():
+        initial_snapshot = snapshot_workspace(root)
+        if initial_snapshot is not None:
+            shift = ShiftGuard(initial_epoch=initial_snapshot.epoch)
     radio_watcher = _radio_watcher_from_env()
     request_logprobs = trace_logprobs_enabled() or trajectory_export_enabled()
 
@@ -1204,6 +1250,11 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                     fn_args = {}
                 _emit({"event": "tool_call", "tool": name, "args_preview": str(fn_args)[:200]})
                 deny = overserve.gate_tool(name, fn_args) if overserve is not None else None
+                shift_block = (
+                    _shift_write_gate(shift, root, str(fn_args.get("path") or ""))
+                    if (shift is not None and name == "write_file" and deny is None)
+                    else None
+                )
                 if deny is not None:
                     _emit(
                         {
@@ -1212,9 +1263,20 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                             "tool": name,
                         }
                     )
+                elif shift_block is not None:
+                    _emit(
+                        {
+                            "event": "shift_block",
+                            "turn": stats.turns,
+                            "tool": name,
+                            "phase": shift.phase.value if shift is not None else "",
+                        }
+                    )
                 try:
                     if deny is not None:
                         result = deny
+                    elif shift_block is not None:
+                        result = shift_block
                     elif name == "list_dir":
                         result = _tool_list_dir(root, fn_args)
                     elif name == "read_file":
@@ -1228,6 +1290,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                             read_path = _normalise_rel_path(str(fn_args.get("path") or ""))
                             if read_path:
                                 stats.reads.append(read_path)
+                                if shift is not None:
+                                    shift.record_fresh_observation(read_path)
                     elif name == "write_file":
                         rel = str(fn_args.get("path") or "")
                         if drift is not None:
@@ -1366,6 +1430,12 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         envelope["ecloop_blocks"] = dict(ecloop.blocks)
     if overserve is not None:
         envelope["overserve"] = overserve.to_dict()
+    if shift is not None:
+        envelope["shift"] = {
+            "phase": shift.phase.value,
+            "events": [event.to_dict() for event in shift.events[-5:]],
+            "remaining": list(shift.remaining_observations()[:5]),
+        }
     if stats.turn_likelihoods:
         envelope["turn_likelihoods"] = list(stats.turn_likelihoods)
     if stats.turn_tokens:

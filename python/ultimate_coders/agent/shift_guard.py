@@ -14,25 +14,31 @@ Feature flag: ``UC_SHIFT_GUARD`` (default off).
 
 from __future__ import annotations
 
+import hashlib
 import os
+import subprocess
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 
 __all__ = [
     "UC_SHIFT_GUARD",
     "ShiftKind",
     "WorkspaceEpoch",
+    "WorkspaceSnapshot",
     "ShiftEvent",
     "ShiftPhase",
     "RecoveryPlan",
     "ShiftGuard",
+    "snapshot_workspace",
     "shift_guard_enabled",
 ]
 
 UC_SHIFT_GUARD = "UC_SHIFT_GUARD"
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 _DEFAULT_EVENT_CAPACITY = 512
+_GIT_TIMEOUT_S = 5.0
 
 
 def shift_guard_enabled() -> bool:
@@ -223,9 +229,7 @@ class ShiftGuard:
         self._begin(event)
         return event
 
-    def observe_stale_evidence(
-        self, detail: str, affected_paths: Iterable[str] = ()
-    ) -> ShiftEvent:
+    def observe_stale_evidence(self, detail: str, affected_paths: Iterable[str] = ()) -> ShiftEvent:
         """Record stale evidence without an epoch change."""
 
         event = ShiftEvent(
@@ -267,9 +271,7 @@ class ShiftGuard:
             if self._pending is not None
             else True
         )
-        self._phase = (
-            ShiftPhase.READY if satisfied else ShiftPhase.AWAITING_FRESH_OBSERVATION
-        )
+        self._phase = ShiftPhase.READY if satisfied else ShiftPhase.AWAITING_FRESH_OBSERVATION
         return satisfied
 
     def remaining_observations(self) -> tuple[str, ...]:
@@ -278,9 +280,7 @@ class ShiftGuard:
         if not self._pending.must_observe_paths:
             return ("*",)
         return tuple(
-            path
-            for path in self._pending.must_observe_paths
-            if path not in self._observed
+            path for path in self._pending.must_observe_paths if path not in self._observed
         )
 
     def verify_symbols_preserved(self, removed_symbols: Iterable[str]) -> None:
@@ -316,3 +316,82 @@ def summarize_shift(events: Iterable[ShiftEvent]) -> Mapping[str, int]:
     for event in events:
         counts[event.kind.value] = counts.get(event.kind.value, 0) + 1
     return counts
+
+
+@dataclass(frozen=True)
+class WorkspaceSnapshot:
+    """A git-derived workspace fingerprint used for mid-run shift detection."""
+
+    epoch: WorkspaceEpoch
+    changed_paths: tuple[str, ...] = ()
+    commit: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "epoch": self.epoch.to_dict(),
+            "changed_paths": list(self.changed_paths),
+            "commit": self.commit,
+        }
+
+
+def _git(root: Path, *args: str) -> str | None:
+    """Run one read-only git query; ``None`` when git or the repo is absent."""
+
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ("git", "-C", str(root), *args),
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout
+
+
+def _status_path(line: str) -> str:
+    """Extract the path from one ``git status --porcelain`` line."""
+
+    raw = line[3:] if len(line) > 3 else ""
+    if " -> " in raw:
+        raw = raw.split(" -> ", 1)[1]
+    return raw.strip().strip('"')
+
+
+def snapshot_workspace(root: Path | str) -> WorkspaceSnapshot | None:
+    """Snapshot HEAD plus the dirty path set for shift detection.
+
+    The epoch packs the commit and a digest of the working-tree status, so a
+    collaborator commit, a user edit, or a checkout each change it -- exactly
+    what :meth:`ShiftGuard.observe_epoch` needs to notice.  The dirty paths
+    become the files the agent must re-read before writing again.  Returns
+    ``None`` outside a git repository so a caller can stay disabled instead of
+    guessing.
+    """
+
+    path = Path(root)
+    toplevel = _git(path, "rev-parse", "--show-toplevel")
+    if toplevel is None:
+        return None
+    # Only guard the workspace the caller named.  A directory that merely lives
+    # inside a parent repository must not inherit that repository's shifts.
+    try:
+        if os.path.normcase(Path(toplevel.strip()).as_posix()) != os.path.normcase(
+            path.resolve().as_posix()
+        ):
+            return None
+    except OSError:
+        return None
+    head = _git(path, "rev-parse", "HEAD")
+    if head is None:
+        return None
+    commit = head.strip()
+    status = _git(path, "status", "--porcelain=v1", "--untracked-files=no") or ""
+    lines = [line.rstrip() for line in status.splitlines() if line.strip()]
+    changed = tuple(dict.fromkeys(candidate for line in lines if (candidate := _status_path(line))))
+    digest = hashlib.sha256(status.encode("utf-8")).hexdigest()[:12] if lines else ""
+    epoch = WorkspaceEpoch(git_head=f"{commit}+{digest}" if digest else commit)
+    return WorkspaceSnapshot(epoch=epoch, changed_paths=changed, commit=commit)
