@@ -43,6 +43,7 @@ from typing import Any
 
 from ultimate_coders.agent.drift_monitor import DriftMonitor, drift_monitor_enabled
 from ultimate_coders.agent.ecloop_gate import ECLoopGate, ecloop_gate_enabled
+from ultimate_coders.agent.overserve_guard import OverServeGuard, overserve_guard_enabled
 from ultimate_coders.agent.radio import (
     RADIO_INBOX_DIR_ENV,
     BackgroundMentionWatcher,
@@ -1093,6 +1094,11 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
     drift_boundary = _env_path_list(DRIFT_BOUNDARY_ENV)
     drift_required = _env_path_list(DRIFT_REQUIRED_FILES_ENV)
     ecloop = ECLoopGate() if ecloop_gate_enabled() else None
+    # OverServe guard (v29 #137) is opt-in as well: repeated polls of an
+    # unchanged state key back off, a completed state breaks the poll loop, and
+    # a completion claim that contradicts the last failing observation is rolled
+    # back once.  Without the flag every branch below is skipped.
+    overserve = OverServeGuard() if overserve_guard_enabled() else None
     radio_watcher = _radio_watcher_from_env()
     request_logprobs = trace_logprobs_enabled() or trajectory_export_enabled()
 
@@ -1197,8 +1203,19 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                 except json.JSONDecodeError:
                     fn_args = {}
                 _emit({"event": "tool_call", "tool": name, "args_preview": str(fn_args)[:200]})
+                deny = overserve.gate_tool(name, fn_args) if overserve is not None else None
+                if deny is not None:
+                    _emit(
+                        {
+                            "event": "overserve_block",
+                            "turn": stats.turns,
+                            "tool": name,
+                        }
+                    )
                 try:
-                    if name == "list_dir":
+                    if deny is not None:
+                        result = deny
+                    elif name == "list_dir":
                         result = _tool_list_dir(root, fn_args)
                     elif name == "read_file":
                         result = _tool_read_file(
@@ -1239,6 +1256,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                         failed_output = _failed_command_output(result)
                         if failed_output:
                             stats.last_failed_output = failed_output
+                        if overserve is not None:
+                            overserve.observe_command_step(failed=bool(failed_output))
                         if drift is not None:
                             _observe_drift_command(drift, result)
                     elif name == "uc_radio_post":
@@ -1257,6 +1276,11 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                                     break
                                 if candidate.warning:
                                     _emit_ecloop_warning("submit", target, candidate)
+                        completion = (
+                            overserve.completion(f"done:{stats.turns}")
+                            if overserve is not None
+                            else None
+                        )
                         if blocked is not None:
                             _emit_ecloop_block(
                                 "submit",
@@ -1264,6 +1288,16 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                                 blocked,
                             )
                             result = _ecloop_blocked_result(blocked)
+                        elif completion is not None and not completion.allowed:
+                            _emit(
+                                {
+                                    "event": "overserve_block",
+                                    "turn": stats.turns,
+                                    "tool": "done",
+                                    "reason": completion.reason,
+                                }
+                            )
+                            result = completion.to_tool_error()
                         else:
                             final_summary = str(fn_args.get("summary") or "Task completed")
                             finished = True
@@ -1330,6 +1364,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         envelope["drift_signals"] = [signal.value for signal in drift.triggered()]
     if ecloop is not None:
         envelope["ecloop_blocks"] = dict(ecloop.blocks)
+    if overserve is not None:
+        envelope["overserve"] = overserve.to_dict()
     if stats.turn_likelihoods:
         envelope["turn_likelihoods"] = list(stats.turn_likelihoods)
     if stats.turn_tokens:
