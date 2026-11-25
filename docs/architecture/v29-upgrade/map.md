@@ -11,7 +11,7 @@ defaults off.
 
 | Area | Modules | Flag | Wired at | State |
 | --- | --- | --- | --- | --- |
-| GrepMem log and Memorix views | `python/ultimate_coders/memory/grepmem_memorix.py` | `UC_GREPMEM_MEMORIX` | memory recall; no caller yet | module only |
+| GrepMem log and Memorix views | `python/ultimate_coders/memory/grepmem_memorix.py` | `UC_GREPMEM_MEMORIX` | `memory.py` write journal + lexical search fallback | wired (opt-in) |
 | TriGRPO sibling tree credit | `packages/uc-orchestrator/src/rl/trigrpo_tree_credit.ts` | n/a (library) | RL trace export; no caller yet | module only |
 | Focus resumption and behavior fingerprint | `python/ultimate_coders/architecture/focus_resumption.py` | `UC_FOCUS_RESUMPTION` | task switch; no caller yet | module only |
 | Weakest-subagent safety barrier | `crates/uc-engine/src/governance/subagent_safety_barrier.rs` | n/a (library) | delegation gate; no engine caller yet | module only |
@@ -30,6 +30,16 @@ silent evidence loss. `RefusalCompressionGuard.should_escalate` flags a lossy
 compression that dropped a refusal/constraint term. `GrepMemMemorix` is the
 facade that ties the log, views, and audit together. Callers own persistence;
 the module stores in memory and never calls a model or database.
+
+Production wiring (memory layer): `memory.py` arms a process-local
+`GrepMemMemorix` journal when the flag is set. Every successful
+`ShortTermMemory.write` / `LongTermMemory.write` appends the written entry to
+that append-only log, and `LongTermMemory.search` falls back to a lexical
+recall over the journal when the semantic index returns nothing. The journal is
+a projection, never the authority: the engine write still happens first, a full
+journal drops the record instead of failing the write, and semantic results
+always win. `recall(pattern)` exposes raw regex recall on both layers;
+`reset_recall_journal()` drops the process-wide journal.
 
 ## TriGRPO sibling tree credit (#134)
 

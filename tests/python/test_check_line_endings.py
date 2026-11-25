@@ -350,6 +350,7 @@ def test_real_repo_is_reconciled() -> None:
         (2746, 2737),  # Mutation-augmentation CLI + its test.
         (2969, 2960),  # V11-V29 ledger modules, tests, maps and dashboard assets.
         (2971, 2962),  # V29 #137 wiring: OverServe guard module + its test.
+        (2972, 2963),  # V29 #133 wiring: memory recall journal + its test.
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

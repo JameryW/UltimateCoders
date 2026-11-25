@@ -1037,7 +1037,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # mentions across the remaining ledger periods (1417 -> 1669, after the
     # deferred AgentStepperPanel mention was made prose); all resolve and the
     # unclassified count stays 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1669
+    # The V29 #133 wiring note names memory.py and the two write methods
+    # (1669 -> 1671); resolved, unclassified 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1671
 
 
 def test_real_corpus_has_no_false_content_mismatch():
