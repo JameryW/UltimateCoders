@@ -338,6 +338,14 @@ def test_mixed_line_endings_are_advisory_only(corpus, capsys):
     assert "ADVISORY" in out and "mixes line endings" in out
 
 
+def test_pure_lf_journal_emits_no_mixed_line_ending_advisory(corpus, capsys):
+    guard, write = corpus
+    write({"dev/journal-1.md": journal(session(1))})
+    code, out = run(guard, capsys)
+    assert code == 0, out
+    assert "mixes line endings" not in out
+
+
 # ---------------------------------------------------------------------------
 # the legacy pin table
 # ---------------------------------------------------------------------------

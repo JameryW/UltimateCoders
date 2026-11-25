@@ -140,7 +140,38 @@ def test_real_repo_delta_detects_f2p_and_p2p(tmp_path: Path) -> None:
 
 
 def test_missing_head_snapshot_is_an_error(tmp_path: Path) -> None:
+    # 1. Directory outside a git repo (or inside an outer repo) fails cleanly.
     empty = tmp_path / "empty"
     empty.mkdir()
-    with pytest.raises(TestExecutionError, match="git worktree root"):
+    with pytest.raises(TestExecutionError, match=r"not a git repository|git worktree root"):
         run_test_delta(empty, [sys.executable, "-m", "pytest", "-q"])
+
+    # 2. A subdirectory of a real git repo must fail with the worktree-root error.
+    repo, _ = _make_repo(tmp_path)
+    subdir = repo / "nested"
+    subdir.mkdir()
+    with pytest.raises(TestExecutionError, match="git worktree root"):
+        run_test_delta(subdir, [sys.executable, "-m", "pytest", "-q"])
+
+    # 3. A git repo with no commits (unborn HEAD) must fail with git archive HEAD error.
+    unborn = tmp_path / "unborn"
+    unborn.mkdir()
+    _git(unborn, "init", "-q")
+    with pytest.raises(TestExecutionError, match="git archive HEAD failed"):
+        run_test_delta(unborn, [sys.executable, "-m", "pytest", "-q"])
+
+
+def test_junitxml_flag_cannot_bypass_pytest_validation(tmp_path: Path) -> None:
+    with pytest.raises(TestExecutionError, match="not a pytest invocation"):
+        run_test_run(tmp_path, ["sh", "-c", "echo pwned", "--junitxml=/tmp/fake.xml"])
+
+
+def test_parse_junit_xml_prefers_failure_over_skipped(tmp_path: Path) -> None:
+    report = tmp_path / "junit.xml"
+    report.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<testsuite><testcase classname="t" name="both">'
+        "<skipped /><failure /></testcase></testsuite>",
+        encoding="utf-8",
+    )
+    assert parse_junit_xml(report)["t::both"] == "failed"

@@ -134,6 +134,11 @@ function truncatedTdCredit(deltas: readonly number[], turn: number, horizon: num
 	return normalizer === 0 ? 0 : weighted / normalizer;
 }
 
+function safeLogRatio(numerator: number, denominator: number): number {
+	const ratio = numerator / denominator;
+	return Number.isFinite(ratio) && ratio > 0 ? Math.log(ratio) : Math.log(numerator) - Math.log(denominator);
+}
+
 /**
  * Compute turn-level credits from answer-ready prefix likelihoods.
  *
@@ -164,14 +169,14 @@ export function computeTurnCredits(
 
 	const deltas: number[] = [];
 	for (let turn = 0; turn < distances.length - 1; turn++) {
-		deltas.push(Math.log(distances[turn] / distances[turn + 1]));
+		deltas.push(safeLogRatio(distances[turn], distances[turn + 1]));
 	}
 
 	const credits: TurnCredit[] = [];
 	for (let turn = 0; turn < deltas.length; turn++) {
 		credits.push({
 			turn,
-			logRatio: Math.log(distances[0] / distances[turn]),
+			logRatio: safeLogRatio(distances[0], distances[turn]),
 			delta: deltas[turn],
 			credit: truncatedTdCredit(deltas, turn, resolved.horizon, resolved.gamma),
 		});

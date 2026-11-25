@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import threading
 import time
 from collections import deque
@@ -50,6 +51,7 @@ from ultimate_coders.dashboard.workflows import (
 )
 
 logger = logging.getLogger(__name__)
+_EVENT_FRACTIONAL_RE = re.compile(r"(\.\d+)(?=[+-]\d\d:?\d\d$|$)")
 
 
 def _status_str(obj: Any) -> str:
@@ -103,8 +105,16 @@ def _event_sort_key(event: dict[str, Any]) -> tuple[int, float]:
     """
     raw = event.get("timestamp")
     if isinstance(raw, str) and raw:
+        text = raw.strip()
+        if text.endswith(("Z", "z")):
+            text = text[:-1] + "+00:00"
+        match = _EVENT_FRACTIONAL_RE.search(text)
+        if match:
+            frac = match.group(1)[1:]
+            norm = (frac + "000000")[:6]
+            text = text[: match.start(1)] + "." + norm + text[match.end(1) :]
         try:
-            parsed = datetime.fromisoformat(raw)
+            parsed = datetime.fromisoformat(text)
         except ValueError:
             return 1, 0.0
         if parsed.tzinfo is None:
@@ -243,6 +253,8 @@ class DashboardApp:
         self._thread: threading.Thread | None = None
         self._stopped = False
         self._event_log: deque[dict[str, Any]] = deque(maxlen=500)
+        self._task_version = 0
+        self._task_version_lock = threading.Lock()
         self._metrics = MetricsAggregator()
         # Auth configuration. DASHBOARD_PASSWORD is the historical name;
         # UC_DASHBOARD_TOKEN lets a deployment share one secret with the
@@ -339,13 +351,14 @@ class DashboardApp:
         """Configure FastAPI routes and middleware."""
         app = self._app
 
-        # CORS middleware — when DASHBOARD_PASSWORD is set, restrict origins
-        # to UC_CORS_ORIGINS env var (comma-separated); otherwise allow all.
-        cors_origins: list[str] = ["*"]
+        # CORS middleware — when auth is configured, restrict origins to
+        # UC_CORS_ORIGINS env var (defaulting to same-origin only when unset);
+        # otherwise allow all for local development.
         if self._dashboard_password:
             env_origins = os.environ.get("UC_CORS_ORIGINS", "")
-            if env_origins:
-                cors_origins = [o.strip() for o in env_origins.split(",") if o.strip()]
+            cors_origins = [o.strip() for o in env_origins.split(",") if o.strip()]
+        else:
+            cors_origins = ["*"]
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins,
@@ -378,8 +391,10 @@ class DashboardApp:
             # Only tag task mutation endpoints
             path = request.url.path
             if "/tasks/" in path and request.method == "POST":
-                # ponytail: simple monotonic counter from event log length
-                version = len(self._event_log)
+                with self._task_version_lock:
+                    if 200 <= response.status_code < 300:
+                        self._task_version += 1
+                    version = self._task_version
                 response.headers["X-Task-Version"] = str(version)
             return response
 
@@ -400,6 +415,8 @@ class DashboardApp:
             try:
                 state = await experiment_state()
                 limit = int(request.query_params.get("limit", "100"))
+                if not 1 <= limit <= 1000:
+                    raise ValueError("limit must be between 1 and 1000")
                 records = await asyncio.to_thread(
                     state.query,
                     "experiments",
@@ -435,7 +452,9 @@ class DashboardApp:
                         for record in records
                         if not task_id or record.get("identity", {}).get("graph_id") == task_id
                     ],
-                    "next_cursor": records[-1]["key"] if len(records) == limit else None,
+                    "next_cursor": (
+                        records[-1]["key"] if records and len(records) == limit else None
+                    ),
                 }
             )
 
@@ -717,7 +736,11 @@ class DashboardApp:
             ]
             if stale:
                 rows = [row for row in rows if row["lease_expired"]]
-            next_after = rows[-1]["effect_id"] if len(rows) == limit else None
+            next_after = (
+                effects[-1].get("effect_id")
+                if effects and len(effects) == limit
+                else None
+            )
             return JSONResponse(
                 {
                     "effects": rows,
@@ -740,8 +763,11 @@ class DashboardApp:
             except Exception as e:
                 return _unavailable("Experiment state unavailable", e)
             metadata = (record or {}).get("artifacts", {}).get(name)
-            if not metadata:
+            if not isinstance(metadata, dict) or not metadata:
                 return JSONResponse({"error": "Unknown artifact"}, status_code=404)
+            expected_sha = metadata.get("sha256")
+            if not isinstance(expected_sha, str) or not expected_sha:
+                return JSONResponse({"error": "Artifact integrity mismatch"}, status_code=409)
             if metadata.get("artifact_id"):
                 from ultimate_coders.inference.artifact_store import ArtifactStore
 
@@ -758,12 +784,15 @@ class DashboardApp:
                 return Response(
                     data,
                     media_type="application/json" if name.endswith(".json") else "text/plain",
-                    headers={"ETag": metadata["sha256"]},
+                    headers={"ETag": expected_sha},
                 )
+            artifact_dir = (record or {}).get("artifact_dir")
+            if not isinstance(artifact_dir, str) or not artifact_dir:
+                return JSONResponse({"error": "Artifact unavailable on this host"}, status_code=404)
             from ultimate_coders.inference.artifacts import artifact_root
 
-            root = artifact_root()
-            path = (pathlib.Path(record["artifact_dir"]) / name).resolve()
+            root = artifact_root().resolve()
+            path = (pathlib.Path(artifact_dir) / name).resolve()
             try:
                 path.relative_to(root)
                 if path.stat().st_size > 16 * 1024 * 1024:
@@ -773,14 +802,14 @@ class DashboardApp:
                 import hashlib
 
                 data = await asyncio.to_thread(path.read_bytes)
-                if hashlib.sha256(data).hexdigest() != metadata["sha256"]:
+                if hashlib.sha256(data).hexdigest() != expected_sha:
                     return JSONResponse({"error": "Artifact integrity mismatch"}, status_code=409)
             except (ValueError, OSError):
                 return JSONResponse({"error": "Artifact unavailable on this host"}, status_code=404)
             return Response(
                 data,
                 media_type="application/json" if name.endswith(".json") else "text/plain",
-                headers={"ETag": metadata["sha256"]},
+                headers={"ETag": expected_sha},
             )
 
         @app.get("/dashboard/api/inference/operations")
@@ -790,6 +819,8 @@ class DashboardApp:
             try:
                 state = await experiment_state()
                 limit = int(request.query_params.get("limit", "100"))
+                if not 1 <= limit <= 1000:
+                    raise ValueError("limit must be between 1 and 1000")
                 rows = await asyncio.to_thread(
                     state.query,
                     "remote_jobs",
@@ -801,6 +832,8 @@ class DashboardApp:
                     versioned = await asyncio.to_thread(
                         state.versioned_get, "remote_jobs", row["key"]
                     )
+                    if versioned is None:
+                        continue
                     jobs.append(
                         {
                             "key": row["key"],
@@ -822,7 +855,7 @@ class DashboardApp:
                         "outbox": await asyncio.to_thread(state.statistics, "result_outbox"),
                         "remote_states": await asyncio.to_thread(state.statistics, "remote_jobs"),
                         "leases": await asyncio.to_thread(state.statistics, "workspace_leases"),
-                        "next_cursor": rows[-1]["key"] if len(rows) == limit else None,
+                        "next_cursor": rows[-1]["key"] if rows and len(rows) == limit else None,
                     }
                 )
             except ValueError:
@@ -839,6 +872,8 @@ class DashboardApp:
 
             try:
                 body = await request.json()
+                if not isinstance(body, dict):
+                    raise ValueError("request body must be an object")
                 if type(body.get("expected_version")) is not int:
                     raise ValueError("expected_version is required")
                 result = await RemoteJobs(
@@ -1202,7 +1237,6 @@ class DashboardApp:
                                 actual_status = _status_str(task)
                                 if actual_status == "paused":
                                     break
-                                actual_status = None  # not yet paused
                             await asyncio.sleep(0.1)
                     if actual_status == "paused":
                         return JSONResponse(
@@ -1263,7 +1297,6 @@ class DashboardApp:
                                 actual_status = _status_str(task)
                                 if actual_status == "in_progress":
                                     break
-                                actual_status = None  # not yet resumed
                             await asyncio.sleep(0.1)
                     if actual_status == "in_progress":
                         return JSONResponse(
@@ -1376,6 +1409,8 @@ class DashboardApp:
             """
             if (resp := self._check_auth(request)) is not None:
                 return resp
+            limit = max(0, min(int(limit), 500))
+            offset = max(0, int(offset))
             if self._nats_client is not None:
                 try:
                     return JSONResponse(
@@ -1386,8 +1421,15 @@ class DashboardApp:
                             offset=offset,
                         )
                     )
+                except ValueError:
+                    return JSONResponse({"error": "Invalid task_id"}, status_code=400)
                 except EventHistoryUnavailableError:
                     pass
+                except Exception as exc:
+                    logger.warning(
+                        "Durable event history failed (%s); falling back to local log",
+                        exc,
+                    )
             # Combine the local event log with the emitter's recent events.
             # Both sources carry the same NATS events, so dedupe the union;
             # their orders differ, so merge them into one newest-first list.
@@ -1405,8 +1447,6 @@ class DashboardApp:
             if task_id:
                 all_events = [e for e in all_events if e.get("task_id") == task_id]
             # Apply pagination
-            limit = min(limit, 500)
-            offset = max(offset, 0)
             paginated = all_events[offset : offset + limit]
             return JSONResponse(
                 {
@@ -1440,6 +1480,12 @@ class DashboardApp:
                         self._nats_client, limit=500, offset=0
                     )
                 except EventHistoryUnavailableError:
+                    history = None
+                except Exception as exc:
+                    logger.warning(
+                        "Durable workflow history failed (%s); falling back to local log",
+                        exc,
+                    )
                     history = None
                 history_events = history.get("events") if isinstance(history, dict) else None
                 if history_events:
@@ -1477,9 +1523,10 @@ class DashboardApp:
             """Return alert history from SQLite store."""
             if (resp := self._check_auth(request)) is not None:
                 return resp
+            clamped = max(1, min(int(limit), 1000))
             return JSONResponse(
                 {
-                    "alerts": self._metrics.alert_store.get_recent(limit=limit),
+                    "alerts": self._metrics.alert_store.get_recent(limit=clamped),
                     "active": self._metrics.alert_store.get_active(),
                 }
             )
@@ -1613,15 +1660,22 @@ class DashboardApp:
     def _safe_path(base_dir: str, sub_path: str) -> pathlib.Path | None:
         """Resolve sub_path under base_dir with path traversal protection.
 
-        Returns None if the resolved path escapes base_dir.
+        Returns None if the resolved path escapes base_dir or traverses hidden
+        / sensitive directories such as ``.git`` or ``.env``.
         """
         base = pathlib.Path(base_dir).resolve()
         if not sub_path:
             return base
-        target = (base / sub_path).resolve()
-        # ponytail: string prefix check — sufficient for POSIX, no symlink chase
-        if not str(target).startswith(str(base) + os.sep) and target != base:
+        candidate = pathlib.Path(sub_path)
+        if candidate.is_absolute():
             return None
+        target = (base / candidate).resolve()
+        if not target.is_relative_to(base):
+            return None
+        rel = target.relative_to(base)
+        for part in rel.parts:
+            if part.startswith(".") or part in ("__pycache__", "node_modules", "target"):
+                return None
         return target
 
     def _list_directory(self, repo_id: str, sub_path: str) -> dict | None:
@@ -1634,6 +1688,7 @@ class DashboardApp:
             return None
 
         local_path = repos[repo_id]
+        base_resolved = pathlib.Path(local_path).resolve()
         safe = self._safe_path(local_path, sub_path)
         if safe is None:
             return {"error": "Path traversal denied"}
@@ -1648,16 +1703,19 @@ class DashboardApp:
                 if name.startswith(".") or name in skip:
                     continue
                 try:
-                    stat = item.stat()
+                    resolved_item = item.resolve()
+                    if not resolved_item.is_relative_to(base_resolved):
+                        continue
+                    stat = resolved_item.stat()
                 except OSError:
                     continue
-                rel = str(item.relative_to(pathlib.Path(local_path).resolve()))
+                rel = str(item.relative_to(base_resolved))
                 entries.append(
                     {
                         "name": name,
                         "path": rel,
-                        "type": "directory" if item.is_dir() else "file",
-                        "size": stat.st_size if item.is_file() else 0,
+                        "type": "directory" if resolved_item.is_dir() else "file",
+                        "size": stat.st_size if resolved_item.is_file() else 0,
                     }
                 )
         except PermissionError:
@@ -1688,7 +1746,9 @@ class DashboardApp:
 
         max_content = 102400  # 100KB
         try:
-            raw = safe.read_bytes()
+            file_size = safe.stat().st_size
+            with safe.open("rb") as handle:
+                raw = handle.read(max_content + 1)
         except PermissionError:
             return {"error": "Permission denied"}
         except OSError as e:
@@ -1700,26 +1760,25 @@ class DashboardApp:
                 "repo_id": repo_id,
                 "path": file_path,
                 "binary": True,
-                "size": len(raw),
+                "size": file_size,
             }
+
+        truncated = len(raw) > max_content
+        sample = raw[:max_content]
 
         # Decode text
         try:
-            text = raw.decode("utf-8")
+            text = sample.decode("utf-8", errors="replace" if truncated else "strict")
         except UnicodeDecodeError:
             try:
-                text = raw.decode("latin-1")
+                text = sample.decode("latin-1")
             except UnicodeDecodeError:
                 return {
                     "repo_id": repo_id,
                     "path": file_path,
                     "binary": True,
-                    "size": len(raw),
+                    "size": file_size,
                 }
-
-        truncated = len(raw) > max_content
-        if truncated:
-            text = text[:max_content]
 
         # Guess language from extension
         suffix = safe.suffix.lstrip(".")
@@ -1770,7 +1829,7 @@ class DashboardApp:
             "repo_id": repo_id,
             "path": file_path,
             "binary": False,
-            "size": len(raw),
+            "size": file_size,
             "content": text,
             "language": language,
             "truncated": truncated,
@@ -2016,7 +2075,7 @@ class DashboardApp:
             logger.warning("Failed to get execution history: %s", e)
 
         # Sort by started_at descending, keep top 20
-        execution_history.sort(key=lambda x: x.get("started_at", ""), reverse=True)
+        execution_history.sort(key=lambda x: x.get("started_at") or "", reverse=True)
         execution_history = execution_history[:20]
 
         return {
@@ -2109,6 +2168,10 @@ class DashboardApp:
             logger.warning("Dashboard is already running")
             return
 
+        # Register NATS startup/shutdown hooks BEFORE launching uvicorn so
+        # startup cannot race past hook registration.
+        self._subscribe_nats_events()
+
         config = uvicorn.Config(
             app=self._app,
             host=host,
@@ -2127,9 +2190,6 @@ class DashboardApp:
         self._thread = threading.Thread(target=_run, daemon=True, name="dashboard")
         self._thread.start()
         logger.info("Dashboard started on http://%s:%d/dashboard/", host, port)
-
-        # Subscribe to NATS uc.task.event if client is available
-        self._subscribe_nats_events()
 
     def _subscribe_sse(self) -> asyncio.Queue[dict[str, Any]]:
         """F63: register an SSE client; returns its own event queue.
@@ -2161,6 +2221,7 @@ class DashboardApp:
         server loop; once connected, nats-py's own reconnect handles
         subsequent broker outages.
         """
+        created_publisher = False
         if self._nats_client is None:
             if not self._nats_url:
                 logger.debug("No NATS client/URL configured, skipping event subscription")
@@ -2181,6 +2242,7 @@ class DashboardApp:
                     from ultimate_coders.nats_worker import NatsPublisher
 
                     self._nats_publisher = NatsPublisher(self._nats_client)
+                    created_publisher = True
             except Exception:
                 logger.warning(
                     "Dashboard failed to connect to NATS at %s; "
@@ -2191,7 +2253,26 @@ class DashboardApp:
                 self._nats_client = None
                 self._spawn_nats_connect_retry()
                 return
-        await self._subscribe_nats_subjects()
+        try:
+            await self._subscribe_nats_subjects()
+        except Exception:
+            logger.warning(
+                "Failed to subscribe to dashboard NATS subjects",
+                exc_info=True,
+            )
+            if self._owns_nats_client and self._nats_client is not None:
+                client = self._nats_client
+                self._nats_client = None
+                self._owns_nats_client = False
+                if created_publisher:
+                    self._nats_publisher = None
+                close = getattr(client, "close", None)
+                if close is not None:
+                    try:
+                        await close()
+                    except Exception:
+                        logger.debug("NATS client close after failed subscribe", exc_info=True)
+                self._spawn_nats_connect_retry()
 
     async def _connect_nats_once(self):
         """Single NATS connect attempt with unbounded runtime reconnects."""
@@ -2308,27 +2389,21 @@ class DashboardApp:
         if getattr(self, "_governance_client", None) is not None:
             self._governance_client.attach(self._nats_client)
 
-        try:
-            sub = await self._nats_client.subscribe(
-                NATS_SUBJECT_TASK_EVENT,
-                cb=self._handle_nats_event,
-            )
-            self._nats_subscriptions.append(sub)
-            logger.info("Dashboard subscribed to %s", NATS_SUBJECT_TASK_EVENT)
-            snapshot_sub = await self._nats_client.subscribe(
-                NATS_SUBJECT_DASHBOARD_SNAPSHOT,
-                cb=self._handle_dashboard_snapshot,
-            )
-            self._nats_subscriptions.append(snapshot_sub)
-            logger.info(
-                "Dashboard subscribed to %s",
-                NATS_SUBJECT_DASHBOARD_SNAPSHOT,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to subscribe to dashboard NATS subjects",
-                exc_info=True,
-            )
+        sub = await self._nats_client.subscribe(
+            NATS_SUBJECT_TASK_EVENT,
+            cb=self._handle_nats_event,
+        )
+        self._nats_subscriptions.append(sub)
+        logger.info("Dashboard subscribed to %s", NATS_SUBJECT_TASK_EVENT)
+        snapshot_sub = await self._nats_client.subscribe(
+            NATS_SUBJECT_DASHBOARD_SNAPSHOT,
+            cb=self._handle_dashboard_snapshot,
+        )
+        self._nats_subscriptions.append(snapshot_sub)
+        logger.info(
+            "Dashboard subscribed to %s",
+            NATS_SUBJECT_DASHBOARD_SNAPSHOT,
+        )
 
     async def _close_owned_nats(self) -> None:
         """Drain + close a client this app connected itself (shutdown hook)."""
@@ -2374,8 +2449,14 @@ class DashboardApp:
         """
         try:
             payload = json.loads(msg.data.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
             logger.warning("Invalid NATS event payload: %s", e)
+            return
+        if not isinstance(payload, dict):
+            logger.warning(
+                "Ignoring non-object NATS event payload of type %s",
+                type(payload).__name__,
+            )
             return
 
         # Normalize to TaskEvent format

@@ -96,6 +96,15 @@ mem.close()
 （`supersedes` + `supersede_policy=mark_not_delete`），**从不**调用
 Hy-Memory 客户端的 delete / remove / drop。
 
+**读侧取代过滤**：标记取代后一页召回里可能同时出现旧事实与新事实；模型
+看不出哪条才是仓库今天在用的。`recall()` 会汇总整页命中里的
+`metadata["supersedes"]`，把已被取代的旧事实从注入通道剔除，并在返回值里
+带 `superseded_removed`（被剔除的 id 列表）；`raw` 保留后端完整响应，存储
+历史不丢。没有 supersede 元数据时保持原样。
+
+`build_hy_memory_channels()` 把召回拆成逐条通道（facts / experiences /
+版本链），供上下文编译器按块分配预算并保留证据指针，而不是整段塞入。
+
 ## 可选自动注入（Worker，默认关）
 
 ```bash
@@ -103,9 +112,12 @@ export UC_HY_MEMORY_AUTO_CONTEXT=1   # 仅在合规 egress 审查通过后开启
 ```
 
 当开关为真且 `hy-memory` 可用时，Worker 在组装上下文（search 之后）会用
-子任务描述做一次小 limit 的 `recall`，把短块并入 gateway `context_block`
-或本地 `compile_context`（`Tier.MEMORY` / P4）。包缺失、recall 失败或无命中
-时**软跳过**（返回 `None`，不崩溃，不宣称注入成功）。
+子任务描述做一次小 limit 的 `recall`，把逐条通道交给本地
+`compile_context`（`Tier.MEMORY` / P4）：包缺失、recall 失败或无命中时
+**软跳过**（返回 `None`，不崩溃，不宣称注入成功）。重试轮（`retry_count` /
+`dispatch_retry_count` ≥ 1）或高风险路由下，带报错/根因语义的经验与版本链
+会升到 50% 预留的 `Tier.EVIDENCE`，其余仍留在 P4。预算丢弃时，易变尾部会
+带一行可恢复指针（列出被丢的 TRACE / MEMORY 条目），模型可以据此再召回。
 
 **合规**：在该环境完成 egress 审查之前保持关闭（默认即关）。开启后 Worker
 进程可能经 Hy-Memory SDK 发起 LLM / Embedding 出站调用。密钥仍只走
@@ -181,6 +193,8 @@ override 只做三件事：给 `orchestrator` / `worker` / `nats-worker` 转发
 | 可用性/版本底线/掩码 | `tests/python/test_hy_memory_integration.py`（`test_available_matches_version`、`test_version_floor_comparisons`、`test_mask_key_never_leaks_the_middle`） |
 | remember 传参（scene/坐标/source） | `test_remember_passes_coding_scene_and_isolation_coordinates` |
 | supersede-not-delete（metadata / 禁 delete / MCP） | `tests/python/test_hy_memory_supersede.py` |
+| 读侧取代过滤（旧事实不注入 / `superseded_removed` / raw 保留） | `tests/python/test_hy_memory_read_supersede.py` |
+| 上下文编译（CJK 估算 / 可恢复丢弃指针 / 通道拆分 / 重试证据升级） | `tests/python/test_context_compiler.py` |
 | 可选 auto-context（flag / soft skip / P4） | `tests/python/test_hy_memory_auto_context.py` |
 | recall 归一化 + 失败降级 + 空通道 | `test_recall_normalises_channels`、`test_recall_survives_client_failure`、`test_recall_tolerates_empty_channels` |
 | 惰性客户端 / 关闭语义 | `test_lazy_client_built_once_and_closed_only_when_owned`、`test_injected_client_is_never_closed_by_the_wrapper` |

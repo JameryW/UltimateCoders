@@ -47,28 +47,43 @@ const CLAIM_REPORT_MAX_ATTEMPTS = 3;
 
 // ── Types ──────────────────────────────────────────────────────────
 
-/** Combine an AbortSignal with a timeout — aborts on whichever fires first. */
-export function abortWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+/** Combine an AbortSignal with a timeout and expose an explicit cleanup hook. */
+function createAbortWithTimeout(
+	signal: AbortSignal | undefined,
+	timeoutMs: number,
+): { signal: AbortSignal; cleanup: () => void } {
 	// Already aborted at call time: return an immediately-aborted signal rather
 	// than starting a fresh timeout countdown (which would delay the abort by
 	// timeoutMs — a cancel arriving during shutdown must take effect instantly).
 	if (signal?.aborted) {
 		const immediate = new AbortController();
 		immediate.abort();
-		return immediate.signal;
+		return { signal: immediate.signal, cleanup: () => {} };
 	}
 	const controller = new AbortController();
+	const onAbort = () => {
+		clearTimeout(timeout);
+		controller.abort();
+	};
 	const timeout = setTimeout(() => {
 		// Timeout fired first — stop listening to the parent signal.
 		signal?.removeEventListener("abort", onAbort);
 		controller.abort();
 	}, timeoutMs);
-	const onAbort = () => {
-		clearTimeout(timeout);
-		controller.abort();
-	};
+	if (typeof (timeout as { unref?: () => void }).unref === "function") {
+		(timeout as { unref: () => void }).unref();
+	}
 	signal?.addEventListener("abort", onAbort, { once: true });
-	return controller.signal;
+	const cleanup = () => {
+		clearTimeout(timeout);
+		signal?.removeEventListener("abort", onAbort);
+	};
+	return { signal: controller.signal, cleanup };
+}
+
+/** Combine an AbortSignal with a timeout — aborts on whichever fires first. */
+export function abortWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+	return createAbortWithTimeout(signal, timeoutMs).signal;
 }
 
 /** Sleep that resolves early (returns true) if the abort signal fires. */
@@ -169,6 +184,52 @@ function normalizeServerDispatchMode(raw: string | undefined): DispatchMode | un
 	}
 }
 
+/** Normalize server wire task status (PascalCase or snake_case) into mirror TaskState fields. */
+function normalizeServerTaskStatus(raw: string | undefined): { status: TaskState["status"]; controlState: ControlState } {
+	switch ((raw ?? "").trim().toLowerCase()) {
+		case "planning":
+			return { status: "planning", controlState: "running" };
+		case "paused":
+			return { status: "in_progress", controlState: "paused" };
+		case "completed":
+			return { status: "completed", controlState: "running" };
+		case "failed":
+			return { status: "failed", controlState: "running" };
+		case "cancelled":
+		case "canceled":
+			return { status: "cancelled", controlState: "cancelled" };
+		case "inprogress":
+		case "in_progress":
+		case "running":
+		case "pending":
+		default:
+			return { status: "in_progress", controlState: "running" };
+	}
+}
+
+/** Normalize server wire subtask status (PascalCase or snake_case) into mirror SubtaskResult status. */
+function normalizeServerSubtaskStatus(raw: string | undefined): SubtaskResult["status"] {
+	switch ((raw ?? "").trim().toLowerCase()) {
+		case "completed":
+			return "completed";
+		case "failed":
+			return "failed";
+		case "cancelled":
+		case "canceled":
+			return "cancelled";
+		case "reviewing":
+			return "reviewing";
+		case "inprogress":
+		case "in_progress":
+		case "assigned":
+		case "running":
+			return "running";
+		case "pending":
+		default:
+			return "pending";
+	}
+}
+
 interface OrchestratorConfig {
 	maxConcurrency: number;
 	maxRetries: number;
@@ -198,8 +259,9 @@ interface OrchestratorConfig {
 export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 	try {
 		const parsed = JSON.parse(raw);
-		if (parsed.subtasks && Array.isArray(parsed.subtasks)) {
-			return parsed.subtasks.map((st: Record<string, unknown>, i: number) => {
+		if (parsed && typeof parsed === "object" && Array.isArray((parsed as Record<string, unknown>).subtasks)) {
+			return ((parsed as Record<string, unknown>).subtasks as unknown[]).map((rawSt, i: number) => {
+				const st = rawSt && typeof rawSt === "object" ? (rawSt as Record<string, unknown>) : {};
 				const def: SubtaskDef = {
 					id: (String(st.id ?? "").replace(/\s+/g, "").trim() || `st-${i + 1}`),
 					description: String(st.description ?? "").replace(/\s+/g, " ").trim(),
@@ -208,8 +270,8 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 					// ids above (deps unmet → blocked-forever subtasks) and produce noisy file
 					// paths. Map over the arrays so the entry shape is normalized, not the
 					// array reference. Non-string entries coerced via String().
-					dependsOn: ((st.depends_on as unknown[]) ?? []).map((d) => String(d).trim()).filter(Boolean),
-					files: ((st.files as unknown[]) ?? []).map((f) => String(f).trim()).filter(Boolean),
+					dependsOn: (Array.isArray(st.depends_on) ? st.depends_on : []).map((d) => String(d).trim()).filter(Boolean),
+					files: (Array.isArray(st.files) ? st.files : []).map((f) => String(f).trim()).filter(Boolean),
 				};
 				// T6 #642 C4 — optional dispatch hint from the decomposer JSON
 				// (snake_case, matching depends_on/files). The claim loop gates
@@ -223,19 +285,22 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 				// ponytail: read optional steps array from decomposer JSON —
 				// unknown fields ignored, missing steps key = undefined (backward compat)
 				if (Array.isArray(st.steps)) {
-					def.steps = (st.steps as Array<Record<string, unknown>>).map((s) => ({
-						agent: String(s.agent ?? ""),
-						prompt: String(s.prompt ?? ""),
-						...(s.agent_config_json != null ? { agent_config_json: String(s.agent_config_json) } : {}),
-						...(s.abort_on_failure != null ? { abort_on_failure: Boolean(s.abort_on_failure) } : {}),
-					}));
+					def.steps = (st.steps as unknown[]).map((rawStep) => {
+						const s = rawStep && typeof rawStep === "object" ? (rawStep as Record<string, unknown>) : {};
+						return {
+							agent: String(s.agent ?? ""),
+							prompt: String(s.prompt ?? ""),
+							...(s.agent_config_json != null ? { agent_config_json: String(s.agent_config_json) } : {}),
+							...(s.abort_on_failure != null ? { abort_on_failure: Boolean(s.abort_on_failure) } : {}),
+						};
+					});
 					// Derive requiredCapabilities from steps[].agent so the scheduler
 					// routes multi-agent subtasks to workers that actually have the CLIs.
 					// Merge explicit caps (snake_case from JSON) with step agent names,
 					// deduped. Step agent values ("grok-build"/"grok"/"codex") double as
 					// capability names matching worker _derive_capabilities output.
 					const explicit = Array.isArray(st.required_capabilities)
-						? (st.required_capabilities as string[]).map(String)
+						? (st.required_capabilities as unknown[]).map(String)
 						: [];
 					const stepAgents = def.steps
 						.map((s) => s.agent)
@@ -256,10 +321,11 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 	for (let i = 0; i < lines.length; i++) {
 		const match = lines[i].match(/^\d+\.\s+(.+)/);
 		if (match) {
+			const idx = subtasks.length;
 			subtasks.push({
-				id: `st-${i + 1}`,
+				id: `st-${idx + 1}`,
 				description: match[1].replace(/\s+/g, " ").trim(),
-				dependsOn: i > 0 ? [`st-${i}`] : [],
+				dependsOn: idx > 0 ? [`st-${idx}`] : [],
 				files: [],
 			});
 		}
@@ -556,11 +622,21 @@ export class UCOrchestrator {
 		// ponytail: stub ctx for rpc server (no omp context)
 		const execCtx = ctx ?? stubContext();
 
-		// ── Step 1: Decompose ──
+		// ── Step 1 & 2: Decompose + validate DAG ──
+		// T6 #642 C4: buildDAG is input validation only (duplicate ids /
+		// unknown deps / cycles throw here). The wave plan is discarded —
+		// execution ordering is the Rust gateway's job.
 		let subtaskDefs: SubtaskDef[];
 		try {
 			subtaskDefs = await this.decompose(description, execCtx, this.abortControllers.get(taskId)?.signal);
+			if (task.status === "cancelled") {
+				this.abortControllers.delete(taskId);
+				return taskId;
+			}
+			buildDAG(subtaskDefs);
 		} catch (err) {
+			this.abortControllers.delete(taskId);
+			if (task.status === "cancelled") return taskId;
 			task.status = "failed";
 			task.error = `Decomposition failed: ${err instanceof Error ? err.message : String(err)}`;
 			execCtx.ui.notify(`Task ${taskId} failed: ${task.error}`, "error");
@@ -572,12 +648,6 @@ export class UCOrchestrator {
 			this.events.emit("task_complete", { taskId, status: task.status, summary: task.error });
 			return taskId;
 		}
-
-		// ── Step 2: Validate decomposer output ──
-		// T6 #642 C4: buildDAG is input validation only (duplicate ids /
-		// unknown deps / cycles throw here). The wave plan is discarded —
-		// execution ordering is the Rust gateway's job.
-		buildDAG(subtaskDefs);
 
 		// T6 #642 C5: grade file overlap once per decomposition set.
 		const risks = classifyConflicts(subtaskDefs);
@@ -649,11 +719,20 @@ export class UCOrchestrator {
 		const execCtx = ctx ?? stubContext();
 		execCtx.ui.notify(`Task ${taskId}: planning...`, "info");
 
-		// Step 1: Decompose
+		// Step 1 & 2: Decompose + validate decomposer output (buildDAG throws on
+		// duplicate ids / unknown deps / cycles); the wave plan is discarded —
+		// execution ordering is the Rust gateway's job now.
 		let subtaskDefs: SubtaskDef[];
 		try {
 			subtaskDefs = await this.decompose(task.description, execCtx, this.abortControllers.get(taskId)?.signal);
+			if (task.status === "cancelled") {
+				this.abortControllers.delete(taskId);
+				return;
+			}
+			buildDAG(subtaskDefs);
 		} catch (err) {
+			this.abortControllers.delete(taskId);
+			if (task.status === "cancelled") return;
 			task.status = "failed";
 			task.error = `Decomposition failed: ${err instanceof Error ? err.message : String(err)}`;
 			execCtx.ui.notify(`Task ${taskId} failed: ${task.error}`, "error");
@@ -666,10 +745,6 @@ export class UCOrchestrator {
 			return;
 		}
 
-		// Step 2: Validate decomposer output (buildDAG throws on duplicate
-		// ids / unknown deps / cycles); the wave plan is discarded — execution
-		// ordering is the Rust gateway's job now.
-		buildDAG(subtaskDefs);
 		const risks = classifyConflicts(subtaskDefs); // T6 #642 C5
 		task.subtasks = subtaskDefs.map((def) => ({
 			id: def.id,
@@ -969,7 +1044,15 @@ export class UCOrchestrator {
 			if (attempt > 1) {
 				await new Promise((r) => setTimeout(r, CLAIM_REPORT_RETRY_MS));
 			}
-			const ok = await this.bridge.upsertTask(this.toPersisted(task));
+			let ok = false;
+			try {
+				ok = await this.bridge.upsertTask(this.toPersisted(task));
+			} catch (err) {
+				this.pi.logger.warn(
+					`Task ${task.id}: subtask ${subtaskId} → ${status} report threw (attempt ${attempt}/${CLAIM_REPORT_MAX_ATTEMPTS}): ${err instanceof Error ? err.message : String(err)}`,
+				);
+				continue;
+			}
 			if (ok) return true;
 			this.pi.logger.warn(
 				`Task ${task.id}: subtask ${subtaskId} → ${status} report rejected (attempt ${attempt}/${CLAIM_REPORT_MAX_ATTEMPTS})`,
@@ -988,58 +1071,76 @@ export class UCOrchestrator {
 	 */
 	private runClaimed(task: TaskState, local: SubtaskResult, ctx: ExtensionCommandContext): void {
 		void (async () => {
-			let result: SubtaskResult;
-			// Circuit breaker: kept at the executor level — the claim loop
-			// itself never trips it.
-			if (!this.circuitBreaker.canExecute()) {
-				result = {
-					id: local.id,
-					description: local.description,
-					status: "failed",
-					dependsOn: local.dependsOn,
-					files: local.files,
-					error: "Circuit breaker open — too many consecutive failures",
-					startedAt: Date.now(),
-					completedAt: Date.now(),
-				};
-			} else {
-				result = await this.executeSubtaskWithRetry(local, task, ctx);
-				if (result.status === "failed") {
-					this.circuitBreaker.recordFailure();
+			let result: SubtaskResult | undefined;
+			let reported = false;
+			try {
+				// Circuit breaker: kept at the executor level — the claim loop
+				// itself never trips it.
+				if (!this.circuitBreaker.canExecute()) {
+					result = {
+						id: local.id,
+						description: local.description,
+						status: "failed",
+						dependsOn: local.dependsOn,
+						files: local.files,
+						error: "Circuit breaker open — too many consecutive failures",
+						startedAt: Date.now(),
+						completedAt: Date.now(),
+					};
 				} else {
-					this.circuitBreaker.recordSuccess();
+					result = await this.executeSubtaskWithRetry(local, task, ctx);
+					if (result.status === "failed") {
+						this.circuitBreaker.recordFailure();
+					} else {
+						this.circuitBreaker.recordSuccess();
+					}
 				}
+
+				// Mirror the outcome.
+				local.status = result.status;
+				local.result = result.result;
+				local.error = result.error;
+				local.retryCount = result.retryCount;
+				local.completedAt = result.completedAt;
+				try {
+					await this.persist(task);
+				} catch (err) {
+					this.pi.logger.warn(`Failed to persist subtask outcome for ${task.id}/${local.id}: ${err}`);
+				}
+
+				if (result.result) {
+					this.bridge.writeMemory(
+						"task", `subtask_result_${result.id}`,
+						result.result, "text", "uc-orchestrator", task.id,
+					).catch((err) => { this.pi.logger.warn(`Failed to write subtask result: ${err}`); });
+				}
+
+				// Report the outcome (authority). "cancelled" maps to Failed on the
+				// wire — consistent with the server's cancel semantics.
+				const reportStatus = result.status === "completed" ? "completed" : "failed";
+				reported = await this.reportSubtaskStatus(task, local.id, reportStatus);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				this.pi.logger.warn(`Task ${task.id} subtask ${local.id}: unexpected execution error: ${msg}`);
+				local.status = "failed";
+				local.error = msg;
+				local.completedAt = Date.now();
+				result = { ...local };
+				try {
+					await this.persist(task);
+				} catch { /* best-effort */ }
+				reported = await this.reportSubtaskStatus(task, local.id, "failed").catch(() => false);
+			} finally {
+				// Unclaim either way; a failed report leaves the mirror at the
+				// outcome status for recovery (see doc).
+				const claimedIds = this.claimed.get(task.id);
+				claimedIds?.delete(local.id);
+				if (claimedIds && claimedIds.size === 0) this.claimed.delete(task.id);
 			}
 
-			// Mirror the outcome.
-			local.status = result.status;
-			local.result = result.result;
-			local.error = result.error;
-			local.retryCount = result.retryCount;
-			local.completedAt = result.completedAt;
-			await this.persist(task);
-
-			if (result.result) {
-				this.bridge.writeMemory(
-					"task", `subtask_result_${result.id}`,
-					result.result, "text", "uc-orchestrator", task.id,
-				).catch((err) => { this.pi.logger.warn(`Failed to write subtask result: ${err}`); });
-			}
-
-			// Report the outcome (authority). "cancelled" maps to Failed on the
-			// wire — consistent with the server's cancel semantics.
-			const reportStatus = result.status === "completed" ? "completed" : "failed";
-			const reported = await this.reportSubtaskStatus(task, local.id, reportStatus);
-
-			// Unclaim either way; a failed report leaves the mirror at the
-			// outcome status for recovery (see doc).
-			const claimedIds = this.claimed.get(task.id);
-			claimedIds?.delete(local.id);
-			if (claimedIds && claimedIds.size === 0) this.claimed.delete(task.id);
-
-			if (result.status === "completed") {
+			if (result?.status === "completed") {
 				this.events.emit("subtask_end", { taskId: task.id, subtaskId: local.id, result: result.result });
-			} else if (result.status === "failed") {
+			} else if (result?.status === "failed") {
 				this.events.emit("subtask_failed", { taskId: task.id, subtaskId: local.id, error: result.error, retryCount: result.retryCount });
 			}
 
@@ -1069,41 +1170,48 @@ export class UCOrchestrator {
 			const failed = task.subtasks.filter((s) => s.status === "failed");
 			task.error = `${failed.length} subtask(s) failed: ${failed.map((f) => f.id).join(", ")}`;
 		}
-		if (swePrimeEnabled()) {
-			const trajectory = this.trajectoryCollector.distill(task.id, {
-				keepPositiveOnly: terminal === "completed",
-			});
-			if (trajectory !== null) {
-				this.pi.logger.info(
-					`Task ${task.id} SWE-Prime trajectory: ${trajectory.keptSegments}/${trajectory.segments} segments kept ` +
-						`(${Math.round(trajectory.keptRatio * 100)}%), kinds=${trajectory.kinds.join(",")}`,
-				);
-				const exportDir = swePrimeExportDir();
-				if (exportDir !== null) {
-					const exported = this.trajectoryCollector.export(task.id, exportDir, {
-						keepPositiveOnly: terminal === "completed",
-					});
-					if (exported !== null) {
-						this.pi.logger.info(`Task ${task.id} SWE-Prime segments exported to ${exported}`);
+		try {
+			if (swePrimeEnabled()) {
+				const trajectory = this.trajectoryCollector.distill(task.id, {
+					keepPositiveOnly: terminal === "completed",
+				});
+				if (trajectory !== null) {
+					this.pi.logger.info(
+						`Task ${task.id} SWE-Prime trajectory: ${trajectory.keptSegments}/${trajectory.segments} segments kept ` +
+							`(${Math.round(trajectory.keptRatio * 100)}%), kinds=${trajectory.kinds.join(",")}`,
+					);
+					const exportDir = swePrimeExportDir();
+					if (exportDir !== null) {
+						const exported = this.trajectoryCollector.export(task.id, exportDir, {
+							keepPositiveOnly: terminal === "completed",
+						});
+						if (exported !== null) {
+							this.pi.logger.info(`Task ${task.id} SWE-Prime segments exported to ${exported}`);
+						}
 					}
 				}
 			}
-		}
-		if (traceLogprobsEnabled()) {
-			const subtasks = this.traceCollector
-				.creditsBySubtask(task.id)
-				.filter((row) => row.credits.length > 0);
-			const credits = subtasks.flatMap((row) => row.credits);
-			if (credits.length > 0) {
-				const total = credits.reduce((sum, credit) => sum + credit.credit, 0);
-				this.pi.logger.info(
-					`Task ${task.id} TRACE: ${subtasks.length} subtask(s), ` +
-						`${credits.length} turn credits, total=${total.toFixed(4)}`,
-				);
+			if (traceLogprobsEnabled()) {
+				const subtasks = this.traceCollector
+					.creditsBySubtask(task.id)
+					.filter((row) => row.credits.length > 0);
+				const credits = subtasks.flatMap((row) => row.credits);
+				if (credits.length > 0) {
+					const total = credits.reduce((sum, credit) => sum + credit.credit, 0);
+					this.pi.logger.info(
+						`Task ${task.id} TRACE: ${subtasks.length} subtask(s), ` +
+							`${credits.length} turn credits, total=${total.toFixed(4)}`,
+					);
+				}
 			}
+		} catch (err) {
+			this.pi.logger.warn(
+				`Task ${task.id}: diagnostic trajectory/TRACE export failed: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		} finally {
 			this.traceCollector.clear(task.id);
+			this.trajectoryCollector.clear(task.id);
 		}
-		this.trajectoryCollector.clear(task.id);
 		// ponytail: F11 — widget teardown is owned by extension.ts's task_complete
 		// handler (setWidget(key, undefined)); the orchestrator never writes the
 		// extension-owned widget key.
@@ -1182,10 +1290,31 @@ export class UCOrchestrator {
 			"\nOutput a JSON object with a 'subtasks' array, each having id, description, depends_on, and files.";
 
 		try {
-			const newDefs = await this.decompose(redecomposePrompt, ctx, this.abortControllers.get(task.id)?.signal);
+			const rawDefs = await this.decompose(redecomposePrompt, ctx, this.abortControllers.get(task.id)?.signal);
+			buildDAG(rawDefs);
+
+			const retained = task.subtasks.filter((s) => s.status !== "failed");
+			const usedIds = new Set(retained.map((s) => s.id));
+			const idRemap = new Map<string, string>();
+			for (const def of rawDefs) {
+				let targetId = def.id;
+				if (usedIds.has(targetId)) {
+					let suffix = 1;
+					while (usedIds.has(`${def.id}-r${suffix}`)) suffix++;
+					targetId = `${def.id}-r${suffix}`;
+				}
+				usedIds.add(targetId);
+				idRemap.set(def.id, targetId);
+			}
+			const newDefs: SubtaskDef[] = rawDefs.map((def) => ({
+				...def,
+				id: idRemap.get(def.id) ?? def.id,
+				dependsOn: [...new Set(def.dependsOn.map((d) => idRemap.get(d) ?? d))],
+			}));
+			buildDAG(newDefs);
 
 			// Remove failed subtasks, add new ones
-			const completedIds = task.subtasks
+			const completedIds = retained
 				.filter((s) => s.status === "completed")
 				.map((s) => s.id);
 
@@ -1194,7 +1323,7 @@ export class UCOrchestrator {
 				id: def.id,
 				description: def.description,
 				status: "pending" as const,
-				dependsOn: [...completedIds, ...def.dependsOn],
+				dependsOn: [...new Set([...completedIds, ...def.dependsOn])],
 				files: def.files,
 				retryCount: this.config.maxRetries, // no further retries
 				dispatchMode: def.dispatchMode,
@@ -1205,7 +1334,7 @@ export class UCOrchestrator {
 			}));
 
 			task.subtasks = [
-				...task.subtasks.filter((s) => s.status !== "failed"),
+				...retained,
 				...newSubtasks,
 			];
 			task.redecomposed = true;
@@ -1314,8 +1443,12 @@ export class UCOrchestrator {
 		task.status = "cancelled";
 		task.completedAt = Date.now();
 
-		const abortCtrl = this.abortControllers.get(taskId);
+		const abortCtrl = this.abortControllers.get(task.id);
 		abortCtrl?.abort();
+		this.abortControllers.delete(task.id);
+		this.taskContexts.delete(task.id);
+		this.trajectoryCollector.clear(task.id);
+		this.traceCollector.clear(task.id);
 
 		// Mark open subtasks cancelled and release in-flight claim bookkeeping
 		// (an executing runClaimed finishes into the aborted signal; its
@@ -1546,39 +1679,43 @@ export class UCOrchestrator {
 		ctx: ExtensionCommandContext,
 		abortSignal?: AbortSignal,
 	): Promise<SubtaskDef[]> {
-		const result = await runSubprocess({
-			cwd: ctx.cwd,
-			agent: {
-				name: "decomposer",
-				description: "Decompose a task into ordered subtasks with dependencies",
-				systemPrompt: DECOMPOSER_PROMPT,
-				source: "project" as const,
-				output: {
-					type: "object",
-					properties: {
-						subtasks: {
-							type: "array",
-							items: {
-								type: "object",
-								properties: {
-									id: { type: "string" },
-									description: { type: "string" },
-									depends_on: {
-										type: "array",
-										items: { type: "string" },
-									},
-									files: {
-										type: "array",
-										items: { type: "string" },
-									},
-									steps: {
-										type: "array",
-										items: {
-											type: "object",
-											properties: {
-												agent: { type: "string" },
-												prompt: { type: "string" },
-												abort_on_failure: { type: "boolean" },
+		const timeoutHandle = createAbortWithTimeout(abortSignal, 120_000);
+		let result: Awaited<ReturnType<typeof runSubprocess>>;
+		try {
+			result = await runSubprocess({
+				cwd: ctx.cwd,
+				agent: {
+					name: "decomposer",
+					description: "Decompose a task into ordered subtasks with dependencies",
+					systemPrompt: DECOMPOSER_PROMPT,
+					source: "project" as const,
+					output: {
+						type: "object",
+						properties: {
+							subtasks: {
+								type: "array",
+								items: {
+									type: "object",
+									properties: {
+										id: { type: "string" },
+										description: { type: "string" },
+										depends_on: {
+											type: "array",
+											items: { type: "string" },
+										},
+										files: {
+											type: "array",
+											items: { type: "string" },
+										},
+										steps: {
+											type: "array",
+											items: {
+												type: "object",
+												properties: {
+													agent: { type: "string" },
+													prompt: { type: "string" },
+													abort_on_failure: { type: "boolean" },
+												},
 											},
 										},
 									},
@@ -1587,15 +1724,17 @@ export class UCOrchestrator {
 						},
 					},
 				},
-			},
-			task: description,
-			id: `decompose-${Date.now().toString(36)}`,
-			index: 0,
-			signal: abortWithTimeout(abortSignal, 120_000),
-			modelRegistry: ctx.modelRegistry,
-			settings: this.pi.pi.settings,
-			enableLsp: false,
-		});
+				task: description,
+				id: `decompose-${Date.now().toString(36)}`,
+				index: 0,
+				signal: timeoutHandle.signal,
+				modelRegistry: ctx.modelRegistry,
+				settings: this.pi.pi.settings,
+				enableLsp: false,
+			});
+		} finally {
+			timeoutHandle.cleanup();
+		}
 
 		if (result.exitCode !== 0) {
 			throw new Error(
@@ -1685,7 +1824,8 @@ export class UCOrchestrator {
 						}
 					}
 				}
-				await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+				const aborted = await sleepCancellable(pollIntervalMs, abortSignal);
+				if (aborted) throw new Error("Aborted");
 			}
 			throw new Error("Remote decomposition timed out");
 		} finally {
@@ -1813,6 +1953,7 @@ export class UCOrchestrator {
 
 		const abortCtrl = this.abortControllers.get(task.id);
 		const contextBlock = this.buildContextForSubtask(def, task);
+		const timeoutHandle = createAbortWithTimeout(abortCtrl?.signal, this.config.subtaskTimeoutMs);
 
 		try {
 			const agentResult = await runSubprocess({
@@ -1828,7 +1969,7 @@ export class UCOrchestrator {
 					: `## Subtask: ${def.description}\n## Files: ${def.files.join(", ") || "(auto-detected)"}`,
 				id: def.id,
 				index: 0,
-				signal: abortWithTimeout(abortCtrl?.signal, this.config.subtaskTimeoutMs),
+				signal: timeoutHandle.signal,
 				modelRegistry: ctx.modelRegistry,
 				settings: this.pi.pi.settings,
 				enableLsp: true,
@@ -1849,6 +1990,8 @@ export class UCOrchestrator {
 				result.status = "failed";
 				result.error = err instanceof Error ? err.message : String(err);
 			}
+		} finally {
+			timeoutHandle.cleanup();
 		}
 
 		result.completedAt = Date.now();
@@ -1960,15 +2103,17 @@ export class UCOrchestrator {
 	 * the mirror carries only what the UI renders).
 	 */
 	private fromServerSync(t: TaskSync): TaskState {
+		const normalized = normalizeServerTaskStatus(t.status);
 		return {
 			id: t.taskId,
 			description: String(t.description ?? "").replace(/\s+/g, " ").trim(),
-			status: t.status as TaskState["status"],
-			controlState: "running",
+			status: normalized.status,
+			controlState: normalized.controlState,
+			projectId: t.projectId || undefined,
 			subtasks: (t.subtasks ?? []).map((s) => ({
 				id: String(s.id ?? "").replace(/\s+/g, "").trim(),
 				description: String(s.description ?? "").replace(/\s+/g, " ").trim(),
-				status: s.status as SubtaskResult["status"],
+				status: normalizeServerSubtaskStatus(s.status),
 				dependsOn: (s.dependsOn ?? []).map((d) => String(d).trim()).filter(Boolean),
 				// T6 #642 C4 — dispatch metadata rides the projection so an
 				// adopted-then-resumed task can be claim-gated (dispatchMode)
@@ -2090,6 +2235,8 @@ export class UCOrchestrator {
 		this.tasks.clear();
 		this.claimed.clear();
 		this.taskContexts.clear();
+		this.trajectoryCollector.clearAll();
+		this.traceCollector.clearAll();
 		this.circuitBreaker.reset();
 		// Close gRPC bridge
 		this.bridge.close();
@@ -2115,8 +2262,13 @@ export class UCOrchestrator {
 		const excess = this.tasks.size - maxTasks;
 		const toEvict = Math.min(excess, terminalIds.length);
 		for (let i = 0; i < toEvict; i++) {
-			this.tasks.delete(terminalIds[i].id);
-			this.abortControllers.delete(terminalIds[i].id);
+			const id = terminalIds[i].id;
+			this.tasks.delete(id);
+			this.abortControllers.delete(id);
+			this.claimed.delete(id);
+			this.taskContexts.delete(id);
+			this.trajectoryCollector.clear(id);
+			this.traceCollector.clear(id);
 		}
 		// Clean up disk files for evicted tasks
 		const remainingIds = new Set(this.tasks.keys());

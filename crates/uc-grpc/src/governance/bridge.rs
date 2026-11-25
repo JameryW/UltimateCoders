@@ -351,6 +351,7 @@ pub async fn get_submission(
 /// A delivery that already succeeded must not be republished, and the record has
 /// to say so: `published` is the audit answer to "did the transport take it?".
 /// Non-submission keys (the outbox is shared with other planes) are ignored.
+#[cfg(any(feature = "messaging", test))]
 async fn confirm_published_submission(governance: &Governance, key: &str, now: DateTime<Utc>) {
     let Some(submission_id) = uc_engine::governance::submission::submission_id_from_outbox_key(key)
     else {

@@ -45,6 +45,7 @@ Honest limitations:
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Callable, Mapping
 from typing import Any, Optional
@@ -349,7 +350,21 @@ def stall_payload(body: Mapping[str, Any]) -> dict[str, Any]:
 AUTH_CHECK_STATE_ATTR = "dashboard_auth_check"
 
 
-def _state_auth_check(request: Request) -> Response | None:
+def _call_auth_check(
+    checker: Callable[..., Response | None], request: Request, *, mutating: bool
+) -> Response | None:
+    try:
+        params = inspect.signature(checker).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "mutating" in params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    ):
+        return checker(request, mutating=mutating)
+    return checker(request)
+
+
+def _state_auth_check(request: Request, *, mutating: bool = False) -> Response | None:
     """Apply the host's gate when it advertised one on ``app.state``.
 
     The dashboard composes this router through
@@ -360,7 +375,7 @@ def _state_auth_check(request: Request) -> Response | None:
     checker = getattr(request.app.state, AUTH_CHECK_STATE_ATTR, None)
     if checker is None:
         return None
-    return checker(request)
+    return _call_auth_check(checker, request, mutating=mutating)
 
 
 def build_router(*, auth: AuthCheck | None = None) -> APIRouter:
@@ -374,13 +389,13 @@ def build_router(*, auth: AuthCheck | None = None) -> APIRouter:
     """
     router = APIRouter(tags=["proactive"])
 
-    def _denied(request: Request) -> Response | None:
-        return auth(request) if auth is not None else None
+    def _denied(request: Request, *, mutating: bool = False) -> Response | None:
+        return _call_auth_check(auth, request, mutating=mutating) if auth is not None else None
 
     @router.get("/api/proactive/state")
     async def proactive_state(request: Request):
         """The gateway's proactive gate state (mode, caps, counters)."""
-        if (denied := _denied(request)) is not None:
+        if (denied := _denied(request, mutating=False)) is not None:
             return denied
         try:
             result = await _call_governance(request, "proactive.state.get", {})
@@ -393,7 +408,7 @@ def build_router(*, auth: AuthCheck | None = None) -> APIRouter:
     @router.post("/api/proactive/mode")
     async def proactive_set_mode(request: Request):
         """Change the autonomy ceiling. The gateway authorizes the principal."""
-        if (denied := _denied(request)) is not None:
+        if (denied := _denied(request, mutating=True)) is not None:
             return denied
         try:
             payload = mode_payload(await _read_object(request))
@@ -410,7 +425,7 @@ def build_router(*, auth: AuthCheck | None = None) -> APIRouter:
     @router.get("/api/proactive/proposals")
     async def proactive_list_proposals(request: Request):
         """List proposals, optionally filtered by status or case."""
-        if (denied := _denied(request)) is not None:
+        if (denied := _denied(request, mutating=False)) is not None:
             return denied
         try:
             payload = proposals_query(request)
@@ -427,7 +442,7 @@ def build_router(*, auth: AuthCheck | None = None) -> APIRouter:
     @router.post("/api/proactive/proposals")
     async def proactive_submit_proposal(request: Request):
         """Submit one evaluated proposal. Admission is the gateway's answer."""
-        if (denied := _denied(request)) is not None:
+        if (denied := _denied(request, mutating=True)) is not None:
             return denied
         try:
             payload = proposal_payload(await _read_object(request))
@@ -452,7 +467,7 @@ def build_router(*, auth: AuthCheck | None = None) -> APIRouter:
     @router.post("/api/proactive/proposals/{proposal_id}/decide")
     async def proactive_decide_proposal(proposal_id: str, request: Request):
         """Approve or reject one proposal (a human decision, recorded by the gateway)."""
-        if (denied := _denied(request)) is not None:
+        if (denied := _denied(request, mutating=True)) is not None:
             return denied
         try:
             payload = decision_payload(proposal_id, await _read_object(request))
@@ -469,7 +484,7 @@ def build_router(*, auth: AuthCheck | None = None) -> APIRouter:
     @router.get("/api/proactive/audit")
     async def proactive_audit(request: Request):
         """The gateway's audit trail: every gate result, allowed or denied."""
-        if (denied := _denied(request)) is not None:
+        if (denied := _denied(request, mutating=False)) is not None:
             return denied
         try:
             payload = audit_query(request)
@@ -486,7 +501,7 @@ def build_router(*, auth: AuthCheck | None = None) -> APIRouter:
     @router.post("/api/watchdog/stall")
     async def watchdog_report_stall(request: Request):
         """Report deterministic stall evidence; the gateway returns the bounded verdict."""
-        if (denied := _denied(request)) is not None:
+        if (denied := _denied(request, mutating=True)) is not None:
             return denied
         try:
             payload = stall_payload(await _read_object(request))

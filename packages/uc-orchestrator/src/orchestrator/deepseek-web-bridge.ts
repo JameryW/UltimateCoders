@@ -28,14 +28,22 @@ export interface DeepSeekWebCliResult {
 	configured?: boolean;
 }
 
+const MAX_STDOUT_CHARS = 2 * 1024 * 1024;
+const MAX_STDERR_CHARS = 256 * 1024;
+
 /** Invoke the UC Python DeepSeek web CLI; returns parsed JSON stdout. */
 export async function invokeDeepSeekWebCli(
 	args: string[],
-	opts?: { env?: NodeJS.ProcessEnv; python?: string; timeoutMs?: number },
+	opts?: { env?: NodeJS.ProcessEnv; python?: string; timeoutMs?: number; signal?: AbortSignal },
 ): Promise<DeepSeekWebCliResult> {
 	const python = opts?.python ?? pythonExecutable();
 	const timeoutMs = opts?.timeoutMs ?? 90_000;
 	const env = opts?.env ?? process.env;
+	const signal = opts?.signal;
+
+	if (signal?.aborted) {
+		return { ok: false, error: "DeepSeek web CLI aborted" };
+	}
 
 	return new Promise((resolve) => {
 		const child = spawn(python, ["-m", PYTHON_MODULE, ...args], {
@@ -44,27 +52,54 @@ export async function invokeDeepSeekWebCli(
 		});
 		let stdout = "";
 		let stderr = "";
+		let stdoutOverflow = false;
 		let settled = false;
-		const timer = setTimeout(() => {
+
+		const cleanup = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", onAbort);
+		};
+
+		const finish = (result: DeepSeekWebCliResult) => {
 			if (settled) return;
 			settled = true;
+			cleanup();
+			resolve(result);
+		};
+
+		const onAbort = () => {
 			child.kill("SIGKILL");
-			resolve({ ok: false, error: `DeepSeek web CLI timed out after ${timeoutMs}ms` });
+			finish({ ok: false, error: "DeepSeek web CLI aborted" });
+		};
+
+		const timer = setTimeout(() => {
+			child.kill("SIGKILL");
+			finish({ ok: false, error: `DeepSeek web CLI timed out after ${timeoutMs}ms` });
 		}, timeoutMs);
+		if (typeof (timer as { unref?: () => void }).unref === "function") {
+			(timer as { unref: () => void }).unref();
+		}
+		signal?.addEventListener("abort", onAbort, { once: true });
 
 		child.stdout.setEncoding("utf8");
 		child.stderr.setEncoding("utf8");
 		child.stdout.on("data", (chunk: string) => {
+			if (stdoutOverflow) return;
+			if (stdout.length + chunk.length > MAX_STDOUT_CHARS) {
+				stdoutOverflow = true;
+				child.kill("SIGKILL");
+				finish({ ok: false, error: "DeepSeek web CLI output exceeded size limit" });
+				return;
+			}
 			stdout += chunk;
 		});
 		child.stderr.on("data", (chunk: string) => {
-			stderr += chunk;
+			if (stderr.length < MAX_STDERR_CHARS) {
+				stderr += chunk.slice(0, MAX_STDERR_CHARS - stderr.length);
+			}
 		});
 		child.on("error", (err) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			resolve({
+			finish({
 				ok: false,
 				error:
 					`Failed to start DeepSeek web CLI (${python}): ${err.message}. ` +
@@ -72,12 +107,9 @@ export async function invokeDeepSeekWebCli(
 			});
 		});
 		child.on("close", () => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
 			const line = stdout.trim().split("\n").filter(Boolean).at(-1) ?? "";
 			if (!line) {
-				resolve({
+				finish({
 					ok: false,
 					error:
 						stderr.trim() ||
@@ -87,13 +119,13 @@ export async function invokeDeepSeekWebCli(
 			}
 			try {
 				const parsed = JSON.parse(line) as DeepSeekWebCliResult;
-				if (typeof parsed.ok !== "boolean") {
-					resolve({ ok: false, error: "DeepSeek web CLI returned invalid JSON" });
+				if (!parsed || typeof parsed !== "object" || typeof parsed.ok !== "boolean") {
+					finish({ ok: false, error: "DeepSeek web CLI returned invalid JSON" });
 					return;
 				}
-				resolve(parsed);
+				finish(parsed);
 			} catch {
-				resolve({
+				finish({
 					ok: false,
 					error: `DeepSeek web CLI returned non-JSON: ${line.slice(0, 200)}`,
 				});
@@ -135,7 +167,7 @@ export function registerDeepSeekWebTools(pi: ExtensionAPI): void {
 			"Account QPS 5; $0.75 / 1k successful calls (agent-embedded grace ends 2026-11-01). " +
 			"Requires DEEPSEEK_API_KEY.",
 		parameters: searchSchema as never,
-		async execute(_id, params: unknown, _signal, _onUpdate, _ctx) {
+		async execute(_id, params: unknown, signal, _onUpdate, _ctx) {
 			const p = params as {
 				query: string;
 				count?: number;
@@ -148,11 +180,11 @@ export function registerDeepSeekWebTools(pi: ExtensionAPI): void {
 						"DEEPSEEK_API_KEY is not set. Set it to enable DeepSeek Search/Fetch.",
 					);
 				}
-				const args = ["search", "--query", p.query];
-				if (p.count !== undefined) args.push("--count", String(p.count));
-				if (p.ori_question) args.push("--ori-question", p.ori_question);
+				const args = ["search", `--query=${p.query}`];
+				if (p.count !== undefined) args.push(`--count=${String(p.count)}`);
+				if (p.ori_question) args.push(`--ori-question=${p.ori_question}`);
 				if (p.need_content) args.push("--need-content");
-				const result = await invokeDeepSeekWebCli(args);
+				const result = await invokeDeepSeekWebCli(args, { signal });
 				if (!result.ok) {
 					return toolError(result.error ?? "DeepSeek web search failed");
 				}
@@ -182,7 +214,7 @@ export function registerDeepSeekWebTools(pi: ExtensionAPI): void {
 			"Account QPS 5; $0.75 / 1k successful calls (agent-embedded grace ends 2026-11-01). " +
 			"Requires DEEPSEEK_API_KEY.",
 		parameters: fetchSchema as never,
-		async execute(_id, params: unknown, _signal, _onUpdate, _ctx) {
+		async execute(_id, params: unknown, signal, _onUpdate, _ctx) {
 			const p = params as { url: string };
 			try {
 				if (!isDeepSeekWebEnabled()) {
@@ -190,7 +222,7 @@ export function registerDeepSeekWebTools(pi: ExtensionAPI): void {
 						"DEEPSEEK_API_KEY is not set. Set it to enable DeepSeek Search/Fetch.",
 					);
 				}
-				const result = await invokeDeepSeekWebCli(["fetch", "--url", p.url]);
+				const result = await invokeDeepSeekWebCli(["fetch", `--url=${p.url}`], { signal });
 				if (!result.ok) {
 					return toolError(result.error ?? "DeepSeek web fetch failed");
 				}

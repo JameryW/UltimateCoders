@@ -19,7 +19,10 @@ import binascii
 import hashlib
 import hmac
 import json
+import math
 import os
+import re
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
@@ -31,7 +34,20 @@ _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 MAX_OUTSTANDING_LEASES = 256
 _MAX_TOKEN_CHARS = 4096
-_SECRET_ENV_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET")
+_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_SECRET_ENV_SUFFIXES = (
+    "_KEY",
+    "_TOKEN",
+    "_SECRET",
+    "_PASSWORD",
+    "_PASSWD",
+    "_CREDENTIAL",
+    "_CREDENTIALS",
+    "_AUTH",
+)
+_SECRET_ENV_EXACT = frozenset(
+    {"PASSWORD", "PASSWD", "SECRET", "TOKEN", "API_KEY", "AUTHORIZATION", "PRIVATE_KEY"}
+)
 
 
 @dataclass(frozen=True)
@@ -40,23 +56,25 @@ class CredentialLease:
 
     lease_id: str
     capability: str
-    token: str
-    expires_at: float
-    broker_url: str
+    token: str = field(repr=False)
+    expires_at: float = 0.0
+    broker_url: str = ""
 
     def expired(self, now: float | None = None) -> bool:
         """Return whether the lease is expired at ``now`` (epoch seconds)."""
 
         current = time.time() if now is None else float(now)
+        if not math.isfinite(current) or not math.isfinite(self.expires_at):
+            return True
         return current >= self.expires_at
 
     def to_env(self) -> dict[str, str]:
         """Return only the two env vars a child may see, never upstream secrets."""
 
-        return {
-            "UC_CREDENTIAL_LEASE": self.token,
-            "UC_CREDENTIAL_BROKER": self.broker_url,
-        }
+        env = {"UC_CREDENTIAL_LEASE": self.token}
+        if self.broker_url.strip():
+            env["UC_CREDENTIAL_BROKER"] = self.broker_url
+        return env
 
 
 class CredentialBroker:
@@ -79,12 +97,13 @@ class CredentialBroker:
             secret_bytes = secret
         else:
             raise TypeError("credential broker secret must be str or bytes")
-        if int(ttl_seconds) <= 0:
+        if isinstance(ttl_seconds, bool) or int(ttl_seconds) <= 0:
             raise ValueError("ttl_seconds must be positive")
         self._secret = secret_bytes
         self._ttl_seconds = int(ttl_seconds)
         self._now = now
         self._broker_url = str(broker_url)
+        self._lock = threading.RLock()
         self._leases: dict[str, CredentialLease] = {}
         self._revoked: dict[str, float] = {}
 
@@ -93,34 +112,39 @@ class CredentialBroker:
 
         if not isinstance(capability, str) or not capability.strip():
             raise ValueError("capability must be a non-empty string")
+        if ttl_seconds is not None and isinstance(ttl_seconds, bool):
+            raise ValueError("ttl_seconds must be positive")
         ttl = self._ttl_seconds if ttl_seconds is None else int(ttl_seconds)
         if ttl <= 0:
             raise ValueError("ttl_seconds must be positive")
-        now = float(self._now())
-        self._prune_expired(now)
-        if len(self._leases) >= MAX_OUTSTANDING_LEASES:
-            raise RuntimeError(
-                f"credential broker lease limit reached ({MAX_OUTSTANDING_LEASES})"
+        with self._lock:
+            now = float(self._now())
+            if not math.isfinite(now):
+                raise ValueError("clock returned non-finite timestamp")
+            self._prune_expired(now)
+            if len(self._leases) >= MAX_OUTSTANDING_LEASES:
+                raise RuntimeError(
+                    f"credential broker lease limit reached ({MAX_OUTSTANDING_LEASES})"
+                )
+            lease_id = uuid.uuid4().hex
+            expires_at = now + ttl
+            token = self._sign(
+                {
+                    "lease_id": lease_id,
+                    "capability": capability,
+                    "iat": now,
+                    "exp": expires_at,
+                }
             )
-        lease_id = uuid.uuid4().hex
-        expires_at = now + ttl
-        token = self._sign(
-            {
-                "lease_id": lease_id,
-                "capability": capability,
-                "iat": now,
-                "exp": expires_at,
-            }
-        )
-        lease = CredentialLease(
-            lease_id=lease_id,
-            capability=capability,
-            token=token,
-            expires_at=expires_at,
-            broker_url=self._broker_url,
-        )
-        self._leases[lease_id] = lease
-        return lease
+            lease = CredentialLease(
+                lease_id=lease_id,
+                capability=capability,
+                token=token,
+                expires_at=expires_at,
+                broker_url=self._broker_url,
+            )
+            self._leases[lease_id] = lease
+            return lease
 
     def issue_many(self, capabilities: Iterable[str]) -> list[CredentialLease]:
         """Issue one lease per capability, validating the whole batch first."""
@@ -129,13 +153,16 @@ class CredentialBroker:
         for capability in requested:
             if not isinstance(capability, str) or not capability.strip():
                 raise ValueError("capability must be a non-empty string")
-        now = float(self._now())
-        self._prune_expired(now)
-        if len(self._leases) + len(requested) > MAX_OUTSTANDING_LEASES:
-            raise RuntimeError(
-                f"credential broker lease limit reached ({MAX_OUTSTANDING_LEASES})"
-            )
-        return [self.issue(capability) for capability in requested]
+        with self._lock:
+            now = float(self._now())
+            if not math.isfinite(now):
+                raise ValueError("clock returned non-finite timestamp")
+            self._prune_expired(now)
+            if len(self._leases) + len(requested) > MAX_OUTSTANDING_LEASES:
+                raise RuntimeError(
+                    f"credential broker lease limit reached ({MAX_OUTSTANDING_LEASES})"
+                )
+            return [self.issue(capability) for capability in requested]
 
     def verify(self, token: str, *, capability: str | None = None) -> dict[str, Any] | None:
         """Return the signed payload, or ``None`` for invalid/expired/revoked tokens."""
@@ -146,6 +173,8 @@ class CredentialBroker:
         if len(parts) != 2:
             return None
         encoded, signature = parts
+        if not _B64URL_RE.match(encoded) or not _B64URL_RE.match(signature):
+            return None
         try:
             provided_signature = _b64url_decode(signature)
             payload_bytes = _b64url_decode(encoded)
@@ -169,12 +198,17 @@ class CredentialBroker:
             return None
         if not isinstance(expires_at, (int, float)) or isinstance(expires_at, bool):
             return None
+        exp_float = float(expires_at)
+        if not math.isfinite(exp_float):
+            return None
         if capability is not None and payload_capability != capability:
             return None
-        if float(self._now()) >= float(expires_at):
-            return None
-        if lease_id in self._revoked:
-            return None
+        with self._lock:
+            now = float(self._now())
+            if not math.isfinite(now) or now >= exp_float:
+                return None
+            if lease_id in self._revoked:
+                return None
         return dict(payload)
 
     def revoke(self, lease_id: str) -> None:
@@ -182,13 +216,22 @@ class CredentialBroker:
 
         if not isinstance(lease_id, str) or not lease_id:
             return
-        lease = self._leases.pop(lease_id, None)
-        expiry = lease.expires_at if lease is not None else float(self._now()) + self._ttl_seconds
-        self._revoked[lease_id] = expiry
+        with self._lock:
+            now = float(self._now())
+            if math.isfinite(now):
+                self._prune_expired(now)
+            lease = self._leases.pop(lease_id, None)
+            expiry = lease.expires_at if lease is not None else now + self._ttl_seconds
+            existing = self._revoked.get(lease_id)
+            if existing is not None and math.isfinite(existing):
+                expiry = max(existing, expiry) if math.isfinite(expiry) else existing
+            self._revoked[lease_id] = expiry
 
     def _sign(self, payload: Mapping[str, Any]) -> str:
         encoded = _b64url(
-            json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            json.dumps(payload, separators=(",", ":"), sort_keys=True, allow_nan=False).encode(
+                "utf-8"
+            )
         )
         signature = hmac.new(
             self._secret, encoded.encode("ascii"), hashlib.sha256
@@ -237,11 +280,15 @@ class SandboxNetworkPolicy:
         object.__setattr__(self, "broker_env", dict(self.broker_env))
 
     def to_env(self) -> dict[str, str]:
-        env = {
-            str(key): str(value)
-            for key, value in self.broker_env.items()
-            if not _is_secret_env_key(str(key))
-        }
+        env: dict[str, str] = {}
+        for key, value in self.broker_env.items():
+            key_str = str(key)
+            val_str = str(value)
+            if _is_secret_env_key(key_str):
+                continue
+            if key_str == _BROKER_ENABLED_ENV and not val_str.strip():
+                continue
+            env[key_str] = val_str
         if not self.allow_egress:
             mode = "none"
         elif self.allowed_hosts:
@@ -267,7 +314,8 @@ def credential_broker_enabled() -> bool:
 
 
 def _is_secret_env_key(key: str) -> bool:
-    return key.strip().upper().endswith(_SECRET_ENV_SUFFIXES)
+    upper = key.strip().upper()
+    return upper in _SECRET_ENV_EXACT or upper.endswith(_SECRET_ENV_SUFFIXES)
 
 
 def _b64url(data: bytes) -> str:

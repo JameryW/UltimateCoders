@@ -35,6 +35,7 @@ import logging
 import math
 import os
 import posixpath
+import signal
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -310,19 +311,24 @@ class LocalLoopHarnessAdapter(AgentAdapter):
                     float(value)
                     for value in raw_likelihoods
                     if isinstance(value, (int, float))
+                    and not isinstance(value, bool)
                     and math.isfinite(float(value))
                     and 0.0 < float(value) <= 1.0
                 ]
         tool_calls = [
             json.loads(line)["tool"]
             for line in result.stdout.splitlines()
-            if _is_event(line, "tool_call")
+            if _is_event(line, "tool_call", required_key="tool")
         ]
         commands_run = [
             str(json.loads(line).get("command") or "")
             for line in result.stdout.splitlines()
-            if _is_event(line, "command")
+            if _is_event(line, "command", required_key="command")
         ]
+        if not commands_run and envelope is not None and isinstance(envelope.get("commands"), list):
+            commands_run = [
+                str(cmd) for cmd in envelope["commands"] if isinstance(cmd, str) and cmd
+            ]
         if envelope is None:
             last_text = ""
             for line in reversed(result.stdout.splitlines()):
@@ -359,12 +365,16 @@ class LocalLoopHarnessAdapter(AgentAdapter):
         )
 
 
-def _is_event(line: str, event: str) -> bool:
+def _is_event(line: str, event: str, *, required_key: str | None = None) -> bool:
     try:
         d = json.loads(line)
     except json.JSONDecodeError:
         return False
-    return isinstance(d, dict) and d.get("event") == event and "tool" in d
+    if not isinstance(d, dict) or d.get("event") != event:
+        return False
+    if required_key is not None:
+        return required_key in d and bool(d[required_key])
+    return True
 
 
 def _final_envelope(stdout: str) -> dict[str, Any] | None:
@@ -398,10 +408,14 @@ def _usage_from_events(stdout: str) -> TokenUsage | None:
             continue
         seen = True
         for key in ("prompt_tokens", "completion_tokens"):
-            try:
-                value = max(0, int(event.get(key, 0) or 0))
-            except (TypeError, ValueError):
+            raw_val = event.get(key, 0)
+            if isinstance(raw_val, bool):
                 value = 0
+            else:
+                try:
+                    value = max(0, int(raw_val or 0))
+                except (TypeError, ValueError):
+                    value = 0
             if key == "prompt_tokens":
                 input_tokens += value
             else:
@@ -427,7 +441,11 @@ def _turn_likelihoods_from_events(stdout: str) -> list[float]:
         if not isinstance(event, dict) or event.get("event") != "turn_likelihood":
             continue
         value = event.get("likelihood")
-        if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+        ):
             likelihood = float(value)
             if 0.0 < likelihood <= 1.0:
                 values.append(likelihood)
@@ -456,7 +474,11 @@ def _turn_tokens_from_events(stdout: str) -> list[list[dict[str, Any]]]:
             logprob = item.get("logprob")
             if not isinstance(token_id, int) or isinstance(token_id, bool):
                 continue
-            if not isinstance(logprob, (int, float)) or not math.isfinite(float(logprob)):
+            if (
+                not isinstance(logprob, (int, float))
+                or isinstance(logprob, bool)
+                or not math.isfinite(float(logprob))
+            ):
                 continue
             cleaned.append({"token_id": int(token_id), "logprob": float(logprob)})
         if cleaned:
@@ -481,7 +503,11 @@ def _normalise_turn_tokens(value: Any) -> list[list[dict[str, Any]]]:
             logprob = item.get("logprob")
             if not isinstance(token_id, int) or isinstance(token_id, bool):
                 continue
-            if not isinstance(logprob, (int, float)) or not math.isfinite(float(logprob)):
+            if (
+                not isinstance(logprob, (int, float))
+                or isinstance(logprob, bool)
+                or not math.isfinite(float(logprob))
+            ):
                 continue
             tokens.append({"token_id": int(token_id), "logprob": float(logprob)})
         if tokens:
@@ -494,12 +520,16 @@ def _normalise_prefix_cache_sample(value: Any) -> dict[str, Any] | None:
 
     if not isinstance(value, dict):
         return None
+    raw_prompt = value.get("prompt_tokens")
+    raw_cached = value.get("cached_tokens")
+    if isinstance(raw_prompt, bool) or isinstance(raw_cached, bool):
+        return None
     try:
-        prompt_tokens = int(value.get("prompt_tokens"))
+        prompt_tokens = int(raw_prompt)
     except (TypeError, ValueError):
         return None
     try:
-        cached_tokens = int(value.get("cached_tokens"))
+        cached_tokens = int(raw_cached)
     except (TypeError, ValueError):
         return None
     if prompt_tokens <= 0 or cached_tokens < 0:
@@ -576,7 +606,11 @@ def _answer_likelihood(response: Any) -> float | None:
             value = getattr(item, "logprob", None)
             if value is None and isinstance(item, dict):
                 value = item.get("logprob")
-            if isinstance(value, (int, float)) and math.isfinite(float(value)):
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(float(value))
+            ):
                 values.append(float(value))
         if not values:
             return None
@@ -878,7 +912,7 @@ def _poll_radio_inbox(watcher: BackgroundMentionWatcher | None) -> int:
     if not isinstance(inbox, RadioFileInbox):
         return 0
     accepted = 0
-    for message in inbox.read():
+    for message in inbox.read(incremental=True):
         if watcher.ingest(message):
             accepted += 1
     return accepted
@@ -1034,8 +1068,9 @@ def _tool_write_file(root: Path, args: dict[str, Any], stats: _RunStats) -> str:
     target.parent.mkdir(parents=True, exist_ok=True)
     with open(target, "w", encoding="utf-8", newline="") as f:
         f.write(content)
-    stats.files_written.append(rel)
-    return json.dumps({"written": rel})
+    norm_rel = _normalise_rel_path(rel) or rel
+    stats.files_written.append(norm_rel)
+    return json.dumps({"written": norm_rel})
 
 
 async def _tool_run_command(root: Path, args: dict[str, Any]) -> str:
@@ -1048,6 +1083,7 @@ async def _tool_run_command(root: Path, args: dict[str, Any]) -> str:
             cwd=str(root),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=(os.name == "posix"),
         )
     except OSError as exc:
         return json.dumps({"error": f"spawn failed: {exc}"})
@@ -1055,8 +1091,18 @@ async def _tool_run_command(root: Path, args: dict[str, Any]) -> str:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=RUN_COMMAND_TIMEOUT_SECS)
     except asyncio.TimeoutError:
         try:
-            proc.kill()
-        except ProcessLookupError:
+            if os.name == "posix" and proc.pid:
+                os.killpg(proc.pid, signal.SIGKILL)
+            else:
+                proc.kill()
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            await proc.wait()
+        except Exception:  # best-effort: reaping timed-out shell child
             pass
         return json.dumps({"error": "command timed out", "exit_code": -1})
     return json.dumps(
@@ -1065,20 +1111,36 @@ async def _tool_run_command(root: Path, args: dict[str, Any]) -> str:
     )
 
 
+def _parse_llm_timeout() -> float:
+    raw = os.environ.get("UC_LLM_TIMEOUT", "600").strip()
+    try:
+        val = float(raw)
+        if math.isfinite(val) and val > 0:
+            return val
+    except ValueError:
+        pass
+    return 600.0
+
+
+_logprobs_rejected_flag = False
+
+
 def _completion(
     messages: list[dict[str, Any]],
     *,
     request_logprobs: bool = False,
 ) -> Any:
     """One litellm completion using the env-configured provider route."""
+    global _logprobs_rejected_flag
     import litellm
 
+    _logprobs_rejected_flag = False
     model = os.environ.get("OPENAI_DEFAULT_MODEL", "openai/qwen3.8-9b-uc")
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "tools": _TOOLS,
-        "timeout": float(os.environ.get("UC_LLM_TIMEOUT", "600")),
+        "timeout": _parse_llm_timeout(),
     }
     if request_logprobs:
         # The provider may ignore this; only a response that actually carries
@@ -1100,6 +1162,7 @@ def _completion(
         )
         if not rejected:
             raise
+        _logprobs_rejected_flag = True
         _emit(
             {
                 "event": "logprobs_unavailable",
@@ -1163,11 +1226,15 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                 )
                 _inject_drift_advisor(messages, drift)
             if request_logprobs:
+                global _logprobs_rejected_flag
+                _logprobs_rejected_flag = False
                 response = await asyncio.to_thread(
                     _completion,
                     messages,
                     request_logprobs=True,
                 )
+                if _logprobs_rejected_flag:
+                    request_logprobs = False
             else:
                 response = await asyncio.to_thread(_completion, messages)
             message = response.choices[0].message
@@ -1186,7 +1253,7 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                         }
                     )
                 turn_tokens = _token_logprobs(response)
-                if turn_tokens:
+                if turn_tokens and len(stats.turn_tokens) < MAX_TURN_LIKELIHOODS:
                     stats.turn_tokens.append(turn_tokens)
                     _emit(
                         {
@@ -1409,6 +1476,7 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                 "turns": stats.turns,
                 "tool_calls": stats.tool_calls,
                 "test_output": stats.last_failed_output,
+                "turn_likelihoods": list(stats.turn_likelihoods),
                 "turn_tokens": stats.turn_tokens,
                 "prefix_cache": stats.prefix_cache,
             }

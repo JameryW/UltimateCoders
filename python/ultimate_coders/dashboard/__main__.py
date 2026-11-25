@@ -27,6 +27,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 from typing import Any
 
 logger = logging.getLogger("ultimate_coders.dashboard.__main__")
@@ -87,43 +88,37 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Block the main thread until a signal is received so the daemon
-    # uvicorn thread keeps running. signal.pause() returns after the
-    # handler runs; on platforms without it, poll a short sleep.
-    received_signal = {"signo": None}
+    # uvicorn thread keeps running. Keep the signal handler minimal (no
+    # logging locks or thread joins inside a signal handler); perform the
+    # actual shutdown back on the main thread after waking up.
+    received_signal: dict[str, int | None] = {"signo": None}
+    stop_event = threading.Event()
 
     def _handle_signal(signo: int, _frame: Any) -> None:
         if received_signal["signo"] is not None:
-            # Second signal — force exit
-            logger.warning("Second signal %d received, forcing exit", signo)
+            # Second signal — force exit immediately
             os._exit(1)
         received_signal["signo"] = signo
-        logger.info("Signal %d received, shutting down dashboard...", signo)
-        try:
-            app.stop()
-        except Exception:
-            logger.warning("Error stopping dashboard", exc_info=True)
-        # ponytail: F58 — NATS drain happens in the app's shutdown hook (on
-        # the server's loop, where the client is bound).
-        logger.info("Shutdown complete")
+        stop_event.set()
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
     try:
-        if hasattr(signal, "pause"):
-            # Returns after a signal is handled; the handler shut us down.
-            signal.pause()
-        else:
-            while received_signal["signo"] is None:
-                import time
-
-                time.sleep(0.5)
+        while not stop_event.is_set():
+            stop_event.wait(timeout=0.5)
     except (KeyboardInterrupt, SystemExit):
         if received_signal["signo"] is None:
-            _handle_signal(signal.SIGINT, None)
+            received_signal["signo"] = signal.SIGINT
 
-    # Handler already stopped the server + drained NATS. Give the daemon
-    # thread a moment to finish so the process can exit cleanly.
+    logger.info("Signal %s received, shutting down dashboard...", received_signal["signo"])
+    try:
+        app.stop()
+    except Exception:
+        logger.warning("Error stopping dashboard", exc_info=True)
+    # ponytail: F58 — NATS drain happens in the app's shutdown hook (on
+    # the server's loop, where the client is bound).
+    logger.info("Shutdown complete")
     return 0
 
 

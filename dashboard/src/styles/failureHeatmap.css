@@ -52,10 +52,12 @@
 
 .failure-heatmap__mode {
   max-width: 15rem;
+  overflow: hidden;
   padding: 0.2rem 0.4rem;
   color: var(--text-secondary);
   font-weight: 500;
   text-align: left;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -101,7 +103,7 @@
 }
 
 .failure-heatmap .heat-4 {
-  background: color-mix(in srgb, #ef4444 52%, var(--bg-surface));
+  background: color-mix(in srgb, #b91c1c 82%, var(--bg-surface));
   color: #fff;
 }
 

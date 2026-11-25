@@ -436,10 +436,14 @@ fn entry_to_payload(entry: &MemoryEntry) -> HashMap<String, qdrant_client::qdran
         qdrant_client::qdrant::Value::from(entry.updated_at.to_rfc3339()),
     );
 
-    // Store the entry ID for reconstruction
+    // Store the entry ID and logical version for reconstruction
     payload.insert(
         "entry_id".into(),
         qdrant_client::qdrant::Value::from(entry.id.0.clone()),
+    );
+    payload.insert(
+        "version".into(),
+        qdrant_client::qdrant::Value::from(entry.version.min(i64::MAX as u64) as i64),
     );
 
     payload
@@ -490,6 +494,12 @@ fn payload_to_entry(
             MemoryId::new()
         });
 
+    let version = payload
+        .get("version")
+        .and_then(|v| v.as_integer())
+        .and_then(|v| u64::try_from(v).ok())
+        .unwrap_or_else(|| uc_types::memory::MemoryEntry::version_from_timestamp(updated_at));
+
     Some(MemoryEntry {
         id,
         key,
@@ -502,7 +512,7 @@ fn payload_to_entry(
         },
         created_at,
         updated_at,
-        version: uc_types::memory::MemoryEntry::version_from_timestamp(updated_at),
+        version,
     })
 }
 

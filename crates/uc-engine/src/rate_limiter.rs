@@ -110,7 +110,7 @@ impl TokenBucket {
             // `Duration::from_secs_f64` panics on NaN/negative/overflow, and a
             // non-finite token estimate (or a huge one) reaches exactly that here.
             if seconds.is_finite() && seconds > 0.0 {
-                Duration::from_secs_f64(seconds)
+                Duration::try_from_secs_f64(seconds).unwrap_or(Duration::from_secs(3600))
             } else {
                 Duration::from_secs(3600)
             }

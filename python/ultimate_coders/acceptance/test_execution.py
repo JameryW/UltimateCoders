@@ -19,9 +19,9 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import tarfile
 import tempfile
 import time
-import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +49,21 @@ _SKIPPED = "skipped"
 
 _BAD_OUTCOMES = frozenset({_FAILED, _ERROR})
 _GOOD_OUTCOMES = frozenset({_PASSED})
+
+_GIT_ENV_STRIP = frozenset(
+    {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    }
+)
+
+
+def _git_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k not in _GIT_ENV_STRIP}
 
 
 def test_execution_enabled() -> bool:
@@ -160,12 +175,12 @@ def parse_junit_xml(path: str | Path) -> dict[str, str]:
         if not test_id:
             continue
         outcome = _PASSED
-        if case.find("skipped") is not None:
-            outcome = _SKIPPED
-        elif case.find("failure") is not None:
+        if case.find("failure") is not None:
             outcome = _FAILED
         elif case.find("error") is not None:
             outcome = _ERROR
+        elif case.find("skipped") is not None:
+            outcome = _SKIPPED
         previous = cases.get(test_id)
         if previous is None or _outcome_rank(outcome) > _outcome_rank(previous):
             cases[test_id] = outcome
@@ -182,20 +197,57 @@ def _command_parts(command: str | Sequence[str]) -> list[str]:
     return [str(part) for part in command]
 
 
+def _is_pytest_argv(argv: Sequence[str]) -> bool:
+    if not argv:
+        return False
+    first = Path(argv[0]).name.lower()
+    stem = first[:-4] if first.endswith(".exe") else first
+    if stem in {"pytest", "py.test"}:
+        return True
+    if stem.startswith("python"):
+        idx = 1
+        while idx < len(argv):
+            token = argv[idx]
+            if token == "-m":
+                return idx + 1 < len(argv) and argv[idx + 1] == "pytest"
+            if token in {"-W", "-X"}:
+                idx += 2
+                continue
+            if token.startswith("-") and token not in {"-", "--", "-c"}:
+                idx += 1
+                continue
+            return False
+    return False
+
+
 def _append_junit(argv: list[str], report: Path, rootdir: Path) -> list[str]:
-    if any(part.startswith("--junitxml") or part.startswith("--junit-xml") for part in argv):
-        return argv
-    first = Path(argv[0]).name.lower() if argv else ""
-    is_pytest = first in {"pytest", "py.test"}
-    if not is_pytest and len(argv) >= 3:
-        is_pytest = first.startswith("python") and argv[1:3] == ["-m", "pytest"]
-    if not is_pytest:
+    if not _is_pytest_argv(argv):
         raise TestExecutionError(
             "test command is not a pytest invocation; per-test F2P/P2P data is unavailable"
         )
-    augmented = [*argv, f"--junitxml={report}"]
-    if not any(part.startswith("--rootdir") for part in argv):
+    # Strip any caller-supplied --junitxml / --junit-xml (before `--`) so this
+    # runner always owns the JUnit report file path and cannot be bypassed.
+    cleaned: list[str] = []
+    tail: list[str] = []
+    idx = 0
+    while idx < len(argv):
+        part = argv[idx]
+        if part == "--":
+            tail = argv[idx:]
+            break
+        if part in {"--junitxml", "--junit-xml"}:
+            idx += 2
+            continue
+        if part.startswith("--junitxml=") or part.startswith("--junit-xml="):
+            idx += 1
+            continue
+        cleaned.append(part)
+        idx += 1
+
+    augmented = [*cleaned, f"--junitxml={report}"]
+    if not any(part == "--rootdir" or part.startswith("--rootdir=") for part in cleaned):
         augmented.append(f"--rootdir={rootdir}")
+    augmented.extend(tail)
     return augmented
 
 
@@ -258,6 +310,7 @@ def _assert_repo_root(repo: Path) -> None:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_git_env(),
             timeout=15,
             check=False,
         )
@@ -272,9 +325,55 @@ def _assert_repo_root(repo: Path) -> None:
         raise TestExecutionError(f"test execution requires the git worktree root, got {top}")
 
 
+def _safe_extract_tar(archive: Path, destination: Path) -> None:
+    dest_root = destination.resolve()
+    with tarfile.open(archive, "r:") as tf:
+        members = tf.getmembers()
+        for member in members:
+            name = member.name
+            if not name or name in {".", "./"}:
+                continue
+            member_path = Path(name)
+            if member_path.is_absolute() or ".." in member_path.parts:
+                raise TestExecutionError(f"unsafe archive member path: {name!r}")
+            target = (dest_root / member_path).resolve()
+            try:
+                target.relative_to(dest_root)
+            except ValueError as exc:
+                raise TestExecutionError(f"archive member escapes destination: {name!r}") from exc
+            if member.issym():
+                link_target = Path(member.linkname)
+                if link_target.is_absolute():
+                    raise TestExecutionError(f"unsafe absolute symlink in archive: {name!r}")
+                resolved_link = (target.parent / link_target).resolve()
+                try:
+                    resolved_link.relative_to(dest_root)
+                except ValueError as exc:
+                    raise TestExecutionError(
+                        f"archive symlink escapes destination: {name!r} -> {member.linkname!r}"
+                    ) from exc
+            elif member.islnk():
+                link_target = Path(member.linkname)
+                if link_target.is_absolute() or ".." in link_target.parts:
+                    raise TestExecutionError(f"unsafe hardlink in archive: {name!r}")
+                resolved_link = (dest_root / link_target).resolve()
+                try:
+                    resolved_link.relative_to(dest_root)
+                except ValueError as exc:
+                    raise TestExecutionError(
+                        f"archive hardlink escapes destination: {name!r} -> {member.linkname!r}"
+                    ) from exc
+            elif not (member.isfile() or member.isdir() or member.pax_headers):
+                raise TestExecutionError(f"unsupported archive member type: {name!r}")
+        for member in members:
+            if not member.name or member.name in {".", "./"}:
+                continue
+            tf.extract(member, path=dest_root, set_attrs=True)
+
+
 def _extract_head(repo: Path, destination: Path) -> None:
     _assert_repo_root(repo)
-    archive = destination.with_suffix(".zip")
+    archive = destination.with_suffix(".tar")
     try:
         result = subprocess.run(
             [
@@ -282,7 +381,7 @@ def _extract_head(repo: Path, destination: Path) -> None:
                 "-C",
                 str(repo),
                 "archive",
-                "--format=zip",
+                "--format=tar",
                 "--output",
                 str(archive),
                 "HEAD",
@@ -291,6 +390,7 @@ def _extract_head(repo: Path, destination: Path) -> None:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_git_env(),
             timeout=120,
             check=False,
         )
@@ -302,9 +402,10 @@ def _extract_head(repo: Path, destination: Path) -> None:
         raise TestExecutionError(f"git archive HEAD failed: {result.stderr.strip()}")
     destination.mkdir(parents=True, exist_ok=True)
     try:
-        with zipfile.ZipFile(archive) as zf:
-            zf.extractall(destination)
-    except (OSError, zipfile.BadZipFile) as exc:
+        _safe_extract_tar(archive, destination)
+    except TestExecutionError:
+        raise
+    except (OSError, tarfile.TarError) as exc:
         raise TestExecutionError(f"cannot extract HEAD snapshot: {exc}") from exc
 
 

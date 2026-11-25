@@ -89,9 +89,27 @@ def normalize_path(value: Any) -> str:
     """Normalize a workspace-relative path to a stable posix spelling."""
 
     text = str(value or "").strip().replace("\\", "/")
+    if not text:
+        return ""
     while text.startswith("./"):
         text = text[2:]
-    return PurePosixPath(text).as_posix() if text else ""
+    parts: list[str] = []
+    is_abs = text.startswith("/")
+    for segment in text.split("/"):
+        if not segment or segment == ".":
+            continue
+        if segment == "..":
+            if parts and parts[-1] != "..":
+                parts.pop()
+            elif not is_abs:
+                parts.append("..")
+            continue
+        parts.append(segment)
+    if not parts:
+        return ""
+    if is_abs:
+        return "/" + "/".join(parts)
+    return PurePosixPath("/".join(parts)).as_posix()
 
 
 class BoundaryContractError(ValueError):
@@ -145,6 +163,10 @@ class BoundaryContract:
             path = normalize_path(raw_path)
             if not path:
                 raise BoundaryContractError("boundary contract contains an empty path")
+            if path.startswith("/") or path == ".." or path.startswith("../"):
+                raise BoundaryContractError(
+                    f"boundary contract contains an invalid path {raw_path!r}"
+                )
             role = _role(raw_role)
             previous = normalized.get(path)
             if previous is not None and previous is not role:
@@ -168,7 +190,19 @@ class BoundaryContract:
         *,
         version: int = 1,
     ) -> BoundaryContract:
-        return cls(entries={entry.path: entry.role for entry in entries}, version=version)
+        mapping: dict[str, BoundaryRole] = {}
+        for entry in entries:
+            path = normalize_path(entry.path)
+            if not path or path.startswith("/") or path == ".." or path.startswith("../"):
+                raise BoundaryContractError(
+                    f"boundary contract contains an invalid path {entry.path!r}"
+                )
+            role = _role(entry.role)
+            previous = mapping.get(path)
+            if previous is not None and previous is not role:
+                raise BoundaryContractError(f"duplicate boundary path {path!r}")
+            mapping[path] = role
+        return cls(entries=mapping, version=version)
 
     @classmethod
     def from_implementation_spec(

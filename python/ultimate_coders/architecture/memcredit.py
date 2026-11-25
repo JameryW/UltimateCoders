@@ -80,6 +80,8 @@ def _text(value: Any) -> str:
 def _finite_float(value: Any, default: float = 0.0) -> float:
     """Best-effort finite float coercion; malformed input falls back."""
 
+    if isinstance(value, bool):
+        return default
     try:
         result = float(value)
     except (TypeError, ValueError):
@@ -92,10 +94,13 @@ def _finite_float(value: Any, default: float = 0.0) -> float:
 def budget_for_attempt(attempt: int) -> int:
     """Token budget for one attempt (attempt 0 = first try)."""
 
-    try:
-        index = int(attempt)
-    except (TypeError, ValueError):
+    if isinstance(attempt, bool):
         index = 0
+    else:
+        try:
+            index = int(attempt)
+        except (TypeError, ValueError):
+            index = 0
     return ATTEMPT_ONE_BUDGET if index <= 0 else RETRY_BUDGET
 
 
@@ -125,10 +130,13 @@ class MemCreditCandidate:
         object.__setattr__(self, "path", _text(self.path))
         object.__setattr__(self, "symbol", _text(self.symbol))
         object.__setattr__(self, "stage", _text(self.stage).strip() or "text")
-        try:
-            tokens = int(self.tokens)
-        except (TypeError, ValueError):
+        if isinstance(self.tokens, bool):
             tokens = 0
+        else:
+            try:
+                tokens = int(self.tokens)
+            except (TypeError, ValueError):
+                tokens = 0
         if tokens <= 0:
             tokens = estimate_tokens(self.content)
         object.__setattr__(self, "tokens", tokens)
@@ -211,6 +219,13 @@ def _parent_segments(path: str) -> tuple[str, ...]:
     return tuple(segments[:-1])
 
 
+def _ancestor_prefixes(path: str) -> set[tuple[str, ...]]:
+    """Cumulative ancestor directory prefixes of ``path``."""
+
+    segments = _parent_segments(path)
+    return {segments[:idx] for idx in range(1, len(segments) + 1)}
+
+
 def directory_affinity(path_a: str, path_b: str) -> float:
     """Return 1.5 when two paths share at least one parent directory, else 1.0.
 
@@ -223,8 +238,8 @@ def directory_affinity(path_a: str, path_b: str) -> float:
     normalised_b = _normalise_path(path_b)
     if not normalised_a or not normalised_b:
         return 1.0
-    parents_a = set(_parent_segments(path_a))
-    parents_b = set(_parent_segments(path_b))
+    parents_a = _ancestor_prefixes(path_a)
+    parents_b = _ancestor_prefixes(path_b)
     if parents_a and parents_b and parents_a & parents_b:
         return _SUBTREE_AFFINITY
     return 1.0
@@ -262,7 +277,7 @@ def _coerce_candidates(candidates: Iterable[Any] | None) -> list[MemCreditCandid
 
 
 def _resolve_budget(budget_tokens: int | None, attempt: int) -> int:
-    if budget_tokens is None:
+    if budget_tokens is None or isinstance(budget_tokens, bool):
         return budget_for_attempt(attempt)
     try:
         value = int(budget_tokens)
@@ -302,8 +317,8 @@ def select_memcredit(
     """
 
     budget = _resolve_budget(budget_tokens, attempt)
-    threshold = _finite_float(overlap_threshold, 0.8)
-    boost = _finite_float(subtree_weight, 1.5)
+    threshold = max(0.0, min(1.0, _finite_float(overlap_threshold, 0.8)))
+    boost = max(0.0, _finite_float(subtree_weight, 1.5))
     ordered = _coerce_candidates(candidates)
     remaining = list(enumerate(ordered))
     selected: list[MemCreditCandidate] = []
@@ -384,6 +399,7 @@ class DirectoryTrie:
     def __init__(self) -> None:
         self._root = _TrieNode()
         self._paths: set[str] = set()
+        self._ancestors: dict[str, set[tuple[str, ...]]] = {}
 
     def __len__(self) -> int:
         return len(self._paths)
@@ -395,6 +411,7 @@ class DirectoryTrie:
         if not normalised or normalised in self._paths:
             return
         self._paths.add(normalised)
+        self._ancestors[normalised] = _ancestor_prefixes(path)
         node = self._root
         node.count += 1
         for segment in normalised.split("/"):
@@ -442,13 +459,12 @@ class DirectoryTrie:
         normalised = _normalise_path(path)
         if not normalised:
             return 1.0
-        ancestors = set(_parent_segments(path))
+        ancestors = _ancestor_prefixes(path)
         if not ancestors:
             return 1.0
-        for stored in self._paths:
+        for stored, other in self._ancestors.items():
             if stored == normalised:
                 continue
-            other = set(_parent_segments(stored))
             if ancestors & other:
                 return _SUBTREE_AFFINITY
         return 1.0

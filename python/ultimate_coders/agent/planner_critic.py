@@ -155,7 +155,7 @@ class PlanCritic:
                     break
 
         capped = tuple(corrections[: self.max_corrections])
-        evidence_complete = all(observed.get(target, False) for target in required)
+        evidence_complete = all(observed.get(target, False) for target in covered)
         approved = (
             recall >= self.min_recall
             and precision >= self.min_precision
@@ -268,7 +268,7 @@ def _observation(value: Any) -> _Observation:
     evidence = bool(target)
     verified = getattr(value, "verified", None)
     if verified is False:
-        evidence = False
+        return _Observation(target=target, evidence=False)
     evidence_value = getattr(value, "evidence", None)
     if evidence_value is not None:
         evidence = _evidence_value_passes(evidence_value)

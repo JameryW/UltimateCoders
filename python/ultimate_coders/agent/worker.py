@@ -8,6 +8,7 @@ their own tool chains and don't need a Python-side tool-calling loop.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import json
 import logging
@@ -31,11 +32,13 @@ from ultimate_coders.agent.conflict import (
 from ultimate_coders.agent.context_compiler import (
     compile_context,
     from_gateway_context_block,
-    from_hy_memory_block,
+    from_hy_memory_channels,
     from_search_block,
 )
 from ultimate_coders.agent.contract import contract_digest
-from ultimate_coders.agent.hy_memory import build_hy_memory_context_block
+from ultimate_coders.agent.hy_memory import (
+    build_hy_memory_channels,
+)
 from ultimate_coders.agent.llm import (
     LLMRetryExhaustedError,
     _classify_llm_error,
@@ -121,6 +124,9 @@ _DIFF_CHANGE_TYPES = {
 
 
 logger = logging.getLogger(__name__)
+_MANDATE_CHECKED_SUBTASK: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "_uc_mandate_checked_subtask", default=None
+)
 
 
 def _is_test_file(path: Path) -> bool:
@@ -234,7 +240,7 @@ Complete only the current subtask while honoring the original request.
 
 Expected output: {expected_output}
 
-File constraints (do NOT modify): {file_constraints}
+Allowed files to modify (file constraints): {file_constraints}
 """
 
 
@@ -948,20 +954,21 @@ class Worker:
 
         lease = os.environ.get("UC_CREDENTIAL_LEASE", "").strip()
         broker = os.environ.get("UC_CREDENTIAL_BROKER", "").strip()
+        broker_valid = bool(broker) and broker.lower() not in {"1", "true", "yes", "on"}
         capabilities = [
             str(cap) for cap in (subtask.required_capabilities or []) if str(cap).strip()
         ]
         event: dict[str, Any] = {
             "phase": "credential lease",
             "percent": 0,
-            "credential_status": "leased" if lease and broker else "invalid",
+            "credential_status": "leased" if (lease and broker_valid) else "invalid",
             "credential_lease_present": bool(lease),
             "credential_broker": broker[:200],
             "credential_capabilities": capabilities[:8],
         }
         if not lease:
             return {}, event, "Credential broker enabled but UC_CREDENTIAL_LEASE is not set"
-        if not broker or broker.lower() in {"1", "true", "yes", "on"}:
+        if not broker_valid:
             return (
                 {},
                 event,
@@ -977,15 +984,16 @@ class Worker:
         """Derive agent_config for a subtask: explicit > capability match > type template.
 
         Priority:
-        1. subtask.agent_config — explicit user override, use as-is
+        1. subtask.agent_config — explicit override, copied so runtime hints never mutate subtask
         2. required_capabilities — match against AGENT_PROFILES
         3. subtask description heuristics — match against SUBTASK_TEMPLATES
 
         ponytail: simple dict merge — upgrade path is a proper profile resolution system.
         """
-        # 1. Explicit override
+        # 1. Explicit override (always return a fresh copy so runtime-only hints
+        # like _uc_credential_lease never leak back into subtask.agent_config)
         if subtask.agent_config:
-            return subtask.agent_config
+            return dict(subtask.agent_config)
 
         config: dict[str, Any] = {}
 
@@ -1185,6 +1193,11 @@ class Worker:
         gateway) the local injector fallback keeps behavior identical to
         before.
         """
+        active_tasks = getattr(self, "_active_tasks", None)
+        if active_tasks is None:
+            active_tasks = {}
+            self._active_tasks = active_tasks
+        active_tasks[subtask.id] = subtask
         self.current_task = subtask
         self._active_count += 1
         subtask.status = SubtaskStatus.IN_PROGRESS
@@ -1226,15 +1239,39 @@ class Worker:
                     subtask.dispatch_retry_count,
                 )
                 # Restore full SubtaskResult from checkpoint
-                from ultimate_coders.agent.types import ChangeType, FileChange
+                from ultimate_coders.agent.types import (
+                    ChangeType,
+                    FileChange,
+                    StepUsage,
+                    SubtaskUsage,
+                )
 
                 mod_files = [
                     FileChange(
                         file_path=f.get("file_path", ""),
                         change_type=ChangeType(f.get("change_type", "modified")),
+                        diff=f.get("diff", "") or "",
                     )
                     for f in (checkpoint.get("modified_files") or [])
+                    if isinstance(f, dict)
                 ]
+                raw_usage = checkpoint.get("usage")
+                restored_usage = (
+                    SubtaskUsage.from_dict(raw_usage) if isinstance(raw_usage, dict) else None
+                )
+                restored_step_usages = [
+                    su
+                    for su in (
+                        StepUsage.from_dict(item)
+                        for item in (checkpoint.get("step_usages") or [])
+                    )
+                    if su is not None
+                ]
+                restored_test_exec = (
+                    checkpoint.get("test_execution")
+                    if isinstance(checkpoint.get("test_execution"), dict)
+                    else None
+                )
                 return SubtaskResult(
                     subtask_id=subtask.id,
                     worker_id=checkpoint.get("worker_id", self.worker_id),
@@ -1246,7 +1283,11 @@ class Worker:
                     modified_files=mod_files,
                     recent_tool_calls=checkpoint.get("tool_calls", []),
                     stderr_tail=checkpoint.get("stderr_tail", ""),
+                    error=checkpoint.get("error") or "",
+                    usage=restored_usage,
+                    step_usages=restored_step_usages,
                     review=checkpoint_review,
+                    test_execution=restored_test_exec,
                 )
 
             # Inject context from completed dependencies. The gateway-composed
@@ -1257,17 +1298,28 @@ class Worker:
             # decision carries the risk level that sizes the context budget
             # allocation (high risk reserves a share for verified evidence).
             # Retries re-route inside the loop (recovery stage).
-            self._last_route = self._model_router.route_subtask(
+            attempt_route = self._model_router.route_subtask(
                 subtask.description,
                 attempt=0,
                 file_constraints=subtask.file_constraints,
                 capabilities=subtask.required_capabilities,
             )
+            self._last_route = attempt_route
+            attempt_context_manifest: dict[str, Any] | None = None
             self._last_context_manifest = None
             search_block = await self._build_search_context(subtask)
             # Opt-in Hy-Memory auto-context (T12 / UC_HY_MEMORY_AUTO_CONTEXT).
-            # Soft-skip when flag off, package missing, or recall empty.
-            hy_block = build_hy_memory_context_block(subtask.description or "")
+            # Soft-skip when flag off, package missing, or recall empty. The
+            # channels are compiled as individual items so one long chain
+            # cannot crowd out the short facts; a retry round or a high-risk
+            # route promotes the failure chain and troubleshooting experience
+            # to P2 evidence where the risk reservation protects them.
+            retry_round = max(
+                int(getattr(subtask, "retry_count", 0) or 0),
+                int(getattr(subtask, "dispatch_retry_count", 0) or 0),
+            )
+            promote_negative = retry_round >= 1 or attempt_route.risk == "high"
+            hy_channels = build_hy_memory_channels(subtask.description or "")
             if gateway_context_block is not None:
                 source_items = from_gateway_context_block(gateway_context_block)
                 legacy_style = "gateway"
@@ -1290,35 +1342,52 @@ class Worker:
             # evidence to this list and recompiles, so recovery facts obey the
             # same budget and dedupe instead of being pasted onto a finished
             # prompt.
-            context_source_items = (
-                list(source_items)
-                + from_search_block(search_block)
-                + from_hy_memory_block(hy_block)
-            )
+            non_hy_base_items = list(source_items) + from_search_block(search_block)
             # P5 read face: gate-approved claims shared inside this task graph.
             # Empty unless stage >= graph; best-effort, counts-only summary.
             knowledge_items, knowledge_summary = await self._knowledge_context_items(subtask)
             if knowledge_items:
-                context_source_items = list(context_source_items) + knowledge_items
+                non_hy_base_items = non_hy_base_items + knowledge_items
+            context_source_items = non_hy_base_items + from_hy_memory_channels(
+                hy_channels, promote_negative=promote_negative
+            )
             self._last_knowledge_summary = knowledge_summary
             manifest = compile_context(
                 context_source_items,
                 budget_tokens=self._context_budget_tokens(),
-                risk=self._last_route.risk,
+                risk=attempt_route.risk,
             )
             context_block = manifest.render_legacy(
                 legacy_style=legacy_style, gateway_truncated=gateway_truncated
             )
-            self._last_context_manifest = manifest.summary()
+            attempt_context_manifest = manifest.summary()
             assembled_context = self._assembled_context_block(manifest)
             if assembled_context is not None:
                 context_block, assembly_summary = assembled_context
-                self._last_context_manifest["assembly"] = assembly_summary
+                attempt_context_manifest["assembly"] = assembly_summary
+            self._last_context_manifest = attempt_context_manifest
             # Audit trail: the same summary that rides the started event also
             # lands in the runtime state, so the "why was the prompt smaller"
             # question outlives the event stream. The gateway path records one
             # now too -- a compiled prompt with no manifest is an audit hole.
-            await self._record_context_manifest(subtask, self._last_context_manifest)
+            await self._record_context_manifest(subtask, attempt_context_manifest)
+
+            # Check optional narrowing Mandate envelope BEFORE workspace acquire
+            # so an unauthorized/expired attempt never allocates a worktree.
+            mandate_event, mandate_error = self._apply_mandate(subtask)
+            if mandate_event is not None:
+                await self._emit_step_event(subtask, "subtask_progress", **mandate_event)
+            if mandate_error:
+                rejected = SubtaskResult(
+                    subtask_id=subtask.id,
+                    worker_id=self.worker_id,
+                    summary="Mandate envelope rejected",
+                    success=False,
+                    retryable=False,
+                    error=mandate_error,
+                )
+                await self._record_decision_terminal(subtask, rejected)
+                return rejected
 
             # Acquire workspace if this subtask modifies files
             from ultimate_coders.inference.agent import InferenceInfraAgent
@@ -1340,7 +1409,9 @@ class Worker:
             # agent_config governance), before workspace acquire: an
             # allocation failure still finishes the attempt and must leave
             # an attempt-scoped audit join (D5 / spec-p0).
-            await self._record_decision_start(subtask)
+            await self._record_decision_start(
+                subtask, route_decision=attempt_route, context_manifest=attempt_context_manifest
+            )
             workspace_handle = None
             if self._workspace_manager and (subtask.file_constraints or needs_worktree):
                 if needs_worktree:
@@ -1374,20 +1445,20 @@ class Worker:
                 "description": subtask.description,
                 "worker_id": self.worker_id,
             }
-            if self._last_context_manifest is not None:
+            if attempt_context_manifest is not None:
                 # Provenance evidence: budget, per-tier counts and drop
                 # reasons for the prompt this attempt will run with. No
                 # content — the manifest summary is log-safe.
-                started_data["context"] = self._last_context_manifest
-            if self._last_route is not None and not self._last_route.is_identity:
+                started_data["context"] = attempt_context_manifest
+            if attempt_route is not None and not attempt_route.is_identity:
                 # Which (stage, risk) this attempt was routed at, with the
                 # model and budget the router chose. Omitted entirely when
                 # no table is configured, so the default event is unchanged.
-                started_data["route"] = self._last_route.to_dict()
-            if self._last_knowledge_summary:
+                started_data["route"] = attempt_route.to_dict()
+            if knowledge_summary:
                 # Counts-only: how much graph knowledge the read face injected
                 # (and whether the retrieval budget truncated it).
-                started_data["knowledge"] = self._last_knowledge_summary
+                started_data["knowledge"] = knowledge_summary
             await self._publish_event(
                 "subtask_started",
                 task_id=subtask.parent_id,
@@ -1419,15 +1490,40 @@ class Worker:
             progress_tracker = ProgressTracker(stall_limit=self._progress_stall_limit())
             for attempt in range(self.MAX_RETRIES):
                 if attempt > 0:
+                    # Re-check mandate on retries (attempt ceiling / expiry may now trip)
+                    retry_mandate_event, retry_mandate_error = self._apply_mandate(subtask)
+                    if retry_mandate_event is not None:
+                        await self._emit_step_event(
+                            subtask, "subtask_progress", **retry_mandate_event
+                        )
+                    if retry_mandate_error:
+                        rejected = SubtaskResult(
+                            subtask_id=subtask.id,
+                            worker_id=self.worker_id,
+                            summary="Mandate envelope rejected",
+                            success=False,
+                            retryable=False,
+                            error=retry_mandate_error,
+                            retry_count=subtask.retry_count,
+                        )
+                        await self._record_decision_terminal(subtask, rejected)
+                        return rejected
+
                     # Re-route: every attempt after the first is recovery,
                     # and a schema failure shrinks the budget for the
                     # re-issue (lightweight repair, not an identical retry).
-                    self._last_route = self._model_router.route_subtask(
+                    attempt_route = self._model_router.route_subtask(
                         subtask.description,
                         attempt=attempt,
                         last_failure=last_failure,
                         file_constraints=subtask.file_constraints,
                         capabilities=subtask.required_capabilities,
+                    )
+                    self._last_route = attempt_route
+                    # Promote negative Hy-Memory channels (failure chains + troubleshooting)
+                    # on retries even when attempt 0 was low-risk.
+                    retry_base_items = non_hy_base_items + from_hy_memory_channels(
+                        hy_channels, promote_negative=True
                     )
                     # Recovery view: a retry is not a blind replay of the first
                     # attempt. When the rollout stage allows it, compile the
@@ -1438,10 +1534,11 @@ class Worker:
                     context_block, recovery_summary = await self._recovery_context_block(
                         subtask,
                         attempt,
-                        context_source_items,
+                        retry_base_items,
                         context_block,
                         legacy_style=legacy_style,
                         gateway_truncated=gateway_truncated,
+                        risk=attempt_route.risk,
                     )
                 # Re-acquire workspace each attempt: prior attempt released it
                 # (or never had one). Without this, retry runs against a freed
@@ -1494,10 +1591,18 @@ class Worker:
                                 ],
                             )
                         else:
-                            result = await asyncio.wait_for(
-                                self._execute_in_sandbox(subtask, context_block, workspace_handle),
-                                timeout=timeout_secs,
-                            )
+                            mandate_token = _MANDATE_CHECKED_SUBTASK.set(id(subtask))
+                            try:
+                                result = await asyncio.wait_for(
+                                    self._execute_in_sandbox(
+                                        subtask,
+                                        context_block,
+                                        workspace_handle,
+                                    ),
+                                    timeout=timeout_secs,
+                                )
+                            finally:
+                                _MANDATE_CHECKED_SUBTASK.reset(mandate_token)
                         await _progress("validating", 80)
                     except asyncio.TimeoutError:
                         result = SubtaskResult(
@@ -1591,7 +1696,11 @@ class Worker:
                             "summary": result.summary[:300],
                             "success": True,
                             "modified_files": [
-                                {"path": f.file_path, "type": f.change_type.value}
+                                {
+                                    "path": f.file_path,
+                                    "type": f.change_type.value,
+                                    "change_type": f.change_type.value,
+                                }
                                 for f in (result.modified_files or [])
                             ],
                             "output": result.summary[:50000],  # ponytail: 50KB cap
@@ -1859,7 +1968,8 @@ class Worker:
                 await self._workspace_manager.quarantine(workspace_handle)
             raise
         finally:
-            self.current_task = None
+            active_tasks.pop(subtask.id, None)
+            self.current_task = next(reversed(active_tasks.values()), None)
             self._active_count = max(0, self._active_count - 1)
 
     @staticmethod
@@ -2117,13 +2227,16 @@ class Worker:
         worktree = getattr(handle, "worktree_path", "") or ""
         if not worktree or not path:
             return ""
-        full = os.path.join(worktree, path)
         try:
-            if not os.path.isfile(full) or os.path.getsize(full) > 500_000:
+            root_real = os.path.realpath(worktree)
+            full_real = os.path.realpath(os.path.join(root_real, path))
+            if os.path.commonpath([root_real, full_real]) != root_real:
                 return ""
-            with open(full, encoding="utf-8", errors="replace") as source:
+            if not os.path.isfile(full_real) or os.path.getsize(full_real) > 500_000:
+                return ""
+            with open(full_real, encoding="utf-8", errors="replace") as source:
                 return source.read()
-        except OSError:
+        except (OSError, ValueError):
             return ""
 
     async def _record_attempt_evidence(
@@ -2387,6 +2500,7 @@ class Worker:
         *,
         legacy_style: str,
         gateway_truncated: bool,
+        risk: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Recompile the retry attempt's context with prior-attempt evidence.
 
@@ -2450,20 +2564,30 @@ class Worker:
                     summary["evolution_reverted_rounds"] = len(chain.reverted_rounds)
         except Exception:
             logger.debug("attempt evolution render failed", exc_info=True)
+        effective_risk = risk if risk is not None else self._last_route.risk
         manifest = compile_context(
             list(base_items) + items,
             budget_tokens=self._context_budget_tokens(),
-            risk=self._last_route.risk,
+            risk=effective_risk,
         )
-        self._last_context_manifest = manifest.summary()
-        return (
-            manifest.render_legacy(
-                legacy_style=legacy_style, gateway_truncated=gateway_truncated
-            ),
-            summary,
+        manifest_summary = manifest.summary()
+        rendered_block = manifest.render_legacy(
+            legacy_style=legacy_style, gateway_truncated=gateway_truncated
         )
+        assembled_context = self._assembled_context_block(manifest)
+        if assembled_context is not None:
+            rendered_block, assembly_summary = assembled_context
+            manifest_summary["assembly"] = assembly_summary
+        self._last_context_manifest = manifest_summary
+        return rendered_block, summary
 
-    async def _record_decision_start(self, subtask: Subtask) -> None:
+    async def _record_decision_start(
+        self,
+        subtask: Subtask,
+        *,
+        route_decision: Any = None,
+        context_manifest: dict[str, Any] | None = None,
+    ) -> None:
         """Persist this dispatch attempt's Decision Record start facts.
 
         Joins worker identity, optional non-identity route, and a pointer at
@@ -2481,13 +2605,17 @@ class Worker:
                 decision_key,
             )
 
+            active_route = route_decision if route_decision is not None else self._last_route
+            active_manifest = (
+                context_manifest if context_manifest is not None else self._last_context_manifest
+            )
             route = None
-            if self._last_route is not None and not self._last_route.is_identity:
-                route = self._last_route.to_dict()
+            if active_route is not None and not active_route.is_identity:
+                route = active_route.to_dict()
             digest = None
             ctx_key = None
-            if self._last_context_manifest is not None:
-                digest = context_digest(self._last_context_manifest)
+            if active_manifest is not None:
+                digest = context_digest(active_manifest)
                 ctx_key = manifest_key(
                     subtask.parent_id, subtask.id, subtask.dispatch_retry_count
                 )
@@ -2610,13 +2738,22 @@ class Worker:
             "domain_result": result.domain_result,
             "delivery": delivery,
             "modified_files": [
-                {"file_path": f.file_path, "change_type": f.change_type.value}
+                {
+                    "file_path": f.file_path,
+                    "change_type": f.change_type.value,
+                    **({"diff": f.diff} if f.diff else {}),
+                }
                 for f in (result.modified_files or [])
             ],
             "tool_calls": result.recent_tool_calls[-5:] if result.recent_tool_calls else [],
-            "error": result.summary if not result.success else None,
+            "error": result.error or (result.summary if not result.success else None),
             "stderr_tail": result.stderr_tail,
+            "usage": result.usage.to_dict() if result.usage is not None else None,
+            "step_usages": [s.to_dict() for s in (result.step_usages or [])],
+            "test_execution": result.test_execution,
         }
+        if result.review is not None:
+            data["review"] = result.review.to_dict()
         if self._is_inference(subtask):
             state = await self._domain_state()
             await asyncio.to_thread(
@@ -2628,8 +2765,6 @@ class Worker:
         if self.engine is None:
             return
         try:
-            if result.review is not None:
-                data["review"] = result.review.to_dict()
             await _engine_call(
                 self.engine,
                 "write_memory",
@@ -2689,7 +2824,9 @@ class Worker:
                 key=self._attempt_checkpoint_key(subtask),
             )
             if raw is not None:
-                return json.loads(raw) if isinstance(raw, str) else raw
+                content = getattr(raw, "content", raw)
+                parsed = json.loads(content) if isinstance(content, str) else content
+                return parsed if isinstance(parsed, dict) else None
         except Exception:
             logger.debug("Failed to load checkpoint for subtask %s", subtask.id[:8])
         return None
@@ -2714,21 +2851,21 @@ class Worker:
         if is_review:
             context_block = f"{context_block}\n\n{REVIEW_INSTRUCTIONS}".strip()
 
-        # Optional narrowing Mandate envelope. It is checked before the
-        # worktree/conflict machinery so an expired or over-broad attempt does
-        # not acquire resources it is not authorized to use.
-        mandate_event, mandate_error = self._apply_mandate(subtask)
-        if mandate_event is not None:
-            await self._emit_step_event(subtask, "subtask_progress", **mandate_event)
-        if mandate_error:
-            return SubtaskResult(
-                subtask_id=subtask.id,
-                worker_id=self.worker_id,
-                summary="Mandate envelope rejected",
-                success=False,
-                retryable=False,
-                error=mandate_error,
-            )
+        # Optional narrowing Mandate envelope. Checked before workspace acquire
+        # by execute_subtask, and re-checked here for direct _execute_in_sandbox callers.
+        if _MANDATE_CHECKED_SUBTASK.get() != id(subtask):
+            mandate_event, mandate_error = self._apply_mandate(subtask)
+            if mandate_event is not None:
+                await self._emit_step_event(subtask, "subtask_progress", **mandate_event)
+            if mandate_error:
+                return SubtaskResult(
+                    subtask_id=subtask.id,
+                    worker_id=self.worker_id,
+                    summary="Mandate envelope rejected",
+                    success=False,
+                    retryable=False,
+                    error=mandate_error,
+                )
 
         # Optional pre-issued sandbox credential lease. The broker is the
         # issuer/verifier; this hop only forwards its short-lived contract.
@@ -2772,12 +2909,19 @@ class Worker:
             working_dir: str | None = None
             if workspace_handle and hasattr(workspace_handle, "worktree_path"):
                 working_dir = workspace_handle.worktree_path or None
+            sandbox_cfg = getattr(self, "_sandbox_config", None)
+            effective_wd: str | None = (
+                working_dir
+                or getattr(sandbox_cfg, "working_dir", None)
+                or getattr(sandbox_cfg, "project_path", None)
+                or None
+            )
 
             # Optional zero-edit PerceptionPass: compile a grounded
             # implementation spec from the worktree before the agent starts.
             # It is read-only and flag-gated; failure to compile must never
             # block the existing prompt path.
-            context_block = self._apply_perception_pass(subtask, context_block, working_dir)
+            context_block = self._apply_perception_pass(subtask, context_block, effective_wd)
             context_block, skill_event = self._apply_skill_card(subtask, context_block)
             if skill_event is not None:
                 await self._emit_step_event(
@@ -2850,10 +2994,10 @@ class Worker:
 
                 from ultimate_coders.inference.agent import InferenceInfraAgent
 
-                agent_config = self._resolve_agent_config(subtask) or {}
+                agent_config = dict(self._resolve_agent_config(subtask) or {})
                 routed = InferenceInfraAgent.route(subtask.description, agent_config)
                 if routed:
-                    agent_config = routed
+                    agent_config = dict(routed)
                     agent_config = {
                         **agent_config,
                         "uc_execution": {
@@ -2962,7 +3106,7 @@ class Worker:
                     tags=["inference_infra", "benchmark", "adaptation_graph"],
                 )
             if success:
-                process_report = await self._verify_output_process(working_dir, output)
+                process_report = await self._verify_output_process(effective_wd, output)
                 if process_report is not None and not process_report.passed:
                     details = "; ".join(
                         f"{finding.kind}:{finding.path}:{finding.line}"
@@ -2971,7 +3115,7 @@ class Worker:
                     success = False
                     error = f"Process review rejected: {details}"[:2000]
             if success:
-                anti_report = await self._verify_output_anti_patterns(working_dir, output)
+                anti_report = await self._verify_output_anti_patterns(effective_wd, output)
                 if anti_report is not None and not anti_report.passed:
                     details = "; ".join(
                         f"{finding.kind}:{finding.path}:{finding.line}"
@@ -2979,7 +3123,7 @@ class Worker:
                     )
                     success = False
                     error = f"Anti-pattern gate rejected: {details}"[:2000]
-            dockerless = await self._verify_output_dockerless(working_dir, output)
+            dockerless = await self._verify_output_dockerless(effective_wd, output)
             if dockerless is not None:
                 await self._emit_step_event(
                     subtask,
@@ -2990,7 +3134,7 @@ class Worker:
                     dockerless_passed=dockerless.passed,
                     dockerless_missing=list(dockerless.missing_evidence)[:8],
                 )
-            retrace = await self._verify_output_retrace(subtask, working_dir, output)
+            retrace = await self._verify_output_retrace(subtask, effective_wd, output)
             if retrace is not None:
                 await self._emit_step_event(
                     subtask,
@@ -3003,7 +3147,7 @@ class Worker:
                     retrace_contradictory=list(retrace.contradictory)[:8],
                     retrace_repair=retrace.repair_instruction[:500],
                 )
-            test_event = await self._test_execution_event(working_dir, subtask)
+            test_event = await self._test_execution_event(effective_wd, subtask)
             if test_event is not None:
                 await self._emit_step_event(subtask, "subtask_progress", **test_event)
                 test_error = self._test_execution_error(test_event)
@@ -3019,7 +3163,7 @@ class Worker:
                 )
             critic_event, critic_error = await self._verify_output_exec_critic(
                 subtask,
-                working_dir,
+                effective_wd,
                 output,
             )
             if critic_event is not None:
@@ -3222,9 +3366,19 @@ class Worker:
         if not mandate_envelope_enabled():
             return None, None
         config = subtask.agent_config if isinstance(subtask.agent_config, dict) else {}
-        raw = config.get("mandate")
-        if not isinstance(raw, dict):
+        if "mandate" not in config or config.get("mandate") is None:
             return None, None
+        raw = config.get("mandate")
+        if not isinstance(raw, dict) or not raw:
+            return (
+                {
+                    "phase": "mandate envelope",
+                    "percent": 0,
+                    "mandate_enforced": True,
+                    "mandate_error": "mandate envelope must be a non-empty object",
+                },
+                "Mandate envelope rejected: mandate envelope must be a non-empty object",
+            )
         enforce = bool(raw.get("enforce", False))
         try:
             mandate = Mandate.from_dict(raw)
@@ -3273,7 +3427,11 @@ class Worker:
                     violations.append(
                         "resources are not granted: " + ", ".join(missing_resources)
                     )
-        attempt_number = int(getattr(subtask, "dispatch_retry_count", 0) or 0) + 1
+        attempt_number = (
+            int(getattr(subtask, "dispatch_retry_count", 0) or 0)
+            + int(getattr(subtask, "retry_count", 0) or 0)
+            + 1
+        )
         if attempt_number > mandate.max_attempts:
             violations.append(
                 f"attempt {attempt_number} exceeds max_attempts {mandate.max_attempts}"
@@ -3292,6 +3450,16 @@ class Worker:
         if enforce and violations:
             return event, "Mandate envelope rejected: " + "; ".join(violations[:5])
         return event, None
+
+    @staticmethod
+    def _append_bounded_section(context_block: str, section: str, limit: int = 20000) -> str:
+        """Append ``section`` within ``limit`` chars, reserving room for ``section``."""
+        if len(context_block) + len(section) <= limit:
+            return context_block + section
+        if len(section) >= limit:
+            return section[:limit]
+        keep = limit - len(section)
+        return context_block[:keep] + section
 
     def _apply_skill_card(
         self,
@@ -3346,7 +3514,7 @@ class Worker:
             f"Procedure: {card.procedure}\n"
             f"Verification: {card.verification}\n"
         )
-        return (context_block + section)[:20000], event
+        return self._append_bounded_section(context_block, section, 20000), event
 
     def _select_skill_card(
         self,
@@ -3430,7 +3598,7 @@ class Worker:
             "skill_passed": True,
             "skill_candidates": len(curriculum),
         }
-        return (context_block + section)[:20000], event
+        return self._append_bounded_section(context_block, section, 20000), event
 
     def _observed_gdpo_group(self, task_id: str, score: Any) -> list[Any]:
         """Append one observed score to a bounded process-local task group."""
@@ -3634,36 +3802,29 @@ class Worker:
         paths = [fc.file_path for fc in changes if fc.file_path]
         if not paths:
             return None
-        root = Path(working_dir)
+        root = Path(working_dir).resolve()
         before: dict[str, str] = {}
         after: dict[str, str] = {}
         for rel in dict.fromkeys(paths):
             path = Path(rel)
             if path.is_absolute():
                 try:
-                    path = path.relative_to(root)
-                except ValueError:
+                    path = path.resolve().relative_to(root)
+                except (ValueError, OSError):
                     continue
-            key = path.as_posix()
-            target = root / path
+            target = (root / path).resolve()
+            try:
+                rel_safe = target.relative_to(root)
+            except ValueError:
+                continue
+            key = rel_safe.as_posix()
             try:
                 after[key] = target.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 after[key] = ""
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "git",
-                    "show",
-                    f"HEAD:{key}",
-                    cwd=str(root),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                stdout, _ = await proc.communicate()
-            except OSError:
-                continue
-            if proc.returncode == 0:
-                before[key] = stdout.decode("utf-8", errors="replace")
+            head_text = await self._git_show_head(root, key)
+            if head_text is not None:
+                before[key] = head_text
         if not after:
             return None
         commands = tuple(getattr(output, "commands_run", ()) or ())
@@ -3683,6 +3844,37 @@ class Worker:
             passed=not errors,
             summary=summary or report.summary,
         )
+
+    @staticmethod
+    async def _git_show_head(root: Path, key: str, timeout: float = 30.0) -> str | None:
+        """Read ``HEAD:<key>`` from ``root`` with a bounded timeout."""
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "show",
+                f"HEAD:{key}",
+                cwd=str(root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            if proc is not None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await proc.wait()
+                except Exception:  # best-effort: reaping timed-out git show
+                    pass
+            return None
+        except OSError:
+            return None
+        if proc.returncode != 0:
+            return None
+        return stdout.decode("utf-8", errors="replace")
 
     def _assembled_context_block(
         self, manifest: Any
@@ -3769,7 +3961,7 @@ class Worker:
         paths = [fc.file_path for fc in changes if fc.file_path]
         if not paths:
             return None
-        root = Path(working_dir)
+        root = Path(working_dir).resolve()
         patches: list[str] = []
         import difflib
 
@@ -3777,29 +3969,22 @@ class Worker:
             path = Path(rel)
             if path.is_absolute():
                 try:
-                    path = path.relative_to(root)
-                except ValueError:
+                    path = path.resolve().relative_to(root)
+                except (ValueError, OSError):
                     continue
-            key = path.as_posix()
+            target = (root / path).resolve()
             try:
-                after = (root / path).read_text(encoding="utf-8", errors="replace")
+                rel_safe = target.relative_to(root)
+            except ValueError:
+                continue
+            key = rel_safe.as_posix()
+            try:
+                after = target.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "git",
-                    "show",
-                    f"HEAD:{key}",
-                    cwd=str(root),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                stdout, _ = await proc.communicate()
-            except OSError:
+            before = await self._git_show_head(root, key)
+            if before is None:
                 continue
-            if proc.returncode != 0:
-                continue
-            before = stdout.decode("utf-8", errors="replace")
             patches.append(
                 "".join(
                     difflib.unified_diff(
@@ -4269,35 +4454,29 @@ class Worker:
         ]
         if not changed:
             return None
-        root = Path(working_dir)
+        root = Path(working_dir).resolve()
         before: dict[str, str] = {}
         after: dict[str, str] = {}
         for rel in dict.fromkeys(changed):
             path = Path(rel)
             if path.is_absolute():
                 try:
-                    path = path.relative_to(root)
-                except ValueError:
+                    path = path.resolve().relative_to(root)
+                except (ValueError, OSError):
                     continue
-            target = root / path
+            target = (root / path).resolve()
             try:
-                after[path.as_posix()] = target.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                after[path.as_posix()] = ""
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "git",
-                    "show",
-                    f"HEAD:{path.as_posix()}",
-                    cwd=str(root),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                stdout, _ = await proc.communicate()
-            except OSError:
+                rel_safe = target.relative_to(root)
+            except ValueError:
                 continue
-            if proc.returncode == 0:
-                before[path.as_posix()] = stdout.decode("utf-8", errors="replace")
+            key = rel_safe.as_posix()
+            try:
+                after[key] = target.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                after[key] = ""
+            head_text = await self._git_show_head(root, key)
+            if head_text is not None:
+                before[key] = head_text
         if not after:
             return None
         return verify_process(before, after, test_paths=tuple(after))
@@ -4332,6 +4511,11 @@ class Worker:
         """
         step_outputs: list[AgentOutput] = []
         all_file_changes: list[FileChange] = []
+        all_commands_run: list[str] = []
+        all_turn_likelihoods: list[float] = []
+        all_turn_tokens: list[list[dict[str, Any]]] = []
+        all_prefix_cache: list[dict[str, Any]] = []
+        last_test_output = ""
         domain_steps: list[dict[str, Any]] = []
         failed_file_changes: list[FileChange] = []
         had_failed_step = False
@@ -4342,6 +4526,19 @@ class Worker:
         step_usages: list[StepUsage] = []
         last_output: AgentOutput | None = None
         file_constraints_str = ", ".join(subtask.file_constraints) or "none"
+
+        def _accumulate_step_telemetry(out: AgentOutput) -> None:
+            nonlocal last_test_output
+            if out.commands_run:
+                all_commands_run.extend(out.commands_run)
+            if out.test_output:
+                last_test_output = out.test_output
+            if out.turn_likelihoods:
+                all_turn_likelihoods.extend(out.turn_likelihoods)
+            if out.turn_tokens:
+                all_turn_tokens.extend(out.turn_tokens)
+            if out.prefix_cache:
+                all_prefix_cache.extend(out.prefix_cache)
 
         # Group consecutive steps by parallel_group. A step with empty
         # parallel_group runs sequentially (current behavior). A run of
@@ -4377,6 +4574,7 @@ class Worker:
                     idx += 1
                     continue
                 step_outputs.append(output)
+                _accumulate_step_telemetry(output)
                 # T18 #668: collected here — *before* the abort check below —
                 # so a step that failed and aborted the chain is still
                 # attributed. It ran, so it spent.
@@ -4409,7 +4607,12 @@ class Worker:
                         retryable=output.retryable,
                         cleanup_pending=output.cleanup_pending,
                         stderr_tail=output.stderr_tail,
+                        test_output=last_test_output,
                         tool_calls=output.tool_calls,
+                        commands_run=all_commands_run,
+                        turn_likelihoods=all_turn_likelihoods,
+                        turn_tokens=all_turn_tokens,
+                        prefix_cache=all_prefix_cache,
                         # T18 #668: the chain stopped early, but the units that
                         # DID run are still what this node spent — dropping them
                         # here would recreate the under-report on the failure
@@ -4450,6 +4653,15 @@ class Worker:
                         success=False,
                         retryable=False,
                         summary="Mutating inference steps cannot share a parallel workspace",
+                        file_changes=all_file_changes,
+                        test_output=last_test_output,
+                        commands_run=all_commands_run,
+                        turn_likelihoods=all_turn_likelihoods,
+                        turn_tokens=all_turn_tokens,
+                        prefix_cache=all_prefix_cache,
+                        step_usages=step_usages,
+                        had_failed_step=had_failed_step,
+                        failed_file_changes=failed_file_changes,
                     )
                 disallowed = set(merged_cfg.get("disallowed_tools", []) or [])
                 missing = required_disallowed - disallowed
@@ -4470,6 +4682,14 @@ class Worker:
                         ),
                         file_changes=all_file_changes,
                         success=False,
+                        test_output=last_test_output,
+                        commands_run=all_commands_run,
+                        turn_likelihoods=all_turn_likelihoods,
+                        turn_tokens=all_turn_tokens,
+                        prefix_cache=all_prefix_cache,
+                        step_usages=step_usages,
+                        had_failed_step=had_failed_step,
+                        failed_file_changes=failed_file_changes,
                     )
 
             # All steps in the group share the SAME prev (last output before
@@ -4513,6 +4733,7 @@ class Worker:
                 if output is None:
                     continue
                 step_outputs.append(output)
+                _accumulate_step_telemetry(output)
                 # T18 #668: one record per group MEMBER — a parallel group of N
                 # produces N entries and deliberately no group-level total,
                 # because a sum would make the members mutually unattributable
@@ -4554,7 +4775,12 @@ class Worker:
                     retryable=failed_output.retryable,
                     cleanup_pending=failed_output.cleanup_pending,
                     stderr_tail=failed_output.stderr_tail,
+                    test_output=last_test_output,
                     tool_calls=failed_output.tool_calls,
+                    commands_run=all_commands_run,
+                    turn_likelihoods=all_turn_likelihoods,
+                    turn_tokens=all_turn_tokens,
+                    prefix_cache=all_prefix_cache,
                     # T18 #668: same as the sequential abort — the members that
                     # ran before the failing one keep their records. Members of
                     # this group that the `break` skipped over were never
@@ -4610,7 +4836,12 @@ class Worker:
             retryable=last_output.retryable,
             cleanup_pending=last_output.cleanup_pending,
             stderr_tail=last_output.stderr_tail,
+            test_output=last_test_output,
             tool_calls=last_output.tool_calls,
+            commands_run=all_commands_run,
+            turn_likelihoods=all_turn_likelihoods,
+            turn_tokens=all_turn_tokens,
+            prefix_cache=all_prefix_cache,
             step_usages=step_usages,
             had_failed_step=had_failed_step,
             failed_file_changes=failed_file_changes,
@@ -4950,21 +5181,28 @@ class Worker:
         # file. Cap at 512KB and send a marker the gateway can distinguish
         # from empty/deleted content.
         max_content_bytes = 512 * 1024
+        base_real = os.path.realpath(base_path) if base_path else ""
         for fc in result.modified_files:
             content = ""
-            if base_path and fc.change_type.value != "deleted":
-                full = os.path.join(base_path, fc.file_path)
+            if base_real and fc.change_type.value != "deleted":
                 try:
-                    if os.path.getsize(full) > max_content_bytes:
-                        content = "[content omitted: exceeds 512KB — re-index from source]"
+                    full_real = os.path.realpath(os.path.join(base_real, fc.file_path))
+                    if os.path.commonpath([base_real, full_real]) != base_real:
                         logger.warning(
-                            "File %s too large to broadcast; sending marker",
+                            "Skipping out-of-workspace file change broadcast for %s",
+                            fc.file_path,
+                        )
+                        continue
+                    if os.path.getsize(full_real) > max_content_bytes:
+                        content = ""
+                        logger.warning(
+                            "File %s too large (>512KB) to broadcast inline; omitting content",
                             fc.file_path,
                         )
                     else:
-                        with open(full, encoding="utf-8", errors="replace") as fh:
+                        with open(full_real, encoding="utf-8", errors="replace") as fh:
                             content = fh.read()
-                except OSError:
+                except (OSError, ValueError):
                     logger.debug("Could not read post-edit content for %s", fc.file_path)
             event = FileChangeEvent(
                 task_id=subtask.parent_id,
@@ -4977,12 +5215,16 @@ class Worker:
                 content=content,
             )
             try:
-                await self.nats_publisher.publish_event(
-                    "file_changed",
-                    task_id=subtask.parent_id,
-                    subtask_id=subtask.id,
-                    data=event.to_dict(),
-                )
+                publish_fc = getattr(self.nats_publisher, "publish_file_changed", None)
+                if callable(publish_fc):
+                    await publish_fc(event.to_dict())
+                else:
+                    await self.nats_publisher.publish_event(
+                        "file_changed",
+                        task_id=subtask.parent_id,
+                        subtask_id=subtask.id,
+                        data=event.to_dict(),
+                    )
             except Exception:
                 # ponytail: F64 — was debug-only: a dropped broadcast meant the
                 # gateway silently never re-indexed this file.

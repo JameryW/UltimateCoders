@@ -248,7 +248,8 @@ def _missing_evidence(
 ) -> tuple[str, ...]:
     """Return the categories not represented by ``evidence`` (empty = allowed)."""
 
-    entries = [str(item).strip().lower() for item in evidence if str(item).strip()]
+    raw_evidence = [evidence] if isinstance(evidence, str) else evidence
+    entries = [str(item).strip().lower() for item in raw_evidence if str(item).strip()]
     categories = (
         ("caller", tuple(str(value) for value in callers if str(value).strip())),
         ("override", tuple(str(value) for value in overrides if str(value).strip())),
@@ -280,11 +281,35 @@ def _category_label(name: str, values: tuple[str, ...]) -> str:
     return f"{name} ({preview})"
 
 
+_SEP_CHARS = frozenset("/\\:.()[]{} \t-,'\"")
+
+
+def _bounded_substring(needle: str, haystack: str) -> bool:
+    """Return True if ``needle`` occurs in ``haystack`` at path/symbol token boundaries."""
+    if not needle or not haystack:
+        return False
+    if needle == haystack:
+        return True
+    if len(needle) < 2:
+        return False
+    start = 0
+    while True:
+        idx = haystack.find(needle, start)
+        if idx < 0:
+            return False
+        before_ok = idx == 0 or haystack[idx - 1] in _SEP_CHARS
+        end = idx + len(needle)
+        after_ok = end == len(haystack) or haystack[end] in _SEP_CHARS
+        if before_ok and after_ok:
+            return True
+        start = idx + 1
+
+
 def _matches(entry: str, candidate: str) -> bool:
     haystack = candidate.strip().lower()
-    if not haystack:
+    if not haystack or not entry:
         return False
-    return haystack in entry or entry in haystack
+    return _bounded_substring(haystack, entry) or _bounded_substring(entry, haystack)
 
 
 def _build_prompt(

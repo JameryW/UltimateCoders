@@ -45,13 +45,13 @@ function OutputFiles({ events, onNavigateFile, repoId }: { events: TaskEvent[]; 
         Output Files: <span className="text-[var(--text-muted)]">{files.length} changed</span>
       </p>
       <div className="space-y-0.5">
-        {files.map((f) => {
+        {files.map((f, idx) => {
           const icon = f.type === "created" ? "+" : f.type === "deleted" ? "−" : "~";
           const color = f.type === "created" ? "text-green-500" : f.type === "deleted" ? "text-red-500" : "text-yellow-500";
           const bg = f.type === "created" ? "file-created" : f.type === "deleted" ? "file-deleted" : "file-modified";
           return (
             <button
-              key={f.path}
+              key={`${f.subtask}:${f.type}:${f.path}:${idx}`}
               onClick={() => onNavigateFile?.({ repoId: repoId ?? "default", path: f.path })}
               className={cn("flex items-center gap-1.5 py-0.5 px-2 rounded text-xs w-full text-left hover:opacity-80", bg)}
             >
@@ -80,6 +80,7 @@ function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
       return;
     }
 
+    let cancelled = false;
     const idMap: Record<string, string> = {};
     subtasks.forEach((st, i) => {
       idMap[st.id] = `s${i + 1}`;
@@ -94,7 +95,11 @@ function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
 
     for (const st of subtasks) {
       const nodeId = idMap[st.id]!;
-      const label = truncate(st.description, 25).replace(/"/g, "'");
+      const label = truncate(st.description, 25)
+        .replace(/[\r\n]+/g, " ")
+        .replace(/"/g, "'")
+        .replace(/[<>{}`[\]]/g, " ")
+        .trim();
       graphDef += `  ${nodeId}["${label}"]\n`;
       // Apply status class
       const cls = st.status === "completed" ? "completed"
@@ -112,6 +117,7 @@ function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
     const mermaidId = `mermaid-dag-${idCounter.current}-${Date.now()}`;
 
     renderMermaid(mermaidId, graphDef).then((result) => {
+      if (cancelled) return;
       if (result) {
         setSvg(DOMPurify.sanitize(result));
         setRenderFailed(false);
@@ -119,7 +125,15 @@ function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
         setSvg(null);
         setRenderFailed(true);
       }
+    }).catch(() => {
+      if (cancelled) return;
+      setSvg(null);
+      setRenderFailed(true);
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [subtasks]);
 
   if (!svg && !renderFailed) return null;
@@ -311,7 +325,7 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId, varia
       <div className="flex items-center gap-2">
         <span className="font-mono text-[var(--text-muted)]">{shortId(task.id)}</span>
         <button
-          onClick={() => { navigator.clipboard.writeText(task.id); }}
+          onClick={() => { void navigator.clipboard?.writeText(task.id).catch(() => {}); }}
           className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           aria-label="Copy task ID"
           title="Copy full task ID"

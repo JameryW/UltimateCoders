@@ -65,7 +65,7 @@ DEFAULT_DRAIN_LIMIT = 20
 DEFAULT_MAX_PROMPT_CHARS = 4000
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
-_INVALID_SUBJECT_CHARS = frozenset({"*", ">", " ", "\t", "\r", "\n", "/"})
+_INVALID_SUBJECT_CHARS = frozenset({"*", ">", " ", "\t", "\r", "\n", "/", "."})
 
 
 def radio_enabled() -> bool:
@@ -271,6 +271,7 @@ class RadioFileInbox:
     """
 
     MAX_LINE_BYTES = 32_000
+    MAX_FILE_BYTES = 2 * 1024 * 1024
 
     def __init__(self, directory: str | os.PathLike[str], graph_id: str, node_id: str) -> None:
         root = str(directory or "").strip()
@@ -281,6 +282,7 @@ class RadioFileInbox:
         digest = hashlib.sha256(f"{self.graph_id}\0{self.node_id}".encode()).hexdigest()[:20]
         self._path = Path(root) / f"radio-{digest}.jsonl"
         self._lock = threading.Lock()
+        self._offset = 0
 
     @property
     def path(self) -> Path:
@@ -293,20 +295,52 @@ class RadioFileInbox:
         if message.graph_id != self.graph_id or message.node_id != self.node_id:
             return False
         line = json.dumps(message.to_dict(), ensure_ascii=False, separators=(",", ":"))
-        if len(line.encode("utf-8")) > self.MAX_LINE_BYTES:
+        raw = (line + "\n").encode("utf-8")
+        if len(raw) - 1 > self.MAX_LINE_BYTES:
             raise ValueError("radio message exceeds the inbox line budget")
         with self._lock:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            with self._path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(line + "\n")
+            with self._path.open("ab") as handle:
+                _flock_exclusive(handle)
+                try:
+                    handle.seek(0, os.SEEK_END)
+                    if handle.tell() + len(raw) > self.MAX_FILE_BYTES:
+                        return False
+                    handle.write(raw)
+                    handle.flush()
+                finally:
+                    _flock_unlock(handle)
         return True
 
-    def read(self) -> list[RadioMessage]:
-        """Read every valid message addressed to this graph/node (bounded parse)."""
+    def read(self, *, incremental: bool = False) -> list[RadioMessage]:
+        """Read valid messages addressed to this graph/node (bounded parse)."""
         try:
-            text = self._path.read_text(encoding="utf-8", errors="replace")
+            with self._path.open("rb") as handle:
+                _flock_shared(handle)
+                try:
+                    handle.seek(0, os.SEEK_END)
+                    size = handle.tell()
+                    start = self._offset if incremental else 0
+                    if start > size:
+                        start = 0
+                    read_len = min(size - start, self.MAX_FILE_BYTES)
+                    handle.seek(start)
+                    chunk = handle.read(read_len)
+                finally:
+                    _flock_unlock(handle)
         except FileNotFoundError:
             return []
+        if not chunk:
+            return []
+        # Only advance past complete newline-terminated lines when incremental
+        # so a concurrent writer's partial line is never skipped.
+        if incremental:
+            last_nl = chunk.rfind(b"\n")
+            if last_nl < 0:
+                return []
+            self._offset = start + last_nl + 1
+            chunk = chunk[: last_nl + 1]
+        text = chunk.decode("utf-8", errors="replace")
         messages: list[RadioMessage] = []
         for line in text.splitlines():
             if not line.strip():
@@ -324,6 +358,33 @@ class RadioFileInbox:
             if message.graph_id == self.graph_id and message.node_id == self.node_id:
                 messages.append(message)
         return messages
+
+
+def _flock_exclusive(handle: Any) -> None:
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except (ImportError, OSError):
+        pass
+
+
+def _flock_shared(handle: Any) -> None:
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+    except (ImportError, OSError):
+        pass
+
+
+def _flock_unlock(handle: Any) -> None:
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except (ImportError, OSError):
+        pass
 
 
 class BackgroundMentionWatcher:
@@ -368,20 +429,21 @@ class BackgroundMentionWatcher:
 
     # ── delivery ─────────────────────────────────────────────────
 
-    def _on_message(self, message: RadioMessage) -> None:
-        """Bus subscription callback."""
+    def _on_message(self, message: RadioMessage) -> bool:
+        """Bus subscription callback; returns True when newly queued."""
 
-        if message.message_id in self._drained:
-            return
         with self._lock:
+            if message.message_id in self._drained:
+                return False
             if any(item.message_id == message.message_id for item in self._inbox):
-                return
+                return False
             self._inbox.append(message)
             overflow = len(self._inbox) - self.max_pending
             if overflow > 0:
                 dropped = self._inbox[:overflow]
                 del self._inbox[:overflow]
                 self._dropped += len(dropped)
+            return True
 
     def ingest(self, message: RadioMessage) -> bool:
         """Feed one externally-delivered message into this watcher's inbox."""
@@ -389,8 +451,9 @@ class BackgroundMentionWatcher:
             raise TypeError("ingest expects a RadioMessage")
         if message.graph_id != self.graph_id or message.node_id != self.node_id:
             return False
-        self._on_message(message)
-        return True
+        if message.kind == KIND_WORKLOG:
+            return False
+        return self._on_message(message)
 
     def pending(self) -> list[RadioMessage]:
         """Return undrained mentions in arrival order (bounded by ``max_pending``)."""
@@ -519,29 +582,30 @@ class BackgroundMentionWatcher:
             candidates = [item for item in self._inbox if item.message_id not in self._drained][
                 :cap_limit
             ]
-        selected: list[RadioMessage] = []
-        lines: list[str] = ["Radio updates:"]
-        used = len(lines[0])
-        for message in candidates:
-            line = self._format_line(message)
-            cost = 1 + len(line)  # newline + line
-            if used + cost <= cap_chars:
-                lines.append(line)
-                selected.append(message)
-                used += cost
-                continue
+            selected: list[RadioMessage] = []
+            lines: list[str] = ["Radio updates:"]
+            used = len(lines[0])
+            for message in candidates:
+                line = self._format_line(message)
+                cost = 1 + len(line)  # newline + line
+                if used + cost <= cap_chars:
+                    lines.append(line)
+                    selected.append(message)
+                    used += cost
+                    continue
+                if not selected:
+                    remaining = cap_chars - used - 1
+                    if remaining <= 0:
+                        break
+                    lines.append(_truncate(line, remaining))
+                    selected.append(message)
+                break
             if not selected:
-                remaining = cap_chars - used - 1
-                if remaining <= 0:
-                    break
-                lines.append(_truncate(line, remaining))
-                selected.append(message)
-            break
-        if not selected:
-            return ""
-        with self._lock:
-            self._drained.update(message.message_id for message in selected)
-        return "\n".join(lines)
+                return ""
+            drained_ids = {message.message_id for message in selected}
+            self._drained.update(drained_ids)
+            self._inbox = [item for item in self._inbox if item.message_id not in drained_ids]
+            return "\n".join(lines)
 
     def _format_line(self, message: RadioMessage) -> str:
         label = "thread" if message.kind == KIND_THREAD else message.kind

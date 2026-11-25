@@ -38,7 +38,8 @@ type WireTask = Omit<TaskSummary, "created_at" | "updated_at"> & {
 /** SSE snapshots carry numeric Unix seconds; gRPC conversion already yields ISO. */
 export function normalizeTaskSnapshot(data: Omit<TasksData, "tasks"> & { tasks: WireTask[] }): TasksData {
   const iso = (value: string | number) => typeof value === "number"
-    ? taskTimestampToISO(BigInt(value)) : value;
+    ? (Number.isFinite(value) ? taskTimestampToISO(BigInt(Math.trunc(value))) : "")
+    : value;
   const tasks = data.tasks.map((task) => ({
     ...task,
     status: normalizeGrpcStatus(task.status),

@@ -98,6 +98,15 @@ NATS_SUBJECT_WINDOW_CLOSED: str = "schedule.window.closed"
 CONTRACT_VERSION: str = "v1"
 
 
+def _gateway_owns_dispatch() -> bool:
+    """Return True when the Rust gateway owns subtask dispatch rather than the local worker."""
+    return os.environ.get("UC_GATEWAY_OWNS_DISPATCH", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 def _outcome_is_settled(existing: dict | None, attempt: int) -> bool:
     """Whether a stored terminal outcome already answers this dispatch.
 
@@ -519,6 +528,13 @@ class NatsPublisher:
             return False
         return await self._publish(subject, payload)
 
+    async def publish_file_changed(self, payload: dict[str, Any]) -> bool:
+        """Publish a flat FileChangeEvent directly to ``uc.file.changed``."""
+        if not isinstance(payload, dict):
+            logger.warning("Refusing file_changed publish with non-mapping payload")
+            return False
+        return await self._publish(NATS_SUBJECT_FILE_CHANGED, payload)
+
     async def publish_submit(
         self,
         task_id: str,
@@ -832,9 +848,9 @@ class NatsWorker:
             # local harness.  The harness is a child process, so it cannot
             # share the in-memory bus; the worker appends to a per-node JSONL
             # file that the harness polls at safe turn boundaries.
-            radio_sub = await self._nc.subscribe("uc.radio.>", cb=self._handle_radio)
+            radio_sub = await self._nc.subscribe("uc.radio.*.mention.*", cb=self._handle_radio)
             self._subscriptions.append(radio_sub)
-            logger.info("Subscribed to uc.radio.> (agent radio inbox spool)")
+            logger.info("Subscribed to uc.radio.*.mention.* (agent radio inbox spool)")
 
             # Worker mode: subscribe to file change events for distributed conflict tracking
             file_change_sub = await self._nc.subscribe(
@@ -2164,7 +2180,7 @@ class NatsWorker:
             # they'll be re-submitted on flush_pending_tasks() when the
             # window closes.
             if task.subtasks and task.status != TaskStatus.FAILED:
-                if os.environ.get("UC_GATEWAY_OWNS_DISPATCH", "").lower() in ("1", "true", "yes"):
+                if _gateway_owns_dispatch():
                     # The gRPC gateway dispatches ready subtasks after this
                     # snapshot. A second local scheduler can race it at
                     # startup before the remote worker's first heartbeat.
@@ -3479,6 +3495,8 @@ class NatsWorker:
             if result.stall_signal:
                 data["stall_signal"] = result.stall_signal
                 data["loop_detected"] = True
+            if isinstance(result.test_execution, dict):
+                data["test_execution"] = result.test_execution
             event = _make_task_event_payload(event_type, task_id, subtask_id, data)
             task = self._make_subtask_result_task(
                 task_id,
@@ -3489,6 +3507,11 @@ class NatsWorker:
                 usage=result.usage,
                 review=result.review,
                 step_usages=result.step_usages,
+                modified_files=result.modified_files,
+                test_execution=result.test_execution,
+                agent_config=subtask.agent_config,
+                error=result.error,
+                retry_count=result.retry_count,
             )
             update = _make_task_update_payload(task, partial=True)
             # Message ids embed (attempt, content hash) so a *new* result is
@@ -3532,7 +3555,7 @@ class NatsWorker:
                     await asyncio.to_thread(
                         state.mutate,
                         "execution_claims",
-                        key,
+                        claim_key,
                         lambda old: {} if old.get("claim") == claim else old,
                     )
                 except Exception:
@@ -3548,6 +3571,11 @@ class NatsWorker:
         usage: SubtaskUsage | None = None,
         review: SubtaskReview | None = None,
         step_usages: list[StepUsage] | None = None,
+        modified_files: list[Any] | None = None,
+        test_execution: dict[str, Any] | None = None,
+        agent_config: dict[str, Any] | None = None,
+        error: str | None = None,
+        retry_count: int = 0,
     ) -> Task:
         """Build a minimal Task object for publishing subtask result via NatsPublisher.
 
@@ -3570,6 +3598,21 @@ class NatsWorker:
         no step records emits no ``steps`` key at all.
         """
         st_status = SubtaskStatus.COMPLETED if status == "Completed" else SubtaskStatus.FAILED
+        has_result = bool(
+            summary
+            or modified_files
+            or test_execution is not None
+            or usage is not None
+            or review is not None
+            or step_usages
+            or error
+        )
+        # Never forward internal ephemeral lease/runtime keys on partial updates;
+        # keep only declared metadata such as boundary_challenge.
+        safe_agent_config: dict[str, Any] = {}
+        if isinstance(agent_config, dict):
+            if "boundary_challenge" in agent_config:
+                safe_agent_config["boundary_challenge"] = agent_config["boundary_challenge"]
         st = Subtask(
             id=subtask_id,
             parent_id=task_id,
@@ -3580,17 +3623,22 @@ class NatsWorker:
             file_constraints=[],
             expected_output="",
             dispatch_retry_count=dispatch_retry_count,
+            retry_count=retry_count,
+            agent_config=safe_agent_config,
             result=SubtaskResult(
                 subtask_id=subtask_id,
                 worker_id=self._worker.worker_id if self._worker else "",
-                modified_files=[],
+                modified_files=list(modified_files or []),
                 summary=summary,
                 success=status == "Completed",
+                error=error,
+                retry_count=retry_count,
                 usage=usage,
                 review=review,
                 step_usages=list(step_usages or []),
+                test_execution=test_execution if isinstance(test_execution, dict) else None,
             )
-            if summary
+            if has_result
             else None,
         )
         return Task(
@@ -3824,16 +3872,32 @@ class NatsWorker:
         previous = {node["id"]: node for node in saved.get("subtasks", [])}
         nodes = []
         for raw_node in raw["subtasks"]:
-            node = {**previous.get(raw_node["id"], {}), **raw_node}
+            prev_node = previous.get(raw_node["id"], {})
+            node = {**prev_node, **raw_node}
             node["status"] = status(raw_node["status"])
             node["dispatch_mode"] = (
                 raw_node.get("dispatch_mode", "PreferRemote")
                 .replace("PreferRemote", "prefer_remote")
                 .lower()
             )
-            node["agent_config"] = json.loads(raw_node.get("agent_config_json") or "{}")
+            raw_agent_cfg = raw_node.get("agent_config_json")
+            if raw_agent_cfg:
+                node["agent_config"] = json.loads(raw_agent_cfg)
+            elif isinstance(prev_node.get("agent_config"), dict):
+                node["agent_config"] = dict(prev_node["agent_config"])
+            else:
+                node["agent_config"] = {}
             result = raw_node.get("result")
             if result:
+                test_contract = result.get("test_contract")
+                test_execution = result.get("test_execution")
+                if test_execution is None and isinstance(test_contract, dict):
+                    test_execution = {
+                        "status": "ok",
+                        "f2p": list(test_contract.get("f2p_tests", [])),
+                        "p2p": list(test_contract.get("p2p_tests", [])),
+                        "broken": list(test_contract.get("broken_tests", [])),
+                    }
                 node["result"] = {
                     **result,
                     "modified_files": [
@@ -3845,6 +3909,8 @@ class NatsWorker:
                         for change in result.get("modified_files", [])
                     ],
                 }
+                if test_execution is not None:
+                    node["result"]["test_execution"] = test_execution
                 if result.get("completed_at"):
                     node["result"]["completed_at"] = timestamp(result["completed_at"])
             nodes.append(node)
@@ -3900,10 +3966,11 @@ class NatsWorker:
             modified_files = [
                 FileChange(
                     file_path=fc.get("path", ""),
-                    change_type=ChangeType(fc.get("change_type", "modified")),
+                    change_type=ChangeType(fc.get("change_type") or fc.get("type") or "modified"),
                     diff=fc.get("diff_stats", ""),
                 )
                 for fc in inner.get("modified_files", [])
+                if isinstance(fc, dict)
             ]
             result = SubtaskResult(
                 subtask_id=subtask_id,
@@ -4007,9 +4074,12 @@ class NatsWorker:
         orch.set_night_window_active(False)
         logger.info("Night window closed — flushing %d deferred task(s)", backlog)
         executed = await orch.flush_pending_tasks()
-        # Re-dispatch execution for each flushed task that now has subtasks.
+        # Publish full task snapshots and respect UC_GATEWAY_OWNS_DISPATCH.
+        gateway_owns = _gateway_owns_dispatch()
         for task in executed:
-            if task.subtasks:
+            if self._publisher is not None:
+                await self._publisher.publish_update(task)
+            if task.subtasks and not gateway_owns:
                 self._spawn_bg(self._execute_subtasks(task))
         logger.info(
             "Night window flush complete — re-dispatched %d/%d task(s)",
@@ -4018,11 +4088,13 @@ class NatsWorker:
         )
 
     async def _handle_radio(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
-        """Spool one inbound ``uc.radio.>`` message for the local harness.
+        """Spool one inbound ``uc.radio.>`` mention/thread message for the local harness.
 
         Delivery is best-effort and process-local: the harness reads the JSONL
-        file at its next tool boundary.  A malformed message or an unset
-        ``UC_RADIO_INBOX_DIR`` is ignored, never fatal to the worker.
+        file at its next tool boundary. Worklog broadcasts are ignored so a
+        node's own mirrored worklog posts never echo back into its mention
+        inbox. A malformed message or an unset ``UC_RADIO_INBOX_DIR`` is
+        ignored, never fatal to the worker.
         """
         inbox_dir = os.environ.get(RADIO_INBOX_DIR_ENV, "").strip()
         if not inbox_dir:
@@ -4036,6 +4108,8 @@ class NatsWorker:
             return
         try:
             message = RadioMessage.from_dict(payload)
+            if message.kind == "worklog":
+                return
             inbox = RadioFileInbox(inbox_dir, message.graph_id, message.node_id)
             inbox.append(message)
         except (TypeError, ValueError, OSError):
@@ -4480,6 +4554,12 @@ class NatsWorker:
             }
         count = orch.pending_task_count
         executed = await orch.flush_pending_tasks()
+        gateway_owns = _gateway_owns_dispatch()
+        for task in executed:
+            if self._publisher is not None:
+                await self._publisher.publish_update(task)
+            if task.subtasks and not gateway_owns:
+                self._spawn_bg(self._execute_subtasks(task))
         return {"success": True, "pending_count": count, "executed_count": len(executed)}
 
     async def _dash_listevents(self, payload: dict) -> dict:

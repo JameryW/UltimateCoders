@@ -22,18 +22,27 @@ __all__ = ["build_parser", "main"]
 _MAX_FILE_BYTES = 2_000_000
 
 
+_SKIP_DIRS = frozenset({".git", "__pycache__", ".venv", "node_modules"})
+
+
 def _read_tree(root: Path) -> dict[str, str]:
     if not root.is_dir():
         raise ValueError(f"not a directory: {root}")
+    root_resolved = root.resolve()
     files: dict[str, str] = {}
     for path in sorted(root.rglob("*")):
-        if not path.is_file():
+        if path.is_symlink() or not path.is_file():
+            continue
+        rel_parts = path.relative_to(root).parts
+        if any(part in _SKIP_DIRS for part in rel_parts):
             continue
         try:
-            if path.stat().st_size > _MAX_FILE_BYTES:
+            resolved = path.resolve()
+            resolved.relative_to(root_resolved)
+            if resolved.stat().st_size > _MAX_FILE_BYTES:
                 continue
-            files[path.relative_to(root).as_posix()] = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+            files[path.relative_to(root).as_posix()] = resolved.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError, ValueError):
             continue
     return files
 

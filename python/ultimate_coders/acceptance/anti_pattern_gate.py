@@ -42,6 +42,7 @@ from __future__ import annotations
 import difflib
 import os
 import re
+import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -73,11 +74,23 @@ _TEST_BYPASS_MARKERS = (
     "pytest.xfail",
     "xfail(",
 )
-_ASSERTION_MARKERS = ("assert", "self.assert", "expect(", "pytest.raises")
+_ASSERTION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bassert\b"),
+    re.compile(r"\bself\.assert\w*"),
+    re.compile(r"\bexpect\s*\("),
+    re.compile(r"\bpytest\.raises\b"),
+)
 _TAUTOLOGY_LINES = frozenset({"assert True", "assert 1", "assert 1 == 1", "assert (True)"})
-_TEST_COMMAND_RE = re.compile(r"\b(?:pytest|py\.test|unittest|tox|nox)\b")
+_TEST_RUNNERS = frozenset({"pytest", "py.test", "unittest", "tox", "nox"})
+_WRAPPER_COMMANDS = frozenset(
+    {"env", "uv", "poetry", "pipenv", "pdm", "hatch", "rye", "timeout", "nice", "xvfb-run", "time"}
+)
+_COLLECT_ONLY_FLAGS = frozenset({"--collect-only", "--co", "-co"})
+_SHELL_SPLIT_RE = re.compile(r"(?:&&|\|\||;|\|)")
+_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+_PYTHON_BIN_RE = re.compile(r"^python(?:\d+(?:\.\d+)*)?(?:\.exe)?$")
 _FROM_IMPORT_RE = re.compile(r"^\s*from\s+([.\w]*)\s+import\s+(.+?)\s*$")
-_IMPORT_RE = re.compile(r"^\s*import\s+([\w.]+)")
+_IMPORT_RE = re.compile(r"^\s*import\s+(.+?)\s*$")
 _ALL_START_RE = re.compile(r"^\s*__all__\s*=\s*[\[(](.*)")
 _PRIVATE_ATTR_RE = re.compile(r"\b([A-Za-z_]\w*)\.(_[A-Za-z]\w*)\b")
 _QUOTED_RE = re.compile(r"[\"']([^\"']+)[\"']")
@@ -231,11 +244,76 @@ def _is_test_path(path: str) -> bool:
     )
 
 
-def _is_test_command(command: str) -> bool:
-    lowered = command.strip().lower()
-    if "--collect-only" in lowered:
+def _strip_python_comment(text: str) -> str:
+    in_quote: str | None = None
+    escaped = False
+    for index, ch in enumerate(text):
+        if escaped:
+            escaped = False
+            continue
+        if in_quote is not None:
+            if ch == "\\":
+                escaped = True
+            elif ch == in_quote:
+                in_quote = None
+            continue
+        if ch in ("'", '"'):
+            in_quote = ch
+        elif ch == "#":
+            return text[:index]
+    return text
+
+
+def _segment_is_test_command(segment: str) -> bool:
+    stripped = segment.strip()
+    if not stripped or stripped.startswith("#"):
         return False
-    return bool(_TEST_COMMAND_RE.search(lowered))
+    try:
+        tokens = shlex.split(stripped)
+    except ValueError:
+        tokens = stripped.split()
+    if not tokens:
+        return False
+    if any(token.lower() in _COLLECT_ONLY_FLAGS for token in tokens):
+        return False
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if _ENV_ASSIGN_RE.match(token):
+            index += 1
+            continue
+        base = os.path.basename(token).lower()
+        if base in _TEST_RUNNERS:
+            return True
+        if _PYTHON_BIN_RE.match(base):
+            rest = tokens[index + 1 :]
+            if len(rest) >= 2 and rest[0] == "-m":
+                module = rest[1].lower().split(".", 1)[0]
+                return module in _TEST_RUNNERS
+            if rest and os.path.basename(rest[0]).lower() in _TEST_RUNNERS:
+                return True
+            return False
+        if base in _WRAPPER_COMMANDS:
+            index += 1
+            if base == "timeout" and index < len(tokens):
+                # Skip optional flags/duration before wrapped command.
+                while index < len(tokens) and tokens[index].startswith("-"):
+                    index += 1
+                if index < len(tokens):
+                    index += 1
+            elif base in {"uv", "poetry", "pipenv", "pdm", "hatch", "rye"} and index < len(tokens):
+                if tokens[index].lower() == "run":
+                    index += 1
+            continue
+        return False
+    return False
+
+
+def _is_test_command(command: str) -> bool:
+    text = str(command or "").strip()
+    if not text or text.startswith("#"):
+        return False
+    return any(_segment_is_test_command(segment) for segment in _SHELL_SPLIT_RE.split(text))
 
 
 def _line_changes(
@@ -255,8 +333,12 @@ def _line_changes(
     return removed, added
 
 
-def _has_assertion(text: str) -> bool:
-    return any(marker in text for marker in _ASSERTION_MARKERS)
+def _has_assertion(text: str, *, is_python: bool = True) -> bool:
+    code = _strip_python_comment(text) if is_python else text
+    stripped = code.strip()
+    if not stripped:
+        return False
+    return any(pattern.search(stripped) for pattern in _ASSERTION_PATTERNS)
 
 
 def _shorten(text: str) -> str:
@@ -285,8 +367,13 @@ def _test_tampering_findings(
             )
         )
         return findings
+    is_python = path.lower().endswith(".py")
     for line, text in added:
-        marker = next((item for item in _TEST_BYPASS_MARKERS if item in text), None)
+        code = _strip_python_comment(text) if is_python else text
+        stripped = code.strip()
+        if not stripped:
+            continue
+        marker = next((item for item in _TEST_BYPASS_MARKERS if item in stripped), None)
         if marker is not None:
             findings.append(
                 AntiPatternFinding(
@@ -297,19 +384,22 @@ def _test_tampering_findings(
                     detail=f"added test bypass marker {marker!r}",
                 )
             )
-        stripped = text.strip()
-        if stripped in _TAUTOLOGY_LINES:
-            findings.append(
-                AntiPatternFinding(
-                    kind="test_file_tampering",
-                    severity="error",
-                    path=path,
-                    line=line,
-                    detail=f"added assertion that cannot fail: {_shorten(stripped)}",
+        if is_python:
+            normalised_stmt = " ".join(stripped.split())
+            if normalised_stmt in _TAUTOLOGY_LINES:
+                findings.append(
+                    AntiPatternFinding(
+                        kind="test_file_tampering",
+                        severity="error",
+                        path=path,
+                        line=line,
+                        detail=f"added assertion that cannot fail: {_shorten(normalised_stmt)}",
+                    )
                 )
-            )
-    removed_assertions = [(line, text) for line, text in removed if _has_assertion(text)]
-    added_assertions = sum(1 for _, text in added if _has_assertion(text))
+    removed_assertions = [
+        (line, text) for line, text in removed if _has_assertion(text, is_python=is_python)
+    ]
+    added_assertions = sum(1 for _, text in added if _has_assertion(text, is_python=is_python))
     if len(removed_assertions) > added_assertions:
         for line, text in removed_assertions[added_assertions:]:
             findings.append(
@@ -329,10 +419,11 @@ def _internal_symbol_leak_findings(
 ) -> list[AntiPatternFinding]:
     findings: list[AntiPatternFinding] = []
     for line, text in added:
-        stripped = text.strip()
-        if not stripped or stripped.startswith("#"):
+        code = _strip_python_comment(text)
+        stripped = code.strip()
+        if not stripped:
             continue
-        match = _FROM_IMPORT_RE.match(text)
+        match = _FROM_IMPORT_RE.match(code)
         if match is not None:
             module = match.group(1)
             if _module_is_private(module):
@@ -341,13 +432,13 @@ def _internal_symbol_leak_findings(
                 if _name_is_private(name):
                     findings.append(_leak(path, line, f"imports private symbol {name!r}"))
             continue
-        match = _IMPORT_RE.match(text)
+        match = _IMPORT_RE.match(code)
         if match is not None:
-            module = match.group(1)
-            if _module_is_private(module):
-                findings.append(_leak(path, line, f"imports private module {module!r}"))
+            for module in _imported_names(match.group(1)):
+                if _module_is_private(module):
+                    findings.append(_leak(path, line, f"imports private module {module!r}"))
             continue
-        match = _ALL_START_RE.match(text)
+        match = _ALL_START_RE.match(code)
         if match is not None:
             for quoted in _QUOTED_RE.findall(match.group(1)):
                 if _name_is_private(quoted):
@@ -355,7 +446,7 @@ def _internal_symbol_leak_findings(
                         _leak(path, line, f"exports private symbol {quoted!r} in __all__")
                     )
             continue
-        for object_name, attribute in _PRIVATE_ATTR_RE.findall(text):
+        for object_name, attribute in _PRIVATE_ATTR_RE.findall(code):
             if object_name in _NON_LEAK_OBJECTS or _is_dunder(attribute):
                 continue
             findings.append(

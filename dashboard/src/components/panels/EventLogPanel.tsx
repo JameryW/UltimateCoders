@@ -118,7 +118,7 @@ export const EventLogPanel = memo(function EventLogPanel({
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [timeRange, setTimeRange] = useState<"5m" | "30m" | "1h" | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(searchQuery);
 
   const uniqueTypes = useMemo(
@@ -147,6 +147,16 @@ export const EventLogPanel = memo(function EventLogPanel({
     return result;
   }, [events, typeFilter, errorsOnly, timeRange, deferredSearch]);
 
+  const rowKeys = useMemo(() => {
+    const counts = new Map<string, number>();
+    return filteredEvents.map((evt) => {
+      const base = eventKey(evt);
+      const seen = counts.get(base) ?? 0;
+      counts.set(base, seen + 1);
+      return seen === 0 ? base : `${base}#${seen}`;
+    });
+  }, [filteredEvents]);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -160,18 +170,20 @@ export const EventLogPanel = memo(function EventLogPanel({
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-    setAutoScroll(atBottom);
+    const atTop = el.scrollTop < 30;
+    setAutoScroll(atTop);
   }, []);
 
   useEffect(() => {
     if (!autoScroll || filteredEvents.length === 0) return;
-    virtualizer.scrollToIndex(filteredEvents.length - 1, { align: "end" });
+    virtualizer.scrollToIndex(0, { align: "start" });
   }, [filteredEvents.length, autoScroll, virtualizer]);
 
   const scrollToLatest = useCallback(() => {
     setAutoScroll(true);
-    virtualizer.scrollToIndex(filteredEvents.length - 1, { align: "end" });
+    if (filteredEvents.length > 0) {
+      virtualizer.scrollToIndex(0, { align: "start" });
+    }
   }, [filteredEvents.length, virtualizer]);
 
   const filters = events.length > 0 ? (
@@ -326,7 +338,8 @@ export const EventLogPanel = memo(function EventLogPanel({
         >
           {rowIndexes.map((rowIndex) => {
             const evt = filteredEvents[rowIndex]!;
-            const isExpanded = expandedIdx === rowIndex;
+            const rowKey = rowKeys[rowIndex] ?? eventKey(evt);
+            const isExpanded = expandedKey === rowKey;
             const role = sessionRoleForEventType(evt.type);
             const virtualRow = virtualItems.find((item) => item.index === rowIndex);
             const layoutStyle = useVirtualLayout && virtualRow
@@ -335,7 +348,6 @@ export const EventLogPanel = memo(function EventLogPanel({
                   top: 0,
                   left: 0,
                   width: "100%",
-                  height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }
               : undefined;
@@ -345,7 +357,9 @@ export const EventLogPanel = memo(function EventLogPanel({
             if (terminal) {
               return (
                 <div
-                  key={eventKey(evt)}
+                  key={rowKey}
+                  ref={useVirtualLayout ? virtualizer.measureElement : undefined}
+                  data-index={rowIndex}
                   className={cn(
                     "cc-session-row",
                     `cc-session-role-${role}`,
@@ -360,7 +374,7 @@ export const EventLogPanel = memo(function EventLogPanel({
                       onSelectTask(taskId);
                       return;
                     }
-                    if (hasDetails) setExpandedIdx(isExpanded ? null : rowIndex);
+                    if (hasDetails) setExpandedKey(isExpanded ? null : rowKey);
                   }}
                 >
                   <span className="cc-session-line">
@@ -389,7 +403,10 @@ export const EventLogPanel = memo(function EventLogPanel({
                   {isExpanded && (
                     <pre
                       className="terminal-logs-expand"
-                      onClick={() => setExpandedIdx(null)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedKey(null);
+                      }}
                     >
                       {JSON.stringify(evt.details, null, 2)}
                     </pre>
@@ -400,7 +417,9 @@ export const EventLogPanel = memo(function EventLogPanel({
 
             return (
               <div
-                key={eventKey(evt)}
+                key={rowKey}
+                ref={useVirtualLayout ? virtualizer.measureElement : undefined}
+                data-index={rowIndex}
                 style={layoutStyle}
                 className={cn("flex items-start gap-2 px-2 py-1 text-xs", eventTypeBg(evt.type))}
               >
@@ -424,7 +443,7 @@ export const EventLogPanel = memo(function EventLogPanel({
                   isExpanded ? (
                     <pre
                       className="text-[var(--text-muted)] text-[10px] whitespace-pre-wrap break-all cursor-pointer hover:text-[var(--text-secondary)]"
-                      onClick={() => setExpandedIdx(null)}
+                      onClick={() => setExpandedKey(null)}
                     >
                       {JSON.stringify(evt.details, null, 2)}
                     </pre>
@@ -436,7 +455,7 @@ export const EventLogPanel = memo(function EventLogPanel({
                           ? "text-cyan-400 font-medium"
                           : "text-[var(--text-muted)]",
                       )}
-                      onClick={() => setExpandedIdx(rowIndex)}
+                      onClick={() => setExpandedKey(rowKey)}
                       title="Click to expand"
                     >
                       {evt.type === "subtask_progress"
@@ -458,11 +477,11 @@ export const EventLogPanel = memo(function EventLogPanel({
           className={cn(
             terminal
               ? "terminal-logs-latest"
-              : "absolute bottom-1 right-2 text-xs bg-blue-500/80 text-white px-2 py-0.5 rounded hover:bg-blue-500 transition-colors",
+              : "absolute top-1 right-2 text-xs bg-blue-500/80 text-white px-2 py-0.5 rounded hover:bg-blue-500 transition-colors",
           )}
           data-testid={terminal ? "terminal-logs-latest" : undefined}
         >
-          ↓ Latest
+          ↑ Latest
         </button>
       )}
     </div>

@@ -87,11 +87,7 @@ start_dashboard() {
         fi
         if [ -d "$SCRIPT_DIR/dashboard/node_modules" ]; then
             echo ">>> Starting dashboard frontend (Vite) on :5173..."
-            case "$DASHBOARD_PM" in
-              bun) (cd "$SCRIPT_DIR/dashboard" && bun run dev) ;;
-              pnpm) (cd "$SCRIPT_DIR/dashboard" && pnpm run dev) ;;
-              npm) (cd "$SCRIPT_DIR/dashboard" && npm run dev) ;;
-            esac >> "$LOG_DIR/dashboard-vite.log" 2>&1 &
+            (cd "$SCRIPT_DIR/dashboard" && exec "$DASHBOARD_PM" run dev) >> "$LOG_DIR/dashboard-vite.log" 2>&1 &
             VITE_PID=$!
             echo "    Vite PID: $VITE_PID (logs: $LOG_DIR/dashboard-vite.log)"
         fi

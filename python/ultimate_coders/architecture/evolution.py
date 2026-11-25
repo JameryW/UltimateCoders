@@ -75,6 +75,7 @@ class EvolutionChange:
     new: str
     round_index: int
     reverted: bool = False
+    reverted_in_round: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", _text(self.path))
@@ -85,6 +86,10 @@ class EvolutionChange:
         object.__setattr__(self, "new", _text(self.new))
         object.__setattr__(self, "round_index", max(0, _as_int(self.round_index)))
         object.__setattr__(self, "reverted", bool(self.reverted))
+        if self.reverted_in_round is not None:
+            object.__setattr__(
+                self, "reverted_in_round", max(0, _as_int(self.reverted_in_round))
+            )
 
 
 def _coerce_change(item: Any) -> EvolutionChange | None:
@@ -100,6 +105,7 @@ def _coerce_change(item: Any) -> EvolutionChange | None:
         new=item.get("new"),
         round_index=item.get("round_index", 0),
         reverted=item.get("reverted", False),
+        reverted_in_round=item.get("reverted_in_round"),
     )
 
 
@@ -168,6 +174,8 @@ def _clip(value: str) -> str:
 
 
 def _reversion_version(change: EvolutionChange, reverted_rounds: tuple[int, ...]) -> int:
+    if change.reverted_in_round is not None:
+        return change.reverted_in_round + 1
     later = [
         round_index
         for round_index in reverted_rounds
@@ -212,12 +220,18 @@ def _symbol_chain(tree: ast.AST, line: int) -> list[str]:
     return best
 
 
-def anchor_symbol(path: str, line: int) -> str:
+def anchor_symbol(
+    path: str,
+    line: int,
+    *,
+    repo_root: str | Path | None = None,
+) -> str:
     """Return ``path::Class::func`` for the definition enclosing ``line``.
 
-    The source file is read from ``path`` (relative to the current working
-    directory) only for ``.py`` files. Missing/unreadable/invalid sources and
-    non-Python paths fall back to ``path::line``; this function never raises.
+    The source file is read from ``path`` (relative to ``repo_root`` when given,
+    else the current working directory) only for ``.py`` files.
+    Missing/unreadable/invalid sources and non-Python paths fall back to
+    ``path::line``; this function never raises.
     """
 
     target_path = _text(path)
@@ -228,7 +242,16 @@ def anchor_symbol(path: str, line: int) -> str:
     if not target_path.lower().endswith(".py"):
         return fallback
     try:
-        source = Path(target_path).read_text(encoding="utf-8", errors="replace")
+        candidate = Path(target_path)
+        if repo_root is not None:
+            root = Path(repo_root).resolve()
+            resolved = (candidate if candidate.is_absolute() else root / candidate).resolve()
+            if not resolved.is_relative_to(root):
+                return fallback
+            file_to_read = resolved
+        else:
+            file_to_read = candidate
+        source = file_to_read.read_text(encoding="utf-8", errors="replace")
         tree = ast.parse(source)
         chain = _symbol_chain(tree, target_line)
     except Exception:
@@ -243,6 +266,32 @@ def anchor_symbol(path: str, line: int) -> str:
 # ---------------------------------------------------------------------------
 
 
+_HEADER_PREFIXES = (
+    "index ",
+    "new file mode ",
+    "deleted file mode ",
+    "old mode ",
+    "new mode ",
+    "similarity index ",
+    "dissimilarity index ",
+    "rename from ",
+    "rename to ",
+    "copy from ",
+    "copy to ",
+    "Binary files ",
+)
+
+
+def _is_file_header_line(raw_line: str) -> bool:
+    return (
+        raw_line.startswith("--- a/")
+        or raw_line.startswith("+++ b/")
+        or raw_line in ("--- /dev/null", "+++ /dev/null")
+        or raw_line.startswith("--- /dev/null\t")
+        or raw_line.startswith("+++ /dev/null\t")
+    )
+
+
 def _diff_changes(path: str, diff: str) -> list[tuple[str, str, str, int]]:
     """Parse one file diff into ``(kind, old, new, anchor_line)`` tuples."""
 
@@ -252,6 +301,8 @@ def _diff_changes(path: str, diff: str) -> list[tuple[str, str, str, int]]:
     old_line = 1
     new_line = 1
     in_hunk = False
+    old_remaining: int | None = None
+    new_remaining: int | None = None
 
     def flush() -> None:
         nonlocal removed, added
@@ -267,27 +318,64 @@ def _diff_changes(path: str, diff: str) -> list[tuple[str, str, str, int]]:
         removed = []
         added = []
 
+    def _consume_hunk_line(*, old: bool = False, new: bool = False) -> None:
+        nonlocal in_hunk, old_remaining, new_remaining
+        if old and old_remaining is not None:
+            old_remaining = max(0, old_remaining - 1)
+        if new and new_remaining is not None:
+            new_remaining = max(0, new_remaining - 1)
+        if (
+            old_remaining is not None
+            and new_remaining is not None
+            and old_remaining == 0
+            and new_remaining == 0
+        ):
+            in_hunk = False
+
     for raw_line in diff.splitlines():
+        if raw_line.startswith("diff --git "):
+            flush()
+            in_hunk = False
+            old_remaining = None
+            new_remaining = None
+            continue
         if raw_line.startswith("@@"):
             flush()
             in_hunk = True
             match = _HUNK_PATTERN.match(raw_line)
             if match:
                 old_line = int(match.group(1))
+                old_remaining = int(match.group(2)) if match.group(2) is not None else 1
                 new_line = int(match.group(3))
+                new_remaining = int(match.group(4)) if match.group(4) is not None else 1
+            else:
+                old_remaining = None
+                new_remaining = None
             continue
-        if not in_hunk and (raw_line.startswith("---") or raw_line.startswith("+++")):
+        if not in_hunk and (
+            raw_line.startswith("---")
+            or raw_line.startswith("+++")
+            or raw_line.startswith(_HEADER_PREFIXES)
+        ):
             flush()
+            continue
+        if _is_file_header_line(raw_line) and not (
+            in_hunk and (old_remaining or new_remaining)
+        ):
+            flush()
+            in_hunk = False
             continue
         if raw_line.startswith("-"):
             if added:
                 flush()
             removed.append((raw_line[1:], new_line))
             old_line += 1
+            _consume_hunk_line(old=True)
             continue
         if raw_line.startswith("+"):
             added.append((raw_line[1:], new_line))
             new_line += 1
+            _consume_hunk_line(new=True)
             continue
         if raw_line.startswith("\\"):
             continue
@@ -295,6 +383,7 @@ def _diff_changes(path: str, diff: str) -> list[tuple[str, str, str, int]]:
             flush()
             old_line += 1
             new_line += 1
+            _consume_hunk_line(old=True, new=True)
             continue
         if raw_line == "":
             flush()
@@ -349,6 +438,7 @@ def compact_evolution(
     *,
     task_id: str = "",
     subtask_id: str = "",
+    repo_root: str | Path | None = None,
 ) -> EvolutionChain:
     """Compact ``AttemptRound.to_dict()``-shaped rounds into a chain.
 
@@ -388,7 +478,7 @@ def compact_evolution(
                 changes.append(
                     EvolutionChange(
                         path=path,
-                        symbol=anchor_symbol(path, line),
+                        symbol=anchor_symbol(path, line, repo_root=repo_root),
                         kind=kind,
                         old=old,
                         new=new,
@@ -405,7 +495,7 @@ def compact_evolution(
         if later is None:
             marked.append(change)
         else:
-            marked.append(replace(change, reverted=True))
+            marked.append(replace(change, reverted=True, reverted_in_round=later))
             reverted_rounds.add(later)
 
     return EvolutionChain(

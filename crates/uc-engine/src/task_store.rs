@@ -419,7 +419,9 @@ impl TaskStoreBackend for PostgresTaskBackend {
                     task_id
                 )));
             }
-            self.get_task(task_id).await.map(|t| t.unwrap())
+            self.get_task(task_id).await?.ok_or_else(|| {
+                EngineError::NotFound(format!("Task {} not found after pause", task_id))
+            })
         } else {
             self.fallback.pause_task(task_id).await
         }
@@ -441,7 +443,9 @@ impl TaskStoreBackend for PostgresTaskBackend {
                     task_id
                 )));
             }
-            self.get_task(task_id).await.map(|t| t.unwrap())
+            self.get_task(task_id).await?.ok_or_else(|| {
+                EngineError::NotFound(format!("Task {} not found after resume", task_id))
+            })
         } else {
             self.fallback.resume_task(task_id).await
         }

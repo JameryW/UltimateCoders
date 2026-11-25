@@ -236,7 +236,10 @@ class AssembledContext:
 
 def _coerce_slots(slots: Iterable[ContextSlot] | Mapping[str, Any]) -> list[ContextSlot]:
     if isinstance(slots, Mapping):
-        return [ContextSlot(slot, content) for slot, content in slots.items()]
+        return [
+            ContextSlot(slot, content, stable=(str(slot).strip().lower() != OBSERVATION))
+            for slot, content in slots.items()
+        ]
     coerced: list[ContextSlot] = []
     for item in slots or ():
         if isinstance(item, ContextSlot):
@@ -299,7 +302,7 @@ class ContextAssembler:
             (index for index, block in enumerate(blocks) if block.slot == OBSERVATION),
             None,
         )
-        if observation_index is not None:
+        if observation_index is not None and not blocks[observation_index].stable:
             other_tokens = sum(
                 block.tokens for block in blocks if block.slot != OBSERVATION
             )

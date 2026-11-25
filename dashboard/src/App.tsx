@@ -179,8 +179,20 @@ function App() {
           data,
         };
       });
-      setHistoricalTaskEvents((previous) => ({ ...previous, [visibleTaskId]: history }));
+      setHistoricalTaskEvents((previous) => {
+        const next: Record<string, TaskEvent[]> = {};
+        for (const [k, v] of Object.entries(previous)) {
+          if (k !== visibleTaskId) next[k] = v;
+        }
+        next[visibleTaskId] = history;
+        const keys = Object.keys(next);
+        if (keys.length > 30) {
+          for (const oldKey of keys.slice(0, keys.length - 30)) delete next[oldKey];
+        }
+        return next;
+      });
       setHistoricalTaskErrors((previous) => {
+        if (!(visibleTaskId in previous)) return previous;
         const updated = { ...previous };
         delete updated[visibleTaskId];
         return updated;
@@ -188,7 +200,18 @@ function App() {
     }).catch((error) => {
       if (cancelled) return;
       console.warn("[Dashboard] task history failed:", error);
-      setHistoricalTaskErrors((previous) => ({ ...previous, [visibleTaskId]: String(error) }));
+      setHistoricalTaskErrors((previous) => {
+        const next: Record<string, string> = {};
+        for (const [k, v] of Object.entries(previous)) {
+          if (k !== visibleTaskId) next[k] = v;
+        }
+        next[visibleTaskId] = String(error);
+        const keys = Object.keys(next);
+        if (keys.length > 30) {
+          for (const oldKey of keys.slice(0, keys.length - 30)) delete next[oldKey];
+        }
+        return next;
+      });
     });
     return () => { cancelled = true; };
   }, [dashGrpcState, listEvents, visibleTaskId]);
@@ -334,15 +357,16 @@ function App() {
       showToast(`Pause failed: ${result.error}`, "error");
       return result;
     }
+    const previousStatus = dashboard.tasks.tasks.find((t) => t.id === taskId)?.status ?? "in_progress";
     dashboard.optimisticStatusUpdate(taskId, "paused");
     try {
       const r = await grpcPauseTask(taskId);
       if (r.success) showToast("Task paused", "success");
       // Revert the optimistic pause on server rejection (wrong state, etc.).
-      else { dashboard.optimisticStatusUpdate(taskId, "in_progress"); showToast(`Pause failed: ${r.error ?? "unknown"}`, "error"); }
+      else { dashboard.optimisticStatusUpdate(taskId, previousStatus); showToast(`Pause failed: ${r.error ?? "unknown"}`, "error"); }
       return r;
     } catch (e) {
-      dashboard.optimisticStatusUpdate(taskId, "in_progress");
+      dashboard.optimisticStatusUpdate(taskId, previousStatus);
       const result = { success: false, taskId, status: "error", error: String(e) };
       showToast(`Pause failed: ${result.error}`, "error");
       return result;
@@ -354,15 +378,16 @@ function App() {
       showToast(`Resume failed: ${result.error}`, "error");
       return result;
     }
+    const previousStatus = dashboard.tasks.tasks.find((t) => t.id === taskId)?.status ?? "paused";
     dashboard.optimisticStatusUpdate(taskId, "in_progress");
     try {
       const r = await grpcResumeTask(taskId);
       if (r.success) showToast("Task resumed", "success");
-      // Revert optimistic resume on server rejection — back to paused.
-      else { dashboard.optimisticStatusUpdate(taskId, "paused"); showToast(`Resume failed: ${r.error ?? "unknown"}`, "error"); }
+      // Revert optimistic resume on server rejection — back to prior status.
+      else { dashboard.optimisticStatusUpdate(taskId, previousStatus); showToast(`Resume failed: ${r.error ?? "unknown"}`, "error"); }
       return r;
     } catch (e) {
-      dashboard.optimisticStatusUpdate(taskId, "paused");
+      dashboard.optimisticStatusUpdate(taskId, previousStatus);
       const result = { success: false, taskId, status: "error", error: String(e) };
       showToast(`Resume failed: ${result.error}`, "error");
       return result;
@@ -374,6 +399,7 @@ function App() {
       showToast(`Cancel failed: ${result.error}`, "error");
       return result;
     }
+    const previousStatus = dashboard.tasks.tasks.find((t) => t.id === taskId)?.status ?? "in_progress";
     dashboard.optimisticStatusUpdate(taskId, "cancelled");
     try {
       const r = await grpcCancelTask(taskId);
@@ -382,11 +408,11 @@ function App() {
         dashboard.optimisticStatusUpdate(taskId, "cancelled");
         showToast("Task cancelled", "success");
       }
-      // Revert optimistic cancel on server rejection — back to in_progress.
-      else { dashboard.optimisticStatusUpdate(taskId, "in_progress"); showToast(`Cancel failed: ${r.error ?? "unknown"}`, "error"); }
+      // Revert optimistic cancel on server rejection — back to prior status.
+      else { dashboard.optimisticStatusUpdate(taskId, previousStatus); showToast(`Cancel failed: ${r.error ?? "unknown"}`, "error"); }
       return r;
     } catch (e) {
-      dashboard.optimisticStatusUpdate(taskId, "in_progress");
+      dashboard.optimisticStatusUpdate(taskId, previousStatus);
       const result = { success: false, taskId, status: "error", error: String(e) };
       showToast(`Cancel failed: ${result.error}`, "error");
       return result;

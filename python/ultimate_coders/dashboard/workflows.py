@@ -21,6 +21,7 @@ Everything here is read-only; no event is mutated or re-published.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
@@ -40,15 +41,22 @@ _STEP_STATUSES = frozenset(
     {STEP_STARTED, STEP_RETRYING, STEP_COMPLETED, STEP_FAILED, STEP_SKIPPED}
 )
 _TERMINAL_STATUSES = frozenset({STEP_COMPLETED, STEP_FAILED, STEP_SKIPPED})
+_FRACTIONAL_RE = re.compile(r"(\.\d+)(?=[+-]\d\d:?\d\d$|$)")
 
 
 def _timestamp(value: Any) -> datetime | None:
-    """Parse an event timestamp, normalising naive values to UTC."""
+    """Parse an event timestamp, normalising naive values to UTC (Py 3.9+ safe)."""
     if not isinstance(value, str) or not value.strip():
         return None
     text = value.strip()
-    if text.endswith("Z"):
+    if text.endswith(("Z", "z")):
         text = text[:-1] + "+00:00"
+    # Python 3.9/3.10 fromisoformat only accepts 3 or 6 fractional digits.
+    match = _FRACTIONAL_RE.search(text)
+    if match:
+        frac = match.group(1)[1:]
+        norm = (frac + "000000")[:6]
+        text = text[: match.start(1)] + "." + norm + text[match.end(1) :]
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
@@ -238,6 +246,8 @@ def build_workflow_replays(
                 "finished": None,
             },
         )
+        if record["status"] in (STEP_STARTED, STEP_RETRYING):
+            step["finished"] = None
         if timestamp is not None:
             if step["started"] is None or timestamp < step["started"]:
                 step["started"] = timestamp
@@ -257,9 +267,15 @@ def build_workflow_replays(
 
     replays: list[tuple[datetime | None, dict[str, Any]]] = []
     for run in runs.values():
-        step_indices = sorted(run["steps"])[:effective_steps]
-        if not step_indices:
+        all_indices = sorted(run["steps"])
+        if not all_indices:
             continue
+        all_raw_steps = [run["steps"][index] for index in all_indices]
+        overall_status = _run_status(all_raw_steps)
+        completed = sum(
+            1 for step in all_raw_steps if step["status"] in (STEP_COMPLETED, STEP_SKIPPED)
+        )
+        step_indices = all_indices[:effective_steps]
         steps: list[dict[str, Any]] = []
         for index in step_indices:
             raw_step = run["steps"][index]
@@ -280,9 +296,6 @@ def build_workflow_replays(
             )
         prefix = run["task_id"] or "task"
         subtask = run["subtask_id"] or "subtask"
-        completed = sum(
-            1 for step in steps if step["status"] in (STEP_COMPLETED, STEP_SKIPPED)
-        )
         replays.append(
             (
                 run["updated"],
@@ -290,8 +303,8 @@ def build_workflow_replays(
                     "id": f"{prefix}:{subtask}",
                     "task_id": run["task_id"],
                     "subtask_id": run["subtask_id"],
-                    "status": _run_status(steps),
-                    "step_total": max(run["step_total"], len(steps)),
+                    "status": overall_status,
+                    "step_total": max(run["step_total"], len(all_indices)),
                     "step_count": len(steps),
                     "completed_steps": completed,
                     "percent": run["percent"],

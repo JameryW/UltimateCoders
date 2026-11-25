@@ -344,10 +344,13 @@ impl BoundaryContract {
 pub struct BoundaryChallengeRequest {
     pub target_file: String,
     /// AST symbol the challenge is about (e.g. `impl Foo::bar`), if known.
+    #[serde(default)]
     pub ast_symbol: String,
     /// Concrete evidence that editing is necessary (log line, failing test,
     /// stack frame, …). Must be non-empty for approval.
+    #[serde(default)]
     pub evidence_line: String,
+    #[serde(default)]
     pub reason: String,
 }
 

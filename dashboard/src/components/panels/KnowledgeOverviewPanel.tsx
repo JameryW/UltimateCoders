@@ -31,10 +31,10 @@ export function KnowledgeOverviewText({ overview }: KnowledgeOverviewTextProps) 
   }
   return (
     <div className="space-y-0.5" role="list" aria-label="Knowledge overview">
-      <p className="text-[10px] text-[var(--text-muted)]">{knowledgeStageLine(overview)}</p>
-      <p className="text-[10px] text-[var(--text-primary)]">{knowledgeCountsLine(overview)}</p>
-      <p className="text-[10px] text-[var(--text-muted)]">{knowledgeOutcomeLine(overview)}</p>
-      <p className="text-[10px] text-[var(--text-muted)]">{knowledgeGateLine(overview)}</p>
+      <p role="listitem" className="text-[10px] text-[var(--text-muted)]">{knowledgeStageLine(overview)}</p>
+      <p role="listitem" className="text-[10px] text-[var(--text-primary)]">{knowledgeCountsLine(overview)}</p>
+      <p role="listitem" className="text-[10px] text-[var(--text-muted)]">{knowledgeOutcomeLine(overview)}</p>
+      <p role="listitem" className="text-[10px] text-[var(--text-muted)]">{knowledgeGateLine(overview)}</p>
     </div>
   );
 }
@@ -51,33 +51,37 @@ interface KnowledgeOverviewPanelProps {
  * instead of inventing counts.
  */
 export function KnowledgeOverviewPanel({ taskId }: KnowledgeOverviewPanelProps) {
-  const [overview, setOverview] = useState<KnowledgeOverview | null>(null);
+  const [loadedState, setLoadedState] = useState<{ taskId: string; overview: KnowledgeOverview } | null>(null);
   const [failedFor, setFailedFor] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     const token = getStoredToken();
-    fetch(knowledgeOverviewQuery(taskId, { token }))
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    fetch(knowledgeOverviewQuery(taskId), { headers, signal: controller.signal })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         if (data && typeof data === "object" && !Array.isArray(data)) {
-          setOverview(data as KnowledgeOverview);
+          setLoadedState({ taskId, overview: data as KnowledgeOverview });
           setFailedFor(null);
         } else {
           setFailedFor(taskId);
         }
       })
       .catch(() => {
-        if (!cancelled) setFailedFor(taskId);
+        if (!controller.signal.aborted) setFailedFor(taskId);
       });
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [taskId]);
 
   const failed = failedFor === taskId;
-  const loaded = !failed && overview !== null;
+  const overview = !failed && loadedState?.taskId === taskId ? loadedState.overview : null;
+  const loaded = overview !== null;
 
   return (
     <div className="mb-2">
@@ -92,7 +96,7 @@ export function KnowledgeOverviewPanel({ taskId }: KnowledgeOverviewPanelProps) 
           Knowledge overview unavailable.
         </p>
       ) : loaded ? (
-        <KnowledgeOverviewText overview={overview as KnowledgeOverview} />
+        <KnowledgeOverviewText overview={overview} />
       ) : (
         <p className="text-xs text-[var(--text-muted)]">Loading knowledge overview…</p>
       )}

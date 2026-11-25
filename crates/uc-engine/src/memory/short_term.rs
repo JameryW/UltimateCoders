@@ -302,9 +302,11 @@ impl ShortTermMemory {
     pub async fn list_keys(&self, prefix: &str) -> Result<Vec<MemoryKey>, EngineError> {
         #[cfg(feature = "storage")]
         if let Some(client) = &self.client {
-            let start_key = prefix.to_string();
-            // Scan range: prefix to prefix + 0xFF (next byte after prefix)
-            let end_key = prefix.to_string() + "\u{00ff}";
+            let start_key = prefix.as_bytes().to_vec();
+            // Scan range: prefix bytes to prefix bytes + 0xFF (strict raw byte upper bound,
+            // unlike UTF-8 "\u{00ff}" which encodes to [0xC3, 0xBF] and drops keys >= 0xC4).
+            let mut end_key = prefix.as_bytes().to_vec();
+            end_key.push(0xff);
             let pairs = client
                 .scan(tikv_client::BoundRange::from(start_key..end_key), 1024)
                 .await
@@ -394,22 +396,24 @@ pub fn encode_key(key: &MemoryKey) -> String {
 ///
 /// Returns None if the key format is unrecognized.
 pub fn decode_key(encoded: &str) -> Option<MemoryKey> {
+    if let Some(inner) = encoded.strip_prefix("memory:global:") {
+        return Some(MemoryKey::Global {
+            key: inner.to_string(),
+        });
+    }
     let parts: Vec<&str> = encoded.splitn(4, ':').collect();
-    if parts.len() < 3 || parts[0] != "memory" {
+    if parts.len() < 4 || parts[0] != "memory" {
         return None;
     }
 
     match parts[1] {
-        "task" if parts.len() == 4 => Some(MemoryKey::Task {
+        "task" => Some(MemoryKey::Task {
             task_id: parts[2].to_string(),
             key: parts[3].to_string(),
         }),
-        "project" if parts.len() == 4 => Some(MemoryKey::Project {
+        "project" => Some(MemoryKey::Project {
             project_id: parts[2].to_string(),
             key: parts[3].to_string(),
-        }),
-        "global" if parts.len() == 3 => Some(MemoryKey::Global {
-            key: parts[2].to_string(),
         }),
         _ => None,
     }

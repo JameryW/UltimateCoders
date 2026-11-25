@@ -136,7 +136,7 @@ class BitemporalClaim:
         object.__setattr__(self, "claim_id", _text(self.claim_id).strip())
         object.__setattr__(self, "statement", _text(self.statement))
         object.__setattr__(self, "status", _coerce_status(self.status))
-        object.__setattr__(self, "valid_from_commit", _text(self.valid_from_commit))
+        object.__setattr__(self, "valid_from_commit", _text(self.valid_from_commit).strip())
         expired = _text(self.expired_at_commit).strip() or None
         object.__setattr__(self, "expired_at_commit", expired)
         object.__setattr__(self, "confidence", _coerce_confidence(self.confidence))
@@ -194,10 +194,10 @@ class BitemporalGraph:
         return len(self._claims)
 
     def __contains__(self, claim_id: object) -> bool:
-        return isinstance(claim_id, str) and claim_id in self._claims
+        return isinstance(claim_id, str) and claim_id.strip() in self._claims
 
     def _require(self, claim_id: str) -> BitemporalClaim:
-        key = _text(claim_id)
+        key = _text(claim_id).strip()
         try:
             return self._claims[key]
         except KeyError:
@@ -243,7 +243,7 @@ class BitemporalGraph:
         successor = _text(superseded_by).strip() or None
         updated = replace(
             existing,
-            expired_at_commit=commit,
+            expired_at_commit=existing.expired_at_commit or commit,
             superseded_by=successor if successor is not None else existing.superseded_by,
         )
         self._claims[existing.claim_id] = updated
@@ -269,7 +269,7 @@ class BitemporalGraph:
         return updated
 
     def get(self, claim_id: str) -> BitemporalClaim | None:
-        return self._claims.get(_text(claim_id))
+        return self._claims.get(_text(claim_id).strip())
 
     def all(self) -> list[BitemporalClaim]:
         """Every claim, insertion order, including expired/superseded ones."""
@@ -297,7 +297,7 @@ class BitemporalGraph:
         ``valid_from_commit`` qualify.
         """
 
-        target = _text(commit)
+        target = _text(commit).strip()
         ancestors = _commit_set(known_ancestors)
         visible = [
             claim

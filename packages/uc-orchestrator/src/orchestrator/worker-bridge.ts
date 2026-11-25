@@ -115,8 +115,10 @@ export function registerWorkerTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 					const wid = p.worker_id;
 					// ponytail: F34 — a prefix matching multiple workers must not
 					// silently pick the first (an LLM could schedule against the
-					// wrong worker). Demand the full id when ambiguous.
-					const matches = result.workers.filter((w) => w.id === wid || w.id.startsWith(wid));
+					// wrong worker). Demand the full id when ambiguous, but an
+					// exact match always wins over a longer prefix-sharing id.
+					const exact = result.workers.find((w) => w.id === wid);
+					const matches = exact ? [exact] : result.workers.filter((w) => w.id.startsWith(wid));
 					if (matches.length === 0) {
 						return { content: [{ type: "text" as const, text: `Worker ${p.worker_id} not found` }], useless: true };
 					}

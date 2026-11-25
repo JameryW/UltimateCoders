@@ -4,11 +4,30 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+
+_ISO_FRACTION_RE = re.compile(r"\.(\d+)(?=(?:[+-]\d{2}:\d{2})?$)")
+
+
+def _parse_iso_timestamp(value: Any) -> datetime:
+    """Parse an ISO-8601 timestamp string safely across Python 3.9–3.12+.
+
+    Python 3.9/3.10 ``datetime.fromisoformat`` rejects trailing ``Z`` and
+    fractional seconds with lengths other than 3 or 6 (e.g. RFC3339 nanoseconds
+    from Rust/Go). Normalize both before parsing.
+    """
+    if isinstance(value, datetime):
+        return value
+    raw = str(value).strip()
+    if raw.endswith(("Z", "z")):
+        raw = raw[:-1] + "+00:00"
+    raw = _ISO_FRACTION_RE.sub(lambda m: "." + m.group(1)[:6].ljust(6, "0"), raw)
+    return datetime.fromisoformat(raw)
 
 
 class TaskStatus(Enum):
@@ -48,6 +67,12 @@ class DispatchMode(Enum):
     PREFER_REMOTE = "prefer_remote"  # Prefer remote, fallback to Pending (default)
     # T5 #641 / D4 #633 Q1: DispatchMode.Local was removed (Rust deleted the
     # variant first; legacy "local" wire values parse back to PREFER_REMOTE).
+
+    @classmethod
+    def _missing_(cls, value: object) -> DispatchMode | None:
+        if isinstance(value, str) and value.strip().lower() == "local":
+            return cls.PREFER_REMOTE
+        return None
 
 
 @dataclass
@@ -601,10 +626,10 @@ class Task:
             status=TaskStatus(data["status"]) if "status" in data else TaskStatus.CREATED,
             result=data.get("result"),
         )
-        if "created_at" in data:
-            task.created_at = datetime.fromisoformat(data["created_at"])
-        if "updated_at" in data:
-            task.updated_at = datetime.fromisoformat(data["updated_at"])
+        if data.get("created_at"):
+            task.created_at = _parse_iso_timestamp(data["created_at"])
+        if data.get("updated_at"):
+            task.updated_at = _parse_iso_timestamp(data["updated_at"])
         task.subtasks = []
         for sd in data.get("subtasks", []):
             st = Subtask(
@@ -632,7 +657,7 @@ class Task:
                 steps=[WorkflowStep.from_dict(s) for s in sd.get("steps", [])],
             )
             rd = sd.get("result")
-            if rd is not None:
+            if isinstance(rd, dict):
                 st.result = SubtaskResult(
                     subtask_id=rd.get("subtask_id", ""),
                     worker_id=rd.get("worker_id", ""),
@@ -649,7 +674,9 @@ class Task:
                     # Absent key (every checkpoint written before T15, and any
                     # publisher that omits it) stays `None` — "not reported".
                     usage=(
-                        SubtaskUsage.from_dict(rd["usage"]) if rd.get("usage") is not None else None
+                        SubtaskUsage.from_dict(rd["usage"])
+                        if isinstance(rd.get("usage"), dict)
+                        else None
                     ),
                     # T18 #668: absent key (every checkpoint written before
                     # T18) stays an empty list — "this result carries no
@@ -661,7 +688,7 @@ class Task:
                     ],
                     review=(
                         SubtaskReview.from_dict(rd["review"])
-                        if rd.get("review") is not None
+                        if isinstance(rd.get("review"), dict)
                         else None
                     ),
                     stall_signal=(
@@ -673,17 +700,21 @@ class Task:
                         else None
                     ),
                 )
-                if "modified_files" in rd:
+                if isinstance(rd.get("modified_files"), list):
                     for fc in rd["modified_files"]:
+                        if not isinstance(fc, dict):
+                            continue
                         st.result.modified_files.append(
                             FileChange(
                                 file_path=fc.get("path", ""),
-                                change_type=ChangeType(fc.get("change_type", "modified")),
+                                change_type=ChangeType(
+                                    fc.get("change_type") or fc.get("type") or "modified"
+                                ),
                                 diff=fc.get("diff_stats", ""),
                             )
                         )
-                if "completed_at" in rd:
-                    st.result.completed_at = datetime.fromisoformat(rd["completed_at"])
+                if rd.get("completed_at"):
+                    st.result.completed_at = _parse_iso_timestamp(rd["completed_at"])
             task.subtasks.append(st)
         return task
 

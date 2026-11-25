@@ -17,12 +17,39 @@ import type {
  *  Oldest entries are evicted when this limit is exceeded. */
 const INTERACTION_LOG_MAX_ENTRIES = 50;
 
+/** Maximum number of events retained per task in interactionLog. */
+const INTERACTION_LOG_MAX_EVENTS_PER_TASK = 500;
+
+/** Maximum number of events retained in the global eventLog. */
+const EVENT_LOG_MAX_ENTRIES = 200;
+
 /** Dedup window in ms — events with the same key within this window are dropped. */
 const DEDUP_WINDOW_MS = 5000;
 
 /** Build a dedup key for a task event. */
 function dedupEventKey(ev: TaskEvent): string {
   return `${ev.type}:${ev.task_id}:${ev.subtask_id ?? ""}:${ev.timestamp}`;
+}
+
+function dashboardEventKey(ev: DashboardEvent): string {
+  const taskId = typeof ev.details?.task_id === "string" ? ev.details.task_id : "";
+  const subtaskId = typeof ev.details?.subtask_id === "string" ? ev.details.subtask_id : "";
+  return `${ev.timestamp}|${ev.type}|${taskId}|${subtaskId}`;
+}
+
+function mergeEventLogs(incoming: DashboardEvent[], existing: DashboardEvent[]): DashboardEvent[] {
+  const combined = [...existing, ...incoming];
+  combined.sort((a, b) => (Date.parse(b.timestamp) || 0) - (Date.parse(a.timestamp) || 0));
+  const seen = new Set<string>();
+  const merged: DashboardEvent[] = [];
+  for (const ev of combined) {
+    const key = dashboardEventKey(ev);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(ev);
+    if (merged.length >= EVENT_LOG_MAX_ENTRIES) break;
+  }
+  return merged;
 }
 
 export function useDashboard() {
@@ -78,7 +105,9 @@ export function useDashboard() {
     if (data.health?.available) setHealth(data.health);
     if (data.workers?.available) setWorkers(data.workers);
     if (data.scheduler?.available) setScheduler(data.scheduler);
-    if (data.events && data.events.length > 0) setEventLog(data.events);
+    if (data.events && data.events.length > 0) {
+      setEventLog((prev) => mergeEventLogs(data.events!, prev));
+    }
     if (data.metrics) setMetrics(data.metrics);
     if (data.alert_events && data.alert_events.length > 0) {
       setActiveAlerts(prev => [...prev, ...data.alert_events!].slice(-50));
@@ -108,9 +137,10 @@ export function useDashboard() {
 
     const tid = ev.task_id;
     setInteractionLog((prev) => {
+      const nextEvents = [...(prev[tid] ?? []), ev].slice(-INTERACTION_LOG_MAX_EVENTS_PER_TASK);
       const updated = {
         ...prev,
-        [tid]: [...(prev[tid] ?? []), ev],
+        [tid]: nextEvents,
       };
       // #12: LRU eviction -- keep max INTERACTION_LOG_MAX_ENTRIES task entries.
       // Evict oldest (by first event timestamp) when exceeded.
@@ -132,9 +162,13 @@ export function useDashboard() {
       {
         timestamp: ev.timestamp,
         type: ev.type,
-        details: { task_id: ev.task_id, ...ev.data },
+        details: {
+          task_id: ev.task_id,
+          ...(ev.subtask_id ? { subtask_id: ev.subtask_id } : {}),
+          ...ev.data,
+        },
       },
-      ...prev.slice(0, 199), // keep max 200
+      ...prev.slice(0, EVENT_LOG_MAX_ENTRIES - 1), // keep max 200
     ]);
 
     switch (ev.type) {
@@ -182,7 +216,13 @@ export function useDashboard() {
             ...prev.tasks,
           ];
           const status_counts = recountStatus(tasks);
-          return { ...prev, tasks, total: totalFromStatusCounts(status_counts), status_counts };
+          return {
+            ...prev,
+            tasks,
+            total: totalFromStatusCounts(status_counts),
+            status_counts,
+            pending_task_count: status_counts.pending ?? status_counts.submitted ?? 0,
+          };
         });
         break;
       }
@@ -191,7 +231,8 @@ export function useDashboard() {
           const tasks = prev.tasks.map((t) =>
             t.id === tid ? { ...t, status: "completed" as const, updated_at: ev.timestamp } : t
           );
-          return { ...prev, tasks, status_counts: recountStatus(tasks) };
+          const status_counts = recountStatus(tasks);
+          return { ...prev, tasks, status_counts, pending_task_count: status_counts.pending ?? status_counts.submitted ?? 0 };
         });
         break;
       }
@@ -201,7 +242,8 @@ export function useDashboard() {
           const tasks = prev.tasks.map((t) =>
             t.id === tid ? { ...t, status: terminalEventStatus(ev.type, t.status), updated_at: ev.timestamp } : t
           );
-          return { ...prev, tasks, status_counts: recountStatus(tasks) };
+          const status_counts = recountStatus(tasks);
+          return { ...prev, tasks, status_counts, pending_task_count: status_counts.pending ?? status_counts.submitted ?? 0 };
         });
         break;
       }
@@ -210,7 +252,8 @@ export function useDashboard() {
           const tasks = prev.tasks.map((t) =>
             t.id === tid ? { ...t, status: "paused" as const, updated_at: ev.timestamp } : t
           );
-          return { ...prev, tasks, status_counts: recountStatus(tasks) };
+          const status_counts = recountStatus(tasks);
+          return { ...prev, tasks, status_counts, pending_task_count: status_counts.pending ?? status_counts.submitted ?? 0 };
         });
         break;
       }
@@ -219,7 +262,8 @@ export function useDashboard() {
           const tasks = prev.tasks.map((t) =>
             t.id === tid ? { ...t, status: "in_progress" as const, updated_at: ev.timestamp } : t
           );
-          return { ...prev, tasks, status_counts: recountStatus(tasks) };
+          const status_counts = recountStatus(tasks);
+          return { ...prev, tasks, status_counts, pending_task_count: status_counts.pending ?? status_counts.submitted ?? 0 };
         });
         break;
       }
@@ -227,14 +271,15 @@ export function useDashboard() {
       // -- Subtask lifecycle --
       case "subtask_assigned":
       case "subtask_started": {
-        setTasks((prev) => ({
-          ...prev,
-          tasks: prev.tasks.map((t) => {
+        setTasks((prev) => {
+          const tasks = prev.tasks.map((t) => {
             if (t.id !== tid || ignoresLateStart(t.status, ev.type)) return t;
             const subtasks = mergeSubtaskEvent(t.subtasks ?? [], ev);
             return { ...t, status: "in_progress" as const, subtasks, subtask_count: subtasks.length, updated_at: ev.timestamp };
-          }),
-        }));
+          });
+          const status_counts = recountStatus(tasks);
+          return { ...prev, tasks, status_counts, pending_task_count: status_counts.pending ?? status_counts.submitted ?? 0 };
+        });
         break;
       }
       case "subtask_completed": {
@@ -249,27 +294,29 @@ export function useDashboard() {
         break;
       }
       case "subtask_failed": {
-        setTasks((prev) => ({
-          ...prev,
-          tasks: prev.tasks.map((t) => {
+        setTasks((prev) => {
+          const tasks = prev.tasks.map((t) => {
             if (t.id !== tid) return t;
             const subtasks = mergeSubtaskEvent(t.subtasks ?? [], ev);
             // If unrecoverable, mark parent task failed too
             const taskFailed = ev.data.recoverable === "false" || ev.data.recoverable === false;
             return { ...t, status: taskFailed ? terminalEventStatus(ev.type, t.status) : t.status, subtasks, subtask_count: subtasks.length, updated_at: ev.timestamp };
-          }),
-        }));
+          });
+          const status_counts = recountStatus(tasks);
+          return { ...prev, tasks, status_counts, pending_task_count: status_counts.pending ?? status_counts.submitted ?? 0 };
+        });
         break;
       }
       case "subtask_retrying": {
-        setTasks((prev) => ({
-          ...prev,
-          tasks: prev.tasks.map((t) => {
+        setTasks((prev) => {
+          const tasks = prev.tasks.map((t) => {
             if (t.id !== tid) return t;
             const subtasks = mergeSubtaskEvent(t.subtasks ?? [], ev);
             return { ...t, ...retryParentState(t, ev.timestamp), subtasks, subtask_count: subtasks.length };
-          }),
-        }));
+          });
+          const status_counts = recountStatus(tasks);
+          return { ...prev, tasks, status_counts, pending_task_count: status_counts.pending ?? status_counts.submitted ?? 0 };
+        });
         break;
       }
       case "subtask_progress": {
@@ -323,7 +370,14 @@ export function useDashboard() {
       // ponytail: F67 — a successful merge means tasks ARE available; without
       // this the "Unavailable" badge stayed stuck even after a sync-driven
       // merge delivered the list (prev.available was never touched).
-      return { ...prev, tasks: merged, total: totalFromStatusCounts(status_counts), status_counts, available: true };
+      return {
+        ...prev,
+        tasks: merged,
+        total: totalFromStatusCounts(status_counts),
+        status_counts,
+        pending_task_count: status_counts.pending ?? status_counts.submitted ?? 0,
+        available: true,
+      };
     });
   }, []);
 
@@ -373,7 +427,13 @@ export function useDashboard() {
       };
       const tasks = [newTask, ...prev.tasks];
       const status_counts = recountStatus(tasks);
-      return { ...prev, tasks, total: totalFromStatusCounts(status_counts), status_counts };
+      return {
+        ...prev,
+        tasks,
+        total: totalFromStatusCounts(status_counts),
+        status_counts,
+        pending_task_count: status_counts.pending ?? status_counts.submitted ?? 0,
+      };
     });
   }, []);
 
@@ -384,7 +444,13 @@ export function useDashboard() {
       const tasks = prev.tasks.map((t) =>
         t.id === taskId ? { ...t, status: newStatus, updated_at: new Date().toISOString() } : t
       );
-      return { ...prev, tasks, status_counts: recountStatus(tasks) };
+      const status_counts = recountStatus(tasks);
+      return {
+        ...prev,
+        tasks,
+        status_counts,
+        pending_task_count: status_counts.pending ?? status_counts.submitted ?? 0,
+      };
     });
   }, []);
 

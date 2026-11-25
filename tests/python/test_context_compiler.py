@@ -20,6 +20,7 @@ from ultimate_coders.agent.context_compiler import (
     estimate_tokens,
     from_dependency_results,
     from_gateway_context_block,
+    from_hy_memory_channels,
     from_search_block,
     register_token_meter,
     resolve_token_meter,
@@ -712,3 +713,110 @@ def test_register_token_meter_rejects_invalid_entries():
         register_token_meter("", len)
     with pytest.raises(TypeError):
         register_token_meter("broken", None)  # type: ignore[arg-type]
+# ── token estimate: CJK and code are not four ASCII chars ───────────
+
+
+def test_estimate_tokens_counts_cjk_and_symbols_heavier_than_prose():
+    prose = "the quick brown fox jumps over the lazy dog"
+    cjk = "上下文编译器需要把中文按整字计算"
+    assert estimate_tokens(cjk) > estimate_tokens(prose) * 1.5
+    # Symbols (paths, operators, punctuation) cost more than letters but less
+    # than a full CJK glyph, so a path-heavy line is not under-counted as
+    # prose.
+    assert estimate_tokens("a/b/c.rs:42: fn main() -> Result<(), E>") > estimate_tokens(
+        "abcdefghijklmnopqrstuvwxyzabcdefghij"
+    )
+    assert estimate_tokens("") == 1
+
+
+# ── recoverable truncation pointer ─────────────────────────────────
+
+
+def test_budget_drops_leave_a_recoverable_pointer_in_the_volatile_tail():
+    manifest = compile_context(
+        [
+            _item("contract", Tier.POLICY, "task contract"),
+            _item("trace-a", Tier.TRACE, "x" * 400),
+            _item("trace-b", Tier.TRACE, "y" * 400),
+            _item("mem-a", Tier.MEMORY, "z" * 400),
+        ],
+        budget_tokens=60,
+    )
+    hint = manifest.recovery_hint()
+    assert "recoverable: dropped by budget" in hint
+    assert "trace=trace-a" in hint and "trace-b" in hint
+    assert "memory=mem-a" in hint and "re-run the subtask or recall" in hint
+    _prefix, tail = manifest.render_parts()
+    assert hint in tail
+
+
+def test_complete_context_has_no_recovery_pointer():
+    manifest = compile_context([_item("contract", Tier.POLICY, "task")], budget_tokens=100)
+    assert manifest.recovery_hint() == ""
+    assert "recoverable: dropped by budget" not in manifest.render_parts()[1]
+
+
+# ── Hy-Memory channels: one item per fact/experience/chain ─────────
+
+
+_CHANNELS = {
+    "facts": [
+        {"id": "f1", "content": "Use pnpm for the orchestrator"},
+        {"id": "f2", "content": "Rust memory tests use fallback stores"},
+    ],
+    "experiences": [
+        {
+            "task": "Fix flaky replay test",
+            "solution": "Root cause was a stale version read",
+        },
+        {
+            "task": "Add pricing helper",
+            "solution": "Use integer cents",
+        },
+    ],
+    "chain_block": ["replay_write -> stale version -> lock -> test"],
+}
+
+
+def test_hy_memory_channels_are_split_into_items():
+    items = from_hy_memory_channels(_CHANNELS)
+    assert [item.item_id for item in items] == [
+        "hy-memory-fact-0",
+        "hy-memory-fact-1",
+        "hy-memory-experience-0",
+        "hy-memory-experience-1",
+        "hy-memory-chain-0",
+    ]
+    assert all(item.tier == Tier.MEMORY for item in items)
+    assert items[0].content == "- [fact] Use pnpm for the orchestrator"
+    assert items[3].content == "- [experience] Add pricing helper -> Use integer cents"
+
+
+def test_negative_knowledge_promotes_on_retry_only():
+    items = from_hy_memory_channels(_CHANNELS, promote_negative=True)
+    tiers = {item.item_id: item.tier for item in items}
+    # The experience that names a root cause is promoted to the reserved
+    # evidence tier; the unrelated experience is not.
+    assert tiers["hy-memory-experience-0"] == Tier.EVIDENCE
+    assert tiers["hy-memory-experience-1"] == Tier.MEMORY
+    # Failure chains are negative knowledge too.
+    assert tiers["hy-memory-chain-0"] == Tier.EVIDENCE
+    # Facts are not troubleshooting knowledge and stay memory.
+    assert tiers["hy-memory-fact-0"] == Tier.MEMORY
+
+
+def test_hy_memory_channels_tolerate_missing_fields():
+    items = from_hy_memory_channels(
+        {"facts": [{"content": "bare fact"}], "experiences": [{"task": "only task"}]}
+    )
+    assert [item.item_id for item in items] == [
+        "hy-memory-fact-0",
+        "hy-memory-experience-0",
+    ]
+    assert items[1].content == "- [experience] only task"
+
+
+def test_hy_memory_channels_reject_non_mapping_payloads():
+    assert from_hy_memory_channels(None) == []
+    assert from_hy_memory_channels("not a mapping") == []
+    assert from_hy_memory_channels({}) == []

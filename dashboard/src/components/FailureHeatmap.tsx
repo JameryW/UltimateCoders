@@ -22,7 +22,7 @@ function cellKey(phase: FailurePhase, modeId: string): string {
 }
 
 function heatClass(count: number, maxCount: number): string {
-  if (count <= 0 || maxCount <= 0) return "heat-0";
+  if (!Number.isFinite(count) || !Number.isFinite(maxCount) || count <= 0 || maxCount <= 0) return "heat-0";
   const share = count / maxCount;
   if (share >= 0.75) return "heat-4";
   if (share >= 0.5) return "heat-3";
@@ -49,7 +49,7 @@ export function FailureHeatmap({ data }: FailureHeatmapProps) {
   let maxCount = 0;
   for (const cell of data.cells) {
     cellsByKey.set(cellKey(cell.phase, cell.modeId), cell);
-    if (cell.count > maxCount) maxCount = cell.count;
+    if (Number.isFinite(cell.count) && cell.count > maxCount) maxCount = cell.count;
   }
   const deterministicModes = data.modes.filter((mode) => mode.deterministic).length;
   const summary =

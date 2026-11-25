@@ -105,15 +105,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "${{ matrix.python-version }}"
+      - uses: dtolnay/rust-toolchain@stable
       # Tests use PYTHONPATH=python, so the project itself is not installed and
       # its base runtime dependencies must be explicit here.
-      - run: pip install pytest pytest-asyncio pytest-cov pyyaml maturin httpx anthropic litellm fastapi uvicorn jinja2 sse-starlette nats-py prometheus-client
-      - uses: dtolnay/rust-toolchain@stable
       - name: Build Rust extension
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install pytest pytest-asyncio pytest-cov pyyaml httpx anthropic litellm prometheus-client fastapi uvicorn jinja2 sse-starlette nats-py
+          pip install pytest pytest-asyncio pytest-cov pyyaml maturin httpx anthropic litellm prometheus-client fastapi uvicorn jinja2 sse-starlette nats-py
           maturin develop --release --manifest-path crates/uc-python/Cargo.toml
       - name: Run tests
         run: |

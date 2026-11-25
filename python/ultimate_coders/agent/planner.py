@@ -199,24 +199,35 @@ def _paths_in_request(request: str) -> list[str]:
 
 
 def _normalize_rel(path: Any, root: Path) -> str:
-    """Normalize a caller path to a POSIX path relative to ``repo_root`` if possible."""
+    """Normalize a caller path to a POSIX path relative to ``repo_root`` if contained."""
     raw = _text(path).strip().replace("\\", "/")
     if not raw:
         return ""
+    root_resolved = root.resolve()
     candidate = Path(raw)
     if candidate.is_absolute():
         try:
-            return candidate.resolve().relative_to(root.resolve()).as_posix()
+            return candidate.resolve().relative_to(root_resolved).as_posix()
         except (OSError, ValueError):
-            return candidate.as_posix()
+            return ""
     while raw.startswith("./"):
         raw = raw[2:]
-    return raw
+    try:
+        resolved = (root_resolved / raw).resolve()
+        return resolved.relative_to(root_resolved).as_posix()
+    except (OSError, ValueError):
+        return ""
 
 
 def _full_path(rel: str, root: Path) -> Path:
+    root_resolved = root.resolve()
     candidate = Path(rel)
-    return candidate if candidate.is_absolute() else root / candidate
+    resolved = (candidate if candidate.is_absolute() else root_resolved / candidate).resolve()
+    try:
+        resolved.relative_to(root_resolved)
+    except ValueError:
+        return root_resolved / "__uc_out_of_root__"
+    return resolved
 
 
 def _as_rel(path: Path, root: Path) -> str:
@@ -511,6 +522,7 @@ class PerceptionPass:
 
         python_targets = [rel for rel in target_paths if rel.lower().endswith(".py")]
         existing_targets = [rel for rel in target_paths if rel not in missing_targets]
+        parsed_python_targets = [rel for rel in python_targets if rel not in missing_targets]
 
         checks = [
             _check(
@@ -535,8 +547,8 @@ class PerceptionPass:
             ),
             _check(
                 "python_targets_parse",
-                _parse_status(python_targets, parse_errors),
-                _parse_detail(python_targets, parse_errors),
+                _parse_status(parsed_python_targets, parse_errors),
+                _parse_detail(parsed_python_targets, parse_errors),
             ),
             _check(
                 "imports_mapped",

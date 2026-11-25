@@ -49,6 +49,8 @@ def gdpo_scorer_enabled() -> bool:
 
 
 def _coerce_score(value: object, name: str) -> float:
+    if isinstance(value, bool):
+        raise TypeError(f"{name} must be a real number, not bool")
     try:
         score = float(value)
     except (TypeError, ValueError) as exc:
@@ -79,6 +81,11 @@ class ComponentScores:
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, object]) -> ComponentScores:
+        if not any(key in values for key in _WEIGHT_KEYS):
+            raise ValueError(
+                "ComponentScores mapping must contain at least one of "
+                + ", ".join(_WEIGHT_KEYS)
+            )
         return cls(
             pass_rate=values.get("pass_rate", 0.0),
             f2p_rate=values.get("f2p_rate", 0.0),
@@ -105,8 +112,10 @@ class GDPOWeight:
         object.__setattr__(self, "pass_rate", _coerce_score(self.pass_rate, "pass_rate"))
         object.__setattr__(self, "f2p_rate", _coerce_score(self.f2p_rate, "f2p_rate"))
         object.__setattr__(self, "p2p_rate", _coerce_score(self.p2p_rate, "p2p_rate"))
-        if self.total <= 0:
-            raise ValueError("GDPO weights must sum to a positive value")
+        if self.pass_rate < 0 or self.f2p_rate < 0 or self.p2p_rate < 0:
+            raise ValueError("GDPO weights must be non-negative")
+        if self.total <= 0 or not math.isfinite(self.total):
+            raise ValueError("GDPO weights must sum to a positive finite value")
 
     @property
     def total(self) -> float:
@@ -163,15 +172,22 @@ class GDPOGroup:
         if count == 0:
             return ()
         columns = list(zip(*(score.as_tuple() for score in self._scores)))
-        normalised: list[tuple[float, float, float]] = []
+        normalised: list[tuple[float, ...]] = []
         for column in columns:
-            mean = sum(column) / count
-            variance = sum((value - mean) ** 2 for value in column) / count
+            col_min = min(column)
+            col_max = max(column)
+            scale = max(1.0, abs(col_min), abs(col_max))
+            if col_max - col_min <= 1e-12 * scale:
+                normalised.append(tuple(0.0 for _ in column))
+                continue
+            shifted = [(value - col_min) / scale for value in column]
+            mean = sum(shifted) / count
+            variance = sum((value - mean) ** 2 for value in shifted) / count
             std = math.sqrt(variance)
-            if std == 0.0:
+            if std <= 1e-12:
                 normalised.append(tuple(0.0 for _ in column))
             else:
-                normalised.append(tuple((value - mean) / std for value in column))
+                normalised.append(tuple((value - mean) / std for value in shifted))
         return tuple(
             ComponentScores(pass_rate=pass_rate, f2p_rate=f2p_rate, p2p_rate=p2p_rate)
             for pass_rate, f2p_rate, p2p_rate in zip(*normalised)

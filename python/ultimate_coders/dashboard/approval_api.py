@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import csv
 import hmac
+import inspect
 import io
 import json
 import logging
@@ -68,6 +69,7 @@ OP_APPROVAL_DECIDE = "approval.decide"
 #: Environment variable carrying the gateway's shared bearer token.
 TOKEN_ENV = "UC_DASHBOARD_TOKEN"
 BEARER_PREFIX = "Bearer "
+AUTH_CHECK_STATE_ATTR = "dashboard_auth_check"
 
 #: Operator identity the dashboard acts as when a human decides.
 OPERATOR_ENV = "UC_OPERATOR_ID"
@@ -108,27 +110,80 @@ EXPORT_COLUMNS = (
 
 #: Cells a spreadsheet would execute as a formula. A reason/note is operator-
 #: supplied text, so an export must not become a vector (CSV injection).
-_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
 
 
 class _GatewayUnavailableError(RuntimeError):
     """The governance bridge could not be reached (reported as ``503``)."""
 
 
-def _check_token(request: Request) -> Optional[JSONResponse]:  # noqa: UP045 - py3.9
-    """Enforce ``UC_DASHBOARD_TOKEN`` on mutating endpoints when configured.
+def _governance_error_types() -> tuple[type[BaseException], ...]:
+    try:
+        from ultimate_coders.governance_client import GovernanceError
+    except Exception:  # pragma: no cover - optional at import time
+        return ()
+    return (GovernanceError,)
 
-    Unset means "no token required", matching the Rust gateway: an operator who
-    deployed without a token already accepted an open surface, and silently
-    inventing one here would break their dashboard.
+
+def _is_governance_error(exc: BaseException) -> bool:
+    if type(exc).__name__ == "GovernanceError":
+        return True
+    types = _governance_error_types()
+    return bool(types) and isinstance(exc, types)
+
+
+def _governance_error_response(exc: BaseException) -> JSONResponse:
+    code = str(getattr(exc, "code", "") or "governance_error")
+    detail = str(getattr(exc, "message", "") or str(exc))
+    lowered = code.lower()
+    if any(token in lowered for token in ("forbidden", "permission", "denied", "unauthorized")):
+        status_code = 403
+    elif "not_found" in lowered:
+        status_code = 404
+    elif any(token in lowered for token in ("conflict", "already_", "expired", "spent")):
+        status_code = 409
+    else:
+        status_code = 400
+    return JSONResponse({"error": code, "detail": detail}, status_code=status_code)
+
+
+def _call_host_auth(checker: Any, request: Request, *, mutating: bool) -> Response | None:
+    try:
+        params = inspect.signature(checker).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "mutating" in params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    ):
+        return checker(request, mutating=mutating)
+    return checker(request)
+
+
+def _check_token(request: Request, *, mutating: bool = True) -> Optional[Response]:  # noqa: UP045 - py3.9
+    """Enforce the host dashboard auth check, or ``UC_DASHBOARD_TOKEN`` standalone.
+
+    When mounted inside ``DashboardApp``, ``app.state.dashboard_auth_check``
+    enforces ``DASHBOARD_PASSWORD`` / ``UC_DASHBOARD_TOKEN`` and fail-closed
+    mutations consistently across the whole API. When mounted standalone,
+    unset ``UC_DASHBOARD_TOKEN`` remains open on mutations (matching the Rust
+    gateway's standalone interceptor).
     """
+    checker = getattr(request.app.state, AUTH_CHECK_STATE_ATTR, None)
+    if checker is not None:
+        return _call_host_auth(checker, request, mutating=mutating)
+    if not mutating:
+        return None
     expected = os.environ.get(TOKEN_ENV, "").strip()
     if not expected:
         return None
-    provided = request.headers.get("authorization", "")
-    if provided.startswith(BEARER_PREFIX):
-        provided = provided[len(BEARER_PREFIX) :]
-    if hmac.compare_digest(provided.strip(), expected):
+    header = request.headers.get("authorization", "")
+    if header[: len(BEARER_PREFIX)].lower() == BEARER_PREFIX.lower():
+        provided = header[len(BEARER_PREFIX) :].strip()
+    else:
+        provided = header.strip()
+    if provided and hmac.compare_digest(
+        provided.encode("utf-8"), expected.encode("utf-8")
+    ):
         return None
     return JSONResponse({"error": "unauthorized"}, status_code=401)
 
@@ -147,6 +202,8 @@ async def _call_governance(
     try:
         reply = await client.call(op, payload)
     except Exception as exc:  # noqa: BLE001 - transport failures are all "unavailable"
+        if _is_governance_error(exc):
+            raise
         logger.warning("governance op %s failed at the transport layer: %s", op, exc)
         raise _GatewayUnavailableError(op) from exc
     if not isinstance(reply, Mapping):
@@ -169,8 +226,10 @@ def _promoter() -> SyncAsyncPromoter:
     return _PROMOTER
 
 
-def _promotion_notices() -> list[dict[str, Any]]:
-    """Promote overdue approvals and return the drained convergence notices.
+def _promotion_notices(
+    *, promote_due: bool = True, decision_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Return drained convergence notices, optionally promoting due approvals first.
 
     The gateway never sees this state: it is a display/telemetry projection of
     how long the synchronous approval budget has been exceeded. An approval
@@ -180,8 +239,19 @@ def _promotion_notices() -> list[dict[str, Any]]:
     if not promotion_enabled():
         return []
     promoter = _promoter()
-    promoter.promote_due()
-    return [notice.to_dict() for notice in promoter.notices()]
+    if promote_due:
+        promoter.promote_due()
+    drained = promoter.notices()
+    if decision_id is None:
+        return [notice.to_dict() for notice in drained]
+    matched = [notice.to_dict() for notice in drained if notice.decision_id == decision_id]
+    # Re-queue notices belonging to unrelated approvals so deciding one item
+    # does not swallow another approval's notices.
+    with promoter._lock:
+        for notice in drained:
+            if notice.decision_id != decision_id:
+                promoter._notices.append(notice)
+    return matched
 
 
 def _limit(value: int) -> int:
@@ -197,6 +267,9 @@ async def list_approvals(
     limit: int = DEFAULT_LIMIT,
 ) -> Any:
     """Return approvals, newest first. ``state`` filters pending/approved/…."""
+    denied = _check_token(request, mutating=False)
+    if denied is not None:
+        return denied
     payload: dict[str, Any] = {"limit": _limit(limit)}
     if state:
         normalized = state.strip().lower()
@@ -207,6 +280,10 @@ async def list_approvals(
         reply = await _call_governance(request, OP_APPROVAL_LIST, payload)
     except _GatewayUnavailableError:
         return _unavailable(OP_APPROVAL_LIST)
+    except Exception as exc:
+        if _is_governance_error(exc):
+            return _governance_error_response(exc)
+        raise
     approvals = reply.get("approvals")
     if not isinstance(approvals, list):
         return JSONResponse({"error": "invalid_gateway_reply"}, status_code=502)
@@ -226,7 +303,7 @@ async def request_approval(request: Request) -> Any:
     refuses a decision from the principal that asked. The TTL is the gateway's to
     bound (``ttl_minutes`` is checked against its own maximum).
     """
-    denied = _check_token(request)
+    denied = _check_token(request, mutating=True)
     if denied is not None:
         return denied
     try:
@@ -288,6 +365,10 @@ async def request_approval(request: Request) -> Any:
         reply = await _call_governance(request, OP_APPROVAL_REQUEST, payload)
     except _GatewayUnavailableError:
         return _unavailable(OP_APPROVAL_REQUEST)
+    except Exception as exc:
+        if _is_governance_error(exc):
+            return _governance_error_response(exc)
+        raise
     approval = reply.get("approval")
     if not isinstance(approval, Mapping):
         return JSONResponse({"error": "invalid_gateway_reply"}, status_code=502)
@@ -305,10 +386,11 @@ async def decide_approval(approval_id: str, request: Request) -> Any:
     The decision is forwarded with a ``user`` principal: the dashboard cannot act
     as a service or an agent, and doing so would defeat the point of the approval.
     """
-    denied = _check_token(request)
+    denied = _check_token(request, mutating=True)
     if denied is not None:
         return denied
-    if not approval_id.strip():
+    cleaned_id = approval_id.strip()
+    if not cleaned_id:
         return JSONResponse({"error": "invalid_approval_id"}, status_code=400)
     try:
         body = await request.json()
@@ -329,7 +411,7 @@ async def decide_approval(approval_id: str, request: Request) -> Any:
         )
 
     payload: dict[str, Any] = {
-        "approval_id": approval_id.strip(),
+        "approval_id": cleaned_id,
         "approve": approve,
         "principal_kind": "user",
         "principal_id": os.environ.get(OPERATOR_ENV, DEFAULT_OPERATOR).strip()
@@ -341,21 +423,25 @@ async def decide_approval(approval_id: str, request: Request) -> Any:
         reply = await _call_governance(request, OP_APPROVAL_DECIDE, payload)
     except _GatewayUnavailableError:
         return _unavailable(OP_APPROVAL_DECIDE)
+    except Exception as exc:
+        if _is_governance_error(exc):
+            return _governance_error_response(exc)
+        raise
     approval = reply.get("approval")
     if not isinstance(approval, Mapping):
         return JSONResponse({"error": "invalid_gateway_reply"}, status_code=502)
     if promotion_enabled():
         promoter = _promoter()
         try:
-            promoter.check(approval_id.strip())
+            promoter.check(cleaned_id)
         except KeyError:
             pass
         try:
-            promoter.converge(approval_id.strip(), accepted=approve, reason="approval decision")
+            promoter.converge(cleaned_id, accepted=approve, reason="approval decision")
         except KeyError:
             pass
     result: dict[str, Any] = {"approval": approval}
-    notices = _promotion_notices()
+    notices = _promotion_notices(promote_due=False, decision_id=cleaned_id)
     if notices:
         result["sync_promotions"] = notices
     return result
@@ -371,7 +457,7 @@ def _csv_cell(value: Any) -> str:
         text = value
     else:
         text = json.dumps(value, ensure_ascii=False, sort_keys=True)
-    if text.startswith(_FORMULA_PREFIXES):
+    if text.startswith(_FORMULA_PREFIXES) or text.lstrip().startswith(_FORMULA_PREFIXES):
         # Prefix with a quote so a spreadsheet shows the text instead of running it.
         return "'" + text
     return text
@@ -393,6 +479,9 @@ async def export_approvals(
     governance metadata, not authority. Cells that a spreadsheet would execute as a
     formula are prefixed with a quote.
     """
+    denied = _check_token(request, mutating=False)
+    if denied is not None:
+        return denied
     payload: dict[str, Any] = {}
     if state:
         normalized = state.strip().lower()
@@ -412,6 +501,10 @@ async def export_approvals(
             )
         except _GatewayUnavailableError:
             return _unavailable(OP_APPROVAL_LIST)
+        except Exception as exc:
+            if _is_governance_error(exc):
+                return _governance_error_response(exc)
+            raise
         page = reply.get("approvals")
         if not isinstance(page, list):
             return JSONResponse({"error": "invalid_gateway_reply"}, status_code=502)

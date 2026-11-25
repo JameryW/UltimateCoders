@@ -1037,11 +1037,14 @@ def test_real_corpus_unanchored_census_is_reported():
     # mentions across the remaining ledger periods (1417 -> 1669, after the
     # deferred AgentStepperPanel mention was made prose); all resolve and the
     # unclassified count stays 0.
-    # The V29 #133 wiring note names memory.py and the two write methods
+    # T70 (hy-memory read-side channels) added the read-supersede and
+    # context-compiler test rows to docs/hy-memory.md's test table
     # (1669 -> 1671); resolved, unclassified 0.
-    # The V29 #26 wiring note names snapshot_workspace (1671 -> 1672);
+    # The V29 #133 wiring note names memory.py and the two write methods
+    # (1671 -> 1673); resolved, unclassified 0.
+    # The V29 #26 wiring note names snapshot_workspace (1673 -> 1674);
     # resolved, unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1672
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1674
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1123,7 +1126,12 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     checkpoint helper; the spec citation and pin were re-measured to
     2585-2639. The inbound AgentRadio spool moved it 2585 -> 2591: the spool
     routing landed above the checkpoint helper; the citation and pin were
-    re-measured to 2591-2645.
+    re-measured to 2591-2645. T70 (UC memory channels) moved it 2591 -> 2604:
+    per-channel compile and retry evidence promotion landed above the
+    checkpoint helpers (+13 lines), and the cited range 2591-2645 still covers
+    the definition. The repo-wide hardening review moved it 2604 -> 2719:
+    credential-lease/radio/checkpoint guards landed above `_save_checkpoint`,
+    and the spec citation and pin were re-measured to 2719-2779.
     """
     guard = _load_guard()
     want = {
@@ -1145,7 +1153,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            2591,
+            2719,
         ),
     }
     rows = [

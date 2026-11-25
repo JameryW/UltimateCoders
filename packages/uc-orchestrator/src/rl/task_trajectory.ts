@@ -169,22 +169,25 @@ export function segmentsFromProgress(
 		};
 	});
 
-	// Keep the last occurrence of an identical (kind, summary) pair; earlier
-	// repeats add no information and must not receive loss.
+	// Keep the last occurrence of an identical (subtaskId, kind, summary) tuple;
+	// earlier repeats within the same subtask add no information and must not
+	// receive loss, while parallel subtasks must not mask one another.
 	const lastIndex = new Map<string, number>();
 	for (let index = 0; index < segments.length; index++) {
 		const segment = segments[index];
 		if (segment === undefined) continue;
 		const summary = String(segment.metadata?.summary ?? "");
 		if (summary.length === 0) continue;
-		lastIndex.set(`${segment.kind}\u0000${summary}`, index);
+		const subtaskId = String(segment.metadata?.subtaskId ?? "");
+		lastIndex.set(`${subtaskId}\u0000${segment.kind}\u0000${summary}`, index);
 	}
 	for (let index = 0; index < segments.length; index++) {
 		const segment = segments[index];
 		if (segment === undefined) continue;
 		const summary = String(segment.metadata?.summary ?? "");
 		if (summary.length === 0) continue;
-		if (lastIndex.get(`${segment.kind}\u0000${summary}`) !== index) {
+		const subtaskId = String(segment.metadata?.subtaskId ?? "");
+		if (lastIndex.get(`${subtaskId}\u0000${segment.kind}\u0000${summary}`) !== index) {
 			segment.repeatedIneffective = true;
 		}
 	}
@@ -242,9 +245,11 @@ export class TaskTrajectoryCollector {
 
 	/** Distil one task, or return null when no progress was recorded. */
 	distill(taskId: string, options: DistillOptions = {}): TaskTrajectorySummary | null {
-		const events = this.eventsByTask.get(taskId);
+		const id = String(taskId ?? "").trim();
+		if (!id) return null;
+		const events = this.eventsByTask.get(id);
 		if (events === undefined || events.length === 0) return null;
-		return distillTaskTrajectory(taskId, events, options);
+		return distillTaskTrajectory(id, events, options);
 	}
 
 	/** Export one task's semantic trajectory without clearing the buffer. */
@@ -253,16 +258,26 @@ export class TaskTrajectoryCollector {
 		directory: string,
 		options: DistillOptions = {},
 	): string | null {
-		const events = this.eventsByTask.get(taskId);
+		const id = String(taskId ?? "").trim();
+		if (!id) return null;
+		const events = this.eventsByTask.get(id);
 		if (events === undefined || events.length === 0) return null;
-		return exportTaskTrajectory(taskId, events, options, directory);
+		return exportTaskTrajectory(id, events, options, directory);
 	}
 
 	/** Release a completed task's buffer. */
 	clear(taskId: string): void {
-		this.eventsByTask.delete(taskId);
-		const index = this.taskOrder.indexOf(taskId);
+		const id = String(taskId ?? "").trim();
+		if (!id) return;
+		this.eventsByTask.delete(id);
+		const index = this.taskOrder.indexOf(id);
 		if (index >= 0) this.taskOrder.splice(index, 1);
+	}
+
+	/** Release all buffered tasks (e.g. on orchestrator shutdown). */
+	clearAll(): void {
+		this.eventsByTask.clear();
+		this.taskOrder.length = 0;
 	}
 
 	/** Number of tasks currently buffered. */

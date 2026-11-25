@@ -134,6 +134,9 @@ def scan(path: pathlib.Path) -> list[tuple[int, str]]:
             continue
         assignment = _enclosing_assignment(node, parents)
         if assignment is None:
+            if isinstance(parents.get(node), ast.Expr):
+                findings.append((node.lineno, "bare create_task() discards the task reference"))
+                continue
             # Used inline: `return asyncio.create_task(...)` or passed to an await
             # helper -- the caller/awaiter owns the reference.
             continue
