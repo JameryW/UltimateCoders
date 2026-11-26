@@ -353,6 +353,7 @@ def test_real_repo_is_reconciled() -> None:
         (2971, 2962),  # V29 #137 wiring: OverServe guard module + its test.
         (2972, 2963),  # V29 #133 wiring: memory recall journal + its test.
         (2973, 2964),  # V29 #26 wiring: workspace snapshot + shift guard test.
+        (2977, 2968),  # V13 #40 wiring: completion review module + its test.
         (2975, 2966),  # Merge of origin/main hardening (2 upstream text files).
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out

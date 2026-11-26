@@ -15,7 +15,7 @@ create a second scheduler, a model service, or a second knowledge authority.
 | AsynCodeBench dependency checker | `crates/uc-engine/src/async_dep_checker.rs`, `crates/uc-engine/src/lib.rs` | n/a (additive Rust library) | `AsyncDependencyChecker` exported from `uc-engine` | module only |
 | Risa sparse-MoE routing | `python/ultimate_coders/agent/risa_moe_controller.py` | `UC_RISA_MOE` | agent library; no worker caller yet | module only |
 | RepoAtlas repository views | `python/ultimate_coders/search/repo_atlas_view.py` | `UC_REPO_ATLAS_VIEW` | search library; no planner caller yet | module only |
-| L3 independent review | `python/ultimate_coders/acceptance/independent_reviewer.py` | `UC_INDEPENDENT_REVIEWER` | acceptance library; no worker caller yet | module only |
+| L3 independent review | `python/ultimate_coders/acceptance/independent_reviewer.py`, `python/ultimate_coders/agent/completion_review.py` | `UC_INDEPENDENT_REVIEWER`, `UC_COMPLETION_REVIEW` | local harness `done()` gate over the run diff + test exits | wired (opt-in) |
 | ExLabel trajectory curation | `packages/uc-orchestrator/src/rl/exlabel_curator.ts` | n/a (library) | orchestrator RL data planning; no export caller yet | module only |
 | Clean regrade + ProjectGuard | `crates/uc-engine/src/clean_regrader.rs`, `python/ultimate_coders/agent/project_guard.py` | `UC_PROJECT_GUARD` (Python) | engine regrade policy; agent progressive-spec library | module only |
 
@@ -84,6 +84,22 @@ rejected. A required path that the patch does not touch yields
 
 `build_brief` emits a bounded, trajectory-free brief for an external critic.
 `changed_paths` parses `+++ b/...` headers and ignores `/dev/null`.
+
+**Production wiring (local harness).** `python/ultimate_coders/agent/completion_review.py`
+(`UC_COMPLETION_REVIEW`, default off) is the reviewer's first caller.
+`CompletionReviewGate` builds the run's own evidence — `workspace_diff` pins
+`git diff` to the base commit captured at run start and synthesizes new-file
+hunks for the paths the harness wrote (untracked files never appear in
+`git diff`, and `git add -N` would mutate the caller's index), while
+`TestRun`/`build_test_report` turn the exit codes of test-looking commands into
+a `TestReport`. `harness_local_loop.run_loop` runs the gate at `done()` and
+blocks the completion once per run for hard findings (`test_file_modified`,
+`assertion_deleted`, `verification_bypass`, `tests_failed`); missing test
+evidence is only advisory, because the harness cannot know whether a task has
+tests, and documentation-only diffs skip the test requirement entirely. Blocked
+`done()` calls emit `completion_review_block` and return a `to_tool_error()`
+payload that names the offending paths; the run envelope carries
+`completion_review` (`blocks` plus the last verdict).
 
 ## ExLabel trajectory curation (#41)
 

@@ -42,6 +42,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ultimate_coders.agent.completion_review import (
+    CompletionReviewGate,
+    TestRun,
+    completion_review_enabled,
+    describe_decision,
+    looks_like_test_command,
+)
 from ultimate_coders.agent.drift_monitor import DriftMonitor, drift_monitor_enabled
 from ultimate_coders.agent.ecloop_gate import ECLoopGate, ecloop_gate_enabled
 from ultimate_coders.agent.overserve_guard import OverServeGuard, overserve_guard_enabled
@@ -720,6 +727,7 @@ class _RunStats:
     commands_run: list[str] = field(default_factory=list)
     reads: list[str] = field(default_factory=list)
     last_failed_output: str = ""
+    test_runs: list[TestRun] = field(default_factory=list)
     turn_likelihoods: list[float] = field(default_factory=list)
     turn_tokens: list[list[dict[str, Any]]] = field(default_factory=list)
     prefix_cache: list[dict[str, Any]] = field(default_factory=list)
@@ -810,6 +818,21 @@ def _failed_command_output(result: str) -> str:
         return ""
     output = payload.get("output")
     return output[-12000:] if isinstance(output, str) and output.strip() else ""
+
+
+def _command_exit_code(result: str) -> int | None:
+    """Return a command's exit code from its tool payload, when it has one."""
+
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    code = payload.get("exit_code")
+    if isinstance(code, bool) or not isinstance(code, int):
+        return None
+    return code
 
 
 def _shift_write_gate(guard: ShiftGuard, root: Path, rel: str) -> str | None:
@@ -1208,6 +1231,18 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         initial_snapshot = snapshot_workspace(root)
         if initial_snapshot is not None:
             shift = ShiftGuard(initial_epoch=initial_snapshot.epoch)
+    # Completion review (V13 #40 wiring) is opt-in too.  It hands the L3
+    # isolated reviewer the diff this run produced -- pinned to the base commit
+    # captured now, so an inherited dirty tree is not re-judged -- plus the
+    # exit codes of test-looking commands.  Without the flag the reviewer never
+    # runs and the legacy `done()` path is untouched.
+    review_gate = None
+    review_base_commit = ""
+    if completion_review_enabled():
+        review_gate = CompletionReviewGate()
+        base_snapshot = snapshot_workspace(root)
+        if base_snapshot is not None:
+            review_base_commit = base_snapshot.commit
     radio_watcher = _radio_watcher_from_env()
     request_logprobs = trace_logprobs_enabled() or trajectory_export_enabled()
 
@@ -1387,6 +1422,15 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                         failed_output = _failed_command_output(result)
                         if failed_output:
                             stats.last_failed_output = failed_output
+                        if (
+                            review_gate is not None
+                            and looks_like_test_command(command)
+                        ):
+                            exit_code = _command_exit_code(result)
+                            if exit_code is not None:
+                                stats.test_runs.append(
+                                    TestRun(command=command, exit_code=exit_code)
+                                )
                         if overserve is not None:
                             overserve.observe_command_step(failed=bool(failed_output))
                         if drift is not None:
@@ -1412,6 +1456,26 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                             if overserve is not None
                             else None
                         )
+                        review = (
+                            review_gate.review(
+                                root,
+                                base_commit=review_base_commit,
+                                test_runs=stats.test_runs,
+                                written_paths=tuple(dict.fromkeys(stats.files_written)),
+                            )
+                            if review_gate is not None
+                            else None
+                        )
+                        if review is not None:
+                            payload = review.to_dict()
+                            payload["decision"] = describe_decision(review.verdict)
+                            _emit(
+                                {
+                                    "event": "completion_review",
+                                    "turn": stats.turns,
+                                    **payload,
+                                }
+                            )
                         if blocked is not None:
                             _emit_ecloop_block(
                                 "submit",
@@ -1429,6 +1493,17 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                                 }
                             )
                             result = completion.to_tool_error()
+                        elif review is not None and review.blocked:
+                            _emit(
+                                {
+                                    "event": "completion_review_block",
+                                    "turn": stats.turns,
+                                    "findings": [
+                                        finding.to_dict() for finding in review.findings
+                                    ],
+                                }
+                            )
+                            result = review.to_tool_error()
                         else:
                             final_summary = str(fn_args.get("summary") or "Task completed")
                             finished = True
@@ -1498,6 +1573,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         envelope["ecloop_blocks"] = dict(ecloop.blocks)
     if overserve is not None:
         envelope["overserve"] = overserve.to_dict()
+    if review_gate is not None:
+        envelope["completion_review"] = review_gate.to_dict()
     if shift is not None:
         envelope["shift"] = {
             "phase": shift.phase.value,
