@@ -5073,17 +5073,23 @@ class Worker:
                     "diff": (fc.diff or "")[: Worker._ARTIFACT_DIFF_MAX],
                 }
             )
-        return json.dumps(
-            {
-                "summary": (out.summary or "")[: Worker._ARTIFACT_SUMMARY_MAX],
-                "success": out.success,
-                "file_changes": fc_list,
-                "stderr_tail": (out.stderr_tail or "")[: Worker._ARTIFACT_STDERR_MAX],
-                "tool_calls": (out.tool_calls or [])[: Worker._ARTIFACT_TOOL_CALLS_MAX],
-            },
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )
+        payload: dict[str, object] = {
+            "summary": (out.summary or "")[: Worker._ARTIFACT_SUMMARY_MAX],
+            "success": out.success,
+            "file_changes": fc_list,
+            "stderr_tail": (out.stderr_tail or "")[: Worker._ARTIFACT_STDERR_MAX],
+            "tool_calls": (out.tool_calls or [])[: Worker._ARTIFACT_TOOL_CALLS_MAX],
+        }
+        # PROBE (#70): a failed step hands the next agent an anchored diagnosis
+        # and bounded recovery actions instead of a bare stderr tail. Imported
+        # lazily so enabling the adapter never affects worker start-up.
+        if not out.success:
+            from ultimate_coders.agent.probe_brief import failure_brief, probe_brief_enabled
+
+            brief = failure_brief(out) if probe_brief_enabled() else None
+            if brief is not None:
+                payload["failure_diagnosis"] = brief
+        return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
     def _render_step_prompt(
         self,

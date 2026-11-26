@@ -14,7 +14,7 @@ introduced.
 | ChainSWE chain isolation | `crates/uc-engine/src/chain_isolation.rs`, `python/ultimate_coders/agent/chain_editor.py` | `UC_CHAIN_EDITOR` (Python) | multi-bug maintenance; no live caller yet | module only |
 | RST recursive synthesis | `packages/uc-orchestrator/src/rl/rst_synthesizer.ts` | n/a (library) | offline RL task synthesis; no live caller yet | module only |
 | SetupX LIFO setup | `crates/uc-engine/src/setupx_lifo.rs`, `python/ultimate_coders/search/xpu_store.py` | `UC_XPU_STORE` (Python) | environment setup; no live caller yet | module only |
-| PROBE failure recovery | `python/ultimate_coders/agent/probe_recovery.py` | `UC_PROBE_RECOVERY` | retry recovery; no worker caller yet | module only |
+| PROBE failure recovery | `python/ultimate_coders/agent/probe_recovery.py`, `python/ultimate_coders/agent/probe_brief.py` | `UC_PROBE_RECOVERY`, `UC_PROBE_BRIEF` | worker step bridge (`failure_diagnosis` in `{{prev_outputs_json}}`) | wired (opt-in) |
 | AgentStepper micro-commits | `crates/uc-engine/src/micro_commit.rs`, `dashboard/src/lib/agentStepper.ts` | n/a (library) | dashboard event inspection; no UI panel yet | module only |
 | SWE-CI continuous integration | `python/ultimate_coders/acceptance/swe_ci_loop.py` | `UC_SWE_CI_LOOP` | acceptance loop; no runner caller yet | module only |
 
@@ -85,6 +85,18 @@ behavioral error, and confidence in `[0, 1]`; `guide` builds bounded
 guidance that is not grounded in collected evidence, not actionable, or wider
 than the intervention scope. The engine is deterministic and never calls a
 model; callers supply observations and oracle snapshots.
+
+**Production wiring (worker step bridge).** `agent/probe_brief.py`
+(`UC_PROBE_BRIEF`, which requires `UC_PROBE_RECOVERY` too) projects the failed
+`AgentOutput` the worker already holds onto PROBE telemetry: `test_output` is
+preferred over `stderr_tail`, file changes become `touched_files`, and commands
+that look like test runs become `test_names`. `Worker._output_to_json` adds the
+resulting brief under `failure_diagnosis` for failed steps only, so the next
+step in a multi-step subtask (the `{{prev_outputs_json}}` bridge) receives an
+anchored cause, failure anchor, behavioral error, signal gaps and up to three
+bounded recovery actions instead of a bare stderr tail. The brief is capped at
+`MAX_BRIEF_CHARS = 1200` encoded characters with per-field truncation, so it
+cannot crowd out the step summary it travels with.
 
 ## AgentStepper micro-commits (#71)
 

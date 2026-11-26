@@ -1046,7 +1046,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # resolved, unclassified 0.
     # The V13 #40 wiring note names completion_review.py, CompletionReviewGate
     # and workspace_diff (1674 -> 1676); resolved, unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1676
+    # The V18 #70 wiring note names probe_brief.py and UC_PROBE_BRIEF
+    # (1676 -> 1678); resolved, unclassified 0.
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1678
 
 
 def test_real_corpus_has_no_false_content_mismatch():
