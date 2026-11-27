@@ -11,7 +11,7 @@ live route is introduced, and every feature flag defaults off.
 | Area | Modules | Flag | Wired at | State |
 | --- | --- | --- | --- | --- |
 | CodeSpec dual specs | `python/ultimate_coders/agent/codespec_compiler.py` | `UC_CODESPEC_COMPILER` | feature planning; no planner caller yet | module only |
-| STAIR plan reuse | `python/ultimate_coders/search/stair_tree.py` | `UC_STAIR_TREE` | repair planning; no search caller yet | module only |
+| STAIR plan reuse | `python/ultimate_coders/search/stair_tree.py`, `python/ultimate_coders/agent/plan_reuse.py` | `UC_STAIR_TREE`, `UC_PLAN_REUSE` | retry plan item in the recovery context block | wired (opt-in) |
 | CodeGrep retrieval | `python/ultimate_coders/search/codegrep_retriever.py` | `UC_CODEGREP_RETRIEVER` | retrieval tool; no worker caller yet | module only |
 | PerfAgent optimization | `python/ultimate_coders/acceptance/perf_agent.py` | `UC_PERF_AGENT` | acceptance/optimization; no runner caller yet | module only |
 | Argus + PMG runtime | `crates/uc-engine/src/argus_pmg.rs` | n/a (library) | runtime strategy state; no engine caller yet | module only |
@@ -46,6 +46,20 @@ unless `include_failed=True`.
 `StairPlan.render` produces the compact plan that can be inserted into a new
 issue prompt. The module never calls an LLM or reads a repository; callers
 supply previously distilled trajectory text.
+
+**Production wiring (worker retry).** `agent/plan_reuse.py` (`UC_PLAN_REUSE`,
+which also requires `UC_STAIR_TREE`) is that caller. On a retry the worker
+already holds the previous attempts as patch rounds — outcome, touched files,
+failure text, test verdict — which is a repair trajectory. The projection is
+deterministic: the attempt summary (or its first failure line) becomes the
+strategy node, each touched file a `edit <path>` subgoal, and the failure lines
+plus the test verdict become diagnostics. Failed attempts are deliberately
+included, because on a retry the useful knowledge is what was already tried and
+where it broke. `Worker._recovery_context_block` appends the rendered plan as an
+additive `Tier.EVIDENCE` item (source `stair-plan`, bounded to five nodes and
+the last six attempts) and reports `attempts`/`nodes`/`score` in the recovery
+summary; the raw evidence is untouched and a plan never claims a repair
+succeeded.
 
 ## CodeGrep precision-gated retrieval (#75)
 

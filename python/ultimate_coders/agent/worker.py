@@ -2564,6 +2564,39 @@ class Worker:
                     summary["evolution_reverted_rounds"] = len(chain.reverted_rounds)
         except Exception:
             logger.debug("attempt evolution render failed", exc_info=True)
+        # STAIR plan reuse (V19 #74 wiring): the same rounds also summarise as a
+        # hierarchical plan -- what was tried, which files to edit next, and the
+        # failures already seen -- so a retry starts from an executable outline
+        # instead of re-reading raw evidence.  Additive and opt-in; the raw
+        # recovery evidence above is untouched.
+        try:
+            from ultimate_coders.agent.plan_reuse import (
+                plan_block,
+                plan_reuse_enabled,
+            )
+
+            if plan_reuse_enabled() and view.rounds:
+                rendered_plan = plan_block(subtask.description, view.rounds)
+                if rendered_plan is not None:
+                    plan_text, plan_meta = rendered_plan
+                    from ultimate_coders.agent.context_compiler import (
+                        ContextItem,
+                        Tier,
+                    )
+
+                    items.append(
+                        ContextItem(
+                            item_id=f"stair-plan:{subtask.id}:{attempt}",
+                            tier=Tier.EVIDENCE,
+                            content="Reusable repair plan:\n" + plan_text,
+                            source="stair-plan",
+                            relevance=0.9,
+                            stable=True,
+                        )
+                    )
+                    summary["stair_plan"] = plan_meta
+        except Exception:
+            logger.debug("stair plan render failed", exc_info=True)
         effective_risk = risk if risk is not None else self._last_route.risk
         manifest = compile_context(
             list(base_items) + items,
