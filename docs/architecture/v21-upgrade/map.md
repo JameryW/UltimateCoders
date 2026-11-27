@@ -14,7 +14,7 @@ flag defaults off.
 | LARK Lean 4 verifier | `python/ultimate_coders/acceptance/lark_lean_verifier.py` | `UC_LARK_LEAN_VERIFIER` | acceptance; no caller yet | module only |
 | Enterprise DSL skill compiler | `python/ultimate_coders/agent/dsl_skill_compiler.py` | `UC_DSL_SKILL_COMPILER` | agent skill authoring; no worker caller yet | module only |
 | Response store and discovery | `python/ultimate_coders/search/response_store.py` | `UC_RESPONSE_STORE` | retrieval/artifact exchange; no caller yet | module only |
-| Requirement tracker | `python/ultimate_coders/agent/requirement_tracker.py` | `UC_REQUIREMENT_TRACKER` | task delivery and retry; no worker caller yet | module only |
+| Requirement tracker | `python/ultimate_coders/agent/requirement_tracker.py`, `python/ultimate_coders/agent/requirement_audit.py` | `UC_REQUIREMENT_TRACKER`, `UC_REQUIREMENT_AUDIT` | acceptance-bullet coverage event per attempt | wired (opt-in) |
 | Continuous benchmark calibration | `crates/uc-engine/src/continuous_bench.rs` | n/a (library) | benchmark reporting; no engine caller yet | module only |
 
 ## Vulnerability propagation and memory audit (#85)
@@ -70,6 +70,20 @@ open, and exposes pending questions and a status report. `build_retry_plan`
 always carries the raw failed trajectory and forces a full regression
 suite; it refuses a summary-only retry. A retry plan does not run tests or
 call a model.
+
+**Production wiring (acceptance gate).** `agent/requirement_audit.py`
+(`UC_REQUIREMENT_AUDIT`, which also requires `UC_REQUIREMENT_TRACKER`) reads
+the acceptance bullets in a subtask description and marks each one verified or
+failed against the evidence the worker already holds — patch diffs, executed
+commands, and the bounded test output. A bullet is satisfied when at least 60%
+of its distinctive words (≥4 characters, stopwords dropped) appear in that
+evidence, because a bullet is prose rather than a predicate: "invalidate the
+cache on write" is met by a patch that invalidates the cache even though the
+conditional wording never appears verbatim. `Worker._verify_output_requirements`
+emits a `requirement audit` progress event with total/verified counts, coverage,
+completion, and up to five unverified bullets. The audit is advisory: coverage
+is reported and never rejects a subtask, since a description bullet list is not
+a machine-checkable contract.
 
 ## Continuous benchmark calibration (#90)
 

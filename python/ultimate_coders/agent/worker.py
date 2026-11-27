@@ -3147,6 +3147,13 @@ class Worker:
                     retrace_contradictory=list(retrace.contradictory)[:8],
                     retrace_repair=retrace.repair_instruction[:500],
                 )
+            requirement_event = self._verify_output_requirements(subtask, output)
+            if requirement_event is not None:
+                await self._emit_step_event(
+                    subtask,
+                    "subtask_progress",
+                    **requirement_event,
+                )
             test_event = await self._test_execution_event(effective_wd, subtask)
             if test_event is not None:
                 await self._emit_step_event(subtask, "subtask_progress", **test_event)
@@ -4041,6 +4048,61 @@ class Worker:
                 exc_info=True,
             )
             return None
+
+    def _verify_output_requirements(
+        self,
+        subtask: Subtask,
+        output: AgentOutput,
+    ) -> dict[str, Any] | None:
+        """Report acceptance-criteria coverage for this attempt (#89).
+
+        Opt-in via ``UC_REQUIREMENT_AUDIT`` (with ``UC_REQUIREMENT_TRACKER``).
+        SWE-CoWork (arXiv:2611.20218) shows agents pass the F2P tests far more
+        often than they deliver the complete requested change, so the audit
+        re-reads the description's acceptance bullets and marks each one
+        against the evidence this attempt produced (patch diffs, executed
+        commands, bounded test output). Advisory only: a bullet list is not a
+        machine-checkable contract, so coverage is reported and never used to
+        reject a subtask.
+        """
+
+        from ultimate_coders.agent.requirement_audit import (
+            audit_requirements,
+            requirement_audit_enabled,
+        )
+
+        if not requirement_audit_enabled() or not (subtask.description or "").strip():
+            return None
+        patch_text = "\n".join(
+            (change.diff or "") for change in (output.file_changes or [])
+        )
+        try:
+            audit = audit_requirements(
+                subtask.description,
+                patch_text=patch_text,
+                commands_run=tuple(output.commands_run or ()),
+                test_output=output.test_output or "",
+            )
+        except Exception:
+            logger.debug(
+                "requirement audit failed for %s",
+                output.summary[:80],
+                exc_info=True,
+            )
+            return None
+        if audit is None:
+            return None
+        return {
+            "phase": "requirement audit",
+            "percent": 0,
+            "requirement_total": len(audit.requirements),
+            "requirement_verified": len(audit.verified),
+            "requirement_coverage": audit.coverage,
+            "requirement_complete": audit.complete,
+            "requirement_unverified": [
+                item.text[:120] for item in audit.unverified_requirements
+            ][:5],
+        }
 
     def _exec_critic_preflight(
         self,

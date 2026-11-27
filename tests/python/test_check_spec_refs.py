@@ -1048,7 +1048,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # and workspace_diff (1674 -> 1676); resolved, unclassified 0.
     # The V18 #70 wiring note names probe_brief.py and UC_PROBE_BRIEF
     # (1676 -> 1678); resolved, unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1678
+    # The V21 #89 wiring note names requirement_audit.py,
+    # _verify_output_requirements and UC_REQUIREMENT_AUDIT (1678 -> 1680).
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1680
 
 
 def test_real_corpus_has_no_false_content_mismatch():

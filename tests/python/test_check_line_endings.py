@@ -355,6 +355,7 @@ def test_real_repo_is_reconciled() -> None:
         (2973, 2964),  # V29 #26 wiring: workspace snapshot + shift guard test.
         (2977, 2968),  # V13 #40 wiring: completion review module + its test.
         (2979, 2970),  # V18 #70 wiring: PROBE failure brief module + its test.
+        (2981, 2972),  # V21 #89 wiring: requirement audit module + its test.
         (2975, 2966),  # Merge of origin/main hardening (2 upstream text files).
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
