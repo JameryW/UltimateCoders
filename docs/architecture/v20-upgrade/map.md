@@ -11,7 +11,7 @@ scheduler, or live route is introduced, and every feature flag defaults off.
 | Area | Modules | Flag | Wired at | State |
 | --- | --- | --- | --- | --- |
 | Harness awareness routing | `crates/uc-engine/src/harness_awareness.rs` | n/a (library) | tool dispatch; no engine caller yet | module only |
-| Rate-limited explicit state | `python/ultimate_coders/search/state_filter.py` | `UC_STATE_FILTER` | memory/state updates; no worker caller yet | module only |
+| Rate-limited explicit state | `python/ultimate_coders/search/state_filter.py`, `python/ultimate_coders/agent/state_ledger.py` | `UC_STATE_FILTER`, `UC_STATE_LEDGER` | run-state snapshot and thrash signal per write/command | wired (opt-in) |
 | MemSidecar scheduling | `crates/uc-engine/src/mem_sidecar.rs` | n/a (library) | memory retrieval scheduling; no engine caller yet | module only |
 | EvoGroup shared harness | `python/ultimate_coders/agent/evogroup_harness.py` | `UC_EVOGROUP_HARNESS` | group-agent harness; no orchestrator caller yet | module only |
 | SWE-WhatIf replay | `python/ultimate_coders/acceptance/swe_whatif_replay.py` | `UC_SWE_WHATIF_REPLAY` | evaluation; no acceptance caller yet | module only |
@@ -45,6 +45,18 @@ bounded key count evicts the oldest entry deterministically. `snapshot`
 returns the current key/value projection without exposing parser state.
 The module never writes durable storage; callers supply event text and
 consume the projection.
+
+**Production wiring (local harness).** `agent/state_ledger.py`
+(`UC_STATE_LEDGER`, which also requires `UC_STATE_FILTER`) is the caller the
+item was missing. The harness applies one typed event per observable fact —
+`file:<path>` after a write, `command:last` and `command:<digest>` after a
+command exit — and keeps a bounded keyed snapshot instead of re-deriving run
+state from the transcript. The only judgement it makes on its own is thrash: a
+path rewritten three times with no passing command in between is reported once
+per checkpoint as a `state_ledger` event, and a zero exit code clears the
+counts. It is observation only and never blocks a tool; the snapshot is also
+returned in the final envelope so a caller can read the run's own state without
+parsing the transcript.
 
 ## MemSidecar scheduling (#81)
 

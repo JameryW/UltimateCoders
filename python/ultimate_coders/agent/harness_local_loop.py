@@ -73,6 +73,7 @@ from ultimate_coders.agent.shift_guard import (
     shift_guard_enabled,
     snapshot_workspace,
 )
+from ultimate_coders.agent.state_ledger import StateLedger, state_ledger_enabled
 from ultimate_coders.architecture.context_folding import (
     ACPFolder,
     ReadLedger,
@@ -835,6 +836,19 @@ def _command_exit_code(result: str) -> int | None:
     return code
 
 
+def _written_path(result: str) -> str | None:
+    """Return the path a write_file payload reports, when it wrote one."""
+
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    written = payload.get("written")
+    return written if isinstance(written, str) and written else None
+
+
 def _shift_write_gate(guard: ShiftGuard, root: Path, rel: str) -> str | None:
     """Freeze a write after a mid-run shift until the state is re-read.
 
@@ -1243,6 +1257,12 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         base_snapshot = snapshot_workspace(root)
         if base_snapshot is not None:
             review_base_commit = base_snapshot.commit
+    # Explicit run state (V20 #80 wiring) is opt-in too.  Every write and every
+    # command exit is applied as a typed event, so the run keeps a bounded
+    # keyed snapshot instead of re-deriving "what has happened" from the whole
+    # transcript.  A path rewritten repeatedly with no passing command in
+    # between is reported once; the ledger never blocks a tool.
+    state_ledger = StateLedger() if state_ledger_enabled() else None
     radio_watcher = _radio_watcher_from_env()
     request_logprobs = trace_logprobs_enabled() or trajectory_export_enabled()
 
@@ -1413,6 +1433,22 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                                 result = _ecloop_blocked_result(decision)
                         else:
                             result = _tool_write_file(root, fn_args, stats)
+                        if state_ledger is not None:
+                            written = _written_path(result)
+                            if written is not None:
+                                warning = state_ledger.record_write(
+                                    stats.turns, written
+                                )
+                                if warning is not None:
+                                    _emit(
+                                        {
+                                            "event": "state_ledger",
+                                            "turn": stats.turns,
+                                            "path": warning.path,
+                                            "writes": warning.writes,
+                                            "message": warning.message,
+                                        }
+                                    )
                     elif name == "run_command":
                         command = str(fn_args.get("command") or "")
                         if command:
@@ -1422,6 +1458,12 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                         failed_output = _failed_command_output(result)
                         if failed_output:
                             stats.last_failed_output = failed_output
+                        if state_ledger is not None and command:
+                            ledger_code = _command_exit_code(result)
+                            if ledger_code is not None:
+                                state_ledger.record_command(
+                                    stats.turns, command, ledger_code
+                                )
                         if (
                             review_gate is not None
                             and looks_like_test_command(command)
@@ -1575,6 +1617,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         envelope["overserve"] = overserve.to_dict()
     if review_gate is not None:
         envelope["completion_review"] = review_gate.to_dict()
+    if state_ledger is not None:
+        envelope["state_ledger"] = state_ledger.to_dict()
     if shift is not None:
         envelope["shift"] = {
             "phase": shift.phase.value,

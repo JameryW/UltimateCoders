@@ -1050,7 +1050,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # (1676 -> 1678); resolved, unclassified 0.
     # The V21 #89 wiring note names requirement_audit.py,
     # _verify_output_requirements and UC_REQUIREMENT_AUDIT (1678 -> 1680).
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1680
+    # The V20 #80 wiring note names state_ledger.py, UC_STATE_LEDGER and
+    # StateLedger (1680 -> 1682).
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1682
 
 
 def test_real_corpus_has_no_false_content_mismatch():
