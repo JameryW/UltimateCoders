@@ -16,7 +16,7 @@ defaults off.
 | Focus resumption and behavior fingerprint | `python/ultimate_coders/architecture/focus_resumption.py`, `python/ultimate_coders/agent/focus_context.py` | `UC_FOCUS_RESUMPTION`, `UC_FOCUS_CONTEXT` | in-flight cards for sibling subtasks in the prompt | wired (opt-in) |
 | Weakest-subagent safety barrier | `crates/uc-engine/src/governance/subagent_safety_barrier.rs` | n/a (library) | delegation gate; no engine caller yet | module only |
 | OverServe polling and counter-evidence guard | `crates/uc-engine/src/scheduler/overserve_evidence_guard.rs` | n/a (library) | tool scheduling; no engine caller yet | module only |
-| Repository-grounded rubrics and collusion audit | `python/ultimate_coders/acceptance/repo_rubric_scorer.py` | `UC_REPO_RUBRIC_SCORER` | acceptance review; no caller yet | module only |
+| Repository-grounded rubrics and collusion audit | `python/ultimate_coders/acceptance/repo_rubric_scorer.py`, `python/ultimate_coders/agent/rubric_audit.py` | `UC_REPO_RUBRIC_SCORER`, `UC_RUBRIC_AUDIT` | advisory per-attempt rubric event | wired (opt-in) |
 
 ## GrepMem log and Memorix views (#133)
 
@@ -107,6 +107,20 @@ instruction-text probe: `DecisionStateMonitor.instruction_probe` reports a weak
 signal when its AUROC is below 0.8, while `decision_monitor` scores actual
 approve/deny decisions. The module performs no model call and launches no
 container.
+
+**Production wiring (worker acceptance).** `python/ultimate_coders/agent/rubric_audit.py` is the
+missing adapter: it freezes one item per dimension (correctness required, then
+test coverage, compatibility, security, maintainability) and derives each
+feature from deterministic checks on the attempt's own evidence - added/removed
+lines, changed paths versus the declared file constraints, a small hazard list
+(`eval`/`exec`, `shell=True`, `os.system`, `pickle.loads`, `yaml.load`),
+added `TODO`/`FIXME` markers and bare `except:`. The worker emits a
+`rubric audit` progress event after the observed test delta, so the score can
+see the F2P/P2P sets when tests actually ran. Two honest limits are reported
+rather than hidden: `rubric_passed` stays false on an execution-free attempt
+(the scorer demands a clean test report), so a no-test repository is judged by
+`rubric_weighted_ok`; and the event carries counts and markers only, never
+diff text or file bodies. Advisory throughout - it never rejects a subtask.
 
 ## Verification
 

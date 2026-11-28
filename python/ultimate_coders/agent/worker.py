@@ -3262,6 +3262,11 @@ class Worker:
                     "subtask_progress",
                     **acceptance_event,
                 )
+            # V29 #138: advisory repository-grounded rubric over the diff the
+            # attempt produced. Deterministic, never rejects the subtask.
+            rubric_event = self._rubric_audit_event(subtask, output, test_event)
+            if rubric_event is not None:
+                await self._emit_step_event(subtask, "subtask_progress", **rubric_event)
             critic_event, critic_error = await self._verify_output_exec_critic(
                 subtask,
                 effective_wd,
@@ -4200,6 +4205,58 @@ class Worker:
                 item.text[:120] for item in audit.unverified_requirements
             ][:5],
         }
+
+    def _rubric_audit_event(
+        self,
+        subtask: Subtask,
+        output: AgentOutput,
+        test_event: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Score this attempt against a frozen repository rubric (#138).
+
+        Opt-in via ``UC_RUBRIC_AUDIT`` (with ``UC_REPO_RUBRIC_SCORER``). The
+        ledger item scores a diff without executing anything; here the evidence
+        is the worker's own diff, its declared file constraints, and the
+        observed test delta when one exists. Every check is deterministic. The
+        score is advisory: it never rejects a subtask, and ``rubric_passed``
+        stays false without observed passing tests - ``rubric_weighted_ok`` is
+        the part a repository with no runnable tests can still satisfy.
+        """
+
+        from ultimate_coders.agent.rubric_audit import (
+            audit_attempt,
+            rubric_audit_enabled,
+        )
+
+        if not rubric_audit_enabled():
+            return None
+        diff = "\n".join(
+            (change.diff or "") for change in (output.file_changes or [])
+        )
+        paths = tuple(
+            change.file_path
+            for change in (output.file_changes or [])
+            if getattr(change, "file_path", "")
+        )
+        passed = 0
+        failed = 0
+        if test_event is not None and test_event.get("test_execution_status") == "ok":
+            passed = len(test_event.get("f2p") or ()) + len(test_event.get("p2p") or ())
+            failed = len(test_event.get("broken") or ())
+        try:
+            audit = audit_attempt(
+                diff=diff,
+                paths=paths,
+                description=subtask.description or "",
+                constraints=tuple(subtask.file_constraints or ()),
+                tests_passed=passed,
+                tests_failed=failed,
+                patch_id=f"{subtask.id}:rubric",
+            )
+        except Exception:
+            logger.debug("rubric audit failed", exc_info=True)
+            return None
+        return audit.to_event()
 
     def _exec_critic_preflight(
         self,
