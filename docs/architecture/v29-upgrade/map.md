@@ -13,7 +13,7 @@ defaults off.
 | --- | --- | --- | --- | --- |
 | GrepMem log and Memorix views | `python/ultimate_coders/memory/grepmem_memorix.py` | `UC_GREPMEM_MEMORIX` | `memory.py` write journal + lexical search fallback | wired (opt-in) |
 | TriGRPO sibling tree credit | `packages/uc-orchestrator/src/rl/trigrpo_tree_credit.ts` | n/a (library) | RL trace export; no caller yet | module only |
-| Focus resumption and behavior fingerprint | `python/ultimate_coders/architecture/focus_resumption.py` | `UC_FOCUS_RESUMPTION` | task switch; no caller yet | module only |
+| Focus resumption and behavior fingerprint | `python/ultimate_coders/architecture/focus_resumption.py`, `python/ultimate_coders/agent/focus_context.py` | `UC_FOCUS_RESUMPTION`, `UC_FOCUS_CONTEXT` | in-flight cards for sibling subtasks in the prompt | wired (opt-in) |
 | Weakest-subagent safety barrier | `crates/uc-engine/src/governance/subagent_safety_barrier.rs` | n/a (library) | delegation gate; no engine caller yet | module only |
 | OverServe polling and counter-evidence guard | `crates/uc-engine/src/scheduler/overserve_evidence_guard.rs` | n/a (library) | tool scheduling; no engine caller yet | module only |
 | Repository-grounded rubrics and collusion audit | `python/ultimate_coders/acceptance/repo_rubric_scorer.py` | `UC_REPO_RUBRIC_SCORER` | acceptance review; no caller yet | module only |
@@ -62,6 +62,17 @@ reports exploration / editing / testing proportions from `BehaviorEvent`s
 without using task outcomes, token counts, or tool names; `drift_from` compares
 a live profile with a baseline. The module is deterministic bookkeeping and the
 caller supplies the events.
+
+**Production wiring (worker context).** `python/ultimate_coders/agent/focus_context.py` keeps a
+process-local registry of the subtasks a task graph has in flight. A subtask
+registers its card before its prompt is assembled, a sibling of the same graph
+receives a relevance-filtered `focus-resumption` evidence item naming the other
+open work and its files, and finishing retires the card and emits a
+`focus resumption` progress event with the remaining count. Only cards that share
+vocabulary with the current description are spelled out - the rest collapse to
+one `N subtask(s) are changing unrelated files` line - so the block cannot crowd
+out the subtask's own targets. Both `UC_FOCUS_CONTEXT` and
+`UC_FOCUS_RESUMPTION` must be on; with either off the prompt is byte-identical.
 
 ## Weakest-subagent safety barrier (#136)
 

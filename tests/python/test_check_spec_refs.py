@@ -1053,8 +1053,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # The V20 #80 wiring note names state_ledger.py, UC_STATE_LEDGER and
     # StateLedger (1680 -> 1682).
     # The V19 #74 wiring note names plan_reuse.py, UC_PLAN_REUSE and
-    # _recovery_context_block (1682 -> 1684).
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1684
+    # _recovery_context_block (1682 -> 1684), then the V29 #135 focus
+    # context wiring added its module, test, and map mention (1684 -> 1686).
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1686
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1139,10 +1140,10 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     re-measured to 2591-2645. T70 (UC memory channels) moved it 2591 -> 2604:
     per-channel compile and retry evidence promotion landed above the
     checkpoint helpers (+13 lines), and the cited range 2591-2645 still covers
-    the definition. The repo-wide hardening review moved it 2604 -> 2719, and the
-V19 #74 wiring moved it to 2752:
+    the definition. The repo-wide hardening review moved it 2604 -> 2719, the
+V19 #74 wiring moved it to 2752, and the V29 #135 wiring moved it to 2813:
     credential-lease/radio/checkpoint guards landed above `_save_checkpoint`,
-    and the spec citation and pin were re-measured to 2752-2812.
+    and the spec citation and pin were re-measured to 2813-2873.
     """
     guard = _load_guard()
     want = {
@@ -1164,7 +1165,7 @@ V19 #74 wiring moved it to 2752:
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            2752,
+            2813,
         ),
     }
     rows = [

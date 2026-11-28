@@ -1305,6 +1305,9 @@ class Worker:
                 capabilities=subtask.required_capabilities,
             )
             self._last_route = attempt_route
+            # Register this subtask's focus card before its prompt is built, so
+            # a sibling subtask of the same graph can see the work in flight.
+            self._focus_begin(subtask)
             attempt_context_manifest: dict[str, Any] | None = None
             self._last_context_manifest = None
             search_block = await self._build_search_context(subtask)
@@ -1348,6 +1351,13 @@ class Worker:
             knowledge_items, knowledge_summary = await self._knowledge_context_items(subtask)
             if knowledge_items:
                 non_hy_base_items = non_hy_base_items + knowledge_items
+            # V29 #135: other subtasks of this graph still have work in flight.
+            # Advisory evidence only - relevance-filtered so the block cannot
+            # crowd out this subtask's own targets.
+            focus_items, focus_summary = self._focus_context_items(subtask)
+            if focus_items:
+                non_hy_base_items = non_hy_base_items + focus_items
+            self._last_focus_summary = focus_summary
             context_source_items = non_hy_base_items + from_hy_memory_channels(
                 hy_channels, promote_negative=promote_negative
             )
@@ -2460,6 +2470,57 @@ class Worker:
             logger.debug("graph knowledge read failed", exc_info=True)
             return [], {}
 
+    def _focus_begin(self, subtask: Subtask) -> None:
+        """Register this subtask's focus card (V29 #135, opt-in)."""
+
+        try:
+            from ultimate_coders.agent.focus_context import begin_subtask
+
+            begin_subtask(subtask)
+        except Exception:
+            logger.debug("focus card registration failed", exc_info=True)
+
+    def _focus_finish(self, subtask: Subtask) -> dict[str, Any] | None:
+        """Retire this subtask's focus card and report the remaining work."""
+
+        try:
+            from ultimate_coders.agent.focus_context import finish_subtask
+
+            return finish_subtask(subtask)
+        except Exception:
+            logger.debug("focus card retirement failed", exc_info=True)
+            return None
+
+    def _focus_context_items(
+        self, subtask: Subtask
+    ) -> tuple[list[Any], dict[str, Any]]:
+        """Advisory items listing the sibling work still in flight (V29 #135).
+
+        Returns ``([], {})`` whenever the flag is off or no sibling subtask of
+        this graph is open, so the pre-upgrade prompt stays byte-identical.
+        """
+
+        try:
+            from ultimate_coders.agent.context_compiler import ContextItem, Tier
+            from ultimate_coders.agent.focus_context import focus_block
+
+            rendered = focus_block(subtask)
+            if rendered is None:
+                return [], {}
+            block, meta = rendered
+            item = ContextItem(
+                item_id=f"focus:{subtask.id}",
+                tier=Tier.EVIDENCE,
+                content=block,
+                source="focus-resumption",
+                relevance=0.8,
+                stable=True,
+            )
+            return [item], dict(meta)
+        except Exception:
+            logger.debug("focus context block failed", exc_info=True)
+            return [], {}
+
     async def _load_recovery_view(
         self, subtask: Subtask, attempt: int
     ) -> RecoveryView | None:
@@ -3232,6 +3293,9 @@ class Worker:
                     "subtask_progress",
                     **trajectory_event,
                 )
+            focus_event = self._focus_finish(subtask)
+            if focus_event is not None:
+                await self._emit_step_event(subtask, "subtask_progress", **focus_event)
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
