@@ -249,6 +249,29 @@ jobs:
       - name: the guard can say no, the exemptions hold, and the repo is clean
         run: pytest tests/python/test_check_subprocess_timeouts.py -v -o addopts=""
 
+  py39-compat:
+    name: python 3.9 compatibility (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - run: pip install ruff pytest
+      - name: ruff check (the guard and its test only)
+        run: ruff check scripts/check-py39-compat.py tests/python/test_check_py39_compat.py
+      - name: run the guard
+        # `zip(..., strict=True)` reached main and broke six tests only on the 3.9 leg:
+        # `ruff`'s `target-version = "py39"` drives upgrade suggestions, not availability.
+        # A 3.10+ construct is a hard failure on 3.9, so it is decidable statically.
+        run: python scripts/check-py39-compat.py
+      - name: each rule says no, guarded imports stay quiet, and the repo is clean
+        run: pytest tests/python/test_check_py39_compat.py -v -o addopts=""
+
   exception-swallow-reasons:
     name: exception swallow reasons (Python ${{ matrix.python-version }})
     runs-on: ubuntu-24.04
