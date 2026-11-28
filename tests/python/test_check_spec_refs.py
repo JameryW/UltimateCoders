@@ -1033,10 +1033,31 @@ def test_real_corpus_unanchored_census_is_reported():
     # (1415 -> 1416); resolved, unclassified 0.
     # The gateway cumulative-regression sentence names the server.rs caller
     # (1416 -> 1417); resolved, unclassified 0.
+    # V11-V29 architecture maps add module, test, dashboard and verification
+    # mentions across the remaining ledger periods (1417 -> 1669, after the
+    # deferred AgentStepperPanel mention was made prose); all resolve and the
+    # unclassified count stays 0.
     # T70 (hy-memory read-side channels) added the read-supersede and
     # context-compiler test rows to docs/hy-memory.md's test table
-    # (1417 -> 1419); resolved, unclassified 0.
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1419
+    # (1669 -> 1671); resolved, unclassified 0.
+    # The V29 #133 wiring note names memory.py and the two write methods
+    # (1671 -> 1673); resolved, unclassified 0.
+    # The V29 #26 wiring note names snapshot_workspace (1673 -> 1674);
+    # resolved, unclassified 0.
+    # The V13 #40 wiring note names completion_review.py, CompletionReviewGate
+    # and workspace_diff (1674 -> 1676); resolved, unclassified 0.
+    # The V18 #70 wiring note names probe_brief.py and UC_PROBE_BRIEF
+    # (1676 -> 1678); resolved, unclassified 0.
+    # The V21 #89 wiring note names requirement_audit.py,
+    # _verify_output_requirements and UC_REQUIREMENT_AUDIT (1678 -> 1680).
+    # The V20 #80 wiring note names state_ledger.py, UC_STATE_LEDGER and
+    # StateLedger (1680 -> 1682).
+    # The V19 #74 wiring note names plan_reuse.py, UC_PLAN_REUSE and
+    # _recovery_context_block (1682 -> 1684), then the V29 #135 focus
+    # context wiring added its module, test, and map mention (1684 -> 1686),
+    # and the V29 #138 rubric wiring added two more (1686 -> 1688), and the
+    # V10 #30 history wiring added its module and test (1688 -> 1690).
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1690
 
 
 def test_real_corpus_has_no_false_content_mismatch():
@@ -1121,9 +1142,10 @@ def test_real_corpus_repaired_references_carry_their_symbol():
     re-measured to 2591-2645. T70 (UC memory channels) moved it 2591 -> 2604:
     per-channel compile and retry evidence promotion landed above the
     checkpoint helpers (+13 lines), and the cited range 2591-2645 still covers
-    the definition. The repo-wide hardening review moved it 2604 -> 2719:
+    the definition. The repo-wide hardening review moved it 2604 -> 2719, the
+V19 #74 wiring moved it to 2752, and the V29 #135 wiring moved it to 2813:
     credential-lease/radio/checkpoint guards landed above `_save_checkpoint`,
-    and the spec citation and pin were re-measured to 2719-2779.
+    and the spec citation and pin were re-measured to 2813-2873.
     """
     guard = _load_guard()
     want = {
@@ -1145,7 +1167,7 @@ def test_real_corpus_repaired_references_carry_their_symbol():
         (".trellis/spec/frontend/hook-guidelines.md", 109): (
             "python/ultimate_coders/agent/worker.py",
             "_save_checkpoint",
-            2719,
+            2813,
         ),
     }
     rows = [
@@ -1599,8 +1621,10 @@ def test_real_corpus_moves_only_where_predicted():
     # 2026-11-07 T18c: WorkCase.replans_used + proactive_service accounting
     # shifted a live workcase citation back into range (OK 223 -> 224,
     # STALE 25 -> 24); rows / AMBIGUOUS / calibers unchanged.
-    assert sum(1 for r in rows if r["verdict"] == "OK") == 224
-    assert sum(1 for r in rows if r["verdict"] == "STALE") == 24
+    # V11-V29 maps move one path:line row from STALE to OK (OK 224 -> 225,
+    # STALE 24 -> 23).
+    assert sum(1 for r in rows if r["verdict"] == "OK") == 225
+    assert sum(1 for r in rows if r["verdict"] == "STALE") == 23
     assert sum(1 for r in rows if r["verdict"] == "AMBIGUOUS") == 72
     assert sum(1 for r in rows if r["symbol"] is not None) == 59
     assert sum(1 for r in rows if r["unanchored"]) == 124

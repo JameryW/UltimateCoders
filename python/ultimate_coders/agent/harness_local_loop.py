@@ -42,8 +42,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ultimate_coders.agent.completion_review import (
+    CompletionReviewGate,
+    TestRun,
+    completion_review_enabled,
+    describe_decision,
+    looks_like_test_command,
+)
 from ultimate_coders.agent.drift_monitor import DriftMonitor, drift_monitor_enabled
 from ultimate_coders.agent.ecloop_gate import ECLoopGate, ecloop_gate_enabled
+from ultimate_coders.agent.history_context import build_history_block, history_context_enabled
+from ultimate_coders.agent.overserve_guard import OverServeGuard, overserve_guard_enabled
 from ultimate_coders.agent.radio import (
     RADIO_INBOX_DIR_ENV,
     BackgroundMentionWatcher,
@@ -59,6 +68,13 @@ from ultimate_coders.agent.sandbox import (
     SandboxConfig,
     TokenUsage,
 )
+from ultimate_coders.agent.shift_guard import (
+    ShiftGuard,
+    ShiftPhase,
+    shift_guard_enabled,
+    snapshot_workspace,
+)
+from ultimate_coders.agent.state_ledger import StateLedger, state_ledger_enabled
 from ultimate_coders.architecture.context_folding import (
     ACPFolder,
     ReadLedger,
@@ -713,6 +729,7 @@ class _RunStats:
     commands_run: list[str] = field(default_factory=list)
     reads: list[str] = field(default_factory=list)
     last_failed_output: str = ""
+    test_runs: list[TestRun] = field(default_factory=list)
     turn_likelihoods: list[float] = field(default_factory=list)
     turn_tokens: list[list[dict[str, Any]]] = field(default_factory=list)
     prefix_cache: list[dict[str, Any]] = field(default_factory=list)
@@ -803,6 +820,65 @@ def _failed_command_output(result: str) -> str:
         return ""
     output = payload.get("output")
     return output[-12000:] if isinstance(output, str) and output.strip() else ""
+
+
+def _command_exit_code(result: str) -> int | None:
+    """Return a command's exit code from its tool payload, when it has one."""
+
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    code = payload.get("exit_code")
+    if isinstance(code, bool) or not isinstance(code, int):
+        return None
+    return code
+
+
+def _written_path(result: str) -> str | None:
+    """Return the path a write_file payload reports, when it wrote one."""
+
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    written = payload.get("written")
+    return written if isinstance(written, str) and written else None
+
+
+def _shift_write_gate(guard: ShiftGuard, root: Path, rel: str) -> str | None:
+    """Freeze a write after a mid-run shift until the state is re-read.
+
+    Returns the tool result to send back when the write must not run, or
+    ``None`` when the guard is satisfied and the normal dispatch continues.
+    """
+
+    snapshot = snapshot_workspace(root)
+    if snapshot is not None:
+        event = guard.observe_epoch(snapshot.epoch, changed_paths=snapshot.changed_paths)
+        if event is not None and guard.phase is ShiftPhase.FROZEN:
+            guard.acknowledge_refresh()
+            guard.apply_history_reset()
+    if guard.can_write:
+        return None
+    remaining = guard.remaining_observations()
+    targets = ", ".join(remaining[:5]) or "the affected files"
+    return json.dumps(
+        {
+            "error": "workspace_changed",
+            "hint": (
+                "The workspace changed underneath this attempt. Writes are "
+                f"frozen until you re-read: {targets}. Re-read, then retry."
+            ),
+            "phase": guard.phase.value,
+            "target": rel,
+            "must_observe": list(remaining[:5]),
+        }
+    )
 
 
 def _inject_drift_advisor(messages: list[dict[str, Any]], drift: DriftMonitor) -> bool:
@@ -1143,6 +1219,15 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
     ]
+    # Repository history context (v10 #30) is opt-in: merged changes that touch
+    # the same files are distilled into a few cards and appended to the task, so
+    # a fix knows why the code looks the way it does.  Advisory, bounded, and
+    # absent entirely when the flag is off or the directory has no history.
+    history = None
+    if history_context_enabled():
+        history = build_history_block(root, prompt)
+        if history is not None:
+            messages[1]["content"] = f"{prompt}\n\n## Repository history\n{history.block}"
     # ACP folding is opt-in.  The ledger exists only while folding is enabled,
     # so the legacy harness path (and its prompts) stays byte-identical by
     # default; when enabled, duplicate reads and over-budget intervals are
@@ -1156,6 +1241,38 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
     drift_boundary = _env_path_list(DRIFT_BOUNDARY_ENV)
     drift_required = _env_path_list(DRIFT_REQUIRED_FILES_ENV)
     ecloop = ECLoopGate() if ecloop_gate_enabled() else None
+    # OverServe guard (v29 #137) is opt-in as well: repeated polls of an
+    # unchanged state key back off, a completed state breaks the poll loop, and
+    # a completion claim that contradicts the last failing observation is rolled
+    # back once.  Without the flag every branch below is skipped.
+    overserve = OverServeGuard() if overserve_guard_enabled() else None
+    # SWE-Shift guard (v29 #26) is opt-in and needs a git workspace: it packs
+    # HEAD plus the dirty-set digest into an epoch, and a write is frozen until
+    # the agent re-reads the paths that changed underneath it.  Outside a git
+    # repository the guard stays off instead of guessing an identity.
+    shift = None
+    if shift_guard_enabled():
+        initial_snapshot = snapshot_workspace(root)
+        if initial_snapshot is not None:
+            shift = ShiftGuard(initial_epoch=initial_snapshot.epoch)
+    # Completion review (V13 #40 wiring) is opt-in too.  It hands the L3
+    # isolated reviewer the diff this run produced -- pinned to the base commit
+    # captured now, so an inherited dirty tree is not re-judged -- plus the
+    # exit codes of test-looking commands.  Without the flag the reviewer never
+    # runs and the legacy `done()` path is untouched.
+    review_gate = None
+    review_base_commit = ""
+    if completion_review_enabled():
+        review_gate = CompletionReviewGate()
+        base_snapshot = snapshot_workspace(root)
+        if base_snapshot is not None:
+            review_base_commit = base_snapshot.commit
+    # Explicit run state (V20 #80 wiring) is opt-in too.  Every write and every
+    # command exit is applied as a typed event, so the run keeps a bounded
+    # keyed snapshot instead of re-deriving "what has happened" from the whole
+    # transcript.  A path rewritten repeatedly with no passing command in
+    # between is reported once; the ledger never blocks a tool.
+    state_ledger = StateLedger() if state_ledger_enabled() else None
     radio_watcher = _radio_watcher_from_env()
     request_logprobs = trace_logprobs_enabled() or trajectory_export_enabled()
 
@@ -1264,8 +1381,35 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                 except json.JSONDecodeError:
                     fn_args = {}
                 _emit({"event": "tool_call", "tool": name, "args_preview": str(fn_args)[:200]})
+                deny = overserve.gate_tool(name, fn_args) if overserve is not None else None
+                shift_block = (
+                    _shift_write_gate(shift, root, str(fn_args.get("path") or ""))
+                    if (shift is not None and name == "write_file" and deny is None)
+                    else None
+                )
+                if deny is not None:
+                    _emit(
+                        {
+                            "event": "overserve_block",
+                            "turn": stats.turns,
+                            "tool": name,
+                        }
+                    )
+                elif shift_block is not None:
+                    _emit(
+                        {
+                            "event": "shift_block",
+                            "turn": stats.turns,
+                            "tool": name,
+                            "phase": shift.phase.value if shift is not None else "",
+                        }
+                    )
                 try:
-                    if name == "list_dir":
+                    if deny is not None:
+                        result = deny
+                    elif shift_block is not None:
+                        result = shift_block
+                    elif name == "list_dir":
                         result = _tool_list_dir(root, fn_args)
                     elif name == "read_file":
                         result = _tool_read_file(
@@ -1278,6 +1422,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                             read_path = _normalise_rel_path(str(fn_args.get("path") or ""))
                             if read_path:
                                 stats.reads.append(read_path)
+                                if shift is not None:
+                                    shift.record_fresh_observation(read_path)
                     elif name == "write_file":
                         rel = str(fn_args.get("path") or "")
                         if drift is not None:
@@ -1297,6 +1443,22 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                                 result = _ecloop_blocked_result(decision)
                         else:
                             result = _tool_write_file(root, fn_args, stats)
+                        if state_ledger is not None:
+                            written = _written_path(result)
+                            if written is not None:
+                                warning = state_ledger.record_write(
+                                    stats.turns, written
+                                )
+                                if warning is not None:
+                                    _emit(
+                                        {
+                                            "event": "state_ledger",
+                                            "turn": stats.turns,
+                                            "path": warning.path,
+                                            "writes": warning.writes,
+                                            "message": warning.message,
+                                        }
+                                    )
                     elif name == "run_command":
                         command = str(fn_args.get("command") or "")
                         if command:
@@ -1306,6 +1468,23 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                         failed_output = _failed_command_output(result)
                         if failed_output:
                             stats.last_failed_output = failed_output
+                        if state_ledger is not None and command:
+                            ledger_code = _command_exit_code(result)
+                            if ledger_code is not None:
+                                state_ledger.record_command(
+                                    stats.turns, command, ledger_code
+                                )
+                        if (
+                            review_gate is not None
+                            and looks_like_test_command(command)
+                        ):
+                            exit_code = _command_exit_code(result)
+                            if exit_code is not None:
+                                stats.test_runs.append(
+                                    TestRun(command=command, exit_code=exit_code)
+                                )
+                        if overserve is not None:
+                            overserve.observe_command_step(failed=bool(failed_output))
                         if drift is not None:
                             _observe_drift_command(drift, result)
                     elif name == "uc_radio_post":
@@ -1324,6 +1503,31 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                                     break
                                 if candidate.warning:
                                     _emit_ecloop_warning("submit", target, candidate)
+                        completion = (
+                            overserve.completion(f"done:{stats.turns}")
+                            if overserve is not None
+                            else None
+                        )
+                        review = (
+                            review_gate.review(
+                                root,
+                                base_commit=review_base_commit,
+                                test_runs=stats.test_runs,
+                                written_paths=tuple(dict.fromkeys(stats.files_written)),
+                            )
+                            if review_gate is not None
+                            else None
+                        )
+                        if review is not None:
+                            payload = review.to_dict()
+                            payload["decision"] = describe_decision(review.verdict)
+                            _emit(
+                                {
+                                    "event": "completion_review",
+                                    "turn": stats.turns,
+                                    **payload,
+                                }
+                            )
                         if blocked is not None:
                             _emit_ecloop_block(
                                 "submit",
@@ -1331,6 +1535,27 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
                                 blocked,
                             )
                             result = _ecloop_blocked_result(blocked)
+                        elif completion is not None and not completion.allowed:
+                            _emit(
+                                {
+                                    "event": "overserve_block",
+                                    "turn": stats.turns,
+                                    "tool": "done",
+                                    "reason": completion.reason,
+                                }
+                            )
+                            result = completion.to_tool_error()
+                        elif review is not None and review.blocked:
+                            _emit(
+                                {
+                                    "event": "completion_review_block",
+                                    "turn": stats.turns,
+                                    "findings": [
+                                        finding.to_dict() for finding in review.findings
+                                    ],
+                                }
+                            )
+                            result = review.to_tool_error()
                         else:
                             final_summary = str(fn_args.get("summary") or "Task completed")
                             finished = True
@@ -1398,6 +1623,20 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         envelope["drift_signals"] = [signal.value for signal in drift.triggered()]
     if ecloop is not None:
         envelope["ecloop_blocks"] = dict(ecloop.blocks)
+    if overserve is not None:
+        envelope["overserve"] = overserve.to_dict()
+    if review_gate is not None:
+        envelope["completion_review"] = review_gate.to_dict()
+    if state_ledger is not None:
+        envelope["state_ledger"] = state_ledger.to_dict()
+    if history is not None:
+        envelope["history_context"] = history.to_dict()
+    if shift is not None:
+        envelope["shift"] = {
+            "phase": shift.phase.value,
+            "events": [event.to_dict() for event in shift.events[-5:]],
+            "remaining": list(shift.remaining_observations()[:5]),
+        }
     if stats.turn_likelihoods:
         envelope["turn_likelihoods"] = list(stats.turn_likelihoods)
     if stats.turn_tokens:

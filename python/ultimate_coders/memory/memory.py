@@ -10,12 +10,104 @@ and pattern accumulation.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from ultimate_coders.memory.grepmem_memorix import (
+    GrepMemMemorix,
+    grepmem_memorix_enabled,
+)
+
 logger = logging.getLogger(__name__)
+
+#: Process-wide regex recall journal (v29 #133 wiring).  ``None`` while the
+#: feature flag is off, so every call site below stays a no-op by default.
+_RECALL_JOURNAL: GrepMemMemorix | None = None
+#: Minimum word length used to build the lexical fallback pattern.
+_MIN_RECALL_TERM = 3
+
+
+def recall_journal() -> GrepMemMemorix | None:
+    """Return the process-wide recall journal, or ``None`` when disabled.
+
+    The journal is a *projection*: it never replaces the engine write and is
+    never the authority for a memory value.  It exists so a worker can still
+    recall what it wrote when the semantic index is unavailable -- GrepMem's
+    point is that a lossless lexical log has no embedding to lose.
+    """
+
+    global _RECALL_JOURNAL
+    if not grepmem_memorix_enabled():
+        return None
+    if _RECALL_JOURNAL is None:
+        _RECALL_JOURNAL = GrepMemMemorix()
+    return _RECALL_JOURNAL
+
+
+def reset_recall_journal() -> None:
+    """Drop the process-wide journal (tests and long-lived workers)."""
+
+    global _RECALL_JOURNAL
+    _RECALL_JOURNAL = None
+
+
+def _journal_record(entry: MemoryEntry, *, layer: str) -> None:
+    """Append one written entry to the recall journal when it is armed."""
+
+    journal = recall_journal()
+    if journal is None:
+        return
+    payload = {
+        "id": entry.id,
+        "key": {
+            "scope": entry.key.scope,
+            "key": entry.key.key,
+            "task_id": entry.key.task_id,
+            "project_id": entry.key.project_id,
+        },
+        "content": entry.content,
+        "content_type": entry.content_type,
+        "source_agent": entry.source_agent,
+        "importance": entry.importance,
+        "tags": list(entry.tags),
+    }
+    try:
+        journal.remember(json.dumps(payload, sort_keys=True), f"memory:{layer}")
+    except ValueError:  # journal full: recall degrades, writes never fail
+        logger.warning("recall journal is full; dropping one record", exc_info=True)
+
+
+def _recall_entries(pattern: str, *, limit: int) -> list[MemoryEntry]:
+    """Regex recall over the journal, decoded back into ``MemoryEntry``."""
+
+    journal = recall_journal()
+    if journal is None:
+        return []
+    try:
+        records = journal.recall(pattern, limit=limit)
+    except ValueError:
+        logger.warning("invalid recall pattern %r", pattern, exc_info=True)
+        return []
+    entries: list[MemoryEntry] = []
+    for record in records:
+        try:
+            entries.append(MemoryEntry.from_dict(json.loads(record.text)))
+        except (KeyError, TypeError, ValueError):
+            logger.warning("unreadable recall record %d", record.seq, exc_info=True)
+    return entries
+
+
+def lexical_pattern(query: str) -> str:
+    """Build a case-insensitive alternation from the query's significant words."""
+
+    terms = [term for term in re.split(r"\W+", query) if len(term) >= _MIN_RECALL_TERM]
+    if not terms:
+        return ""
+    return "(?i)" + "|".join(re.escape(term) for term in dict.fromkeys(terms))
 
 
 @dataclass
@@ -225,7 +317,18 @@ class ShortTermMemory:
             task_id=task_id,
             project_id=project_id,
         )
-        return self._to_entry(raw)
+        entry = self._to_entry(raw)
+        _journal_record(entry, layer="task")
+        return entry
+
+    def recall(self, pattern: str, *, limit: int = 20) -> list[MemoryEntry]:
+        """Regex recall over this process's journal, oldest matches first.
+
+        Armed by ``UC_GREPMEM_MEMORIX``; without the flag this returns an
+        empty list and never touches the engine.
+        """
+
+        return _recall_entries(pattern, limit=limit)
 
     def delete(
         self,
@@ -350,7 +453,9 @@ class LongTermMemory:
             tags=tags,
             project_id=project_id,
         )
-        return self._to_entry(raw)
+        entry = self._to_entry(raw)
+        _journal_record(entry, layer=scope)
+        return entry
 
     def search(
         self,
@@ -390,7 +495,19 @@ class LongTermMemory:
                 entries.append(self._to_entry(entry_obj))
             else:
                 entries.append(self._to_entry(raw))
+        if not entries:
+            # Semantic index empty or unavailable: fall back to the lossless
+            # lexical journal so a worker can still recall what it wrote in
+            # this process (GrepMem: lexical recall has nothing to lose).
+            pattern = lexical_pattern(query)
+            if pattern:
+                entries = _recall_entries(pattern, limit=max_results)
         return entries
+
+    def recall(self, pattern: str, *, limit: int = 20) -> list[MemoryEntry]:
+        """Regex recall over this process's write journal (GrepMem fallback)."""
+
+        return _recall_entries(pattern, limit=limit)
 
     def delete(
         self,

@@ -349,6 +349,19 @@ def test_real_repo_is_reconciled() -> None:
         (2744, 2735),  # #17 cumulative-regression gate + its orchestrator test.
         (2746, 2737),  # Mutation-augmentation CLI + its test.
         (2748, 2739),  # UC memory read-side supersede filter + TS excerpt test (+2 text).
+        (2969, 2960),  # V11-V29 ledger modules, tests, maps and dashboard assets.
+        (2971, 2962),  # V29 #137 wiring: OverServe guard module + its test.
+        (2972, 2963),  # V29 #133 wiring: memory recall journal + its test.
+        (2973, 2964),  # V29 #26 wiring: workspace snapshot + shift guard test.
+        (2977, 2968),  # V13 #40 wiring: completion review module + its test.
+        (2979, 2970),  # V18 #70 wiring: PROBE failure brief module + its test.
+        (2981, 2972),  # V21 #89 wiring: requirement audit module + its test.
+        (2983, 2974),  # V20 #80 wiring: state ledger module + its test.
+        (2985, 2976),  # V19 #74 wiring: plan reuse module + its test.
+    (2987, 2978),  # V29 #135 wiring: focus context module + its test.
+    (2989, 2980),  # V29 #138 wiring: rubric audit module + its test.
+    (2991, 2982),  # V10 #30 wiring: history context module + its test.
+        (2975, 2966),  # Merge of origin/main hardening (2 upstream text files).
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out
 

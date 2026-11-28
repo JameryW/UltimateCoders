@@ -26,10 +26,13 @@ pub mod attention;
 pub mod case_resume;
 pub mod case_store;
 pub mod case_wake;
+pub mod compaction_rule_guard;
+pub mod dual_rule_auditor;
 pub mod outbox;
 pub mod policy;
 pub mod proactive;
 pub mod record_store;
+pub mod subagent_safety_barrier;
 pub mod submission;
 pub mod trigger_inbox;
 pub mod watchdog;
@@ -41,6 +44,15 @@ pub use attention::{AttentionBoard, AttentionBoardError};
 pub use case_resume::{plan_resume, ResumePlan, ResumeSkip};
 pub use case_store::{CaseStore, CaseStoreError, MandateStore};
 pub use case_wake::{wake_matched_cases, CaseWake};
+pub use compaction_rule_guard::{
+    CompactionAnchor, CompactionRuleError, CompactionRuleGuard, MandateRule, RuleViolation,
+    RuleViolationKind, DEFAULT_MAX_RULES,
+};
+pub use dual_rule_auditor::{
+    AuditDecision, AuditEntry, DualRuleAuditor, DualRuleError, HardRule, HopAttestation,
+    PropagationToken, Proposal, SoftRule, DEFAULT_MAX_AUDIT_ENTRIES, DEFAULT_SOFT_THRESHOLD,
+    ROOT_SIGNATURE,
+};
 pub use outbox::{OutboxError, OutboxQueue};
 pub use policy::{PolicyEngine, PolicyEngineError};
 pub use proactive::{ProactiveGate, ProactiveGateError};
@@ -48,6 +60,10 @@ pub use proactive::{ProactiveGate, ProactiveGateError};
 pub use record_store::PostgresRecordStore;
 pub use record_store::{
     InMemoryRecordStore, Record, RecordError, RecordStore, GOVERNANCE_RECORDS_TABLE,
+};
+pub use subagent_safety_barrier::{
+    DelegationDecision, DelegationRequest, EvidenceMode, SubagentSafetyBarrier,
+    SubagentSafetyError, SubagentTier,
 };
 pub use submission::{SubmissionError, SubmissionStore};
 pub use trigger_inbox::{TriggerInbox, TriggerInboxError};

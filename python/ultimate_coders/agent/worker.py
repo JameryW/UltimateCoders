@@ -1305,6 +1305,9 @@ class Worker:
                 capabilities=subtask.required_capabilities,
             )
             self._last_route = attempt_route
+            # Register this subtask's focus card before its prompt is built, so
+            # a sibling subtask of the same graph can see the work in flight.
+            self._focus_begin(subtask)
             attempt_context_manifest: dict[str, Any] | None = None
             self._last_context_manifest = None
             search_block = await self._build_search_context(subtask)
@@ -1348,6 +1351,13 @@ class Worker:
             knowledge_items, knowledge_summary = await self._knowledge_context_items(subtask)
             if knowledge_items:
                 non_hy_base_items = non_hy_base_items + knowledge_items
+            # V29 #135: other subtasks of this graph still have work in flight.
+            # Advisory evidence only - relevance-filtered so the block cannot
+            # crowd out this subtask's own targets.
+            focus_items, focus_summary = self._focus_context_items(subtask)
+            if focus_items:
+                non_hy_base_items = non_hy_base_items + focus_items
+            self._last_focus_summary = focus_summary
             context_source_items = non_hy_base_items + from_hy_memory_channels(
                 hy_channels, promote_negative=promote_negative
             )
@@ -2460,6 +2470,57 @@ class Worker:
             logger.debug("graph knowledge read failed", exc_info=True)
             return [], {}
 
+    def _focus_begin(self, subtask: Subtask) -> None:
+        """Register this subtask's focus card (V29 #135, opt-in)."""
+
+        try:
+            from ultimate_coders.agent.focus_context import begin_subtask
+
+            begin_subtask(subtask)
+        except Exception:
+            logger.debug("focus card registration failed", exc_info=True)
+
+    def _focus_finish(self, subtask: Subtask) -> dict[str, Any] | None:
+        """Retire this subtask's focus card and report the remaining work."""
+
+        try:
+            from ultimate_coders.agent.focus_context import finish_subtask
+
+            return finish_subtask(subtask)
+        except Exception:
+            logger.debug("focus card retirement failed", exc_info=True)
+            return None
+
+    def _focus_context_items(
+        self, subtask: Subtask
+    ) -> tuple[list[Any], dict[str, Any]]:
+        """Advisory items listing the sibling work still in flight (V29 #135).
+
+        Returns ``([], {})`` whenever the flag is off or no sibling subtask of
+        this graph is open, so the pre-upgrade prompt stays byte-identical.
+        """
+
+        try:
+            from ultimate_coders.agent.context_compiler import ContextItem, Tier
+            from ultimate_coders.agent.focus_context import focus_block
+
+            rendered = focus_block(subtask)
+            if rendered is None:
+                return [], {}
+            block, meta = rendered
+            item = ContextItem(
+                item_id=f"focus:{subtask.id}",
+                tier=Tier.EVIDENCE,
+                content=block,
+                source="focus-resumption",
+                relevance=0.8,
+                stable=True,
+            )
+            return [item], dict(meta)
+        except Exception:
+            logger.debug("focus context block failed", exc_info=True)
+            return [], {}
+
     async def _load_recovery_view(
         self, subtask: Subtask, attempt: int
     ) -> RecoveryView | None:
@@ -2564,6 +2625,39 @@ class Worker:
                     summary["evolution_reverted_rounds"] = len(chain.reverted_rounds)
         except Exception:
             logger.debug("attempt evolution render failed", exc_info=True)
+        # STAIR plan reuse (V19 #74 wiring): the same rounds also summarise as a
+        # hierarchical plan -- what was tried, which files to edit next, and the
+        # failures already seen -- so a retry starts from an executable outline
+        # instead of re-reading raw evidence.  Additive and opt-in; the raw
+        # recovery evidence above is untouched.
+        try:
+            from ultimate_coders.agent.plan_reuse import (
+                plan_block,
+                plan_reuse_enabled,
+            )
+
+            if plan_reuse_enabled() and view.rounds:
+                rendered_plan = plan_block(subtask.description, view.rounds)
+                if rendered_plan is not None:
+                    plan_text, plan_meta = rendered_plan
+                    from ultimate_coders.agent.context_compiler import (
+                        ContextItem,
+                        Tier,
+                    )
+
+                    items.append(
+                        ContextItem(
+                            item_id=f"stair-plan:{subtask.id}:{attempt}",
+                            tier=Tier.EVIDENCE,
+                            content="Reusable repair plan:\n" + plan_text,
+                            source="stair-plan",
+                            relevance=0.9,
+                            stable=True,
+                        )
+                    )
+                    summary["stair_plan"] = plan_meta
+        except Exception:
+            logger.debug("stair plan render failed", exc_info=True)
         effective_risk = risk if risk is not None else self._last_route.risk
         manifest = compile_context(
             list(base_items) + items,
@@ -3147,6 +3241,13 @@ class Worker:
                     retrace_contradictory=list(retrace.contradictory)[:8],
                     retrace_repair=retrace.repair_instruction[:500],
                 )
+            requirement_event = self._verify_output_requirements(subtask, output)
+            if requirement_event is not None:
+                await self._emit_step_event(
+                    subtask,
+                    "subtask_progress",
+                    **requirement_event,
+                )
             test_event = await self._test_execution_event(effective_wd, subtask)
             if test_event is not None:
                 await self._emit_step_event(subtask, "subtask_progress", **test_event)
@@ -3161,6 +3262,11 @@ class Worker:
                     "subtask_progress",
                     **acceptance_event,
                 )
+            # V29 #138: advisory repository-grounded rubric over the diff the
+            # attempt produced. Deterministic, never rejects the subtask.
+            rubric_event = self._rubric_audit_event(subtask, output, test_event)
+            if rubric_event is not None:
+                await self._emit_step_event(subtask, "subtask_progress", **rubric_event)
             critic_event, critic_error = await self._verify_output_exec_critic(
                 subtask,
                 effective_wd,
@@ -3192,6 +3298,9 @@ class Worker:
                     "subtask_progress",
                     **trajectory_event,
                 )
+            focus_event = self._focus_finish(subtask)
+            if focus_event is not None:
+                await self._emit_step_event(subtask, "subtask_progress", **focus_event)
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
@@ -4041,6 +4150,113 @@ class Worker:
                 exc_info=True,
             )
             return None
+
+    def _verify_output_requirements(
+        self,
+        subtask: Subtask,
+        output: AgentOutput,
+    ) -> dict[str, Any] | None:
+        """Report acceptance-criteria coverage for this attempt (#89).
+
+        Opt-in via ``UC_REQUIREMENT_AUDIT`` (with ``UC_REQUIREMENT_TRACKER``).
+        SWE-CoWork (arXiv:2611.20218) shows agents pass the F2P tests far more
+        often than they deliver the complete requested change, so the audit
+        re-reads the description's acceptance bullets and marks each one
+        against the evidence this attempt produced (patch diffs, executed
+        commands, bounded test output). Advisory only: a bullet list is not a
+        machine-checkable contract, so coverage is reported and never used to
+        reject a subtask.
+        """
+
+        from ultimate_coders.agent.requirement_audit import (
+            audit_requirements,
+            requirement_audit_enabled,
+        )
+
+        if not requirement_audit_enabled() or not (subtask.description or "").strip():
+            return None
+        patch_text = "\n".join(
+            (change.diff or "") for change in (output.file_changes or [])
+        )
+        try:
+            audit = audit_requirements(
+                subtask.description,
+                patch_text=patch_text,
+                commands_run=tuple(output.commands_run or ()),
+                test_output=output.test_output or "",
+            )
+        except Exception:
+            logger.debug(
+                "requirement audit failed for %s",
+                output.summary[:80],
+                exc_info=True,
+            )
+            return None
+        if audit is None:
+            return None
+        return {
+            "phase": "requirement audit",
+            "percent": 0,
+            "requirement_total": len(audit.requirements),
+            "requirement_verified": len(audit.verified),
+            "requirement_coverage": audit.coverage,
+            "requirement_complete": audit.complete,
+            "requirement_unverified": [
+                item.text[:120] for item in audit.unverified_requirements
+            ][:5],
+        }
+
+    def _rubric_audit_event(
+        self,
+        subtask: Subtask,
+        output: AgentOutput,
+        test_event: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Score this attempt against a frozen repository rubric (#138).
+
+        Opt-in via ``UC_RUBRIC_AUDIT`` (with ``UC_REPO_RUBRIC_SCORER``). The
+        ledger item scores a diff without executing anything; here the evidence
+        is the worker's own diff, its declared file constraints, and the
+        observed test delta when one exists. Every check is deterministic. The
+        score is advisory: it never rejects a subtask, and ``rubric_passed``
+        stays false without observed passing tests - ``rubric_weighted_ok`` is
+        the part a repository with no runnable tests can still satisfy.
+        """
+
+        from ultimate_coders.agent.rubric_audit import (
+            audit_attempt,
+            rubric_audit_enabled,
+        )
+
+        if not rubric_audit_enabled():
+            return None
+        diff = "\n".join(
+            (change.diff or "") for change in (output.file_changes or [])
+        )
+        paths = tuple(
+            change.file_path
+            for change in (output.file_changes or [])
+            if getattr(change, "file_path", "")
+        )
+        passed = 0
+        failed = 0
+        if test_event is not None and test_event.get("test_execution_status") == "ok":
+            passed = len(test_event.get("f2p") or ()) + len(test_event.get("p2p") or ())
+            failed = len(test_event.get("broken") or ())
+        try:
+            audit = audit_attempt(
+                diff=diff,
+                paths=paths,
+                description=subtask.description or "",
+                constraints=tuple(subtask.file_constraints or ()),
+                tests_passed=passed,
+                tests_failed=failed,
+                patch_id=f"{subtask.id}:rubric",
+            )
+        except Exception:
+            logger.debug("rubric audit failed", exc_info=True)
+            return None
+        return audit.to_event()
 
     def _exec_critic_preflight(
         self,
@@ -5073,17 +5289,23 @@ class Worker:
                     "diff": (fc.diff or "")[: Worker._ARTIFACT_DIFF_MAX],
                 }
             )
-        return json.dumps(
-            {
-                "summary": (out.summary or "")[: Worker._ARTIFACT_SUMMARY_MAX],
-                "success": out.success,
-                "file_changes": fc_list,
-                "stderr_tail": (out.stderr_tail or "")[: Worker._ARTIFACT_STDERR_MAX],
-                "tool_calls": (out.tool_calls or [])[: Worker._ARTIFACT_TOOL_CALLS_MAX],
-            },
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )
+        payload: dict[str, object] = {
+            "summary": (out.summary or "")[: Worker._ARTIFACT_SUMMARY_MAX],
+            "success": out.success,
+            "file_changes": fc_list,
+            "stderr_tail": (out.stderr_tail or "")[: Worker._ARTIFACT_STDERR_MAX],
+            "tool_calls": (out.tool_calls or [])[: Worker._ARTIFACT_TOOL_CALLS_MAX],
+        }
+        # PROBE (#70): a failed step hands the next agent an anchored diagnosis
+        # and bounded recovery actions instead of a bare stderr tail. Imported
+        # lazily so enabling the adapter never affects worker start-up.
+        if not out.success:
+            from ultimate_coders.agent.probe_brief import failure_brief, probe_brief_enabled
+
+            brief = failure_brief(out) if probe_brief_enabled() else None
+            if brief is not None:
+                payload["failure_diagnosis"] = brief
+        return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
     def _render_step_prompt(
         self,
@@ -5387,19 +5609,58 @@ class Worker:
                 chosen = items[:8]
             if not chosen:
                 return None
-            lines = ["## Related code from indexed repositories"]
+            entries: list[tuple[str, str, str, str, float]] = []
             for r in chosen:
                 if isinstance(r, MemCreditCandidate):
                     repo = str(r.metadata.get("repo", "?"))
                     path = str(r.metadata.get("path", r.path or "?"))
                     snippet = r.content
+                    symbol = str(r.symbol or "")
+                    score = float(r.score or 0.0)
                 else:
-                    repo = getattr(r, "repo_id", "?")
-                    path = getattr(r, "file_path", "?")
-                    snippet = getattr(r, "content_snippet", "")
+                    repo = str(getattr(r, "repo_id", "?"))
+                    path = str(getattr(r, "file_path", "?"))
+                    snippet = getattr(r, "content_snippet", "") or ""
+                    symbol = str(getattr(r, "symbol_name", "") or "")
+                    score = float(getattr(r, "score", 0.0) or 0.0)
                 if snippet:
-                    lines.append(f"### [{repo}] {path}")
-                    lines.append(f"```\n{snippet[:500]}\n```")
+                    entries.append((repo, path, snippet, symbol, score))
+            if not entries:
+                return None
+            # Rivet shaping is opt-in: it grounds identifiers, links utility
+            # edges and degrades snippet -> signature -> summary under the same
+            # context budget instead of blindly truncating the hit list.
+            from ultimate_coders.search.rivet_shaper import (
+                EvidenceItem,
+                rivet_shaper_enabled,
+                shape_context,
+            )
+
+            if rivet_shaper_enabled():
+                pool = [
+                    EvidenceItem(
+                        path=f"[{repo}] {path}",
+                        symbol=symbol,
+                        content=snippet,
+                        score=score,
+                    )
+                    for repo, path, snippet, symbol, score in entries
+                ]
+                shaped = shape_context(
+                    subtask.description,
+                    pool,
+                    budget_tokens=self._context_budget_tokens(),
+                )
+                if not shaped.shaped:
+                    return None
+                lines = ["## Related code from indexed repositories"]
+                for evidence in shaped.shaped:
+                    lines.append(evidence.text)
+                return "\n\n".join(lines)
+            lines = ["## Related code from indexed repositories"]
+            for repo, path, snippet, _symbol, _score in entries:
+                lines.append(f"### [{repo}] {path}")
+                lines.append(f"```\n{snippet[:500]}\n```")
             return "\n".join(lines) if len(lines) > 1 else None
         except Exception:
             # ponytail: search failure is non-fatal — subtask still executes

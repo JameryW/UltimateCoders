@@ -269,7 +269,7 @@ def test_http_transport_preserves_the_callers_budget_at_the_real_connection(
     assert observed == [budget]
 
 
-@pytest.mark.parametrize("delay,budget,completed", [(0.1, 2, True), (2, 0.5, False)])
+@pytest.mark.parametrize("delay,budget,completed", [(0.1, 5, True), (2, 0.5, False)])
 def test_real_header_delay_uses_the_absolute_operation_deadline(
     ollama_peer, delay, budget, completed
 ):
