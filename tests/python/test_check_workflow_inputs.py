@@ -178,7 +178,8 @@ def test_real_repo_is_reconciled() -> None:
             # pytest step that both name files. 25 -> 27: the subprocess-timeouts
             # job (T50) adds the same pair. 27 -> 29: so does
             # exception-swallow-reasons (T51). 29 -> 31: so does py39-compat.
-            "workflows: 12 workflow(s), 10 path-filtered, 31 run-step reference(s), "
+            # 31 -> 33: so does test-tempdirs.
+            "workflows: 12 workflow(s), 10 path-filtered, 33 run-step reference(s), "
             "15 subject to coverage"
         )
     assert expected in out, f"the reported summary has moved; got:\n{out}"

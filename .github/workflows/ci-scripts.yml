@@ -272,6 +272,29 @@ jobs:
       - name: each rule says no, guarded imports stay quiet, and the repo is clean
         run: pytest tests/python/test_check_py39_compat.py -v -o addopts=""
 
+  test-tempdirs:
+    name: test temp dirs (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - run: pip install ruff pytest
+      - name: ruff check (the guard and its test only)
+        run: ruff check scripts/check-test-tempdirs.py tests/python/test_check_test_tempdirs.py
+      - name: run the guard
+        # `tempfile.mkdtemp()` plus a hand-written `finally:` only cleans up when the
+        # test reaches its own end, so a failing assertion leaks the directory. Two such
+        # leftovers were once staged as embedded repos and moved a pinned gitlink count.
+        run: python scripts/check-test-tempdirs.py
+      - name: the guard can say no, pytest-owned dirs stay quiet, and the repo is clean
+        run: pytest tests/python/test_check_test_tempdirs.py -v -o addopts=""
+
   exception-swallow-reasons:
     name: exception swallow reasons (Python ${{ matrix.python-version }})
     runs-on: ubuntu-24.04

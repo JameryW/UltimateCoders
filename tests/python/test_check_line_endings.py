@@ -362,6 +362,7 @@ def test_real_repo_is_reconciled() -> None:
     (2989, 2980),  # V29 #138 wiring: rubric audit module + its test.
     (2991, 2982),  # V10 #30 wiring: history context module + its test.
     (2993, 2984),  # 3.9 compatibility guard + its test.
+    (2995, 2986),  # Test temp-dir guard + its test.
         (2975, 2966),  # Merge of origin/main hardening (2 upstream text files).
     }, f"the scan size has moved: {(m.group(1), m.group(2))}; update the pair"
     assert "line endings check passed." in out, out

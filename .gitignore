@@ -137,3 +137,8 @@ docker/docker-compose.override.yaml
 .scratch/
 # pytest's per-run temp root when it is created inside the checkout
 pytest-of-*/
+# Test helpers that cannot ask pytest for a basetemp. `tempfile.gettempdir()`
+# falls back to the checkout when the configured TEMP directory is denied to the
+# child process, so a helper's own temp dir lands beside the sources; it is
+# removed on exit, and this keeps an interrupted run from being staged.
+.uc-codegraph-*/
