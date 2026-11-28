@@ -51,6 +51,7 @@ from ultimate_coders.agent.completion_review import (
 )
 from ultimate_coders.agent.drift_monitor import DriftMonitor, drift_monitor_enabled
 from ultimate_coders.agent.ecloop_gate import ECLoopGate, ecloop_gate_enabled
+from ultimate_coders.agent.history_context import build_history_block, history_context_enabled
 from ultimate_coders.agent.overserve_guard import OverServeGuard, overserve_guard_enabled
 from ultimate_coders.agent.radio import (
     RADIO_INBOX_DIR_ENV,
@@ -1218,6 +1219,15 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
     ]
+    # Repository history context (v10 #30) is opt-in: merged changes that touch
+    # the same files are distilled into a few cards and appended to the task, so
+    # a fix knows why the code looks the way it does.  Advisory, bounded, and
+    # absent entirely when the flag is off or the directory has no history.
+    history = None
+    if history_context_enabled():
+        history = build_history_block(root, prompt)
+        if history is not None:
+            messages[1]["content"] = f"{prompt}\n\n## Repository history\n{history.block}"
     # ACP folding is opt-in.  The ledger exists only while folding is enabled,
     # so the legacy harness path (and its prompts) stays byte-identical by
     # default; when enabled, duplicate reads and over-budget intervals are
@@ -1619,6 +1629,8 @@ async def run_loop(prompt: str, cwd: str, max_turns: int) -> int:
         envelope["completion_review"] = review_gate.to_dict()
     if state_ledger is not None:
         envelope["state_ledger"] = state_ledger.to_dict()
+    if history is not None:
+        envelope["history_context"] = history.to_dict()
     if shift is not None:
         envelope["shift"] = {
             "phase": shift.phase.value,

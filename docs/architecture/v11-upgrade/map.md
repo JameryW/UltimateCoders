@@ -16,7 +16,7 @@ authority, or a network service.
 | LatentSift candidate filter | `python/ultimate_coders/acceptance/latent_sift.py` | `UC_LATENT_SIFT` | acceptance library; no worker caller yet | module only |
 | ANTE belief world model | `python/ultimate_coders/agent/ante_world_model.py` | `UC_ANTE_WORLD_MODEL` | agent library; no harness caller yet | module only |
 | Rivet context shaper | `python/ultimate_coders/search/rivet_shaper.py` | `UC_RIVET_SHAPER` | worker `_build_search_context` after MemCredit / before rendering | wired |
-| Chronos PR evolution graph | `python/ultimate_coders/knowledge/chronos_pr_graph.py` | `UC_CHRONOS_PR_GRAPH` | knowledge library; no worker caller yet | module only |
+| Chronos PR evolution graph | `python/ultimate_coders/knowledge/chronos_pr_graph.py`, `python/ultimate_coders/agent/history_context.py` | `UC_CHRONOS_PR_GRAPH`, `UC_HISTORY_CONTEXT` | git-history cards appended to the local harness prompt | wired (opt-in) |
 
 ## TomasuLLM speculative execution (#25)
 
@@ -159,6 +159,20 @@ exactly two candidates, requires each to be verified, and selects exactly one
 of them using historical motivation/solution support; it never invents a third
 patch. The graph is in-memory and has no database or GitHub ingestion worker;
 callers supply cards and edges from their own history store.
+
+**Production wiring (local harness).** `python/ultimate_coders/agent/history_context.py`
+supplies the missing ingestion: `mine_history` walks `git log --name-only`,
+turns each commit into a card (id `#101` when the subject carries a pull-request
+reference, otherwise the short hash), extracts touched files as signals, and
+attaches edges with `auto_link`. `build_history_block` ranks entry cards by stem
+overlap — the graph's own `search` matches whole words, so a task that says
+`cache` would miss a commit that says `caching` — expands three hops, and renders
+bounded `Change`/`Files`/`Why`/`How` lines. `Why` stays empty when the commit
+message never says why, instead of echoing the subject. With `UC_HISTORY_CONTEXT`
+(and `UC_CHRONOS_PR_GRAPH`) set, `run_loop` appends the block to the task prompt
+under `## Repository history` and reports `history_context` in the final
+envelope; with the flag off the prompt is byte-identical to before, and a
+directory that is not a git root yields no block.
 
 ## Rollout and verification
 

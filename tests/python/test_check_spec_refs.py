@@ -1055,8 +1055,9 @@ def test_real_corpus_unanchored_census_is_reported():
     # The V19 #74 wiring note names plan_reuse.py, UC_PLAN_REUSE and
     # _recovery_context_block (1682 -> 1684), then the V29 #135 focus
     # context wiring added its module, test, and map mention (1684 -> 1686),
-    # and the V29 #138 rubric wiring added two more (1686 -> 1688).
-    assert sum(1 for r in rows if r["kind"] == "mention") == 1688
+    # and the V29 #138 rubric wiring added two more (1686 -> 1688), and the
+    # V10 #30 history wiring added its module and test (1688 -> 1690).
+    assert sum(1 for r in rows if r["kind"] == "mention") == 1690
 
 
 def test_real_corpus_has_no_false_content_mismatch():
