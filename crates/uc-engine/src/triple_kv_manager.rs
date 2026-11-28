@@ -281,7 +281,7 @@ mod tests {
         let plan = manager.access("a", 10, 5).unwrap();
         assert_eq!(plan.hit_tier, Some(KvTier::Dram));
         assert_eq!(plan.reused_tokens, 5);
-        assert_eq!(plan.refilled_from_ssd, false);
+        assert!(!plan.refilled_from_ssd);
         assert_eq!(manager.tier_of("a"), Some(KvTier::Gpu));
     }
 

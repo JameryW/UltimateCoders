@@ -308,17 +308,15 @@ impl CuriosityEngine {
     ) -> Result<CuriosityChoice, ProverError> {
         let mut seen: Vec<String> = Vec::new();
         let mut best: Option<&CuriosityCandidate> = None;
-        let mut count = 0usize;
         let mut owned = Vec::new();
         for candidate in candidates {
-            if count >= self.max_candidates {
+            if seen.len() >= self.max_candidates {
                 return Err(ProverError::CandidateCapacityReached);
             }
             if seen.iter().any(|action| action == &candidate.action) {
                 return Err(ProverError::DuplicateCandidate(candidate.action));
             }
             seen.push(candidate.action.clone());
-            count += 1;
             owned.push(candidate);
         }
         for candidate in &owned {

@@ -150,7 +150,7 @@ export class AgentStepper {
 			}
 			commit = {
 				id: `shadow-${this.commitList.length + 1}-${event.seq}`,
-				parent: this.commitList.at(-1)?.id ?? null,
+				parent: this.commitList[this.commitList.length - 1]?.id ?? null,
 				eventSeq: event.seq,
 				summary: event.summary,
 				diff: event.diff ?? "",

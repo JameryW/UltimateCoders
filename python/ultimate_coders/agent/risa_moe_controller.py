@@ -65,7 +65,9 @@ def cosine_similarity(
     """Cosine similarity in ``[-1, 1]``; zero vectors return ``0.0``."""
     if len(left) != len(right):
         raise ValueError("routes must have the same dimension")
-    dot = sum(a * b for a, b in zip(left, right, strict=True))
+    # ``zip(strict=...)`` is 3.10+; the harness still supports 3.9, and the
+    # caller has already rejected mismatched widths.
+    dot = sum(a * b for a, b in zip(left, right))
     left_norm = math.sqrt(sum(a * a for a in left))
     right_norm = math.sqrt(sum(b * b for b in right))
     if left_norm == 0.0 or right_norm == 0.0:

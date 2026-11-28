@@ -296,9 +296,7 @@ impl AgentStepper {
         if let Some(commit) = &commit {
             self.commits.push(commit.clone());
         }
-        if hit_breakpoint {
-            self.state = StepperState::Paused;
-        } else if self.state == StepperState::Stepping {
+        if hit_breakpoint || self.state == StepperState::Stepping {
             self.state = StepperState::Paused;
         }
         Ok(IngestOutcome {
